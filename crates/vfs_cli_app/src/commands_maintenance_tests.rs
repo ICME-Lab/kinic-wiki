@@ -49,55 +49,51 @@ async fn rebuild_index_renders_sections_from_existing_wiki_nodes() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/foo/index.md",
+                "/Wiki/foo/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for foo.\n",
             ),
             node(
-                "/Knowledge/foo/facts.md",
+                "/Wiki/foo/facts.md",
                 NodeKind::File,
                 "# Facts\n\nFacts summary",
             ),
             node(
-                "/Knowledge/foo/child/index.md",
+                "/Wiki/foo/child/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for child.\n",
             ),
             node(
-                "/Knowledge/sources/alpha.md",
+                "/Wiki/sources/alpha.md",
                 NodeKind::File,
                 "# Alpha\n\nAlpha summary",
             ),
             node(
-                "/Knowledge/sources/index.md",
+                "/Wiki/sources/index.md",
                 NodeKind::File,
                 "# Sources\n\nSource landing page",
             ),
             node(
-                "/Knowledge/entities/openai.md",
+                "/Wiki/entities/openai.md",
                 NodeKind::File,
                 "# OpenAI\n\nEntity summary",
             ),
             node(
-                "/Knowledge/entities/index.md",
+                "/Wiki/entities/index.md",
                 NodeKind::File,
                 "# Entities\n\nEntity landing page",
             ),
             node(
-                "/Knowledge/concepts/tool-calling.md",
+                "/Wiki/concepts/tool-calling.md",
                 NodeKind::File,
                 "# Tool Calling\n\nConcept summary",
             ),
             node(
-                "/Knowledge/concepts/index.md",
+                "/Wiki/concepts/index.md",
                 NodeKind::File,
                 "# Concepts\n\nConcept landing page",
             ),
-            node(
-                "/Knowledge/lint/r.md",
-                NodeKind::File,
-                "# Lint\n\nLint summary",
-            ),
+            node("/Wiki/lint/r.md", NodeKind::File, "# Lint\n\nLint summary"),
         ],
         ..Default::default()
     };
@@ -108,46 +104,42 @@ async fn rebuild_index_renders_sections_from_existing_wiki_nodes() {
 
     let writes = client.writes.lock().expect("writes should lock");
     let index = writes.last().expect("index write should exist");
-    assert_eq!(index.path, "/Knowledge/index.md");
+    assert_eq!(index.path, "/Wiki/index.md");
     assert!(index.content.contains("## Scopes"));
     assert!(
         index
             .content
-            .contains("- [foo](/Knowledge/foo/index.md) - Scope entry point for foo.")
+            .contains("- [foo](/Wiki/foo/index.md) - Scope entry point for foo.")
     );
     assert!(
         !index
             .content
-            .contains("- [sources](/Knowledge/sources/index.md) - ")
+            .contains("- [sources](/Wiki/sources/index.md) - ")
     );
     assert!(
         !index
             .content
-            .contains("- [entities](/Knowledge/entities/index.md) - ")
+            .contains("- [entities](/Wiki/entities/index.md) - ")
     );
     assert!(
         !index
             .content
-            .contains("- [concepts](/Knowledge/concepts/index.md) - ")
+            .contains("- [concepts](/Wiki/concepts/index.md) - ")
     );
-    assert!(!index.content.contains("/Knowledge/foo/child/index.md"));
+    assert!(!index.content.contains("/Wiki/foo/child/index.md"));
     assert!(index.content.contains("## Sources"));
     assert!(index.content.contains("## Entities"));
     assert!(index.content.contains("## Concepts"));
+    assert!(index.content.contains("[Sources](/Wiki/sources/index.md)"));
     assert!(
         index
             .content
-            .contains("[Sources](/Knowledge/sources/index.md)")
+            .contains("[Entities](/Wiki/entities/index.md)")
     );
     assert!(
         index
             .content
-            .contains("[Entities](/Knowledge/entities/index.md)")
-    );
-    assert!(
-        index
-            .content
-            .contains("[Concepts](/Knowledge/concepts/index.md)")
+            .contains("[Concepts](/Wiki/concepts/index.md)")
     );
     assert!(!index.content.contains("## Queries"));
     assert!(!index.content.contains("## Lint Reports"));
@@ -162,10 +154,7 @@ async fn rebuild_index_command_dispatches() {
         .expect("rebuild index command should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert_eq!(
-        writes.last().expect("index write").path,
-        "/Knowledge/index.md"
-    );
+    assert_eq!(writes.last().expect("index write").path, "/Wiki/index.md");
 }
 
 #[tokio::test]
@@ -173,37 +162,37 @@ async fn rebuild_scope_index_renders_direct_children_and_updates_root_entry() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/foo/index.md",
+                "/Wiki/foo/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for foo.\n",
             ),
             node(
-                "/Knowledge/index.md",
+                "/Wiki/index.md",
                 NodeKind::File,
-                "# Index\n\n## Scopes\n\n- [bar](/Knowledge/bar/index.md) - existing bar\n",
+                "# Index\n\n## Scopes\n\n- [bar](/Wiki/bar/index.md) - existing bar\n",
             ),
             node(
-                "/Knowledge/foo/summary.md",
+                "/Wiki/foo/summary.md",
                 NodeKind::File,
                 "# Summary\n\nSummary text",
             ),
             node(
-                "/Knowledge/foo/custom.md",
+                "/Wiki/foo/custom.md",
                 NodeKind::File,
                 "# Custom\n\nCustom text",
             ),
             node(
-                "/Knowledge/foo/facts.md",
+                "/Wiki/foo/facts.md",
                 NodeKind::File,
                 "# Facts\n\nFacts text",
             ),
             node(
-                "/Knowledge/foo/child/note.md",
+                "/Wiki/foo/child/note.md",
                 NodeKind::File,
                 "# Child\n\nChild text",
             ),
             node(
-                "/Knowledge/bar/index.md",
+                "/Wiki/bar/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for bar.",
             ),
@@ -217,36 +206,36 @@ async fn rebuild_scope_index_renders_direct_children_and_updates_root_entry() {
 
     let writes = client.writes.lock().expect("writes should lock");
     assert_eq!(writes.len(), 2);
-    assert_eq!(writes[0].path, "/Knowledge/foo/index.md");
+    assert_eq!(writes[0].path, "/Wiki/foo/index.md");
     assert!(writes[0].content.contains("Scope entry point for foo."));
     assert!(writes[0].content.contains("## Scopes"));
-    assert!(!writes[0].content.contains("/Knowledge/foo/child/index.md"));
+    assert!(!writes[0].content.contains("/Wiki/foo/child/index.md"));
     let facts_pos = writes[0]
         .content
-        .find("- [facts](/Knowledge/foo/facts.md)")
+        .find("- [facts](/Wiki/foo/facts.md)")
         .expect("facts row should exist");
     let summary_pos = writes[0]
         .content
-        .find("- [summary](/Knowledge/foo/summary.md)")
+        .find("- [summary](/Wiki/foo/summary.md)")
         .expect("summary row should exist");
     let custom_pos = writes[0]
         .content
-        .find("- [custom](/Knowledge/foo/custom.md)")
+        .find("- [custom](/Wiki/foo/custom.md)")
         .expect("custom row should exist");
     assert!(facts_pos < summary_pos);
     assert!(summary_pos < custom_pos);
-    assert!(!writes[0].content.contains("/Knowledge/foo/index.md)"));
+    assert!(!writes[0].content.contains("/Wiki/foo/index.md)"));
 
-    assert_eq!(writes[1].path, "/Knowledge/index.md");
+    assert_eq!(writes[1].path, "/Wiki/index.md");
     assert!(
         writes[1]
             .content
-            .contains("- [bar](/Knowledge/bar/index.md) - existing bar")
+            .contains("- [bar](/Wiki/bar/index.md) - existing bar")
     );
     assert!(
         writes[1]
             .content
-            .contains("- [foo](/Knowledge/foo/index.md) - Scope entry point for foo.")
+            .contains("- [foo](/Wiki/foo/index.md) - Scope entry point for foo.")
     );
 }
 
@@ -257,7 +246,7 @@ async fn rebuild_scope_index_command_dispatches_for_canonical_path() {
     run_command(
         &client,
         test_cli(Command::RebuildScopeIndex {
-            scope: "/Knowledge/foo".to_string(),
+            scope: "/Wiki/foo".to_string(),
         }),
         &test_connection(),
     )
@@ -265,8 +254,8 @@ async fn rebuild_scope_index_command_dispatches_for_canonical_path() {
     .expect("rebuild scope index command should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert_eq!(writes[0].path, "/Knowledge/foo/index.md");
-    assert_eq!(writes[1].path, "/Knowledge/index.md");
+    assert_eq!(writes[0].path, "/Wiki/foo/index.md");
+    assert_eq!(writes[1].path, "/Wiki/index.md");
 }
 
 #[tokio::test]
@@ -276,7 +265,7 @@ async fn rebuild_scope_index_command_dispatches_for_nested_scope() {
     run_command(
         &client,
         test_cli(Command::RebuildScopeIndex {
-            scope: "/Knowledge/foo/child".to_string(),
+            scope: "/Wiki/foo/child".to_string(),
         }),
         &test_connection(),
     )
@@ -284,9 +273,9 @@ async fn rebuild_scope_index_command_dispatches_for_nested_scope() {
     .expect("nested rebuild scope index command should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert_eq!(writes[0].path, "/Knowledge/foo/child/index.md");
-    assert_eq!(writes[1].path, "/Knowledge/foo/index.md");
-    assert_eq!(writes[2].path, "/Knowledge/index.md");
+    assert_eq!(writes[0].path, "/Wiki/foo/child/index.md");
+    assert_eq!(writes[1].path, "/Wiki/foo/index.md");
+    assert_eq!(writes[2].path, "/Wiki/index.md");
     assert_eq!(writes.len(), 3);
 }
 
@@ -295,12 +284,12 @@ async fn rebuild_scope_index_does_not_touch_other_scope_indexes() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/foo/facts.md",
+                "/Wiki/foo/facts.md",
                 NodeKind::File,
                 "# Facts\n\nFacts text",
             ),
             node(
-                "/Knowledge/bar/index.md",
+                "/Wiki/bar/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for bar.",
             ),
@@ -316,7 +305,7 @@ async fn rebuild_scope_index_does_not_touch_other_scope_indexes() {
     assert!(
         writes
             .iter()
-            .all(|write| write.path != "/Knowledge/bar/index.md")
+            .all(|write| write.path != "/Wiki/bar/index.md")
     );
 }
 
@@ -325,17 +314,17 @@ async fn rebuild_scope_index_nested_scope_updates_leaf_parent_and_root() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/index.md",
+                "/Wiki/index.md",
                 NodeKind::File,
-                "# Index\n\n## Scopes\n\n- [bar](/Knowledge/bar/index.md) - existing bar\n",
+                "# Index\n\n## Scopes\n\n- [bar](/Wiki/bar/index.md) - existing bar\n",
             ),
             node(
-                "/Knowledge/foo/index.md",
+                "/Wiki/foo/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for foo.\n",
             ),
             node(
-                "/Knowledge/foo/child/facts.md",
+                "/Wiki/foo/child/facts.md",
                 NodeKind::File,
                 "# Facts\n\nFacts text",
             ),
@@ -343,25 +332,25 @@ async fn rebuild_scope_index_nested_scope_updates_leaf_parent_and_root() {
         ..Default::default()
     };
 
-    rebuild_scope_index(&client, "default", "/Knowledge/foo/child")
+    rebuild_scope_index(&client, "default", "/Wiki/foo/child")
         .await
         .expect("nested rebuild should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
     assert_eq!(writes.len(), 3);
-    assert_eq!(writes[0].path, "/Knowledge/foo/child/index.md");
-    assert_eq!(writes[1].path, "/Knowledge/foo/index.md");
-    assert_eq!(writes[2].path, "/Knowledge/index.md");
+    assert_eq!(writes[0].path, "/Wiki/foo/child/index.md");
+    assert_eq!(writes[1].path, "/Wiki/foo/index.md");
+    assert_eq!(writes[2].path, "/Wiki/index.md");
     assert!(writes[1].content.contains("## Scopes"));
     assert!(
         writes[1]
             .content
-            .contains("- [child](/Knowledge/foo/child/index.md)")
+            .contains("- [child](/Wiki/foo/child/index.md)")
     );
     assert!(
         writes[2]
             .content
-            .contains("- [foo](/Knowledge/foo/index.md) - Scope entry point for foo.")
+            .contains("- [foo](/Wiki/foo/index.md) - Scope entry point for foo.")
     );
 }
 
@@ -370,17 +359,17 @@ async fn rebuild_scope_index_lists_child_scope_only_when_child_index_exists() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/foo/index.md",
+                "/Wiki/foo/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for foo.\n",
             ),
             node(
-                "/Knowledge/foo/child/index.md",
+                "/Wiki/foo/child/index.md",
                 NodeKind::File,
                 "# Index\n\nScope entry point for child.\n",
             ),
             node(
-                "/Knowledge/foo/child/facts.md",
+                "/Wiki/foo/child/facts.md",
                 NodeKind::File,
                 "# Facts\n\nFacts text",
             ),
@@ -393,11 +382,11 @@ async fn rebuild_scope_index_lists_child_scope_only_when_child_index_exists() {
         .expect("scope rebuild should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert_eq!(writes[0].path, "/Knowledge/foo/index.md");
+    assert_eq!(writes[0].path, "/Wiki/foo/index.md");
     assert!(
         writes[0]
             .content
-            .contains("- [child](/Knowledge/foo/child/index.md)")
+            .contains("- [child](/Wiki/foo/child/index.md)")
     );
 }
 
@@ -406,17 +395,17 @@ async fn rebuild_scope_index_reserved_root_scope_does_not_update_root_scopes() {
     let client = MockClient {
         nodes: vec![
             node(
-                "/Knowledge/index.md",
+                "/Wiki/index.md",
                 NodeKind::File,
-                "# Index\n\n## Scopes\n\n- [foo](/Knowledge/foo/index.md) - existing foo\n",
+                "# Index\n\n## Scopes\n\n- [foo](/Wiki/foo/index.md) - existing foo\n",
             ),
             node(
-                "/Knowledge/sources/index.md",
+                "/Wiki/sources/index.md",
                 NodeKind::File,
                 "# Sources\n\nSource landing page\n",
             ),
             node(
-                "/Knowledge/sources/alpha.md",
+                "/Wiki/sources/alpha.md",
                 NodeKind::File,
                 "# Alpha\n\nAlpha summary",
             ),
@@ -424,13 +413,13 @@ async fn rebuild_scope_index_reserved_root_scope_does_not_update_root_scopes() {
         ..Default::default()
     };
 
-    rebuild_scope_index(&client, "default", "/Knowledge/sources")
+    rebuild_scope_index(&client, "default", "/Wiki/sources")
         .await
         .expect("reserved scope rebuild should succeed");
 
     let writes = client.writes.lock().expect("writes should lock");
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].path, "/Knowledge/sources/index.md");
+    assert_eq!(writes[0].path, "/Wiki/sources/index.md");
 }
 
 #[test]
@@ -463,7 +452,7 @@ fn connection_flags_are_optional_in_cli() {
         "kinic-vfs-cli",
         "rebuild-scope-index",
         "--scope",
-        "/Knowledge/foo",
+        "/Wiki/foo",
     ]);
     assert!(scoped_path.is_ok(), "canonical scope path should parse");
 

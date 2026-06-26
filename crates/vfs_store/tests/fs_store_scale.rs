@@ -77,7 +77,7 @@ fn markdown_size_variants_roundtrip_through_write_append_and_edit() {
     let (_dir, store) = new_store();
 
     for (index, size) in [1_024usize, 4_096, 16_384, 65_536].into_iter().enumerate() {
-        let path = format!("/Knowledge/sizes/{size}.md");
+        let path = format!("/Wiki/sizes/{size}.md");
         let marker = format!("TARGET_{size}");
         let content = markdown_of_size(size, &marker);
         ensure_parent_folders(&store, &path, 99 + index as i64);
@@ -159,14 +159,14 @@ fn list_nodes_scales_to_thousand_entries() {
 
     for index in 0..1_000 {
         let bucket = index % 10;
-        let path = format!("/Knowledge/scale/bucket-{bucket}/node-{index:04}.md");
+        let path = format!("/Wiki/scale/bucket-{bucket}/node-{index:04}.md");
         write_file(&store, &path, "scale body", None, 10 + index as i64);
     }
 
     let root_entries = store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge/scale".to_string(),
+            prefix: "/Wiki/scale".to_string(),
             recursive: false,
         })
         .expect("root list should succeed");
@@ -174,13 +174,13 @@ fn list_nodes_scales_to_thousand_entries() {
     assert!(root_entries.iter().all(|entry| {
         entry.kind == NodeEntryKind::Folder
             && entry.has_children
-            && entry.path.starts_with("/Knowledge/scale/bucket-")
+            && entry.path.starts_with("/Wiki/scale/bucket-")
     }));
 
     let recursive_entries = store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge/scale".to_string(),
+            prefix: "/Wiki/scale".to_string(),
             recursive: true,
         })
         .expect("recursive list should succeed");
@@ -200,7 +200,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
 
     for index in 0..120 {
         let project = if index % 2 == 0 { "alpha" } else { "beta" };
-        let path = format!("/Knowledge/projects/{project}/nested/topic-{index:03}.md");
+        let path = format!("/Wiki/projects/{project}/nested/topic-{index:03}.md");
         let etag = write_file(
             &store,
             &path,
@@ -227,7 +227,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
         .glob_nodes(GlobNodesRequest {
             database_id: "default".to_string(),
             pattern: "**/*.md".to_string(),
-            path: Some("/Knowledge/projects/alpha".to_string()),
+            path: Some("/Wiki/projects/alpha".to_string()),
             node_type: Some(GlobNodeType::File),
         })
         .expect("glob should succeed");
@@ -235,14 +235,14 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
     assert!(
         glob_hits
             .iter()
-            .all(|hit| hit.path.starts_with("/Knowledge/projects/alpha/"))
+            .all(|hit| hit.path.starts_with("/Wiki/projects/alpha/"))
     );
 
     let search_hits = store
         .search_nodes(SearchNodesRequest {
             database_id: "default".to_string(),
             query_text: "needle".to_string(),
-            prefix: Some("/Knowledge/projects/alpha".to_string()),
+            prefix: Some("/Wiki/projects/alpha".to_string()),
             top_k: 100,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -250,7 +250,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
     assert!(
         search_hits
             .iter()
-            .all(|hit| hit.path.starts_with("/Knowledge/projects/alpha/"))
+            .all(|hit| hit.path.starts_with("/Wiki/projects/alpha/"))
     );
     assert!(
         !search_hits
@@ -262,7 +262,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
         .search_node_paths(SearchNodePathsRequest {
             database_id: "default".to_string(),
             query_text: "TOPIC-000".to_string(),
-            prefix: Some("/Knowledge/projects/alpha".to_string()),
+            prefix: Some("/Wiki/projects/alpha".to_string()),
             top_k: 100,
             preview_mode: None,
         })
@@ -270,7 +270,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
     assert!(
         path_hits
             .iter()
-            .all(|hit| hit.path.starts_with("/Knowledge/projects/alpha/"))
+            .all(|hit| hit.path.starts_with("/Wiki/projects/alpha/"))
     );
 }
 
@@ -279,7 +279,7 @@ fn path_search_smoke_reports_latency_and_hits() {
     let (_dir, store) = new_store();
 
     for index in 0..300 {
-        let path = format!("/Knowledge/bench/nested/Topic-{index:03}.md");
+        let path = format!("/Wiki/bench/nested/Topic-{index:03}.md");
         write_file(
             &store,
             &path,
@@ -300,7 +300,7 @@ fn path_search_smoke_reports_latency_and_hits() {
             .search_node_paths(SearchNodePathsRequest {
                 database_id: "default".to_string(),
                 query_text: query_text.to_string(),
-                prefix: Some("/Knowledge/bench".to_string()),
+                prefix: Some("/Wiki/bench".to_string()),
                 top_k: 20,
                 preview_mode: None,
             })
@@ -319,7 +319,7 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
     let (_dir, store) = new_store();
 
     for index in 0..1_000 {
-        let path = format!("/Knowledge/snapshot/note-{index:04}.md");
+        let path = format!("/Wiki/snapshot/note-{index:04}.md");
         write_file(
             &store,
             &path,
@@ -332,7 +332,7 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge/snapshot".to_string()),
+            prefix: Some("/Wiki/snapshot".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -342,19 +342,19 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
     assert_eq!(base.nodes.len(), 100);
 
     let updated_etag = store
-        .read_node("/Knowledge/snapshot/note-0001.md")
+        .read_node("/Wiki/snapshot/note-0001.md")
         .expect("read should succeed")
         .expect("node should exist")
         .etag;
     let updated = write_file(
         &store,
-        "/Knowledge/snapshot/note-0001.md",
+        "/Wiki/snapshot/note-0001.md",
         "body 1 updated",
         Some(&updated_etag),
         5_000,
     );
     let deleted_etag = store
-        .read_node("/Knowledge/snapshot/note-0002.md")
+        .read_node("/Wiki/snapshot/note-0002.md")
         .expect("read should succeed")
         .expect("node should exist")
         .etag;
@@ -362,26 +362,20 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
         .delete_node(
             DeleteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/snapshot/note-0002.md".to_string(),
+                path: "/Wiki/snapshot/note-0002.md".to_string(),
                 expected_etag: Some(deleted_etag),
                 expected_folder_index_etag: None,
             },
             5_001,
         )
         .expect("delete should succeed");
-    write_file(
-        &store,
-        "/Knowledge/snapshot/new.md",
-        "new body",
-        None,
-        5_002,
-    );
+    write_file(&store, "/Wiki/snapshot/new.md", "new body", None, 5_002);
 
     let updates = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge/snapshot".to_string()),
+            prefix: Some("/Wiki/snapshot".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -392,16 +386,16 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
         updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/snapshot/note-0001.md" && node.etag == updated)
+            .any(|node| node.path == "/Wiki/snapshot/note-0001.md" && node.etag == updated)
     );
     assert!(
         updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/snapshot/new.md")
+            .any(|node| node.path == "/Wiki/snapshot/new.md")
     );
     assert_eq!(
         updates.removed_paths,
-        vec!["/Knowledge/snapshot/note-0002.md".to_string()]
+        vec!["/Wiki/snapshot/note-0002.md".to_string()]
     );
 }

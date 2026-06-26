@@ -64,7 +64,6 @@ async fn main() -> Result<()> {
             ContextPackCommand::Verify(args) => {
                 run_context_pack_verify(ContextPackVerifyOptions {
                     path: args.path,
-                    fail_on_truncated: args.fail_on_truncated,
                     json: args.json,
                 })?;
                 return Ok(());

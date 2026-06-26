@@ -1,6 +1,7 @@
 CREATE TABLE databases (
   database_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  profile TEXT NOT NULL DEFAULT 'workspace',
   db_file_name TEXT NOT NULL,
   mount_id INTEGER NOT NULL,
   active_mount_id INTEGER,

@@ -52,7 +52,7 @@ use crate::{
 };
 
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
-const WIKI_ROOT_PATH: &str = "/Knowledge";
+const WIKI_ROOT_PATH: &str = "/Wiki";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
@@ -188,7 +188,7 @@ impl FsStore {
                 top_level_paths: load_marketplace_top_level_paths(conn)?,
                 excerpts: load_marketplace_preview_excerpts(conn)?,
                 category_graph: load_marketplace_category_graph(conn)?,
-                graph_links: load_graph_links(conn, "/Knowledge", 100)?,
+                graph_links: load_graph_links(conn, "/Wiki", 100)?,
                 preview_stale: false,
             };
             Ok((stats, preview))
@@ -1560,7 +1560,7 @@ fn load_marketplace_verified_stats(
     ) = conn
         .query_row(
             "SELECT COUNT(*),
-                    SUM(CASE WHEN path = '/Knowledge' OR path LIKE '/Knowledge/%' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN path = '/Wiki' OR path LIKE '/Wiki/%' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'source' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'folder' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'file' THEN length(content) ELSE 0 END),
@@ -1605,7 +1605,7 @@ fn load_marketplace_top_level_paths(conn: &Connection) -> Result<Vec<String>, St
             "SELECT child.path
              FROM fs_nodes child
              JOIN fs_nodes parent ON parent.id = child.parent_id
-             WHERE parent.path = '/Knowledge'
+             WHERE parent.path = '/Wiki'
              ORDER BY CASE child.kind WHEN 'folder' THEN 0 WHEN 'file' THEN 1 ELSE 2 END,
                       child.path ASC
              LIMIT 12",
@@ -1626,7 +1626,7 @@ fn load_marketplace_preview_excerpts(
                     length(content)
              FROM fs_nodes
              WHERE kind = 'file'
-               AND (path = '/Knowledge' OR path LIKE '/Knowledge/%')
+               AND (path = '/Wiki' OR path LIKE '/Wiki/%')
              ORDER BY path ASC
              LIMIT ?1",
         )
@@ -1648,7 +1648,7 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT path
              FROM fs_nodes
-             WHERE path = '/Knowledge' OR path LIKE '/Knowledge/%'
+             WHERE path = '/Wiki' OR path LIKE '/Wiki/%'
              ORDER BY path ASC",
         )
         .map_err(|error| error.to_string())?;
@@ -1685,8 +1685,8 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT source_path, target_path
              FROM fs_links
-             WHERE (source_path = '/Knowledge' OR source_path LIKE '/Knowledge/%')
-               AND (target_path = '/Knowledge' OR target_path LIKE '/Knowledge/%')",
+             WHERE (source_path = '/Wiki' OR source_path LIKE '/Wiki/%')
+               AND (target_path = '/Wiki' OR target_path LIKE '/Wiki/%')",
         )
         .map_err(|error| error.to_string())?;
     let edges = crate::sqlite::query_map(&mut stmt, params![], |row| {
@@ -1736,12 +1736,12 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
 }
 
 fn marketplace_top_category(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("/Knowledge/")?;
+    let rest = path.strip_prefix("/Wiki/")?;
     let segment = rest.split('/').next()?.trim();
     if segment.is_empty() {
         None
     } else {
-        Some(format!("/Knowledge/{segment}"))
+        Some(format!("/Wiki/{segment}"))
     }
 }
 
@@ -1814,7 +1814,7 @@ fn load_child_rows(
 fn allows_empty_directory_listing(path: &str) -> bool {
     matches!(
         path,
-        "/" | "/Memory" | "/Knowledge" | "/Skills" | "/Sessions" | "/Sources"
+        "/" | "/Memory" | "/Wiki" | "/Skills" | "/Sessions" | "/Sources"
     )
 }
 
@@ -2237,7 +2237,7 @@ fn store_root_for_child_path(path: &str) -> Option<&'static str> {
     let root = path.split('/').nth(1)?;
     let root_path = match root {
         "Memory" => "/Memory",
-        "Knowledge" => "/Knowledge",
+        "Wiki" => "/Wiki",
         "Skills" => "/Skills",
         "Sessions" => "/Sessions",
         "Sources" => "/Sources",
@@ -2254,7 +2254,7 @@ fn is_protected_root_folder(path: &str) -> bool {
     matches!(
         path,
         "/Memory"
-            | "/Knowledge"
+            | "/Wiki"
             | "/Skills"
             | "/Sessions"
             | "/Sources"
@@ -2439,7 +2439,7 @@ fn scope_root_provenance_path_for(node_path: &str) -> Option<String> {
     let mut parts = node_path.trim_matches('/').split('/');
     let root = parts.next()?;
     let scope = parts.next()?;
-    if root != "Knowledge" {
+    if root != "Wiki" {
         return None;
     }
     Some(format!("/{root}/{scope}/provenance.md"))

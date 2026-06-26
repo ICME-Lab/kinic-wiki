@@ -5,8 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CyclesCommand, DatabaseCommand, DatabaseProfileArg, GlobNodeTypeArg,
-    IdentityModeArg, MarketCommand, NodeKindArg, SearchPreviewModeArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg,
+    MarketCommand, NodeKindArg, SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
@@ -1046,8 +1046,8 @@ impl Command {
 mod tests {
     use super::{
         ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
-        DatabaseCommand, DatabaseProfileArg, HermesCommand, IdentityModeArg, MarketCommand,
-        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
+        SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -1155,29 +1155,12 @@ mod tests {
     fn main_cli_parses_database_link_commands() {
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "create", "team-db"]);
         let Command::Database {
-            command: DatabaseCommand::Create { name, profile },
+            command: DatabaseCommand::Create { name },
         } = cli.command
         else {
             panic!("expected database create command");
         };
         assert_eq!(name, "team-db");
-        assert_eq!(profile, DatabaseProfileArg::Workspace);
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "create",
-            "--profile",
-            "memory",
-            "team-memory",
-        ]);
-        let Command::Database {
-            command: DatabaseCommand::Create { name, profile },
-        } = cli.command
-        else {
-            panic!("expected database create command");
-        };
-        assert_eq!(name, "team-memory");
-        assert_eq!(profile, DatabaseProfileArg::Memory);
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
         let cli = Cli::parse_from([

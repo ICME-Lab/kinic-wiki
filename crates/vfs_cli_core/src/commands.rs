@@ -670,10 +670,8 @@ async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
-        DatabaseCommand::Create { name, profile } => {
-            let result = client
-                .create_database(&name, profile.to_database_profile())
-                .await?;
+        DatabaseCommand::Create { name } => {
+            let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
         }
         DatabaseCommand::Rename { database_id, name } => {
@@ -1455,7 +1453,7 @@ fn default_metadata_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::{command_requires_write_cycles_available, run_vfs_command};
-    use crate::cli::{CyclesCommand, DatabaseProfileArg, NodeKindArg, VfsCommand};
+    use crate::cli::{CyclesCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
@@ -1561,17 +1559,13 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(
-            &self,
-            name: &str,
-            profile: vfs_types::DatabaseProfile,
-        ) -> Result<CreateDatabaseResult> {
+        async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
                 name: name.to_string(),
-                profile,
+                profile: DatabaseProfile::Workspace,
             })
         }
         async fn purchase_database_cycles(
@@ -2345,7 +2339,6 @@ mod tests {
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Create {
-                    profile: DatabaseProfileArg::Workspace,
                     name: "Team skills".to_string(),
                 },
             },

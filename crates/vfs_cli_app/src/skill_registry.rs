@@ -62,6 +62,7 @@ pub async fn run_skill_command(
             notes_file,
             agent,
             json,
+            ..
         } => {
             let result = if let Some(evidence_json) = evidence_json {
                 record_skill_run_evidence(
@@ -156,6 +157,14 @@ pub async fn run_skill_command(
         )?,
         SkillCommand::History { id, json } => {
             print(skill_history(client, database_id, &id).await?, json)?
+        }
+        SkillCommand::ProposeImprovement { .. }
+        | SkillCommand::ApproveProposal { .. }
+        | SkillCommand::ApplyProposal { .. }
+        | SkillCommand::EvolveJobs { .. } => {
+            return Err(anyhow!(
+                "skill proposal and evolve job commands are not implemented"
+            ));
         }
         SkillCommand::Install { id, lockfile, json } => print(
             install_skill_lockfile(client, database_id, &id, &lockfile).await?,

@@ -40,10 +40,27 @@ pub enum DatabaseStatus {
     Deleted,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseProfile {
+    #[serde(alias = "Workspace")]
+    #[default]
+    Workspace,
+    #[serde(alias = "Knowledge")]
+    Knowledge,
+    #[serde(alias = "Memory")]
+    Memory,
+    #[serde(alias = "Skill")]
+    Skill,
+    #[serde(alias = "Session")]
+    Session,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseInfo {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
     pub status: DatabaseStatus,
     pub mount_id: Option<u16>,
     pub schema_version: String,
@@ -56,6 +73,7 @@ pub struct DatabaseInfo {
 pub struct DatabaseSummary {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
@@ -344,12 +362,14 @@ pub struct WikiMetricsPoint {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
+    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseResult {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -820,6 +840,9 @@ pub struct MemoryCapability {
 }
 
 pub type MemoryManifestRequest = DatabaseIdRequest;
+pub type StoreManifestRequest = DatabaseIdRequest;
+pub type StoreRoot = MemoryRoot;
+pub type StoreCapability = MemoryCapability;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CanonicalRole {
@@ -836,6 +859,23 @@ pub struct MemoryManifest {
     pub roots: Vec<MemoryRoot>,
     pub entry_roots: Vec<MemoryRoot>,
     pub capabilities: Vec<MemoryCapability>,
+    pub canonical_roles: Vec<CanonicalRole>,
+    pub write_policy: String,
+    pub recommended_entrypoint: String,
+    pub max_depth: u32,
+    pub max_query_limit: u32,
+    pub budget_unit: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct StoreManifest {
+    pub api_version: String,
+    pub profile: DatabaseProfile,
+    pub purpose: String,
+    pub enabled_stores: Vec<String>,
+    pub roots: Vec<StoreRoot>,
+    pub entry_roots: Vec<StoreRoot>,
+    pub capabilities: Vec<StoreCapability>,
     pub canonical_roles: Vec<CanonicalRole>,
     pub write_policy: String,
     pub recommended_entrypoint: String,
@@ -888,3 +928,9 @@ pub struct SourceEvidence {
     pub node_path: String,
     pub refs: Vec<SourceEvidenceRef>,
 }
+
+pub type MemoryRecallRequest = QueryContextRequest;
+pub type MemoryRecall = QueryContext;
+pub type KnowledgeEvidenceRequest = SourceEvidenceRequest;
+pub type KnowledgeEvidenceRef = SourceEvidenceRef;
+pub type KnowledgeEvidence = SourceEvidence;

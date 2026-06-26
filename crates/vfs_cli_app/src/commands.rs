@@ -62,11 +62,7 @@ pub async fn run_command(
                     client,
                     require_database_id(database_id)?,
                     ContextPackExportOptions {
-                        task: args.task,
-                        namespace: args.namespace,
-                        budget_tokens: args.budget_tokens,
-                        depth: args.depth,
-                        entities: args.entities,
+                        root: args.root,
                         out: args.out,
                         expires_at: args.expires_at,
                         trust_level: args.trust_level,
@@ -80,7 +76,6 @@ pub async fn run_command(
             ContextPackCommand::Verify(args) => {
                 run_context_pack_verify(ContextPackVerifyOptions {
                     path: args.path,
-                    fail_on_truncated: args.fail_on_truncated,
                     json: args.json,
                 })?;
             }

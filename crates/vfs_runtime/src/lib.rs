@@ -92,6 +92,12 @@ const INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS: &str =
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
+const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
+const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
+const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
+const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
+const INDEX_SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "index SQL execution budget exceeded";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -335,18 +341,43 @@ impl VfsService {
         validate_index_select_sql(sql)?;
         let limit = page_limit(limit);
         self.read_index(|conn| {
-            let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
-            let rows =
-                crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
+            let _progress_handler = crate::sqlite::install_progress_handler(
+                conn,
+                SQL_JSON_PROGRESS_OP_INTERVAL,
+                SQL_JSON_PROGRESS_CALLBACK_BUDGET,
+            );
+            let mut json_object_stmt = conn
+                .prepare("SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END")
+                .map_err(map_index_sql_json_execution_error)?;
+            let mut stmt = conn
+                .prepare(sql)
+                .map_err(map_index_sql_json_execution_error)?;
+            let mut total_bytes = 0_usize;
+            let rows = crate::sqlite::query_try_map_limit(
+                &mut stmt,
+                params![],
+                limit as usize,
+                |row| -> std::result::Result<String, crate::sqlite::QueryTryMapError<String>> {
                     if crate::sqlite::row_has_column(row, 1)? {
-                        return Err(crate::sqlite::invalid_query());
+                        return Err(crate::sqlite::invalid_query().into());
                     }
                     let value: Option<String> = crate::sqlite::row_get(row, 0)?;
-                    value.ok_or_else(crate::sqlite::invalid_query)
-                })
-                .map_err(|error| {
-                    format!("index SQL must return exactly one non-null TEXT JSON column: {error}")
-                })?;
+                    let value = value.ok_or_else(crate::sqlite::invalid_query)?;
+                    validate_sql_json_value_bytes("index SQL", &value, &mut total_bytes)
+                        .map_err(crate::sqlite::QueryTryMapError::Validation)?;
+                    let is_object: i64 = crate::sqlite::query_one(
+                        &mut json_object_stmt,
+                        params![value.as_str()],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )?;
+                    if is_object == 1 {
+                        Ok(value)
+                    } else {
+                        Err(crate::sqlite::invalid_query().into())
+                    }
+                },
+            )
+            .map_err(map_index_sql_json_query_error)?;
             Ok(IndexSqlJsonQueryResult {
                 row_count: rows.len() as u32,
                 rows,
@@ -3246,7 +3277,7 @@ impl VfsService {
             request.namespace = Some("/Memory".to_string());
         }
         let store = self.database_store(&meta)?;
-        store.memory_recall(request)
+        store.query_context(request)
     }
 
     pub fn knowledge_evidence(
@@ -3256,7 +3287,7 @@ impl VfsService {
     ) -> Result<KnowledgeEvidence, String> {
         let database_id = request.database_id.clone();
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.knowledge_evidence(request)
+            store.source_evidence(request)
         })
     }
 
@@ -4783,7 +4814,50 @@ fn load_cycles_billing_config_bool(conn: &Connection, key: &str) -> Result<bool,
 }
 
 fn validate_index_select_sql(sql: &str) -> Result<(), String> {
+    if sql.len() > SQL_JSON_SQL_BYTES_MAX {
+        return Err(format!(
+            "index SQL must be at most {SQL_JSON_SQL_BYTES_MAX} bytes"
+        ));
+    }
     validate_sql_json_select(sql, "index SQL")
+}
+
+fn validate_sql_json_value_bytes(
+    label: &str,
+    value: &str,
+    total: &mut usize,
+) -> Result<(), String> {
+    if value.len() > SQL_JSON_ROW_BYTES_MAX {
+        return Err(format!(
+            "{label} row JSON exceeds {SQL_JSON_ROW_BYTES_MAX} bytes"
+        ));
+    }
+    *total = total.saturating_add(value.len());
+    if *total > SQL_JSON_RESPONSE_BYTES_MAX {
+        return Err(format!(
+            "{label} response JSON exceeds {SQL_JSON_RESPONSE_BYTES_MAX} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn map_index_sql_json_execution_error(error: crate::sqlite::Error) -> String {
+    if crate::sqlite::is_interrupted(&error) {
+        INDEX_SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+fn map_index_sql_json_query_error(error: crate::sqlite::QueryTryMapError<String>) -> String {
+    let message = match error {
+        crate::sqlite::QueryTryMapError::Sqlite(error) => map_index_sql_json_execution_error(error),
+        crate::sqlite::QueryTryMapError::Validation(message) => message,
+    };
+    if message.contains("interrupted") {
+        return INDEX_SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string();
+    }
+    format!("index SQL must return exactly one non-null valid JSON object TEXT column: {message}")
 }
 
 fn load_wiki_metrics(
@@ -8925,7 +8999,7 @@ mod tests {
             .query_index_sql_json("SELECT 1 LIMIT 1", 10)
             .expect_err("non-text first column should reject");
 
-        assert!(error.contains("exactly one non-null TEXT JSON column"));
+        assert!(error.contains("exactly one non-null valid JSON object TEXT column"));
     }
 
     #[test]

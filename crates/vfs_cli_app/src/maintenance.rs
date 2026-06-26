@@ -280,7 +280,7 @@ fn normalize_scope_name(scope: &str) -> Result<String> {
     }
     for segment in normalized.split('/') {
         if segment.is_empty() || matches!(segment, "." | ".." | "index.md") {
-            bail!("scope must be a valid /Knowledge/<scope> path");
+            bail!("scope must be a valid /Wiki/<scope> path");
         }
     }
     Ok(normalized.to_string())

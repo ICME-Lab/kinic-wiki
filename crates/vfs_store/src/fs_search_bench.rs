@@ -75,7 +75,7 @@ mod tests {
                 .write_node(
                     WriteNodeRequest {
                         database_id: "default".to_string(),
-                        path: format!("/Knowledge/bench/node-{index:03}.md"),
+                        path: format!("/Wiki/bench/node-{index:03}.md"),
                         kind: NodeKind::File,
                         content: make_searchable_payload(payload_size_bytes, index),
                         metadata_json: "{}".to_string(),
@@ -122,7 +122,7 @@ mod tests {
                         .search_nodes(SearchNodesRequest {
                             database_id: "default".to_string(),
                             query_text: "shared-bench-search".to_string(),
-                            prefix: Some("/Knowledge/bench".to_string()),
+                            prefix: Some("/Wiki/bench".to_string()),
                             top_k: 10,
                             preview_mode: Some(SearchPreviewMode::None),
                         })

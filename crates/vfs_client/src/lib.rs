@@ -14,7 +14,7 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
     DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DatabaseMember, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
@@ -25,8 +25,8 @@ use vfs_types::{
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, StoreManifest, StoreManifestRequest,
+    WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -41,6 +41,9 @@ pub trait VfsApi: Sync {
     }
     async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
+    }
+    async fn store_manifest(&self, _database_id: &str) -> Result<StoreManifest> {
+        Err(anyhow!("store_manifest is not implemented by this client"))
     }
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
@@ -537,12 +540,25 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn store_manifest(&self, database_id: &str) -> Result<StoreManifest> {
+        let result: Result<StoreManifest, String> = self
+            .query(
+                "store_manifest",
+                &StoreManifestRequest {
+                    database_id: database_id.to_string(),
+                },
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
                     name: name.to_string(),
+                    profile: DatabaseProfile::Workspace,
                 },
             )
             .await?;

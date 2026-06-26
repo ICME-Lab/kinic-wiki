@@ -646,7 +646,7 @@ fn index_sql_json_requires_text_json_first_column() {
     let error = query_index_sql_json("SELECT 1 LIMIT 1".to_string(), 10)
         .expect_err("non-text first column should reject");
 
-    assert!(error.contains("exactly one non-null TEXT JSON column"));
+    assert!(error.contains("exactly one non-null valid JSON object TEXT column"));
 }
 
 #[test]
@@ -657,7 +657,7 @@ fn index_sql_json_rejects_extra_result_columns() {
     let error = query_index_sql_json("SELECT json_object('ok', 1), 1 LIMIT 1".to_string(), 10)
         .expect_err("extra result columns should reject");
 
-    assert!(error.contains("exactly one non-null TEXT JSON column"));
+    assert!(error.contains("exactly one non-null valid JSON object TEXT column"));
 }
 
 fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index: u64) {
