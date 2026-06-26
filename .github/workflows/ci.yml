@@ -189,7 +189,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install --profile minimal --component rustfmt --component clippy
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run workspace tests
@@ -233,7 +235,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install --profile minimal --component rustfmt --component clippy
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Build CLI
         run: cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release --locked
       - name: Package CLI artifact
@@ -275,7 +279,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install --profile minimal --component rustfmt --component clippy
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install WASI sysroot
