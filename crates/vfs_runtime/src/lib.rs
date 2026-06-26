@@ -8738,6 +8738,10 @@ mod tests {
             .expect("market table count should load");
         assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
     }
 
     #[test]
@@ -8773,7 +8777,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
     }
@@ -8805,6 +8809,10 @@ mod tests {
         );
         assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
     }
@@ -8839,6 +8847,10 @@ mod tests {
         }
         assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
     }
@@ -8879,6 +8891,10 @@ mod tests {
         assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             0
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
         );
     }
 

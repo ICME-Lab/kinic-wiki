@@ -373,6 +373,13 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("legacy column count should load");
+    let profile: String = conn
+        .query_row(
+            "SELECT profile FROM databases WHERE database_id = 'db_existing'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database profile should load");
     let balance: i64 = conn
         .query_row(
             "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = 'db_existing'",
@@ -439,6 +446,7 @@ fn mainnet_011_index_upgrades_to_latest() {
 
     assert_eq!(status, "active");
     assert_eq!(profile_columns, 1);
+    assert_eq!(profile, "memory");
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(storage_columns, 1);
@@ -461,6 +469,10 @@ fn mainnet_011_index_upgrades_to_latest() {
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:033_store_roots"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:034_database_profile"),
         1
     );
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
