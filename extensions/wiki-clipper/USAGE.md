@@ -112,4 +112,4 @@ This command creates a wiki scaffold. Re-running it preserves existing `summary.
 
 - ChatGPT and Claude private API shapes can change.
 - Stopping an export can allow up to 2 in-flight conversations to finish saving.
-- ChatGPT/Claude evidence-source export and URL ingest writes require writer access for the logged-in Internet Identity principal.
+- ChatGPT/Claude evidence-source export and active-tab source capture writes require writer access for the logged-in Internet Identity principal.

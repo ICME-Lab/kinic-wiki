@@ -47,7 +47,7 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 
 ## Active Tab Capture
 
-Clicking the extension toolbar icon captures the active `http` / `https` tab DOM as a evidence source, then queues generation from that source. If settings or Internet Identity login are missing, the extension opens the settings page.
+Clicking the extension toolbar icon captures the active `http` / `https` tab DOM as an evidence source, then queues generation from that source. If settings or Internet Identity login are missing, the extension opens the settings page.
 
 Required settings:
 

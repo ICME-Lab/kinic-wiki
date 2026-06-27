@@ -99,8 +99,8 @@ test("settings popup clears database on logout and fails closed on auth reset er
   assert.match(logoutHandler, /await refreshAuthAndDatabases\(\)/);
   assert.doesNotMatch(notifyAuthSessionChanged, /catch/);
   assert.match(notifyAuthSessionChanged, /await send\(\{ type: "auth-session-changed" \}\)/);
-  assert.match(refreshLatestStatus, /type: "latest-url-ingest-status"/);
-  assert.doesNotMatch(refreshLatestStatus, /latest-source-capture-status/);
+  assert.match(refreshLatestStatus, /type: "latest-source-capture-status"/);
+  assert.doesNotMatch(refreshLatestStatus, /latest-url-ingest-status/);
   assert.match(popupJs, /function latestStatusLabel\(value\)/);
   assert.match(popupJs, /value\.sourcePath/);
 });

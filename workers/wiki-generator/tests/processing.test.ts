@@ -3,7 +3,7 @@
 // Why: Optional worker log writes must not decide source generation status.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, runManual } from "../src/processing.js";
+import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
 import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./url-ingest-fixtures.js";
@@ -116,6 +116,18 @@ test("manual source run input requires source etag", () => {
     sessionNonce: "session-1",
     dryRun: false
   });
+});
+
+test("context hits rank Sources after database notes", () => {
+  assert.deepEqual(
+    rankContextHits([
+      contextHit("/Sources/web/a.md"),
+      contextHit("/Memory/session.md"),
+      contextHit("/Sources/web/b.md"),
+      contextHit("/Knowledge/fact.md")
+    ]).map((hit) => hit.path),
+    ["/Memory/session.md", "/Knowledge/fact.md", "/Sources/web/a.md", "/Sources/web/b.md"]
+  );
 });
 
 test("worker log append failure is non-fatal", async () => {
@@ -579,5 +591,14 @@ function sourceNode(etag: string): WikiNode {
     content: "evidence source",
     etag,
     metadataJson: "{}"
+  };
+}
+
+function contextHit(path: string): SearchNodeHit {
+  return {
+    path,
+    kind: "file",
+    previewExcerpt: null,
+    snippet: null
   };
 }

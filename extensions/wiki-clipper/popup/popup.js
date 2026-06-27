@@ -200,7 +200,7 @@ function setCreateDatabaseFormVisible(visible) {
 }
 
 async function refreshLatestStatus() {
-  const response = await send({ type: "latest-url-ingest-status" });
+  const response = await send({ type: "latest-source-capture-status" });
   const value = response.value ? JSON.parse(response.value) : null;
   latestStatusText.textContent = value ? latestStatusLabel(value) : "No run yet.";
 }

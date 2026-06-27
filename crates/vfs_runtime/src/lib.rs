@@ -8739,6 +8739,10 @@ mod tests {
         assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
         assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
@@ -8767,6 +8771,50 @@ mod tests {
             assert!(
                 service
                     .read_node("legacy_active", "owner", path)
+                    .expect("seeded root should read")
+                    .is_some(),
+                "{path} should exist"
+            );
+        }
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+    }
+
+    #[test]
+    fn store_roots_pending_index_seeds_roots_without_reapplying_profile() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "profile_without_roots",
+            &["/Memory", "/Sessions", "/Skills"],
+        );
+        {
+            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
+            let tx = conn.transaction().expect("transaction should start");
+            apply_database_profile_migration(&tx).expect("profile migration should apply");
+            tx.commit().expect("profile migration should commit");
+        }
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("store-roots-pending index should seed roots");
+
+        for path in ["/Memory", "/Sessions", "/Skills"] {
+            assert!(
+                service
+                    .read_node("profile_without_roots", "owner", path)
                     .expect("seeded root should read")
                     .is_some(),
                 "{path} should exist"

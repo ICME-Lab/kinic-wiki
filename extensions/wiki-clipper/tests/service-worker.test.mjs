@@ -10,7 +10,7 @@ import {
   handleMessage,
   refreshTabBadgeForTest,
   resetSettingsOpenThrottleForTest,
-  resetUrlIngestInFlightForTest,
+  resetSourceCaptureInFlightForTest,
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
@@ -408,7 +408,7 @@ test("action click saves browser source then queues generation", async () => {
   ]);
 });
 
-test("action click refreshes existing browser source for only the current tab", async () => {
+test("action click skips capture and generation for existing browser source", async () => {
   const calls = [];
   const response = await handleActionClick(
     { id: 7, url: "https://example.com/#section", title: "Example" },
@@ -419,31 +419,23 @@ test("action click refreshes existing browser source for only the current tab", 
       },
       sendOffscreen: async (message) => {
         calls.push(["message", message.type]);
-        if (message.type === "save-evidence-source") {
-          return {
-            ok: true,
-            result: { path: message.evidenceSource.path, created: false, etag: "etag-refreshed", sourceRunSessionNonce: "session-source" }
-          };
-        }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
       },
-      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath, status.etag, status.message]),
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
     })
   );
 
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourceCreated, false);
-  assert.equal(response.result.sourceEtag, "etag-refreshed");
-  assert.equal(response.result.generationQueued, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.sourceEtag, "etag-source");
+  assert.equal(response.result.generationQueued, false);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
   assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
-    ["message", "save-evidence-source"],
-    ["message", "trigger-source-generation"],
-    ["status", "ok", response.result.sourcePath],
+    ["status", "source_exists", lookupPath, "etag-source", "Evidence source already saved."],
     ["badge", "IN", 7]
   ]);
 });
@@ -476,7 +468,7 @@ test("action click keeps source result when generation trigger fails", async () 
   ]);
 });
 
-test("context menu opens settings without starting URL ingest", async () => {
+test("context menu opens settings without starting source capture", async () => {
   const createdMenus = [];
   let optionsOpened = 0;
   const restore = installChromeForContextMenu(createdMenus, () => {
@@ -533,7 +525,7 @@ test("action click can save browser source without queueing generation", async (
 });
 
 test("context menu evidence save skips generation trigger", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const restore = installChromeForAction();
   try {
     const response = await handleContextMenuClickForTest(
@@ -547,13 +539,13 @@ test("context menu evidence save skips generation trigger", async () => {
     assert.equal(restore.messages[1].type, "save-evidence-source");
     assert.ok(restore.badges.some((badge) => badge.text === "SRC"));
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
-test("action click rejects duplicate in-flight URL ingest", async () => {
-  resetUrlIngestInFlightForTest();
+test("action click rejects duplicate in-flight source capture", async () => {
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -575,7 +567,7 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 3);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
@@ -589,13 +581,13 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
     assert.equal(retry.ok, true);
     assert.equal(restore.messages.length, 7);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click allows a different URL while another URL is in flight", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -628,34 +620,34 @@ test("action click allows a different URL while another URL is in flight", async
     });
     assert.equal((await first).ok, true);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click honors session in-flight TTL", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   sessionStorage.setItem(
-    "kinic-url-ingest-in-flight-v1",
+    "kinic-source-capture-in-flight-v1",
     JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() + 120_000 })
   );
   const restore = installChromeForAction({ sessionStorage });
   try {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
-    assert.equal(busy.error, "URL ingest is already running for this page.");
+    assert.equal(busy.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 1);
 
     sessionStorage.setItem(
-      "kinic-url-ingest-in-flight-v1",
+      "kinic-source-capture-in-flight-v1",
       JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() - 1 })
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
     assert.equal(restore.messages.length, 4);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
@@ -1009,8 +1001,8 @@ function actionDeps(overrides = {}) {
     writeStatus: async () => {},
     setBadge: async () => {},
     openSettings: async () => {},
-    reserveUrlIngest: async () => true,
-    releaseUrlIngest: async () => {},
+    reserveSourceCapture: async () => true,
+    releaseSourceCapture: async () => {},
     captureTabSource: async () => rawWebSource(),
     ...overrides
   };
