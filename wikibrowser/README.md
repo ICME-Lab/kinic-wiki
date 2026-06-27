@@ -66,12 +66,12 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 
 No full lint workflow is included.
 
-## URL Ingest
+## Source Capture
 
-Open a database route and select the `ingest` left-pane tab:
+Open a database route and select the `source-capture` left-pane tab:
 
 ```text
-/<database-id>/Knowledge?tab=ingest
+/<database-id>/Knowledge?tab=source-capture
 ```
 
 Submitting a web page snapshot writes raw evidence to the same database:

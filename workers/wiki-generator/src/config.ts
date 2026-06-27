@@ -21,7 +21,7 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     icHost: env.KINIC_WIKI_IC_HOST || "https://icp0.io",
     model: env.KINIC_WIKI_WORKER_MODEL || DEFAULT_MODEL,
     targetRoot: env.KINIC_WIKI_WORKER_TARGET_ROOT || DEFAULT_TARGET_ROOT,
-    sourcePrefix: env.KINIC_WIKI_WORKER_SOURCE_PREFIX || DEFAULT_SOURCE_PREFIX,
+    sourcePrefix: normalizeSourcePrefix(env.KINIC_WIKI_WORKER_SOURCE_PREFIX),
     contextPrefix: env.KINIC_WIKI_WORKER_CONTEXT_PREFIX || DEFAULT_CONTEXT_PREFIX,
     maxRawChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_RAW_CHARS, DEFAULT_MAX_RAW_CHARS),
     maxFetchedBytes: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_FETCHED_BYTES, DEFAULT_MAX_FETCHED_BYTES),
@@ -29,6 +29,22 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     maxContextHits: parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_HITS, DEFAULT_CONTEXT_HITS),
     maxOutputTokens: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   };
+}
+
+function normalizeSourcePrefix(value: string | undefined): string {
+  if (value === undefined) return DEFAULT_SOURCE_PREFIX;
+  const raw = value.trim();
+  const normalized = raw.replace(/\/+$/, "");
+  if (
+    raw.length === 0 ||
+    normalized.length === 0 ||
+    normalized === "/" ||
+    normalized.includes("//") ||
+    !/^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(normalized)
+  ) {
+    throw new Error(`Invalid source prefix: ${value}`);
+  }
+  return normalized;
 }
 
 function required(value: string | undefined, name: string): string {

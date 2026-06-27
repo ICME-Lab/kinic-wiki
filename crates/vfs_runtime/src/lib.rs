@@ -35,10 +35,10 @@ use vfs_types::{
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{validate_canonical_source_path, validate_source_path_for_kind};
@@ -48,7 +48,7 @@ const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
 const INDEX_SCHEMA_VERSION_RESTORE_SIZE: &str = "database_index:002_restore_size";
 const INDEX_SCHEMA_VERSION_RESTORE_CHUNKS: &str = "database_index:003_restore_chunks";
 const INDEX_SCHEMA_VERSION_MOUNT_HISTORY: &str = "database_index:005_mount_history";
-const INDEX_SCHEMA_VERSION_URL_INGEST_TRIGGER_SESSIONS: &str =
+const INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS: &str =
     "database_index:006_url_ingest_trigger_sessions";
 const INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS: &str = "database_index:007_ops_answer_sessions";
 const INDEX_SCHEMA_VERSION_RESTORE_SESSIONS: &str = "database_index:008_restore_sessions";
@@ -87,6 +87,9 @@ const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
 const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
 const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:034_database_profile";
+const INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE: &str = "database_index:035_drop_database_profile";
+const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
+    "database_index:036_rename_url_ingest_trigger_sessions";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -103,9 +106,9 @@ const MAX_DATABASE_MOUNT_ID: u16 = 32767;
 pub const MAX_ARCHIVE_CHUNK_BYTES: u32 = 1024 * 1024;
 pub const MAX_RESTORE_CHUNK_BYTES: usize = 1024 * 1024;
 pub const MAX_DATABASE_SIZE_BYTES: u64 = i64::MAX as u64;
-const URL_INGEST_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
+const SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const OPS_ANSWER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
-const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
+const SOURCE_RUN_SESSION_TTL_MS: i64 = SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS;
 const MAX_PENDING_DATABASES_PER_CALLER: i64 = 3;
 const PENDING_DATABASE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_DATABASE_MEMBERS_PER_DATABASE: i64 = 32;
@@ -653,9 +656,9 @@ impl VfsService {
         let db_file_name = self.database_file_name(database_id, mount_id)?;
         tx.execute(
             "INSERT INTO databases
-             (database_id, name, profile, db_file_name, mount_id, active_mount_id, status, schema_version,
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, 'memory', ?3, ?4, ?4, 'active', ?5, 0, ?6, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?4, 'active', ?5, 0, ?6, ?6)",
             params![
                 database_id,
                 name,
@@ -708,9 +711,9 @@ impl VfsService {
     ) -> Result<DatabaseMeta, String> {
         tx.execute(
             "INSERT INTO databases
-             (database_id, name, profile, db_file_name, mount_id, active_mount_id, status, schema_version,
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, 'memory', '', ?3, NULL, 'pending', ?4, 0, ?5, ?5)",
+             VALUES (?1, ?2, '', ?3, NULL, 'pending', ?4, 0, ?5, ?5)",
             params![
                 database_id,
                 name,
@@ -2689,13 +2692,13 @@ impl VfsService {
         self.with_market_read_database_store(database_id, caller, |store| store.read_node(path))
     }
 
-    pub fn authorize_url_ingest_trigger_session(
+    pub fn authorize_source_capture_trigger_session(
         &self,
         caller: &str,
-        request: UrlIngestTriggerSessionRequest,
+        request: SourceCaptureTriggerSessionRequest,
         now: i64,
     ) -> Result<(), String> {
-        validate_url_ingest_trigger_session_request(&request)?;
+        validate_source_capture_trigger_session_request(&request)?;
         if caller == "2vxsx-fae" {
             return Err("anonymous caller not allowed".to_string());
         }
@@ -2707,9 +2710,9 @@ impl VfsService {
         )
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         self.write_index(|conn| {
-            purge_expired_url_ingest_trigger_sessions(conn, now)?;
+            purge_expired_source_capture_trigger_sessions(conn, now)?;
             conn.execute(
-                "INSERT INTO url_ingest_trigger_sessions
+                "INSERT INTO source_capture_trigger_sessions
              (database_id, session_nonce, principal, expires_at_ms, created_at_ms,
               refreshed_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?5)
@@ -2721,7 +2724,7 @@ impl VfsService {
                     request.database_id,
                     request.session_nonce,
                     caller,
-                    now + URL_INGEST_TRIGGER_SESSION_TTL_MS,
+                    now + SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS,
                     now
                 ],
             )
@@ -2730,12 +2733,12 @@ impl VfsService {
         })
     }
 
-    pub fn check_url_ingest_trigger_session(
+    pub fn check_source_capture_trigger_session(
         &self,
-        request: UrlIngestTriggerSessionCheckRequest,
+        request: SourceCaptureTriggerSessionCheckRequest,
         now: i64,
     ) -> Result<(), String> {
-        validate_url_ingest_trigger_session_check_request(&request)?;
+        validate_source_capture_trigger_session_check_request(&request)?;
         self.require_role(
             &request.database_id,
             DEFAULT_LLM_WRITER_PRINCIPAL,
@@ -2744,7 +2747,7 @@ impl VfsService {
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         let principal: String = self.read_index(|conn| {
             conn.query_row(
-                "SELECT principal FROM url_ingest_trigger_sessions
+                "SELECT principal FROM source_capture_trigger_sessions
                  WHERE database_id = ?1
                    AND session_nonce = ?2
                    AND expires_at_ms >= ?3",
@@ -2753,12 +2756,12 @@ impl VfsService {
             )
             .optional()
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| "url ingest trigger session is missing or expired".to_string())
+            .ok_or_else(|| "source capture trigger session is missing or expired".to_string())
         })?;
         let node = self
             .read_node(&request.database_id, &principal, &request.request_path)?
-            .ok_or_else(|| format!("url ingest request not found: {}", request.request_path))?;
-        validate_url_ingest_request_node(&node, &principal)?;
+            .ok_or_else(|| format!("source capture request not found: {}", request.request_path))?;
+        validate_source_capture_request_node(&node, &principal)?;
         self.require_database_write_cycles_available(&request.database_id)
     }
 
@@ -3716,6 +3719,10 @@ enum IndexSchemaState {
     Mainnet031,
     Mainnet032,
     Mainnet033,
+    DatabaseProfile,
+    DatabaseProfileStoreRootsPending,
+    RenameSourceCaptureTriggerSessions,
+    RenameSourceCaptureTriggerSessionsStoreRootsPending,
     StoreRootsPending,
 }
 
@@ -3744,19 +3751,47 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
-            apply_database_profile_migration(conn)?;
+            insert_database_profile_history_marker(conn)?;
+            apply_drop_database_profile_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet032 => {
-            apply_database_profile_migration(conn)?;
+            insert_database_profile_history_marker(conn)?;
+            apply_drop_database_profile_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet033 => {
-            apply_database_profile_migration(conn)?;
+            insert_database_profile_history_marker(conn)?;
+            apply_drop_database_profile_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::DatabaseProfile => {
+            apply_drop_database_profile_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::DatabaseProfileStoreRootsPending => {
+            apply_drop_database_profile_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::RenameSourceCaptureTriggerSessions => {
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending => {
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::StoreRootsPending => {
             validate_index_schema(conn)?;
@@ -3793,11 +3828,32 @@ fn classify_existing_index_schema_state(
     let store_roots_applied = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)?;
     let database_profile_applied =
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
-    if store_roots_applied && database_profile_applied {
+    let drop_database_profile_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
+    let rename_source_capture_trigger_sessions_applied = migration_applied_tx(
+        conn,
+        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
+    )?;
+    if store_roots_applied
+        && drop_database_profile_applied
+        && rename_source_capture_trigger_sessions_applied
+    {
         return Ok(IndexSchemaState::Latest);
     }
-    if database_profile_applied {
+    if store_roots_applied && drop_database_profile_applied {
+        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessions);
+    }
+    if drop_database_profile_applied && rename_source_capture_trigger_sessions_applied {
         return Ok(IndexSchemaState::StoreRootsPending);
+    }
+    if drop_database_profile_applied {
+        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending);
+    }
+    if database_profile_applied && store_roots_applied {
+        return Ok(IndexSchemaState::DatabaseProfile);
+    }
+    if database_profile_applied {
+        return Ok(IndexSchemaState::DatabaseProfileStoreRootsPending);
     }
     if store_roots_applied {
         return Ok(IndexSchemaState::Mainnet033);
@@ -3857,7 +3913,9 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
-    apply_database_profile_migration(conn)?;
+    insert_database_profile_history_marker(conn)?;
+    apply_drop_database_profile_migration(conn)?;
+    apply_rename_source_capture_trigger_sessions_migration(conn)?;
     Ok(())
 }
 
@@ -3871,7 +3929,9 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
         insert_schema_migration_now(conn, version)?;
     }
     apply_cycles_top_up_config_migration(conn, None)?;
-    apply_database_profile_migration(conn)?;
+    insert_database_profile_history_marker(conn)?;
+    apply_drop_database_profile_migration(conn)?;
+    apply_rename_source_capture_trigger_sessions_migration(conn)?;
     Ok(())
 }
 
@@ -3887,13 +3947,52 @@ fn apply_cycles_top_up_config_migration(
     Ok(())
 }
 
-fn apply_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
-        "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+fn insert_database_profile_history_marker(conn: &Transaction<'_>) -> Result<(), String> {
+    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)? {
+        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+    }
+    Ok(())
+}
+
+fn apply_drop_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if index_column_exists(conn, "databases", "profile")? {
+        conn.execute("ALTER TABLE databases DROP COLUMN profile", params![])
+            .map_err(|error| error.to_string())?;
+    }
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
+    Ok(())
+}
+
+fn apply_rename_source_capture_trigger_sessions_migration(
+    conn: &Transaction<'_>,
+) -> Result<(), String> {
+    if tx_sqlite_master_entry_exists(conn, "table", "url_ingest_trigger_sessions")? {
+        if tx_sqlite_master_entry_exists(conn, "index", "url_ingest_trigger_sessions_expiry_idx")? {
+            conn.execute(
+                "DROP INDEX url_ingest_trigger_sessions_expiry_idx",
+                params![],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        conn.execute(
+            "ALTER TABLE url_ingest_trigger_sessions RENAME TO source_capture_trigger_sessions",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if !tx_sqlite_master_entry_exists(conn, "index", "source_capture_trigger_sessions_expiry_idx")?
+    {
+        conn.execute(
+            "CREATE INDEX source_capture_trigger_sessions_expiry_idx
+             ON source_capture_trigger_sessions(expires_at_ms)",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    insert_schema_migration_now(
+        conn,
+        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
+    )?;
     Ok(())
 }
 
@@ -4062,7 +4161,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_RESTORE_SIZE,
     INDEX_SCHEMA_VERSION_RESTORE_CHUNKS,
     INDEX_SCHEMA_VERSION_MOUNT_HISTORY,
-    INDEX_SCHEMA_VERSION_URL_INGEST_TRIGGER_SESSIONS,
+    INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS,
     INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS,
     INDEX_SCHEMA_VERSION_RESTORE_SESSIONS,
     INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES,
@@ -4091,6 +4190,8 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
     INDEX_SCHEMA_VERSION_STORE_ROOTS,
     INDEX_SCHEMA_VERSION_DATABASE_PROFILE,
+    INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE,
+    INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4099,6 +4200,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_restore_chunks",
     "database_mount_history",
     "url_ingest_trigger_sessions",
+    "source_capture_trigger_sessions",
     "ops_answer_sessions",
     "source_run_sessions",
     "database_restore_sessions",
@@ -4304,6 +4406,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "schema_migrations",
         "databases",
         "database_restore_chunks",
+        "source_capture_trigger_sessions",
         "database_restore_sessions",
         "database_cycle_accounts",
         "database_cycle_ledger",
@@ -4326,7 +4429,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &[
                 "database_id",
                 "name",
-                "profile",
                 "db_file_name",
                 "mount_id",
                 "active_mount_id",
@@ -4344,6 +4446,17 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         (
             "database_restore_chunks",
             &["database_id", "offset_bytes", "end_bytes", "bytes"][..],
+        ),
+        (
+            "source_capture_trigger_sessions",
+            &[
+                "database_id",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
         ),
         (
             "database_cycle_accounts",
@@ -4469,9 +4582,18 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             }
         }
     }
+    if index_column_exists(conn, "databases", "profile")? {
+        return Err("unsupported index schema: stale column databases.profile".to_string());
+    }
+    if tx_sqlite_master_entry_exists(conn, "table", "url_ingest_trigger_sessions")? {
+        return Err(
+            "unsupported index schema: stale table url_ingest_trigger_sessions".to_string(),
+        );
+    }
     for index in [
         "databases_active_mount_id_idx",
         "database_restore_chunks_database_id_idx",
+        "source_capture_trigger_sessions_expiry_idx",
         "database_cycle_ledger_database_idx",
         "database_cycle_pending_operations_database_idx",
         "market_listings_status_idx",
@@ -4741,8 +4863,8 @@ fn load_metric_principal_activity(
         "SELECT payout_principal, created_at_ms, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT payout_principal, created_at_ms, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
         "SELECT buyer_principal, purchased_at_ms, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
-        "SELECT principal, created_at_ms, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT principal, created_at_ms, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT principal, created_at_ms, created_at_ms FROM source_capture_trigger_sessions WHERE created_at_ms <= ?1",
+        "SELECT principal, created_at_ms, refreshed_at_ms FROM source_capture_trigger_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT principal, created_at_ms, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
         "SELECT principal, created_at_ms, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT principal, created_at_ms, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
@@ -4816,8 +4938,8 @@ fn load_metric_database_activity(
         "SELECT database_id, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT database_id, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
-        "SELECT database_id, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT database_id, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT database_id, created_at_ms FROM source_capture_trigger_sessions WHERE created_at_ms <= ?1",
+        "SELECT database_id, refreshed_at_ms FROM source_capture_trigger_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
         "SELECT database_id, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
@@ -5143,7 +5265,7 @@ fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<()
         "database_members",
         "database_restore_chunks",
         "database_restore_sessions",
-        "url_ingest_trigger_sessions",
+        "source_capture_trigger_sessions",
         "ops_answer_sessions",
         "source_run_sessions",
         "databases",
@@ -6989,23 +7111,23 @@ fn map_database_cycles_entry(
     })
 }
 
-fn validate_url_ingest_trigger_session_request(
-    request: &UrlIngestTriggerSessionRequest,
+fn validate_source_capture_trigger_session_request(
+    request: &SourceCaptureTriggerSessionRequest,
 ) -> Result<(), String> {
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_url_ingest_trigger_session_nonce(&request.session_nonce)
+    validate_source_capture_trigger_session_nonce(&request.session_nonce)
 }
 
-fn validate_url_ingest_trigger_session_check_request(
-    request: &UrlIngestTriggerSessionCheckRequest,
+fn validate_source_capture_trigger_session_check_request(
+    request: &SourceCaptureTriggerSessionCheckRequest,
 ) -> Result<(), String> {
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_url_ingest_trigger_session_nonce(&request.session_nonce)?;
-    validate_url_ingest_request_path(&request.request_path)
+    validate_source_capture_trigger_session_nonce(&request.session_nonce)?;
+    validate_source_capture_request_path(&request.request_path)
 }
 
 fn validate_ops_answer_session_request(request: &OpsAnswerSessionRequest) -> Result<(), String> {
@@ -7052,7 +7174,7 @@ fn validate_knowledge_source_run_path(path: &str) -> Result<(), String> {
     validate_source_path_for_kind(path, &NodeKind::Source)
 }
 
-fn validate_url_ingest_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
+fn validate_source_capture_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
     validate_session_nonce(session_nonce)
 }
 
@@ -7066,37 +7188,39 @@ fn validate_session_nonce(session_nonce: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_url_ingest_request_path(request_path: &str) -> Result<(), String> {
-    if !request_path.starts_with("/Sources/ingest-requests/") || !request_path.ends_with(".md") {
-        return Err("request_path must be a URL ingest request path".to_string());
+fn validate_source_capture_request_path(request_path: &str) -> Result<(), String> {
+    if !request_path.starts_with("/Sources/source-capture-requests/")
+        || !request_path.ends_with(".md")
+    {
+        return Err("request_path must be a source capture request path".to_string());
     }
     Ok(())
 }
 
-fn validate_url_ingest_request_node(node: &Node, caller: &str) -> Result<(), String> {
+fn validate_source_capture_request_node(node: &Node, caller: &str) -> Result<(), String> {
     if node.kind != NodeKind::File {
-        return Err("url ingest request must be a file node".to_string());
+        return Err("source capture request must be a file node".to_string());
     }
     let frontmatter = parse_frontmatter_fields(&node.content)?;
-    expect_frontmatter(&frontmatter, "kind", "kinic.url_ingest_request")?;
+    expect_frontmatter(&frontmatter, "kind", "kinic.source_capture_request")?;
     expect_frontmatter(&frontmatter, "schema_version", "1")?;
     let status = frontmatter
         .get("status")
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| "url ingest request status is required".to_string())?;
+        .ok_or_else(|| "source capture request status is required".to_string())?;
     if status != "queued"
         && status != "fetching"
         && status != "source_written"
         && status != "generating"
     {
-        return Err("url ingest request is not triggerable".to_string());
+        return Err("source capture request is not triggerable".to_string());
     }
     let requested_by = frontmatter
         .get("requested_by")
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| "url ingest request requested_by is required".to_string())?;
+        .ok_or_else(|| "source capture request requested_by is required".to_string())?;
     if requested_by != caller {
-        return Err("url ingest request caller mismatch".to_string());
+        return Err("source capture request caller mismatch".to_string());
     }
     Ok(())
 }
@@ -7104,9 +7228,9 @@ fn validate_url_ingest_request_node(node: &Node, caller: &str) -> Result<(), Str
 fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<String>>, String> {
     let rest = content
         .strip_prefix("---\n")
-        .ok_or_else(|| "url ingest request frontmatter is required".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter is required".to_string())?;
     let end = frontmatter_end(rest)
-        .ok_or_else(|| "url ingest request frontmatter is not closed".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter is not closed".to_string())?;
     let frontmatter = &rest[..end];
     let mut fields = BTreeMap::new();
     for line in frontmatter.lines() {
@@ -7115,7 +7239,7 @@ fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<Str
             continue;
         }
         let Some((key, value)) = trimmed.split_once(':') else {
-            return Err("url ingest request frontmatter is invalid".to_string());
+            return Err("source capture request frontmatter is invalid".to_string());
         };
         fields.insert(key.trim().to_string(), frontmatter_scalar(value.trim())?);
     }
@@ -7146,7 +7270,7 @@ fn parse_json_string_literal(value: &str) -> Result<String, String> {
     let body = value
         .strip_prefix('"')
         .and_then(|inner| inner.strip_suffix('"'))
-        .ok_or_else(|| "url ingest request frontmatter quoted scalar is invalid".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter quoted scalar is invalid".to_string())?;
     let mut chars = body.chars();
     let mut decoded = String::new();
     while let Some(ch) = chars.next() {
@@ -7215,7 +7339,7 @@ fn parse_json_hex4(chars: &mut std::str::Chars<'_>) -> Result<u32, String> {
 }
 
 fn invalid_quoted_scalar() -> String {
-    "url ingest request frontmatter quoted scalar is invalid".to_string()
+    "source capture request frontmatter quoted scalar is invalid".to_string()
 }
 
 fn expect_frontmatter(
@@ -7226,17 +7350,20 @@ fn expect_frontmatter(
     let value = frontmatter
         .get(key)
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| format!("url ingest request {key} is required"))?;
+        .ok_or_else(|| format!("source capture request {key} is required"))?;
     if value == expected {
         Ok(())
     } else {
-        Err(format!("url ingest request {key} is invalid"))
+        Err(format!("source capture request {key} is invalid"))
     }
 }
 
-fn purge_expired_url_ingest_trigger_sessions(conn: &Connection, now: i64) -> Result<(), String> {
+fn purge_expired_source_capture_trigger_sessions(
+    conn: &Connection,
+    now: i64,
+) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM url_ingest_trigger_sessions WHERE expires_at_ms < ?1",
+        "DELETE FROM source_capture_trigger_sessions WHERE expires_at_ms < ?1",
         params![now],
     )
     .map(|_| ())
@@ -8047,15 +8174,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_ingest_frontmatter_requires_whole_line_terminator() {
+    fn source_capture_frontmatter_requires_whole_line_terminator() {
         let fields = parse_frontmatter_fields(
-            "---\nkind: \"kinic.url_ingest_request\"\nstatus: queued\nnote: ---not-a-terminator\nrequested_by: alice\n---\n# Body\n",
+            "---\nkind: \"kinic.source_capture_request\"\nstatus: queued\nnote: ---not-a-terminator\nrequested_by: alice\n---\n# Body\n",
         )
         .expect("frontmatter should parse at the real terminator");
 
         assert_eq!(
             fields.get("kind").and_then(|value| value.as_deref()),
-            Some("kinic.url_ingest_request")
+            Some("kinic.source_capture_request")
         );
         assert_eq!(
             fields
@@ -8066,9 +8193,9 @@ mod tests {
     }
 
     #[test]
-    fn url_ingest_frontmatter_unescapes_json_quoted_scalars() {
+    fn source_capture_frontmatter_unescapes_json_quoted_scalars() {
         let fields = parse_frontmatter_fields(
-            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\\"1\\\"-\\uD83D\\uDE00\"\n---\n# Body\n",
+            "---\nkind: kinic.source_capture_request\nrequested_by: \"principal-\\\"1\\\"-\\uD83D\\uDE00\"\n---\n# Body\n",
         )
         .expect("frontmatter should parse quoted scalars");
 
@@ -8081,9 +8208,9 @@ mod tests {
     }
 
     #[test]
-    fn url_ingest_frontmatter_rejects_invalid_json_quoted_scalars() {
+    fn source_capture_frontmatter_rejects_invalid_json_quoted_scalars() {
         let error = parse_frontmatter_fields(
-            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\q\"\n---\n# Body\n",
+            "---\nkind: kinic.source_capture_request\nrequested_by: \"principal-\\q\"\n---\n# Body\n",
         )
         .expect_err("invalid JSON escape must not be accepted as a raw quoted value");
 
@@ -8397,6 +8524,16 @@ mod tests {
         .expect("schema marker count should load")
     }
 
+    fn database_profile_column_count(index_path: &Path) -> i64 {
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database profile column count should load")
+    }
+
     #[test]
     fn old_upgrade_migrations_require_config() {
         let dir = tempdir().expect("tempdir should create");
@@ -8514,6 +8651,18 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8552,10 +8701,22 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
-    fn store_roots_pending_index_seeds_roots_without_reapplying_profile() {
+    fn store_roots_pending_index_drops_profile_and_seeds_roots() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8570,7 +8731,12 @@ mod tests {
         {
             let mut conn = Connection::open(&index_path).expect("index DB should reopen");
             let tx = conn.transaction().expect("transaction should start");
-            apply_database_profile_migration(&tx).expect("profile migration should apply");
+            tx.execute(
+                "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
+                params![],
+            )
+            .expect("legacy profile column should add");
+            insert_database_profile_history_marker(&tx).expect("profile marker should insert");
             tx.commit().expect("profile migration should commit");
         }
         let service = VfsService::new(index_path.clone(), databases_dir);
@@ -8596,6 +8762,56 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
+    }
+
+    #[test]
+    fn mainnet_033_index_applies_profile_drop_noop() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        {
+            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
+            let tx = conn.transaction().expect("transaction should start");
+            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
+                .expect("store roots marker should insert");
+            tx.commit().expect("store roots marker should commit");
+        }
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("mainnet 033 index should apply profile-drop noop");
+
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8631,6 +8847,18 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8669,6 +8897,18 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8712,6 +8952,11 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -9331,9 +9576,9 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'memory', 'workspace', COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9430,9 +9675,9 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'memory', 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9917,9 +10162,9 @@ mod tests {
             .write_index(|tx| {
                 tx.execute(
                     "INSERT INTO databases
-                     (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                     (database_id, name, db_file_name, mount_id, active_mount_id, status,
                       schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                     VALUES (?1, ?1, 'memory', 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                     VALUES (?1, ?1, 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
                     params![
                         database_id,
                         i64::from(mount_id),

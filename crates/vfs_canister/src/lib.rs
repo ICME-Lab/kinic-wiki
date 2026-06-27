@@ -57,10 +57,10 @@ use vfs_types::{
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -1238,23 +1238,25 @@ fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, Strin
 }
 
 #[update]
-fn authorize_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionRequest,
+fn authorize_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(
-        "authorize_url_ingest_trigger_session",
+        "authorize_source_capture_trigger_session",
         Some(database_id),
         RequiredRole::Writer,
-        |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
+        |service, caller, now| {
+            service.authorize_source_capture_trigger_session(caller, request, now)
+        },
     )
 }
 
 #[query]
-fn check_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionCheckRequest,
+fn check_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionCheckRequest,
 ) -> Result<(), String> {
-    with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
+    with_service(|service| service.check_source_capture_trigger_session(request, now_millis()))
 }
 
 #[query]
@@ -2517,11 +2519,11 @@ fn normalize_candid_interface(interface: String) -> String {
     );
     let normalized = normalize_candid_method_input(
         &normalized,
-        "authorize_url_ingest_trigger_session",
+        "authorize_source_capture_trigger_session",
         "OpsAnswerSessionRequest",
-        "UrlIngestTriggerSessionRequest",
+        "SourceCaptureTriggerSessionRequest",
     );
-    ensure_url_ingest_trigger_session_request(ensure_rename_database_request(
+    ensure_source_capture_trigger_session_request(ensure_rename_database_request(
         ensure_outgoing_links_request(normalized),
     ))
 }
@@ -2574,13 +2576,13 @@ fn ensure_rename_database_request(interface: String) -> String {
     )
 }
 
-fn ensure_url_ingest_trigger_session_request(interface: String) -> String {
-    if interface.contains("type UrlIngestTriggerSessionRequest = record {") {
+fn ensure_source_capture_trigger_session_request(interface: String) -> String {
+    if interface.contains("type SourceCaptureTriggerSessionRequest = record {") {
         return interface;
     }
     interface.replace(
         "type WriteNodeItem = record {",
-        "type UrlIngestTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
+        "type SourceCaptureTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
     )
 }
 

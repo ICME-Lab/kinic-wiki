@@ -1,4 +1,4 @@
-// Where: extensions/wiki-clipper/src/url-ingest-request.js
+// Where: extensions/wiki-clipper/src/source-capture-request.js
 // What: Normalize extension input URLs and expose fixed runtime defaults.
 // Why: Active-tab capture and settings need stable canister defaults and URL validation.
 

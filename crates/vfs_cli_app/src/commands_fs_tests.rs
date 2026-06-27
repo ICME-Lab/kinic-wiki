@@ -349,7 +349,7 @@ async fn write_node_rejects_non_canonical_source_paths() {
         "/Sources/x-/y.md",
         "/Sources/x/",
         "/Sources/raw/source.md",
-        "/Sources/ingest-requests/source.md",
+        "/Sources/source-capture-requests/source.md",
     ] {
         let error = run_command(
             &client,
@@ -485,9 +485,9 @@ async fn delete_node_autofills_folder_index_etag() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_dry_run_does_not_delete() {
+async fn purge_source_capture_dry_run_does_not_delete() {
     let client = MockClient {
-        nodes: url_ingest_nodes(),
+        nodes: source_capture_nodes(),
         ..Default::default()
     };
 
@@ -502,7 +502,7 @@ async fn purge_url_ingest_dry_run_does_not_delete() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: Some("https://example.com/page#fragment".to_string()),
                 source_path: None,
                 yes: false,
@@ -520,9 +520,9 @@ async fn purge_url_ingest_dry_run_does_not_delete() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_requires_force_for_wide_target_delete() {
+async fn purge_source_capture_requires_force_for_wide_target_delete() {
     let client = MockClient {
-        nodes: url_ingest_nodes(),
+        nodes: source_capture_nodes(),
         ..Default::default()
     };
 
@@ -537,7 +537,7 @@ async fn purge_url_ingest_requires_force_for_wide_target_delete() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -556,9 +556,9 @@ async fn purge_url_ingest_requires_force_for_wide_target_delete() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags() {
+async fn purge_source_capture_deletes_request_source_and_generated_tree_with_etags() {
     let client = MockClient {
-        nodes: url_ingest_nodes(),
+        nodes: source_capture_nodes(),
         ..Default::default()
     };
 
@@ -573,7 +573,7 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -591,7 +591,10 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
         .iter()
         .map(|request| (request.path.as_str(), request.expected_etag.as_deref()))
         .collect::<Vec<_>>();
-    assert!(deleted.contains(&("/Sources/ingest-requests/r1.md", Some("etag-request"))));
+    assert!(deleted.contains(&(
+        "/Sources/source-capture-requests/r1.md",
+        Some("etag-request")
+    )));
     assert!(deleted.contains(&("/Sources/web/1.md", Some("etag-source"))));
     assert!(deleted.contains(&(
         "/Knowledge/conversations/web-1/facts.md",
@@ -614,8 +617,8 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
 }
 
 #[tokio::test]
-async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_deletes_index_only_folder_with_folder_index_etag() {
+    let mut nodes = source_capture_nodes();
     nodes.retain(|node| node.path != "/Knowledge/conversations/web-1/facts.md");
     let index = nodes
         .iter_mut()
@@ -638,7 +641,7 @@ async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -668,7 +671,7 @@ async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_rejects_unsafe_target_paths() {
+async fn purge_source_capture_rejects_unsafe_target_paths() {
     for target_path in [
         "",
         "/",
@@ -679,7 +682,7 @@ async fn purge_url_ingest_rejects_unsafe_target_paths() {
         "/Knowledge/conversations-web-1",
     ] {
         let client = MockClient {
-            nodes: url_ingest_nodes_with_target(target_path),
+            nodes: source_capture_nodes_with_target(target_path),
             ..Default::default()
         };
 
@@ -694,7 +697,7 @@ async fn purge_url_ingest_rejects_unsafe_target_paths() {
                     identity_mode: IdentityModeArg::Auto,
                     allow_non_ii_identity: false,
                 },
-                command: Command::PurgeUrlIngest {
+                command: Command::PurgeSourceCapture {
                     url: Some("https://example.com/page".to_string()),
                     source_path: None,
                     yes: false,
@@ -718,8 +721,8 @@ async fn purge_url_ingest_rejects_unsafe_target_paths() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_rejects_prefix_bleed_from_list_nodes() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_rejects_prefix_bleed_from_list_nodes() {
+    let mut nodes = source_capture_nodes();
     nodes.push(Node {
         path: "/Knowledge/conversations/web-1-copy/secret.md".to_string(),
         kind: NodeKind::File,
@@ -745,7 +748,7 @@ async fn purge_url_ingest_rejects_prefix_bleed_from_list_nodes() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: Some("https://example.com/page".to_string()),
                 source_path: None,
                 yes: false,
@@ -762,9 +765,9 @@ async fn purge_url_ingest_rejects_prefix_bleed_from_list_nodes() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_rejects_request_paths_outside_ingest_prefix() {
-    let mut nodes = url_ingest_nodes();
-    nodes[0].path = "/Sources/ingest-requestsfake/r1.md".to_string();
+async fn purge_source_capture_rejects_request_paths_outside_ingest_prefix() {
+    let mut nodes = source_capture_nodes();
+    nodes[0].path = "/Sources/source-capture-requestsfake/r1.md".to_string();
     let client = MockClient {
         nodes,
         ..Default::default()
@@ -781,7 +784,7 @@ async fn purge_url_ingest_rejects_request_paths_outside_ingest_prefix() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: Some("https://example.com/page".to_string()),
                 source_path: None,
                 yes: false,
@@ -794,15 +797,19 @@ async fn purge_url_ingest_rejects_request_paths_outside_ingest_prefix() {
     .await
     .expect_err("request prefix bleed should fail closed");
 
-    assert!(error.to_string().contains("outside ingest request prefix"));
+    assert!(
+        error
+            .to_string()
+            .contains("outside source capture request prefix")
+    );
 }
 
 #[tokio::test]
-async fn purge_url_ingest_rejects_noncanonical_request_source_path() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_rejects_noncanonical_request_source_path() {
+    let mut nodes = source_capture_nodes();
     nodes[0].content = [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
@@ -828,7 +835,7 @@ async fn purge_url_ingest_rejects_noncanonical_request_source_path() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: Some("https://example.com/page".to_string()),
                 source_path: None,
                 yes: false,
@@ -845,9 +852,9 @@ async fn purge_url_ingest_rejects_noncanonical_request_source_path() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_returns_error_when_delete_fails() {
+async fn purge_source_capture_returns_error_when_delete_fails() {
     let client = MockClient {
-        nodes: url_ingest_nodes(),
+        nodes: source_capture_nodes(),
         delete_fail_paths: HashSet::from(["/Sources/web/1.md".to_string()]),
         ..Default::default()
     };
@@ -863,7 +870,7 @@ async fn purge_url_ingest_returns_error_when_delete_fails() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -881,12 +888,12 @@ async fn purge_url_ingest_returns_error_when_delete_fails() {
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/ingest-requests/r1.md")
+            .any(|request| request.path == "/Sources/source-capture-requests/r1.md")
     );
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
+async fn purge_source_capture_source_path_rejects_non_source_nodes() {
     let client = MockClient {
         nodes: vec![Node {
             path: "/Knowledge/foo.md".to_string(),
@@ -911,7 +918,7 @@ async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Knowledge/foo.md".to_string()),
                 yes: true,
@@ -931,14 +938,14 @@ async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_requires_matching_request() {
+async fn purge_source_capture_source_path_requires_matching_request() {
     let client = MockClient {
         nodes: vec![Node {
             path: "/Sources/web/2.md".to_string(),
             kind: NodeKind::Source,
             content: [
                 "---",
-                "kind: kinic.raw_web_source",
+                "kind: kinic.evidence_web_source",
                 "schema_version: 1",
                 "---",
                 "",
@@ -963,7 +970,7 @@ async fn purge_url_ingest_source_path_requires_matching_request() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/2.md".to_string()),
                 yes: true,
@@ -981,11 +988,11 @@ async fn purge_url_ingest_source_path_requires_matching_request() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_requires_request_source_path() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_source_path_requires_request_source_path() {
+    let mut nodes = source_capture_nodes();
     nodes[0].content = [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
@@ -1010,7 +1017,7 @@ async fn purge_url_ingest_source_path_requires_request_source_path() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -1028,11 +1035,11 @@ async fn purge_url_ingest_source_path_requires_request_source_path() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_requires_matching_request_source_path() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_source_path_requires_matching_request_source_path() {
+    let mut nodes = source_capture_nodes();
     nodes[0].content = [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
@@ -1058,7 +1065,7 @@ async fn purge_url_ingest_source_path_requires_matching_request_source_path() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -1076,9 +1083,9 @@ async fn purge_url_ingest_source_path_requires_matching_request_source_path() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_uses_request_side_source_path() {
+async fn purge_source_capture_source_path_uses_request_side_source_path() {
     let client = MockClient {
-        nodes: url_ingest_nodes(),
+        nodes: source_capture_nodes(),
         ..Default::default()
     };
 
@@ -1093,7 +1100,7 @@ async fn purge_url_ingest_source_path_uses_request_side_source_path() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -1110,7 +1117,7 @@ async fn purge_url_ingest_source_path_uses_request_side_source_path() {
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/ingest-requests/r1.md")
+            .any(|request| request.path == "/Sources/source-capture-requests/r1.md")
     );
     assert!(
         deletes
@@ -1138,14 +1145,14 @@ async fn purge_url_ingest_source_path_uses_request_side_source_path() {
 }
 
 #[tokio::test]
-async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
-    let mut nodes = url_ingest_nodes();
+async fn purge_source_capture_source_path_deletes_all_matching_requests() {
+    let mut nodes = source_capture_nodes();
     nodes.push(Node {
-        path: "/Sources/ingest-requests/r2.md".to_string(),
+        path: "/Sources/source-capture-requests/r2.md".to_string(),
         kind: NodeKind::File,
         content: [
             "---",
-            "kind: kinic.url_ingest_request",
+            "kind: kinic.source_capture_request",
             "schema_version: 1",
             "status: completed",
             "url: https://example.com/page",
@@ -1176,7 +1183,7 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
                 identity_mode: IdentityModeArg::Auto,
                 allow_non_ii_identity: false,
             },
-            command: Command::PurgeUrlIngest {
+            command: Command::PurgeSourceCapture {
                 url: None,
                 source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
@@ -1193,12 +1200,12 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/ingest-requests/r1.md")
+            .any(|request| request.path == "/Sources/source-capture-requests/r1.md")
     );
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/ingest-requests/r2.md")
+            .any(|request| request.path == "/Sources/source-capture-requests/r2.md")
     );
     assert!(
         deletes
@@ -1207,14 +1214,14 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
     );
 }
 
-fn url_ingest_nodes() -> Vec<Node> {
+fn source_capture_nodes() -> Vec<Node> {
     vec![
         Node {
-            path: "/Sources/ingest-requests/r1.md".to_string(),
+            path: "/Sources/source-capture-requests/r1.md".to_string(),
             kind: NodeKind::File,
             content: [
                 "---",
-                "kind: kinic.url_ingest_request",
+                "kind: kinic.source_capture_request",
                 "schema_version: 1",
                 "status: completed",
                 "url: https://example.com/page",
@@ -1234,7 +1241,7 @@ fn url_ingest_nodes() -> Vec<Node> {
             kind: NodeKind::Source,
             content: [
                 "---",
-                "kind: kinic.raw_web_source",
+                "kind: kinic.evidence_web_source",
                 "schema_version: 1",
                 "---",
                 "",
@@ -1275,11 +1282,11 @@ fn url_ingest_nodes() -> Vec<Node> {
     ]
 }
 
-fn url_ingest_nodes_with_target(target_path: &str) -> Vec<Node> {
-    let mut nodes = url_ingest_nodes();
+fn source_capture_nodes_with_target(target_path: &str) -> Vec<Node> {
+    let mut nodes = source_capture_nodes();
     nodes[0].content = [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",

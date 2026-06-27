@@ -564,6 +564,11 @@ type SearchPreview = record {
 };
 type SearchPreviewField = variant { Path; Content };
 type SearchPreviewMode = variant { Light; ContentStart; None };
+type SourceCaptureTriggerSessionCheckRequest = record {
+  request_path : text;
+  session_nonce : text;
+  database_id : text;
+};
 type SourceEvidence = record { node_path : text; refs : vec SourceEvidenceRef };
 type SourceEvidenceRef = record {
   link_text : text;
@@ -593,11 +598,6 @@ type StorageBillingBatchResult = record {
   charged_databases : nat32;
   processed_databases : nat32;
 };
-type UrlIngestTriggerSessionCheckRequest = record {
-  request_path : text;
-  session_nonce : text;
-  database_id : text;
-};
 type WikiMetrics = record {
   charged_kinic_30d_e8s : nat64;
   users_active_30d : nat64;
@@ -614,7 +614,7 @@ type WikiMetricsPoint = record {
   metrics : WikiMetrics;
   bucket_start_ms : int64;
 };
-type UrlIngestTriggerSessionRequest = record {
+type SourceCaptureTriggerSessionRequest = record {
   session_nonce : text;
   database_id : text;
 };
@@ -653,7 +653,7 @@ type WriteSourceForGenerationResult = record {
 service : (CyclesBillingConfig) -> {
   append_node : (AppendNodeRequest) -> (Result);
   authorize_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_1);
-  authorize_url_ingest_trigger_session : (UrlIngestTriggerSessionRequest) -> (
+  authorize_source_capture_trigger_session : (SourceCaptureTriggerSessionRequest) -> (
       Result_1,
     );
   begin_database_archive : (text) -> (Result_2);
@@ -664,10 +664,10 @@ service : (CyclesBillingConfig) -> {
   check_cycles_top_up : () -> (Result_3);
   check_database_write_cycles : (text) -> (Result_1) query;
   check_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_4) query;
+  check_source_capture_trigger_session : (
+      SourceCaptureTriggerSessionCheckRequest,
+    ) -> (Result_1) query;
   check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_1) query;
-  check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
-      Result_1,
-    ) query;
   create_database : (CreateDatabaseRequest) -> (Result_5);
   delete_database : (DatabaseIdRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_6);

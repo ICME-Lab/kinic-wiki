@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
-import { testEnv, TestQueue } from "./url-ingest-fixtures.js";
+import { testEnv, TestQueue } from "./source-capture-fixtures.js";
 
 test("loadConfig accepts only full positive integer byte limits", () => {
   const env = testEnv(new TestQueue());
@@ -25,4 +25,20 @@ test("loadConfig respects explicit context prefix override", () => {
   const env = testEnv(new TestQueue());
 
   assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Knowledge" }).contextPrefix, "/Knowledge");
+});
+
+test("loadConfig normalizes source prefix", () => {
+  const env = testEnv(new TestQueue());
+  delete env.KINIC_WIKI_WORKER_SOURCE_PREFIX;
+
+  assert.equal(loadConfig(env).sourcePrefix, "/Sources");
+  assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources" }).sourcePrefix, "/Sources");
+  assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources/" }).sourcePrefix, "/Sources");
+});
+
+test("loadConfig rejects invalid source prefixes", () => {
+  const env = testEnv(new TestQueue());
+  for (const value of ["", "   ", "/", "Sources", "/Sources//web", "/Sources/with.dot"]) {
+    assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: value }), /Invalid source prefix/);
+  }
 });

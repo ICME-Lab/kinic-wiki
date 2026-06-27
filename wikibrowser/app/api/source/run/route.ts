@@ -114,7 +114,7 @@ function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
 
 function isCanonicalSourcePath(path: string): boolean {
   const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return !!match && !["raw", "sessions", "skill-runs", "ingest-requests"].includes(match[1]) && !match[2].includes("..");
+  return !!match && !["raw", "sessions", "skill-runs", "source-capture-requests"].includes(match[1]) && !match[2].includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

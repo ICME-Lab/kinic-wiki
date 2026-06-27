@@ -42,7 +42,8 @@ async function main() {
   assertSnapshotIncludes("Local link graph");
   assertSnapshotIncludes(target.nodePath);
   run("open", [emptyGraphUrl]);
-  assertSnapshotIncludes("Open Graph from a knowledge page to inspect its local neighborhood.");
+  assertSnapshotIncludes("Database-wide graph");
+  assertSnapshotIncludes("No indexed links found in this database.");
   run("open", [helpUrl]);
   assertSnapshotIncludes("Wiki browser help");
   assertSnapshotIncludes("Path search matches node paths.");

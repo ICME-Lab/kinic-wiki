@@ -1,15 +1,15 @@
-// Where: workers/wiki-generator/tests/url-ingest-fixtures.ts
-// What: Test doubles for URL ingest worker tests.
-// Why: URL ingest state tests need VFS, D1, Queue, and fetch fixtures without bloating the spec file.
+// Where: workers/wiki-generator/tests/source-capture-fixtures.ts
+// What: Test doubles for source capture worker tests.
+// Why: source capture state tests need VFS, D1, Queue, and fetch fixtures without bloating the spec file.
 import type { RuntimeEnv } from "../src/env.js";
-import { parseUrlIngestRequest } from "../src/url-ingest.js";
+import { parseSourceCaptureRequest } from "../src/source-capture.js";
 import type {
   ExportSnapshotPage,
   FetchUpdatesPage,
   NodeKind,
   QueueMessage,
   SearchNodeHit,
-  UrlIngestRequest,
+  SourceCaptureRequest,
   WikiNode,
   WorkerConfig,
   WriteNodeAck,
@@ -75,7 +75,7 @@ export class TestVfsClient implements VfsClient {
   sourceReadsAfterWrite = 0;
   requestReads = 0;
   sourceWrites = 0;
-  lastRequest: UrlIngestRequest | null = null;
+  lastRequest: SourceCaptureRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
 
   async checkDatabaseWriteCycles(databaseId: string): Promise<void> {
@@ -86,13 +86,13 @@ export class TestVfsClient implements VfsClient {
     this.sourceSessionChecks.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
   }
 
-  async checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {
+  async checkSourceCaptureTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {
     this.sessionChecks.push({ databaseId, requestPath, sessionNonce });
     if (this.failSessionCheck) throw new Error("session denied");
   }
 
   async readNode(_databaseId: string, path: string): Promise<WikiNode | null> {
-    if (path.startsWith("/Sources/ingest-requests/")) {
+    if (path.startsWith("/Sources/source-capture-requests/")) {
       this.requestReads += 1;
       return this.requestNode;
     }
@@ -123,7 +123,7 @@ export class TestVfsClient implements VfsClient {
       etag,
       metadataJson: request.metadataJson
     };
-    const parsed = parseUrlIngestRequest({
+    const parsed = parseSourceCaptureRequest({
       path: request.path,
       kind: "file",
       content: request.content,
@@ -212,7 +212,7 @@ function isQueueMessage(value: unknown): value is QueueMessage {
       typeof value.sourceEtag === "string"
     );
   }
-  if ("kind" in value && value.kind === "url_ingest") {
+  if ("kind" in value && value.kind === "source_capture") {
     return (
       "canisterId" in value &&
       "databaseId" in value &&

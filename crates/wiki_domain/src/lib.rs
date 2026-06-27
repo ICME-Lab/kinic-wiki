@@ -15,7 +15,8 @@ pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
 const MAX_SOURCE_ID_LEN: usize = 128;
-const RESERVED_SOURCE_PROVIDERS: &[&str] = &["raw", "sessions", "skill-runs", "ingest-requests"];
+const RESERVED_SOURCE_PROVIDERS: &[&str] =
+    &["raw", "sessions", "skill-runs", "source-capture-requests"];
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = is_knowledge_source_path_candidate(path)
@@ -140,7 +141,10 @@ fn is_knowledge_source_path_candidate(path: &str) -> bool {
     let Some(provider) = relative.split('/').next() else {
         return false;
     };
-    !matches!(provider, "sessions" | "skill-runs" | "ingest-requests")
+    !matches!(
+        provider,
+        "sessions" | "skill-runs" | "source-capture-requests"
+    )
 }
 
 fn is_safe_source_segment(value: &str) -> bool {
@@ -262,7 +266,7 @@ mod tests {
             "/Sources/raw/alpha.md",
             "/Sources/sessions/alpha.md",
             "/Sources/skill-runs/alpha.md",
-            "/Sources/ingest-requests/alpha.md",
+            "/Sources/source-capture-requests/alpha.md",
         ] {
             assert!(validate_knowledge_source_path(path).is_err(), "{path}");
         }

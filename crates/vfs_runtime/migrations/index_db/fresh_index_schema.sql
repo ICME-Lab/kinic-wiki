@@ -1,7 +1,6 @@
 CREATE TABLE databases (
   database_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  profile TEXT NOT NULL,
   db_file_name TEXT NOT NULL,
   mount_id INTEGER NOT NULL,
   active_mount_id INTEGER,
@@ -49,7 +48,7 @@ CREATE TABLE database_mount_history (
   PRIMARY KEY (mount_id)
 );
 
-CREATE TABLE url_ingest_trigger_sessions (
+CREATE TABLE source_capture_trigger_sessions (
   database_id TEXT NOT NULL,
   session_nonce TEXT NOT NULL,
   principal TEXT NOT NULL,
@@ -60,8 +59,8 @@ CREATE TABLE url_ingest_trigger_sessions (
   FOREIGN KEY (database_id) REFERENCES databases(database_id)
 );
 
-CREATE INDEX url_ingest_trigger_sessions_expiry_idx
-  ON url_ingest_trigger_sessions(expires_at_ms);
+CREATE INDEX source_capture_trigger_sessions_expiry_idx
+  ON source_capture_trigger_sessions(expires_at_ms);
 
 CREATE TABLE ops_answer_sessions (
   database_id TEXT NOT NULL,

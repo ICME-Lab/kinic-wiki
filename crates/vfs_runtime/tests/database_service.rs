@@ -19,8 +19,8 @@ use vfs_types::{
     MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
     MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
+    SourceRunSessionCheckRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
@@ -180,20 +180,13 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("database status should load");
-    let profile_columns: i64 = conn
+    let stale_profile_columns: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
             params![],
             |row| row.get(0),
         )
-        .expect("legacy column count should load");
-    let profile: String = conn
-        .query_row(
-            "SELECT profile FROM databases WHERE database_id = 'db_existing'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("database profile should load");
+        .expect("stale profile column count should load");
     let balance: i64 = conn
         .query_row(
             "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = 'db_existing'",
@@ -259,8 +252,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("usage table count should load");
 
     assert_eq!(status, "active");
-    assert_eq!(profile_columns, 1);
-    assert_eq!(profile, "memory");
+    assert_eq!(stale_profile_columns, 0);
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(storage_columns, 1);
@@ -289,6 +281,27 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:034_database_profile"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:035_drop_database_profile"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
+        1
+    );
+    assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
+    assert!(table_exists(&root, "source_capture_trigger_sessions"));
+    assert!(!index_exists(
+        &root,
+        "url_ingest_trigger_sessions_expiry_idx"
+    ));
+    assert!(index_exists(
+        &root,
+        "source_capture_trigger_sessions_expiry_idx"
+    ));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
@@ -866,6 +879,18 @@ fn table_exists(root: &std::path::Path, name: &str) -> bool {
     .is_some()
 }
 
+fn index_exists(root: &std::path::Path, name: &str) -> bool {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .expect("index existence should load")
+    .is_some()
+}
+
 #[test]
 fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     let (_service, root) = service_with_root();
@@ -905,22 +930,22 @@ fn mount_history_count(root: &std::path::Path) -> i64 {
     .expect("mount history count should load")
 }
 
-fn url_ingest_session_request(
+fn source_capture_session_request(
     database_id: &str,
     session_nonce: &str,
-) -> UrlIngestTriggerSessionRequest {
-    UrlIngestTriggerSessionRequest {
+) -> SourceCaptureTriggerSessionRequest {
+    SourceCaptureTriggerSessionRequest {
         database_id: database_id.to_string(),
         session_nonce: session_nonce.to_string(),
     }
 }
 
-fn url_ingest_session_check_request(
+fn source_capture_session_check_request(
     database_id: &str,
     request_path: &str,
     session_nonce: &str,
-) -> UrlIngestTriggerSessionCheckRequest {
-    UrlIngestTriggerSessionCheckRequest {
+) -> SourceCaptureTriggerSessionCheckRequest {
+    SourceCaptureTriggerSessionCheckRequest {
         database_id: database_id.to_string(),
         request_path: request_path.to_string(),
         session_nonce: session_nonce.to_string(),
@@ -973,10 +998,10 @@ fn write_source_for_generation_request(
     }
 }
 
-fn url_ingest_content(status: &str, requested_by: &str) -> String {
+fn source_capture_content(status: &str, requested_by: &str) -> String {
     [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         &format!("status: {status}"),
         "url: \"https://example.com/\"",
@@ -989,13 +1014,13 @@ fn url_ingest_content(status: &str, requested_by: &str) -> String {
         "error: null",
         "---",
         "",
-        "# URL Ingest Request",
+        "# Source Capture Request",
         "",
     ]
     .join("\n")
 }
 
-fn write_url_ingest_request(
+fn write_source_capture_request(
     service: &VfsService,
     caller: &str,
     database_id: &str,
@@ -1011,13 +1036,13 @@ fn write_url_ingest_request(
                 database_id: database_id.to_string(),
                 path: path.to_string(),
                 kind: NodeKind::File,
-                content: url_ingest_content(status, requested_by),
+                content: source_capture_content(status, requested_by),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
             2,
         )
-        .expect("url ingest request should write");
+        .expect("source capture request should write");
 }
 
 fn ensure_parent_folders(
@@ -1159,6 +1184,13 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:007_ops_answer_sessions"),
         1
     );
@@ -1191,6 +1223,13 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:007_ops_answer_sessions"),
         1
     );
@@ -1209,49 +1248,49 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
 }
 
 #[test]
-fn url_ingest_trigger_session_requires_writer_and_allows_replay() {
+fn source_capture_trigger_session_requires_writer_and_allows_replay() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("owner should authorize session");
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect("session should check");
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             102,
         )
         .expect("session check should allow replay");
 }
 
 #[test]
-fn url_ingest_trigger_session_requires_default_llm_writer() {
+fn source_capture_trigger_session_requires_default_llm_writer() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("default LLM writer should allow session");
@@ -1260,17 +1299,17 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
         .revoke_database_access("alpha", "owner", DEFAULT_LLM_WRITER_PRINCIPAL)
         .expect("owner should revoke LLM writer");
     let check = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect_err("revoked LLM writer should fail session check");
     assert!(check.contains("LLM writer principal lacks writer access"));
 
     let authorize = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-2"),
+            source_capture_session_request("alpha", "session-2"),
             102,
         )
         .expect_err("revoked LLM writer should fail session authorization");
@@ -1278,7 +1317,7 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
 }
 
 #[test]
-fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
+fn source_capture_trigger_session_rejects_invalid_request_nodes() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1287,48 +1326,52 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
     service
         .grant_database_access("alpha", "owner", "other", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     let reader = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "other",
-            url_ingest_session_request("alpha", "session-reader"),
+            source_capture_session_request("alpha", "session-reader"),
             100,
         )
         .expect_err("reader principal should fail");
     assert!(reader.contains("lacks required database role"));
 
     let anonymous = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "2vxsx-fae",
-            url_ingest_session_request("alpha", "session-anonymous"),
+            source_capture_session_request("alpha", "session-anonymous"),
             100,
         )
         .expect_err("anonymous principal should fail");
     assert!(anonymous.contains("anonymous caller not allowed"));
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-owner"),
+            source_capture_session_request("alpha", "session-owner"),
             100,
         )
         .expect("owner should authorize session");
 
     let invalid_path = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", "/Knowledge/not-request.md", "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
+                "alpha",
+                "/Knowledge/not-request.md",
+                "session-owner",
+            ),
             101,
         )
         .expect_err("non request path should fail");
-    assert!(invalid_path.contains("request_path must be a URL ingest request path"));
+    assert!(invalid_path.contains("request_path must be a source capture request path"));
 
     let missing = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request(
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
                 "alpha",
-                "/Sources/ingest-requests/missing.md",
+                "/Sources/source-capture-requests/missing.md",
                 "session-owner",
             ),
             101,
@@ -1336,8 +1379,8 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         .expect_err("missing node should fail");
     assert!(missing.contains("not found"));
 
-    let completed_path = "/Sources/ingest-requests/completed.md";
-    write_url_ingest_request(
+    let completed_path = "/Sources/source-capture-requests/completed.md";
+    write_source_capture_request(
         &service,
         "owner",
         "alpha",
@@ -1346,14 +1389,14 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         "owner",
     );
     let completed = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", completed_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", completed_path, "session-owner"),
             101,
         )
         .expect_err("completed request should fail");
     assert!(completed.contains("not triggerable"));
 
-    let invalid_frontmatter_path = "/Sources/ingest-requests/invalid.md";
+    let invalid_frontmatter_path = "/Sources/source-capture-requests/invalid.md";
     service
         .write_node(
             "owner",
@@ -1369,18 +1412,22 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         )
         .expect("invalid request node should write");
     let invalid_frontmatter = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", invalid_frontmatter_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
+                "alpha",
+                invalid_frontmatter_path,
+                "session-owner",
+            ),
             101,
         )
         .expect_err("invalid frontmatter should fail");
     assert!(invalid_frontmatter.contains("frontmatter"));
 
-    let mismatch_path = "/Sources/ingest-requests/mismatch.md";
-    write_url_ingest_request(&service, "owner", "alpha", mismatch_path, "queued", "other");
+    let mismatch_path = "/Sources/source-capture-requests/mismatch.md";
+    write_source_capture_request(&service, "owner", "alpha", mismatch_path, "queued", "other");
     let caller_mismatch = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", mismatch_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", mismatch_path, "session-owner"),
             101,
         )
         .expect_err("requested_by mismatch should fail");
@@ -1388,40 +1435,40 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
 }
 
 #[test]
-fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
+fn source_capture_trigger_session_rejects_expired_and_unknown_nonce() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             0,
         )
         .expect("session should authorize");
     let unknown = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "unknown"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "unknown"),
             1,
         )
         .expect_err("unknown nonce should fail");
     assert!(unknown.contains("missing or expired"));
 
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             1_800_000,
         )
         .expect("session should remain valid at ttl boundary");
 
     let expired = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             1_800_001,
         )
         .expect_err("expired session should fail");
@@ -1429,24 +1476,24 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_requires_write_cycles_database() {
+fn source_capture_trigger_session_check_requires_write_cycles_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("session should authorize before cycles changes");
 
     let error = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect_err("suspended database should reject session check");
@@ -1455,14 +1502,14 @@ fn url_ingest_trigger_session_check_requires_write_cycles_database() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_allows_generating_status() {
+fn source_capture_trigger_session_check_allows_generating_status() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(
         &service,
         "owner",
         "alpha",
@@ -1471,16 +1518,16 @@ fn url_ingest_trigger_session_check_allows_generating_status() {
         "owner",
     );
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("session should authorize");
 
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect("generating request should remain session-checkable");
@@ -1950,7 +1997,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 }
 
 #[test]
-fn pending_database_creation_uses_default_internal_profile() {
+fn pending_database_creation_omits_removed_internal_profile() {
     let (service, root) = service_with_root();
     let pending = service
         .reserve_pending_generated_database(" Agent Memory ", "owner", 1)
@@ -1959,20 +2006,13 @@ fn pending_database_creation_uses_default_internal_profile() {
         .list_database_summaries_for_caller("owner")
         .expect("owner summaries should load");
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let profile_columns: i64 = conn
+    let stale_profile_columns: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
             params![],
             |row| row.get(0),
         )
-        .expect("profile column count should load");
-    let profile: String = conn
-        .query_row(
-            "SELECT profile FROM databases WHERE database_id = ?1",
-            params![&pending.database_id],
-            |row| row.get(0),
-        )
-        .expect("pending profile should load");
+        .expect("stale profile column count should load");
 
     assert_eq!(pending.name, "Agent Memory");
     assert_eq!(summaries[0].database_id, pending.database_id);
@@ -1980,8 +2020,7 @@ fn pending_database_creation_uses_default_internal_profile() {
         pending_database_activation_row(&root, &pending.database_id),
         ("pending".to_string(), 0, None, false)
     );
-    assert_eq!(profile_columns, 1);
-    assert_eq!(profile, "memory");
+    assert_eq!(stale_profile_columns, 0);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/frontmatter.ts
 // What: Small frontmatter parser/renderer for worker-owned ingest nodes.
-// Why: URL ingest state needs deterministic metadata writes without a YAML dependency.
+// Why: source capture state needs deterministic metadata writes without a YAML dependency.
 export type FrontmatterDocument = {
   fields: Record<string, string | null>;
   body: string;

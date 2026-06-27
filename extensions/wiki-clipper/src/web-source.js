@@ -1,7 +1,7 @@
 // Where: extensions/wiki-clipper/src/web-source.js
 // What: Build canonical evidence source nodes from active-page DOM text snapshots.
 // Why: Web page capture should save source evidence before queueing generation.
-import { normalizedHttpUrl } from "./url-ingest-request.js";
+import { normalizedHttpUrl } from "./source-capture-request.js";
 
 const MAX_WEB_SOURCE_CHARS = 300_000;
 

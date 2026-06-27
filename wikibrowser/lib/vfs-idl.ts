@@ -380,8 +380,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     overwrite: idl.Bool,
     database_id: idl.Text
   });
-  const UrlIngestTriggerSessionRequest = idl.Record({ database_id: idl.Text, session_nonce: idl.Text });
-  const UrlIngestTriggerSessionCheckRequest = idl.Record({
+  const SourceCaptureTriggerSessionRequest = idl.Record({ database_id: idl.Text, session_nonce: idl.Text });
+  const SourceCaptureTriggerSessionCheckRequest = idl.Record({
     database_id: idl.Text,
     request_path: idl.Text,
     session_nonce: idl.Text
@@ -472,13 +472,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
     authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [ResultUnit], []),
-    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [ResultUnit], []),
+    authorize_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_cycles_top_up: idl.Func([], [ResultCyclesTopUpCheck], []),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
-    check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
+    check_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
     delete_database: idl.Func([DatabaseIdRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),

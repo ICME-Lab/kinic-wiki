@@ -408,7 +408,49 @@ test("action click saves browser source then queues generation", async () => {
   ]);
 });
 
-test("action click skips capture and generation for existing browser source", async () => {
+test("action click queues generation for existing browser source", async () => {
+  const calls = [];
+  const messages = [];
+  const response = await handleActionClick(
+    { id: 7, url: "https://example.com/#section", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: true, path: sourcePath, etag: "etag-old" };
+      },
+      sendOffscreen: async (message) => {
+        messages.push(message);
+        if (message.type === "save-evidence-source") {
+          return {
+            ok: true,
+            result: { path: message.evidenceSource.path, created: false, etag: "etag-new", sourceRunSessionNonce: "session-new" }
+          };
+        }
+        return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.sourceEtag, "etag-new");
+  assert.equal(response.result.generationQueued, true);
+  assert.equal(messages[0].type, "save-evidence-source");
+  assert.equal(messages[1].type, "trigger-source-generation");
+  assert.equal(messages[1].sourcePath, "/Sources/web/abc.md");
+  assert.equal(messages[1].sourceEtag, "etag-new");
+  assert.equal(messages[1].sessionNonce, "session-new");
+  const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
+  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.deepEqual(calls, [
+    ["badge", "...", 7],
+    ["lookup", lookupPath],
+    ["badge", "IN", 7]
+  ]);
+});
+
+test("action click skips capture and generation for existing browser source when saving evidence only", async () => {
   const calls = [];
   const response = await handleActionClick(
     { id: 7, url: "https://example.com/#section", title: "Example" },
@@ -423,7 +465,8 @@ test("action click skips capture and generation for existing browser source", as
       },
       writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath, status.etag, status.message]),
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
-    })
+    }),
+    { queueGeneration: false }
   );
 
   assert.equal(response.ok, true);

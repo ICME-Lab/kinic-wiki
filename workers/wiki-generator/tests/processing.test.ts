@@ -6,7 +6,7 @@ import test from "node:test";
 import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
-import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./url-ingest-fixtures.js";
+import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./source-capture-fixtures.js";
 
 test("manual source run queues the validated source etag", async () => {
   const queue = new TestQueue();
@@ -146,28 +146,22 @@ test("worker log append failure is non-fatal", async () => {
   }
 });
 
-test("legacy url ingest queue message without nonce marks request failed", async () => {
-  const vfs = new TestVfsClient();
-  vfs.requestNode = ingestRequestNode();
+test("source capture queue message without nonce is invalid", async () => {
   const envelope = parseQueueMessageEnvelope({
-    kind: "url_ingest",
+    kind: "source_capture",
     canisterId: "xis3j-paaaa-aaaai-axumq-cai",
     databaseId: "db_1",
-    requestPath: "/Sources/ingest-requests/1.md"
+    requestPath: "/Sources/source-capture-requests/1.md"
   });
 
-  assert.equal(envelope.kind, "legacy_url_ingest_missing_nonce");
-  await processQueueMessageEnvelope(testEnv(new TestQueue()), envelope, { config: workerConfig(), vfs });
-
-  assert.equal(vfs.lastRequest?.status, "failed");
-  assert.match(vfs.lastRequest?.error ?? "", /sessionNonce is required/);
-  assert.equal(parseQueueMessageEnvelope({ kind: "url_ingest", canisterId: "xis3j-paaaa-aaaai-axumq-cai", databaseId: "db_1" }).kind, "invalid");
+  assert.equal(envelope.kind, "invalid");
+  assert.equal(parseQueueMessageEnvelope({ kind: "source_capture", canisterId: "xis3j-paaaa-aaaai-axumq-cai", databaseId: "db_1" }).kind, "invalid");
   assert.equal(
     parseQueueMessageEnvelope({
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md",
+      requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: ""
     }).kind,
     "invalid"
@@ -190,14 +184,14 @@ test("legacy url ingest queue message without nonce marks request failed", async
       databaseId: "db_1",
       sourcePath: "/Sources/a/a.md",
       sourceEtag: "etag-source",
-      requestPath: "/Sources/ingest-requests/../bad.md",
+      requestPath: "/Sources/source-capture-requests/../bad.md",
       sessionNonce: "session-1"
     }).kind,
     "invalid"
   );
   assert.equal(
     parseQueueMessageEnvelope({
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: "canister-1",
       databaseId: "db_1",
       requestPath: "/Knowledge/not-ingest.md",
@@ -207,10 +201,10 @@ test("legacy url ingest queue message without nonce marks request failed", async
   );
   assert.equal(
     parseQueueMessageEnvelope({
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: "canister-1",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/../bad.md"
+      requestPath: "/Sources/source-capture-requests/../bad.md"
     }).kind,
     "invalid"
   );
@@ -306,7 +300,7 @@ test("request-bound source queue without session nonce fails before DeepSeek", a
         databaseId: "db_1",
         sourcePath: "/Sources/a/a.md",
         sourceEtag: "etag-source",
-        requestPath: "/Sources/ingest-requests/1.md"
+        requestPath: "/Sources/source-capture-requests/1.md"
       },
       { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), requestWrites }) }
     );
@@ -336,7 +330,7 @@ test("request-bound source queue retries when gate failure cannot be recorded", 
           databaseId: "db_1",
           sourcePath: "/Sources/a/a.md",
           sourceEtag: "etag-source",
-          requestPath: "/Sources/ingest-requests/1.md"
+          requestPath: "/Sources/source-capture-requests/1.md"
         },
         { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), failRequestWrite: true }) }
       ),
@@ -395,7 +389,7 @@ function failingLogVfs(): VfsClient {
   return {
     checkDatabaseWriteCycles: async (): Promise<void> => {},
     checkSourceRunSession: async (): Promise<void> => {},
-    checkUrlIngestTriggerSession: async (): Promise<void> => {},
+    checkSourceCaptureTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => ({
       path,
       kind: "file",
@@ -440,7 +434,7 @@ function sourceVfs(
       options.sourceSessionChecks?.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
       if (options.failSourceRunSession) throw new Error("source run session denied");
     },
-    checkUrlIngestTriggerSession: async (): Promise<void> => {},
+    checkSourceCaptureTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {
       if (path === "/Sources/a/a.md") {
         return {
@@ -495,11 +489,11 @@ function draftJson(): string {
 
 function ingestRequestNode(): WikiNode {
   return {
-    path: "/Sources/ingest-requests/1.md",
+    path: "/Sources/source-capture-requests/1.md",
     kind: "file",
     content: [
       "---",
-      "kind: kinic.url_ingest_request",
+      "kind: kinic.source_capture_request",
       "schema_version: 1",
       "status: generating",
       'url: "https://example.com/a"',
@@ -512,7 +506,7 @@ function ingestRequestNode(): WikiNode {
       "error: null",
       "---",
       "",
-      "# URL Ingest Request"
+      "# Source Capture Request"
     ].join("\n"),
     etag: "etag-request",
     metadataJson: "{}"

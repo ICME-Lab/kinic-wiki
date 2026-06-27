@@ -1,6 +1,6 @@
 # Wiki Canister Browser Design
 
-Historical MVP design note. The current WikiBrowser also includes authenticated database creation, access management, Markdown editing, URL ingest, and dashboard workflows. Treat this file as design background unless it is explicitly refreshed.
+Historical MVP design note. The current WikiBrowser also includes authenticated database creation, access management, Markdown editing, source capture, and dashboard workflows. Treat this file as design background unless it is explicitly refreshed.
 
 ## Product Positioning
 

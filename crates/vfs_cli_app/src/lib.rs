@@ -20,7 +20,7 @@ pub mod identity;
 pub mod identity_mode;
 pub mod maintenance;
 mod plugin_payload;
-mod purge_url_ingest;
+mod purge_source_capture;
 pub mod skill_registry;
 #[cfg(test)]
 mod skill_registry_tests;

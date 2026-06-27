@@ -13,7 +13,7 @@ import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/componen
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
-import { IngestPanel } from "@/components/ingest-panel";
+import { SourceCapturePanel } from "@/components/source-capture-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
+const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
@@ -869,9 +869,9 @@ function LeftPane({
       />
     );
   }
-  if (tab === "ingest") {
+  if (tab === "source-capture") {
     return (
-      <IngestPanel
+      <SourceCapturePanel
         canisterId={canisterId}
         databaseId={databaseId}
         readIdentity={readIdentity}
@@ -1632,7 +1632,7 @@ function ModeTabs({
 
 function tabTitle(tab: ModeTab): string {
   if (tab === "query") return "Query";
-  if (tab === "ingest") return "Ingest";
+  if (tab === "source-capture") return "Source Capture";
   return "Explorer";
 }
 

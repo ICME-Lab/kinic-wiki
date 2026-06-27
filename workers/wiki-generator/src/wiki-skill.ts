@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/wiki-skill.ts
 // What: Versioned core wiki-generation rules for worker pages.
-// Why: URL ingest should follow wiki semantics without depending on Skill Registry packages.
+// Why: source capture should follow wiki semantics without depending on Skill Registry packages.
 export const WIKI_SKILL_VERSION = 1;
 
 const WIKI_RULES = [

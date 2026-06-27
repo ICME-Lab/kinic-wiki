@@ -81,12 +81,12 @@ export type MoveNodeResult = {
   overwrote: boolean;
 };
 
-export type UrlIngestTriggerSessionRequest = {
+export type SourceCaptureTriggerSessionRequest = {
   databaseId: string;
   sessionNonce: string;
 };
 
-export type UrlIngestTriggerSessionCheckRequest = {
+export type SourceCaptureTriggerSessionCheckRequest = {
   databaseId: string;
   requestPath: string;
   sessionNonce: string;

@@ -6,7 +6,7 @@ import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, s
 import { generateDraft, validateDraftSources } from "./openai.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { sourceIdFromPath, validateCanonicalSourcePath } from "./source-path.js";
-import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
+import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
@@ -17,7 +17,6 @@ export type ManualRunContext = {
 
 export type QueueMessageEnvelope =
   | { kind: "valid"; message: QueueMessage }
-  | { kind: "legacy_url_ingest_missing_nonce"; canisterId: string; databaseId: string; requestPath: string }
   | { kind: "invalid"; reason: string };
 
 type ExternalCostGateInput = {
@@ -70,8 +69,8 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
 }
 
 export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage): Promise<void> {
-  if (message.kind === "url_ingest") {
-    await triggerUrlIngestRequest(env, message);
+  if (message.kind === "source_capture") {
+    await triggerSourceCaptureRequest(env, message);
     return;
   }
   await processSourceQueueMessage(env, message);
@@ -84,10 +83,6 @@ export async function processQueueMessageEnvelope(
 ): Promise<void> {
   if (envelope.kind === "valid") {
     await processQueueMessage(env, envelope.message);
-    return;
-  }
-  if (envelope.kind === "legacy_url_ingest_missing_nonce") {
-    await failLegacyUrlIngestMessage(env, envelope, context);
     return;
   }
   console.warn("invalid wiki-generator queue message acked", envelope.reason);
@@ -143,7 +138,7 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     await writeGeneratedPage(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
     await markCompleted(env.DB, message, generated.targetPath);
     if (message.requestPath) {
-      await markIngestRequestCompleted(vfs, message.databaseId, message.requestPath, source.path, generated.targetPath);
+      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, source.path, generated.targetPath);
     }
     await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, generated.targetPath, source.path);
   } catch (error) {
@@ -173,7 +168,7 @@ async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGate
       throw new Error("sessionNonce is required for request-bound source generation");
     }
     if (input.requestPath && input.sessionNonce) {
-      await vfs.checkUrlIngestTriggerSession(input.databaseId, input.requestPath, input.sessionNonce);
+      await vfs.checkSourceCaptureTriggerSession(input.databaseId, input.requestPath, input.sessionNonce);
       return;
     }
     if (input.sessionNonce && input.sourcePath && input.sourceEtag) {
@@ -189,7 +184,7 @@ async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGate
 async function markQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
   await markFailed(env.DB, message, messageText);
   if (message.requestPath) {
-    await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
+    await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
   }
 }
 
@@ -242,7 +237,7 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if (!nonEmptyString(value.sourcePath)) return null;
     if (!nonEmptyString(value.sourceEtag)) return null;
     if ("requestPath" in value && value.requestPath !== undefined && !nonEmptyString(value.requestPath)) return null;
-    if (typeof value.requestPath === "string" && !isIngestRequestPath(value.requestPath)) return null;
+    if (typeof value.requestPath === "string" && !isSourceCaptureRequestPath(value.requestPath)) return null;
     if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
     return {
       kind: "source",
@@ -253,14 +248,14 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
       sessionNonce: typeof value.sessionNonce === "string" ? value.sessionNonce : undefined
     };
   }
-  if (value.kind === "url_ingest") {
+  if (value.kind === "source_capture") {
     if (!nonEmptyString(value.canisterId)) return null;
     if (!nonEmptyString(value.databaseId)) return null;
     if (!nonEmptyString(value.requestPath)) return null;
-    if (!isIngestRequestPath(value.requestPath)) return null;
+    if (!isSourceCaptureRequestPath(value.requestPath)) return null;
     if (!nonEmptyString(value.sessionNonce)) return null;
     return {
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: value.canisterId,
       databaseId: value.databaseId,
       requestPath: value.requestPath,
@@ -273,40 +268,14 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
 export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope {
   const message = parseQueueMessage(value);
   if (message) return { kind: "valid", message };
-  if (isObject(value) && value.kind === "url_ingest") {
-    if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "url_ingest canisterId is missing" };
-    if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "url_ingest databaseId is missing" };
-    if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "url_ingest requestPath is missing" };
-    if (!isIngestRequestPath(value.requestPath)) return { kind: "invalid", reason: "url_ingest requestPath is non-canonical" };
-    if (!("sessionNonce" in value)) {
-      return {
-        kind: "legacy_url_ingest_missing_nonce",
-        canisterId: value.canisterId,
-        databaseId: value.databaseId,
-        requestPath: value.requestPath
-      };
-    }
-    if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "url_ingest sessionNonce is missing" };
+  if (isObject(value) && value.kind === "source_capture") {
+    if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "source_capture canisterId is missing" };
+    if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "source_capture databaseId is missing" };
+    if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is missing" };
+    if (!isSourceCaptureRequestPath(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is non-canonical" };
+    if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "source_capture sessionNonce is missing" };
   }
   return { kind: "invalid", reason: "queue message shape is invalid" };
-}
-
-async function failLegacyUrlIngestMessage(
-  env: RuntimeEnv,
-  message: { canisterId: string; databaseId: string; requestPath: string },
-  context?: { config?: WorkerConfig; vfs?: VfsClient }
-): Promise<void> {
-  const config = context?.config ?? loadConfig(env);
-  if (message.canisterId !== config.canisterId) {
-    console.warn("legacy url_ingest queue message targets a different canister");
-    return;
-  }
-  if (!isIngestRequestPath(message.requestPath)) {
-    console.warn("legacy url_ingest queue message has a non-canonical request path");
-    return;
-  }
-  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
-  await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, "sessionNonce is required for url_ingest queue message");
 }
 
 async function generateFromSource(
@@ -452,9 +421,9 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function isIngestRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/ingest-requests/")) return false;
-  const name = path.slice("/Sources/ingest-requests/".length);
+function isSourceCaptureRequestPath(path: string): boolean {
+  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
+  const name = path.slice("/Sources/source-capture-requests/".length);
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 

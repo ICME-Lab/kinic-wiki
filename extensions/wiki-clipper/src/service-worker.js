@@ -7,7 +7,7 @@ import {
   DEFAULT_IC_HOST,
   SOURCE_CAPTURE_STATUS_KEY,
   normalizedHttpUrl
-} from "./url-ingest-request.js";
+} from "./source-capture-request.js";
 import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";
 
 const DEFAULT_CONFIG = {
@@ -160,7 +160,8 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     }
     const sourcePath = await webSourcePathForUrl(url);
     const existingSource = await deps.findWebSource(config, sourcePath);
-    if (existingSource.exists) {
+    const sourceAlreadyExists = existingSource.exists;
+    if (sourceAlreadyExists && !queueGeneration) {
       const status = existingSourceStatus({ url, title: tab?.title || "", sourcePath: existingSource.path || sourcePath, etag: existingSource.etag });
       await deps.writeStatus(status);
       await deps.setBadge("IN", "#137333", tabId);
@@ -217,6 +218,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       title: tab?.title || "",
       sourcePath: saveResponse.result.path,
       sourceEtag: saveResponse.result.etag,
+      sourceExists: sourceAlreadyExists,
       sourceCreated: saveResponse.result.created,
       generationQueued: queueGeneration ? Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false) : false,
       generationSkipped: !queueGeneration,

@@ -157,7 +157,10 @@ function normalizeIdlShape(value) {
 function splitShapes(value) {
   const trimmed = value.trim();
   if (!trimmed) return [];
-  return trimmed.split(",").map((part) => normalizeShape(part));
+  return trimmed
+    .split(",")
+    .map((part) => normalizeShape(part))
+    .filter(Boolean);
 }
 
 function normalizeShape(value) {

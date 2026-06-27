@@ -11,7 +11,7 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
-const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|ingest-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
+const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|source-capture-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";

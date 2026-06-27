@@ -36,17 +36,17 @@ export function HelpPanel() {
           <HelpItem
             icon={<MessageSquareText aria-hidden size={17} />}
             title="Query"
-            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, or paste a URL to queue ingest."
+            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, or paste a URL to queue source capture."
           />
           <HelpItem
             icon={<FileText aria-hidden size={17} />}
-            title="Sources and ingest"
-            body="Sources holds source evidence and ingest requests. Generated wiki pages should be reviewed before relying on them."
+            title="Sources and source capture"
+            body="Sources holds source evidence and source capture requests. Generated wiki pages should be reviewed before relying on them."
           />
           <HelpItem
             icon={<LockKeyhole aria-hidden size={17} />}
             title="Access"
-            body="Public databases can be read anonymously. Internet Identity is required for private reads, URL ingest, and writer or owner edits."
+            body="Public databases can be read anonymously. Internet Identity is required for private reads, source capture, and writer or owner edits."
           />
         </section>
       </article>

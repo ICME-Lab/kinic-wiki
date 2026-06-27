@@ -4,7 +4,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { AlertTriangle, Database, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
-import { createUrlIngestRequest } from "@/lib/url-ingest";
+import { createSourceCaptureRequest } from "@/lib/source-capture";
 import { collectLintHints, type LintHint } from "@/lib/lint-hints";
 import { classifyQueryInput, type QueryAction } from "@/lib/query-actions";
 import { collectQueryAnswerContext } from "@/lib/query-context";
@@ -164,7 +164,7 @@ export function QueryPanel({
   async function confirmQueueUrl(action: QueryAction) {
     if (action.kind !== "queue_url") return;
     if (!writeIdentity) {
-      setResult({ kind: "message", tone: "error", text: "Login with Internet Identity to queue URL ingest." });
+      setResult({ kind: "message", tone: "error", text: "Login with Internet Identity to queue source capture." });
       return;
     }
     if (databaseCyclesError) {
@@ -173,7 +173,7 @@ export function QueryPanel({
     }
     setBusy(true);
     try {
-      const created = await createUrlIngestRequest(canisterId, databaseId, writeIdentity, action.url);
+      const created = await createSourceCaptureRequest(canisterId, databaseId, writeIdentity, action.url);
       setPendingAction(null);
       setResult({
         kind: "message",

@@ -419,11 +419,11 @@ export const expectedTypes = {
     kind: "record",
     fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
   },
-  UrlIngestTriggerSessionRequest: {
+  SourceCaptureTriggerSessionRequest: {
     kind: "record",
     fields: { database_id: "text", session_nonce: "text" }
   },
-  UrlIngestTriggerSessionCheckRequest: {
+  SourceCaptureTriggerSessionCheckRequest: {
     kind: "record",
     fields: { database_id: "text", request_path: "text", session_nonce: "text" }
   },
@@ -659,7 +659,7 @@ export const expectedTypes = {
 
 export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
-  UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
+  SourceCaptureTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultCyclesTopUpCheck: "Result_3",
   ResultOpsAnswerSessionCheck: "Result_4",
   ResultCreateDatabase: "Result_5",
@@ -700,13 +700,13 @@ export const didTypeAliases = {
 
 export const expectedMethods = {
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
-  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
   check_cycles_top_up: { input: [], output: "ResultCyclesTopUpCheck", mode: "update" },
   check_database_write_cycles: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
-  check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
+  check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },

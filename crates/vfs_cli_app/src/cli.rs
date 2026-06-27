@@ -196,8 +196,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Remove URL ingest source and generated target nodes")]
-    PurgeUrlIngest {
+    #[command(about = "Remove source capture source and generated target nodes")]
+    PurgeSourceCapture {
         #[arg(
             long,
             conflicts_with = "source_path",
@@ -672,7 +672,7 @@ impl Command {
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
             | Self::DeleteTree { .. }
-            | Self::PurgeUrlIngest { .. }
+            | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => true,
@@ -740,7 +740,7 @@ impl Command {
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
             | Self::DeleteTree { .. }
-            | Self::PurgeUrlIngest { .. }
+            | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => false,
@@ -860,7 +860,7 @@ impl Command {
                 path: path.clone(),
                 json: *json,
             }),
-            Self::PurgeUrlIngest { .. } => None,
+            Self::PurgeSourceCapture { .. } => None,
             Self::MkdirNode { path, json } => Some(VfsCommand::MkdirNode {
                 path: path.clone(),
                 json: *json,

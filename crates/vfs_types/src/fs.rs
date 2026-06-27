@@ -488,13 +488,13 @@ pub struct WriteNodesRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionRequest {
+pub struct SourceCaptureTriggerSessionRequest {
     pub database_id: String,
     pub session_nonce: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionCheckRequest {
+pub struct SourceCaptureTriggerSessionCheckRequest {
     pub database_id: String,
     pub request_path: String,
     pub session_nonce: String,

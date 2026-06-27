@@ -109,7 +109,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills"
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
-Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
+Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. source capture and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 

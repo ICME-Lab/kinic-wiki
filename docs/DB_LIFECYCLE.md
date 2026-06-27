@@ -107,7 +107,7 @@ Normal operator flow:
 4. Successful DB updates consume DB cycles balance.
 5. DB delete discards any remaining cycles.
 
-URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
+source capture and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. source capture source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
 Treasury sweep, DB-specific ledger subaccounts, repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented.
 

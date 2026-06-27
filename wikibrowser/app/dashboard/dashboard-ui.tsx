@@ -223,7 +223,7 @@ export function OwnerPanel(props: {
           <AclQuickAction enabled={llmWriterEnabled} busy={props.busy} actionBusy={llmWriterBusy} enabledLabel="Disable LLM writer" disabledLabel={llmWriterButtonLabel} onDisable={() => llmWriterMember && requestRevoke(llmWriterMember)} onEnable={() => requestGrant(LLM_WRITER_PRINCIPAL, "writer")} />
         </div>
         <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-muted">
-          URL ingest trigger sessions are valid for 30 minutes. Revoking writer access does not immediately invalidate an already issued session ticket before it expires.
+          source capture trigger sessions are valid for 30 minutes. Revoking writer access does not immediately invalidate an already issued session ticket before it expires.
         </p>
       </div>
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
