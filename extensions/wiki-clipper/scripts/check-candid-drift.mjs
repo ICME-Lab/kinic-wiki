@@ -179,12 +179,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_13") return "ResultCyclesBillingConfig";
-  if (normalized === "Result_8") return "ResultCreateDatabase";
-  if (normalized === "Result_20") return "ResultDatabases";
-  if (normalized === "Result_32") return "ResultMkdirNode";
-  if (normalized === "Result_38") return "ResultNode";
-  if (normalized === "Result_46") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_10") return "ResultCyclesBillingConfig";
+  if (normalized === "Result_5") return "ResultCreateDatabase";
+  if (normalized === "Result_17") return "ResultDatabases";
+  if (normalized === "Result_29") return "ResultMkdirNode";
+  if (normalized === "Result_35") return "ResultNode";
+  if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
