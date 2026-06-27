@@ -1,13 +1,29 @@
 import { databaseRouteBase } from "./share-links";
 import type { SearchLimit, SearchPreviewMode, SearchScope } from "./search-options";
 
-const INTERNAL_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
+const INTERNAL_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources", "/Wiki"] as const;
 
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
     return "/Knowledge";
   }
   return `/${segments.join("/")}`;
+}
+
+export function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] !== "db" || !segments[1]) {
+    return { databaseId: null, nodePath: "/Knowledge" };
+  }
+  const path = segments
+    .slice(2)
+    .filter(Boolean)
+    .map(decodePathSegment)
+    .join("/");
+  return {
+    databaseId: decodePathSegment(segments[1]),
+    nodePath: path ? `/${path}` : "/Knowledge",
+  };
 }
 
 export function hrefForPath(
@@ -186,6 +202,14 @@ function decodeMarkdownHrefPath(path: string): string {
     return decodeURIComponent(path);
   } catch {
     return path;
+  }
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
   }
 }
 

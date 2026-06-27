@@ -8,9 +8,10 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
-import { canExpandChildNode, errorMessage, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
+import { canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
 
-const STORE_ROOT_NODES = STORE_ROOT_PATHS.map((path) => rootChild(path));
+const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
+const STORE_ROOT_PATH_SET = new Set<string>(STORE_ROOT_PATHS);
 
 export function ExplorerTree({
   canisterId,
@@ -30,13 +31,55 @@ export function ExplorerTree({
   onSelectedNode: (node: ChildNode) => void;
 }) {
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
+  const rootRequestKey = nodeRequestKey(canisterId, databaseId, "/", readPrincipal);
+  const [rootNodes, setRootNodes] = useState<LoadState<ChildNode[]>>(() => {
+    const cached = childNodesCache.current.get(rootRequestKey);
+    return cached ? { data: cached, error: null, loading: false } : { data: null, error: null, loading: true };
+  });
+  const requestedRootKey = useRef<string | null>(null);
+  const visibleRootNodes = rootNodes.data && rootNodes.data.length > 0 ? rootNodes.data : FALLBACK_STORE_ROOT_NODES;
+
+  useEffect(() => {
+    const cached = childNodesCache.current.get(rootRequestKey);
+    if (cached) {
+      setRootNodes({ data: filterStoreRoots(cached), error: null, loading: false });
+      return;
+    }
+    if (requestedRootKey.current === rootRequestKey) return;
+    let cancelled = false;
+    requestedRootKey.current = rootRequestKey;
+    setRootNodes({ data: null, error: null, loading: true });
+    import("@/lib/vfs-client")
+      .then((module) => module.listChildren(canisterId, databaseId, "/", readIdentity ?? undefined))
+      .then((data) => {
+        if (cancelled) return;
+        const roots = filterStoreRoots(data);
+        childNodesCache.current.set(rootRequestKey, roots);
+        setRootNodes({ data: roots, error: null, loading: false });
+      })
+      .catch((error: Error) => {
+        if (cancelled) return;
+        setRootNodes({ data: null, error: errorMessage(error), loading: false });
+        requestedRootKey.current = null;
+      });
+    return () => {
+      cancelled = true;
+      if (requestedRootKey.current === rootRequestKey) requestedRootKey.current = null;
+    };
+  }, [canisterId, databaseId, childNodesCache, readIdentity, rootRequestKey]);
+
   return (
     <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-      {STORE_ROOT_NODES.map((node) => (
+      {visibleRootNodes.map((node) => (
         <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
       ))}
+      {rootNodes.error ? <TreeStatus depth={0} label={rootNodes.error} /> : null}
     </div>
   );
+}
+
+function filterStoreRoots(children: ChildNode[]): ChildNode[] {
+  return children.filter((child) => STORE_ROOT_PATH_SET.has(child.path));
 }
 
 function TreeNode({

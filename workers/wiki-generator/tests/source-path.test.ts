@@ -1,21 +1,25 @@
 // Where: workers/wiki-generator/tests/source-path.test.ts
-// What: Raw source path validation tests.
-// Why: Queueing invalid source paths should fail before VFS writes.
+// What: Raw source path prefix and source id tests.
+// Why: Queueing stays under the configured source root without imposing a source schema.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sourceIdFromPath, validateCanonicalSourcePath } from "../src/source-path.js";
+import { sourceIdFromPath, validateSourceRootPath } from "../src/source-path.js";
 
-test("canonical raw source path is accepted", () => {
-  assert.doesNotThrow(() => validateCanonicalSourcePath("/Sources/chatgpt/alpha.md", "/Sources"));
-  assert.doesNotThrow(() => validateCanonicalSourcePath("/Sources/123/alpha.md", "/Sources"));
-  assert.equal(sourceIdFromPath("/Sources/chatgpt/alpha.md", "/Sources"), "chatgpt-alpha");
+test("source path under prefix is accepted", () => {
+  assert.doesNotThrow(() => validateSourceRootPath("/Sources/chatgpt/alpha.md", "/Sources"));
+  assert.doesNotThrow(() => validateSourceRootPath("/Sources/123/alpha.md", "/Sources"));
+  assert.doesNotThrow(() => validateSourceRootPath("/Sources/raw/chatgpt/alpha.md", "/Sources"));
+  assert.doesNotThrow(() => validateSourceRootPath("/Sources/web-abc/web-abc.md", "/Sources"));
 });
 
-test("non-canonical raw source paths are rejected", () => {
-  assert.throws(() => validateCanonicalSourcePath("/Sources/alpha/beta.txt", "/Sources"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/web-abc/web-abc.md", "/Sources"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/chatgpt/a..b.md", "/Sources"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/raw/alpha.md", "/Sources"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/sessions/alpha.md", "/Sources"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sourcesfoo/alpha/alpha.md", "/Sources"), /under/);
+test("source id is derived from nearest parent and file stem", () => {
+  assert.equal(sourceIdFromPath("/Sources/chatgpt/alpha.md", "/Sources"), "chatgpt-alpha");
+  assert.equal(sourceIdFromPath("/Sources/raw/chatgpt/alpha.md", "/Sources"), "chatgpt-alpha");
+  assert.equal(sourceIdFromPath("/Sources/web-abc/web-abc.md", "/Sources"), "web-abc-web-abc");
+  assert.equal(sourceIdFromPath("/Sources/loose.txt", "/Sources"), "loose.txt");
+});
+
+test("source path outside prefix is rejected", () => {
+  assert.throws(() => validateSourceRootPath("/Sourcesfoo/alpha/alpha.md", "/Sources"), /under/);
+  assert.throws(() => validateSourceRootPath("/Sources/", "/Sources"), /child/);
 });

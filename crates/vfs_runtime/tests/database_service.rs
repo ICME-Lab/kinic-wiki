@@ -1487,7 +1487,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
         .expect("reader grant should succeed");
-    let path = "/Sources/web/abc.md";
+    let path = "/Sources/raw/chatgpt/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 4);
 
     let reader = service
@@ -1547,7 +1547,11 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     let revoke_session = service
         .write_source_for_generation(
             "writer",
-            write_source_for_generation_request("alpha", "/Sources/web/def.md", "session-2"),
+            write_source_for_generation_request(
+                "alpha",
+                "/Sources/raw/chatgpt/def.md",
+                "session-2",
+            ),
             103,
         )
         .expect("writer should authorize second session");
@@ -1558,7 +1562,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/web/def.md",
+                "/Sources/raw/chatgpt/def.md",
                 &revoke_session.write.node.etag,
                 "session-2",
             ),
@@ -4355,13 +4359,13 @@ fn enforces_reader_writer_owner_roles() {
 }
 
 #[test]
-fn append_node_validates_effective_kind_paths() {
+fn source_paths_are_not_schema_validated_on_write_and_append() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let error = service
+    let appended = service
         .append_node(
             "owner",
             AppendNodeRequest {
@@ -4375,25 +4379,8 @@ fn append_node_validates_effective_kind_paths() {
             },
             2,
         )
-        .expect_err("non-canonical source append should fail");
-    assert!(error.contains("canonical form"));
-
-    let error = service
-        .append_node(
-            "owner",
-            AppendNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Sources/bad/bad.md".to_string(),
-                content: "bad".to_string(),
-                expected_etag: None,
-                separator: None,
-                metadata_json: None,
-                kind: None,
-            },
-            3,
-        )
-        .expect_err("kind=None under sources should be treated as file");
-    assert!(error.contains("source path must use source kind"));
+        .expect("source append should not enforce source path schema");
+    assert_eq!(appended.node.kind, NodeKind::Source);
 
     ensure_parent_folders(
         &service,
@@ -4402,7 +4389,7 @@ fn append_node_validates_effective_kind_paths() {
         "/Sources/skill-runs/review/1700000000000.md",
         3,
     );
-    let error = service
+    let file = service
         .write_node(
             "owner",
             WriteNodeRequest {
@@ -4415,22 +4402,8 @@ fn append_node_validates_effective_kind_paths() {
             },
             4,
         )
-        .expect_err("skill run source path should reject file kind");
-    assert!(error.contains("source path must use source kind"));
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
-                kind: NodeKind::Source,
-                content: "source".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            5,
-        )
-        .expect("skill run source path should accept source kind");
+        .expect("file under source-like path should not be rejected by schema");
+    assert_eq!(file.node.kind, NodeKind::File);
 
     ensure_parent_folders(&service, "owner", "alpha", "/Sources/good/good.md", 3);
     let source = service
@@ -4483,7 +4456,7 @@ fn append_node_validates_effective_kind_paths() {
 }
 
 #[test]
-fn move_node_validates_source_target_path() {
+fn move_node_keeps_source_kind_without_schema_validation() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -4506,7 +4479,7 @@ fn move_node_validates_source_target_path() {
         )
         .expect("source should write");
 
-    let error = service
+    let moved = service
         .move_node(
             "owner",
             MoveNodeRequest {
@@ -4518,22 +4491,9 @@ fn move_node_validates_source_target_path() {
             },
             4,
         )
-        .expect_err("non-canonical source target should fail");
-    assert!(error.contains("canonical form"));
-
-    service
-        .move_node(
-            "owner",
-            MoveNodeRequest {
-                database_id: "alpha".to_string(),
-                from_path: "/Sources/web/abc.md".to_string(),
-                to_path: "/Sources/chatgpt/def.md".to_string(),
-                expected_etag: Some(source.node.etag),
-                overwrite: false,
-            },
-            5,
-        )
-        .expect("canonical source target should pass");
+        .expect("move should not enforce source path schema");
+    assert_eq!(moved.node.path, "/Sources/web/wrong.txt");
+    assert_eq!(moved.node.kind, NodeKind::Source);
 }
 
 #[test]

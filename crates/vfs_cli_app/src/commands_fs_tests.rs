@@ -295,7 +295,7 @@ impl VfsApi for MockClient {
 }
 
 #[tokio::test]
-async fn write_node_accepts_canonical_source_paths_only() {
+async fn write_node_passes_source_paths_to_client() {
     let dir = tempdir().expect("tempdir should create");
     let input = dir.path().join("source.md");
     std::fs::write(&input, "source").expect("input should write");
@@ -328,7 +328,7 @@ async fn write_node_accepts_canonical_source_paths_only() {
             &test_connection(),
         )
         .await
-        .expect("canonical source path should pass");
+        .expect("source path should pass through CLI");
     }
 
     let writes = client.writes.lock().expect("writes should lock");
@@ -336,13 +336,13 @@ async fn write_node_accepts_canonical_source_paths_only() {
 }
 
 #[tokio::test]
-async fn write_node_rejects_non_canonical_source_paths() {
+async fn write_node_does_not_schema_validate_source_paths() {
     let dir = tempdir().expect("tempdir should create");
     let input = dir.path().join("source.md");
     std::fs::write(&input, "source").expect("input should write");
     let client = MockClient::default();
 
-    for path in [
+    let paths = [
         "/Sources-foo/a/a.md",
         "/Sources/x/y/y.md",
         "/Sources/x/x.txt",
@@ -350,8 +350,10 @@ async fn write_node_rejects_non_canonical_source_paths() {
         "/Sources/x/",
         "/Sources/raw/source.md",
         "/Sources/ingest-requests/source.md",
-    ] {
-        let error = run_command(
+    ];
+
+    for path in paths {
+        run_command(
             &client,
             Cli {
                 connection: ConnectionArgs {
@@ -374,16 +376,15 @@ async fn write_node_rejects_non_canonical_source_paths() {
             &test_connection(),
         )
         .await
-        .expect_err("non-canonical source path should fail");
-        assert!(error.to_string().contains("source path must"));
+        .expect("source path schema should not be checked by CLI");
     }
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert!(writes.is_empty());
+    assert_eq!(writes.len(), paths.len());
 }
 
 #[tokio::test]
-async fn move_node_rejects_non_canonical_source_target() {
+async fn move_node_does_not_schema_validate_source_target() {
     let client = MockClient {
         nodes: vec![Node {
             path: "/Sources/web/abc.md".to_string(),
@@ -397,7 +398,7 @@ async fn move_node_rejects_non_canonical_source_target() {
         ..MockClient::default()
     };
 
-    let error = run_command(
+    run_command(
         &client,
         Cli {
             connection: ConnectionArgs {
@@ -419,10 +420,11 @@ async fn move_node_rejects_non_canonical_source_target() {
         &test_connection(),
     )
     .await
-    .expect_err("non-canonical source target should fail");
+    .expect("source target schema should not be checked by CLI");
 
-    assert!(error.to_string().contains("canonical form"));
-    assert!(client.moves.lock().expect("moves should lock").is_empty());
+    let moves = client.moves.lock().expect("moves should lock");
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0].to_path, "/Sources/web/wrong.txt");
 }
 
 #[tokio::test]

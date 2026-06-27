@@ -14,10 +14,14 @@ const compiled = ts.transpileModule(source, {
   }
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, pathFromSegments } = await import(moduleUrl);
+const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await import(moduleUrl);
 
 assert.equal(pathFromSegments([]), "/Knowledge");
 assert.equal(pathFromSegments(["Knowledge", "100%.md"]), "/Knowledge/100%.md");
+assert.deepEqual(parseWikiRoute("/db/db_1"), { databaseId: "db_1", nodePath: "/Knowledge" });
+assert.deepEqual(parseWikiRoute("/db/db_1/Wiki"), { databaseId: "db_1", nodePath: "/Wiki" });
+assert.deepEqual(parseWikiRoute("/db/db_1/Wiki/page.md"), { databaseId: "db_1", nodePath: "/Wiki/page.md" });
+assert.deepEqual(parseWikiRoute("/db/db%201/Wiki/space%20name.md"), { databaseId: "db 1", nodePath: "/Wiki/space name.md" });
 assert.equal(
   hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/100%.md"),
   "/db/alpha/Knowledge/100%25.md"

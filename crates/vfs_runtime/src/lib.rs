@@ -41,7 +41,6 @@ use vfs_types::{
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
-use wiki_domain::{validate_knowledge_source_path, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -2883,7 +2882,6 @@ impl VfsService {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        validate_source_path_for_kind(&request.path, &request.kind)?;
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
@@ -2949,9 +2947,6 @@ impl VfsService {
         request: WriteNodesRequest,
         now: i64,
     ) -> Result<Vec<WriteNodeResult>, String> {
-        for node in &request.nodes {
-            validate_source_path_for_kind(&node.path, &node.kind)?;
-        }
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
@@ -2989,12 +2984,6 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                let kind = store
-                    .read_node(&request.path)?
-                    .map(|node| node.kind)
-                    .or_else(|| request.kind.clone())
-                    .unwrap_or(NodeKind::File);
-                validate_source_path_for_kind(&request.path, &kind)?;
                 store.append_node(request, now)
             });
         if result.is_ok() {
@@ -3046,9 +3035,6 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                if let Some(node) = store.read_node(&request.from_path)? {
-                    validate_source_path_for_kind(&request.to_path, &node.kind)?;
-                }
                 store.move_node(request, now)
             });
         if result.is_ok() {
@@ -6985,7 +6971,6 @@ fn validate_source_for_generation_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_knowledge_source_run_path(&request.path)?;
     validate_session_nonce(&request.session_nonce)
 }
 
@@ -6995,16 +6980,10 @@ fn validate_source_run_session_check_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_knowledge_source_run_path(&request.source_path)?;
     if request.source_etag.trim().is_empty() {
         return Err("source_etag is required".to_string());
     }
     validate_session_nonce(&request.session_nonce)
-}
-
-fn validate_knowledge_source_run_path(path: &str) -> Result<(), String> {
-    validate_knowledge_source_path(path)?;
-    validate_source_path_for_kind(path, &NodeKind::Source)
 }
 
 fn validate_url_ingest_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
