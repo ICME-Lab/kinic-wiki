@@ -41,10 +41,7 @@ use vfs_runtime::{
     RequiredRole, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
-    AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, ControllerFinalizeImportRequest,
-    ControllerImportDatabaseMembersRequest, ControllerImportDatabaseMetadataRequest,
-    ControllerImportNodesChunkRequest, ControllerImportNodesChunkResult,
-    ControllerVerifyAllDatabasesResult, ControllerVerifyDatabaseResult, CreateDatabaseRequest,
+    AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
     DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
@@ -715,56 +712,6 @@ fn query_database_sql_json(
     with_service(|service| {
         service.query_database_sql_json(&database_id, &caller_text(), &sql, limit)
     })
-}
-
-#[update]
-fn controller_import_database_metadata(
-    request: ControllerImportDatabaseMetadataRequest,
-) -> Result<(), String> {
-    require_controller_caller()?;
-    with_service(|service| {
-        service
-            .controller_import_database_metadata(request)
-            .map(|_| ())
-    })
-}
-
-#[update]
-fn controller_import_database_members(
-    request: ControllerImportDatabaseMembersRequest,
-) -> Result<(), String> {
-    require_controller_caller()?;
-    with_service(|service| service.controller_import_database_members(request))
-}
-
-#[update]
-fn controller_import_nodes_chunk(
-    request: ControllerImportNodesChunkRequest,
-) -> Result<ControllerImportNodesChunkResult, String> {
-    require_controller_caller()?;
-    with_service(|service| service.controller_import_nodes_chunk(request))
-}
-
-#[update]
-fn controller_finalize_import(
-    request: ControllerFinalizeImportRequest,
-) -> Result<ControllerVerifyDatabaseResult, String> {
-    require_controller_caller()?;
-    with_service(|service| service.controller_finalize_import(request))
-}
-
-#[query]
-fn controller_verify_database(
-    database_id: String,
-) -> Result<ControllerVerifyDatabaseResult, String> {
-    require_controller_caller()?;
-    with_service(|service| service.controller_verify_database(&database_id))
-}
-
-#[query]
-fn controller_verify_all_databases() -> Result<ControllerVerifyAllDatabasesResult, String> {
-    require_controller_caller()?;
-    with_service(|service| service.controller_verify_all_databases())
 }
 
 #[query]

@@ -107,9 +107,6 @@ pub(crate) struct ProgressHandlerGuard<'connection> {
     conn: &'connection Connection,
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) struct ProgressHandlerGuard;
-
 #[cfg(not(target_arch = "wasm32"))]
 impl<'connection> ProgressHandlerGuard<'connection> {
     pub(crate) fn new(
@@ -193,7 +190,11 @@ pub(crate) use ic_sqlite_vfs::db::transaction::UpdateConnection as Transaction;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::db::{FromColumn, Row, ToSql};
 #[cfg(target_arch = "wasm32")]
+use ic_sqlite_vfs::sqlite_vfs::ffi;
+#[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::{DbError as Error, params};
+#[cfg(target_arch = "wasm32")]
+use std::ffi::{c_int, c_void};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Result<T> = std::result::Result<T, Error>;
@@ -419,17 +420,79 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn install_progress_handler(
-    _conn: &Connection,
-    _op_interval: i32,
-    _callback_budget: u32,
-) -> ProgressHandlerGuard {
-    ProgressHandlerGuard
+struct ProgressHandlerState {
+    callbacks: u32,
+    callback_budget: u32,
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn is_interrupted(_error: &Error) -> bool {
-    false
+pub(crate) struct ProgressHandlerGuard<'connection> {
+    raw: *mut ffi::sqlite3,
+    _conn: &'connection Connection,
+    _state: Box<ProgressHandlerState>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'connection> ProgressHandlerGuard<'connection> {
+    pub(crate) fn new(
+        conn: &'connection Connection,
+        op_interval: c_int,
+        callback_budget: u32,
+    ) -> Self {
+        unsafe extern "C" fn progress_callback(state: *mut c_void) -> c_int {
+            // SAFETY: sqlite3 calls this only while ProgressHandlerGuard is alive.
+            // The pointer is the boxed ProgressHandlerState registered in new().
+            let state = unsafe { &mut *(state.cast::<ProgressHandlerState>()) };
+            state.callbacks = state.callbacks.saturating_add(1);
+            c_int::from(state.callbacks > state.callback_budget)
+        }
+
+        let raw = conn.raw();
+        let mut state = Box::new(ProgressHandlerState {
+            callbacks: 0,
+            callback_budget,
+        });
+        // SAFETY: raw belongs to conn, and the boxed state is retained by the guard
+        // until Drop unregisters the callback before the box is freed.
+        unsafe {
+            ffi::sqlite3_progress_handler(
+                raw,
+                op_interval,
+                Some(progress_callback),
+                state.as_mut() as *mut ProgressHandlerState as *mut c_void,
+            );
+        }
+        Self {
+            raw,
+            _conn: conn,
+            _state: state,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for ProgressHandlerGuard<'_> {
+    fn drop(&mut self) {
+        // SAFETY: raw is the same live sqlite handle used during registration;
+        // passing a null callback clears SQLite's progress handler.
+        unsafe {
+            ffi::sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn install_progress_handler(
+    conn: &Connection,
+    op_interval: c_int,
+    callback_budget: u32,
+) -> ProgressHandlerGuard<'_> {
+    ProgressHandlerGuard::new(conn, op_interval, callback_budget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn is_interrupted(error: &Error) -> bool {
+    matches!(error, Error::Sqlite(code, _) if *code == ffi::SQLITE_INTERRUPT)
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -751,14 +751,20 @@ async function openSettingsOnce(open = openSettings) {
 
 async function reserveSourceCapture(key) {
   if (activeSourceCaptures.has(key)) return false;
-  const current = await readInFlightRecord();
-  const now = Date.now();
-  if (current?.key === key && current.expiresAt > now) {
-    return false;
-  }
-  await writeInFlightRecord({ key, expiresAt: now + SOURCE_CAPTURE_IN_FLIGHT_TTL_MS });
   activeSourceCaptures.add(key);
-  return true;
+  try {
+    const current = await readInFlightRecord();
+    const now = Date.now();
+    if (current?.key === key && current.expiresAt > now) {
+      activeSourceCaptures.delete(key);
+      return false;
+    }
+    await writeInFlightRecord({ key, expiresAt: now + SOURCE_CAPTURE_IN_FLIGHT_TTL_MS });
+    return true;
+  } catch (error) {
+    activeSourceCaptures.delete(key);
+    throw error;
+  }
 }
 
 async function releaseSourceCapture(key) {

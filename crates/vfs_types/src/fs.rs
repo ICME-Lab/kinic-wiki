@@ -66,57 +66,6 @@ pub struct DatabaseSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerImportDatabaseMetadataRequest {
-    pub database_id: String,
-    pub name: String,
-    pub profile: Option<String>,
-    pub active_mount_id: Option<u16>,
-    pub schema_version: String,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerImportDatabaseMembersRequest {
-    pub database_id: String,
-    pub members: Vec<DatabaseMember>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerImportNodesChunkRequest {
-    pub database_id: String,
-    pub nodes: Vec<Node>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerImportNodesChunkResult {
-    pub imported_count: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerFinalizeImportRequest {
-    pub database_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerVerifyDatabaseResult {
-    pub database_id: String,
-    pub node_count: u64,
-    pub file_count: u64,
-    pub max_node_updated_at: Option<i64>,
-    pub logical_checksum: String,
-    pub integrity_check: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct ControllerVerifyAllDatabasesResult {
-    pub database_count: u64,
-    pub member_count: u64,
-    pub cycle_account_count: u64,
-    pub databases: Vec<ControllerVerifyDatabaseResult>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CyclesBillingConfig {
     pub kinic_ledger_canister_id: String,
     pub billing_authority_id: String,

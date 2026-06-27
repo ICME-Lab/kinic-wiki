@@ -14,12 +14,10 @@ use vfs_runtime::{
 };
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeRequest, ControllerFinalizeImportRequest, ControllerImportDatabaseMembersRequest,
-    ControllerImportDatabaseMetadataRequest, ControllerImportNodesChunkRequest,
-    CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseMember, DatabaseRole, DatabaseStatus,
+    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
     MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, Node, NodeKind,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
     SearchPreviewMode, SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
@@ -40,30 +38,6 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
-}
-
-fn import_metadata_request(database_id: &str) -> ControllerImportDatabaseMetadataRequest {
-    ControllerImportDatabaseMetadataRequest {
-        database_id: database_id.to_string(),
-        name: "Imported DB".to_string(),
-        profile: Some("memory".to_string()),
-        active_mount_id: None,
-        schema_version: "vfs_store:current".to_string(),
-        created_at_ms: 10,
-        updated_at_ms: 20,
-    }
-}
-
-fn import_node(path: &str, kind: NodeKind, content: &str, etag: &str) -> Node {
-    Node {
-        path: path.to_string(),
-        kind,
-        content: content.to_string(),
-        created_at: 100,
-        updated_at: 200,
-        etag: etag.to_string(),
-        metadata_json: r#"{"source":"fixture"}"#.to_string(),
-    }
 }
 
 fn activate_pending_database(service: &VfsService) -> String {
@@ -184,166 +158,6 @@ fn ledger_details<'a>(
         ledger_fee_e8s,
         ledger_created_at_time_ns: u64::try_from(now).expect("now should fit u64") * 1_000_000,
     }
-}
-
-#[test]
-fn controller_import_metadata_creates_no_cycle_account_and_rejects_duplicate_database() {
-    let (service, root) = service_with_root();
-    service
-        .controller_import_database_metadata(import_metadata_request("db_import_meta"))
-        .expect("metadata import should create active database");
-
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let cycle_accounts: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM database_cycle_accounts WHERE database_id = 'db_import_meta'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("cycle account count should load");
-    assert_eq!(cycle_accounts, 0);
-
-    let duplicate =
-        service.controller_import_database_metadata(import_metadata_request("db_import_meta"));
-    assert!(
-        duplicate
-            .expect_err("duplicate database import should reject")
-            .contains("database already exists")
-    );
-}
-
-#[test]
-fn controller_import_members_preserves_roles_and_created_at() {
-    let (service, root) = service_with_root();
-    service
-        .controller_import_database_metadata(import_metadata_request("db_import_members"))
-        .expect("metadata import should create database");
-    service
-        .controller_import_database_members(ControllerImportDatabaseMembersRequest {
-            database_id: "db_import_members".to_string(),
-            members: vec![
-                DatabaseMember {
-                    database_id: "db_import_members".to_string(),
-                    principal: "aaaaa-aa".to_string(),
-                    role: DatabaseRole::Owner,
-                    created_at_ms: 111,
-                },
-                DatabaseMember {
-                    database_id: "db_import_members".to_string(),
-                    principal: "2vxsx-fae".to_string(),
-                    role: DatabaseRole::Reader,
-                    created_at_ms: 222,
-                },
-            ],
-        })
-        .expect("member import should preserve backup rows");
-
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let owner_created_at: i64 = conn
-        .query_row(
-            "SELECT created_at_ms FROM database_members
-             WHERE database_id = 'db_import_members' AND principal = 'aaaaa-aa' AND role = 'owner'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("owner member should exist");
-    let reader_created_at: i64 = conn
-        .query_row(
-            "SELECT created_at_ms FROM database_members
-             WHERE database_id = 'db_import_members' AND principal = '2vxsx-fae' AND role = 'reader'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("reader member should exist");
-    assert_eq!(owner_created_at, 111);
-    assert_eq!(reader_created_at, 222);
-}
-
-#[test]
-fn controller_import_nodes_preserves_node_fields_and_verifies() {
-    let service = service();
-    service
-        .controller_import_database_metadata(import_metadata_request("db_import_nodes"))
-        .expect("metadata import should create database");
-    service
-        .controller_import_database_members(ControllerImportDatabaseMembersRequest {
-            database_id: "db_import_nodes".to_string(),
-            members: vec![DatabaseMember {
-                database_id: "db_import_nodes".to_string(),
-                principal: "aaaaa-aa".to_string(),
-                role: DatabaseRole::Owner,
-                created_at_ms: 1,
-            }],
-        })
-        .expect("owner import should grant read access");
-    service
-        .controller_import_nodes_chunk(ControllerImportNodesChunkRequest {
-            database_id: "db_import_nodes".to_string(),
-            nodes: vec![
-                import_node("/Knowledge", NodeKind::Folder, "", "folder-etag"),
-                import_node(
-                    "/Knowledge/imported.md",
-                    NodeKind::File,
-                    "imported",
-                    "file-etag",
-                ),
-            ],
-        })
-        .expect("node import should preserve backup fields");
-
-    let node = service
-        .read_node("db_import_nodes", "aaaaa-aa", "/Knowledge/imported.md")
-        .expect("imported node should read")
-        .expect("imported node should exist");
-    assert_eq!(node.content, "imported");
-    assert_eq!(node.created_at, 100);
-    assert_eq!(node.updated_at, 200);
-    assert_eq!(node.etag, "file-etag");
-    assert_eq!(node.metadata_json, r#"{"source":"fixture"}"#);
-
-    let verify = service
-        .controller_finalize_import(ControllerFinalizeImportRequest {
-            database_id: "db_import_nodes".to_string(),
-        })
-        .expect("finalize should verify imported database");
-    assert_eq!(verify.integrity_check, "ok");
-    assert!(verify.node_count >= 2);
-    assert!(verify.file_count >= 1);
-    assert_eq!(verify.max_node_updated_at, Some(200));
-}
-
-#[test]
-fn controller_import_rejects_duplicate_paths_and_unsorted_chunks() {
-    let service = service();
-    service
-        .controller_import_database_metadata(import_metadata_request("db_import_rejects"))
-        .expect("metadata import should create database");
-
-    let duplicate = service.controller_import_nodes_chunk(ControllerImportNodesChunkRequest {
-        database_id: "db_import_rejects".to_string(),
-        nodes: vec![
-            import_node("/Knowledge/a.md", NodeKind::File, "a", "a1"),
-            import_node("/Knowledge/a.md", NodeKind::File, "a", "a2"),
-        ],
-    });
-    assert!(
-        duplicate
-            .expect_err("duplicate path should reject")
-            .contains("duplicate import path")
-    );
-
-    let unsorted = service.controller_import_nodes_chunk(ControllerImportNodesChunkRequest {
-        database_id: "db_import_rejects".to_string(),
-        nodes: vec![
-            import_node("/Knowledge/b.md", NodeKind::File, "b", "b"),
-            import_node("/Knowledge/a.md", NodeKind::File, "a", "a"),
-        ],
-    });
-    assert!(
-        unsorted
-            .expect_err("unsorted chunk should reject")
-            .contains("sorted by path ascending")
-    );
 }
 
 #[test]

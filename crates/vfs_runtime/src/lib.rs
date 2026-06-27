@@ -20,28 +20,25 @@ use ic_sqlite_vfs::{Db, DbError, DbHandle};
 use sha2::{Digest, Sha256};
 use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
-    AppendNodeRequest, ChildNode, ControllerFinalizeImportRequest,
-    ControllerImportDatabaseMembersRequest, ControllerImportDatabaseMetadataRequest,
-    ControllerImportNodesChunkRequest, ControllerImportNodesChunkResult,
-    ControllerVerifyAllDatabasesResult, ControllerVerifyDatabaseResult, CyclesBillingConfig,
-    CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry,
-    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember,
-    DatabaseRole, DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCategoryGraph,
-    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketListingPreview, MarketListingStatus,
-    MarketListingVerifiedStats, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
-    WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
+    CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
+    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{validate_canonical_source_path, validate_source_path_for_kind};
@@ -2593,187 +2590,6 @@ impl VfsService {
             )
             .map_err(|error| error.to_string())?;
             Ok(())
-        })
-    }
-
-    pub fn controller_import_database_metadata(
-        &self,
-        request: ControllerImportDatabaseMetadataRequest,
-    ) -> Result<DatabaseMeta, String> {
-        validate_database_id(&request.database_id)?;
-        if request.schema_version.trim().is_empty() {
-            return Err("schema_version is required".to_string());
-        }
-        let name = normalize_database_name(&request.name)?;
-        let profile = normalize_import_profile(request.profile.as_deref())?;
-        let meta = self.write_index(|tx| {
-            if database_exists(tx, &request.database_id)? {
-                return Err(format!("database already exists: {}", request.database_id));
-            }
-            let mount_id = match request.active_mount_id {
-                Some(mount_id) => {
-                    validate_import_mount_id(mount_id)?;
-                    if mount_id_exists(tx, mount_id)? {
-                        return Err(format!("database mount_id already exists: {mount_id}"));
-                    }
-                    mount_id
-                }
-                None => allocate_mount_id(tx)?,
-            };
-            let db_file_name = self.database_file_name(&request.database_id, mount_id)?;
-            tx.execute(
-                "INSERT INTO databases
-                 (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
-                  schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, 'active', ?6, 0, ?7, ?8)",
-                params![
-                    request.database_id,
-                    name,
-                    profile,
-                    db_file_name,
-                    i64::from(mount_id),
-                    request.schema_version,
-                    request.created_at_ms,
-                    request.updated_at_ms
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            record_mount_history(
-                tx,
-                &request.database_id,
-                mount_id,
-                "logical_import",
-                request.created_at_ms,
-            )?;
-            Ok(DatabaseMeta {
-                database_id: request.database_id.clone(),
-                name,
-                db_file_name,
-                mount_id,
-                schema_version: request.schema_version.clone(),
-                logical_size_bytes: 0,
-            })
-        })?;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(parent) = Path::new(&meta.db_file_name).parent() {
-                create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
-        }
-        if let Err(error) = self.database_store(&meta)?.run_fs_migrations() {
-            let _ = self.write_index(|tx| {
-                tx.execute(
-                    "DELETE FROM database_mount_history WHERE database_id = ?1",
-                    params![meta.database_id.as_str()],
-                )
-                .map_err(|delete_error| delete_error.to_string())?;
-                tx.execute(
-                    "DELETE FROM databases WHERE database_id = ?1",
-                    params![meta.database_id.as_str()],
-                )
-                .map_err(|delete_error| delete_error.to_string())?;
-                Ok(())
-            });
-            return Err(error);
-        }
-        Ok(meta)
-    }
-
-    pub fn controller_import_database_members(
-        &self,
-        request: ControllerImportDatabaseMembersRequest,
-    ) -> Result<(), String> {
-        self.database_meta(&request.database_id)?;
-        if request.members.len() as i64 > MAX_DATABASE_MEMBERS_PER_DATABASE {
-            return Err("too many database members".to_string());
-        }
-        let mut principals = BTreeSet::new();
-        for member in &request.members {
-            if member.database_id != request.database_id {
-                return Err("member database_id does not match request".to_string());
-            }
-            let principal = Principal::from_text(&member.principal)
-                .map_err(|error| format!("invalid member principal: {error}"))?
-                .to_text();
-            if !principals.insert(principal) {
-                return Err(format!("duplicate database member: {}", member.principal));
-            }
-        }
-        self.write_index(|tx| {
-            tx.execute(
-                "DELETE FROM database_members WHERE database_id = ?1",
-                params![request.database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            for member in request.members {
-                let principal = Principal::from_text(&member.principal)
-                    .map_err(|error| format!("invalid member principal: {error}"))?
-                    .to_text();
-                tx.execute(
-                    "INSERT INTO database_members (database_id, principal, role, created_at_ms)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![
-                        member.database_id,
-                        principal,
-                        role_to_db(member.role),
-                        member.created_at_ms
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        })
-    }
-
-    pub fn controller_import_nodes_chunk(
-        &self,
-        request: ControllerImportNodesChunkRequest,
-    ) -> Result<ControllerImportNodesChunkResult, String> {
-        let meta = self.database_meta(&request.database_id)?;
-        let result = self
-            .database_store(&meta)?
-            .import_nodes_chunk(request.nodes)?;
-        self.refresh_logical_size_for_meta(&meta.database_id, &meta)?;
-        Ok(result)
-    }
-
-    pub fn controller_finalize_import(
-        &self,
-        request: ControllerFinalizeImportRequest,
-    ) -> Result<ControllerVerifyDatabaseResult, String> {
-        let meta = self.database_meta(&request.database_id)?;
-        self.refresh_logical_size_for_meta(&meta.database_id, &meta)?;
-        self.database_store(&meta)?
-            .verify_database(&meta.database_id)
-    }
-
-    pub fn controller_verify_database(
-        &self,
-        database_id: &str,
-    ) -> Result<ControllerVerifyDatabaseResult, String> {
-        let meta = self.database_meta(database_id)?;
-        self.database_store(&meta)?
-            .verify_database(&meta.database_id)
-    }
-
-    pub fn controller_verify_all_databases(
-        &self,
-    ) -> Result<ControllerVerifyAllDatabasesResult, String> {
-        let databases = self.read_index(load_active_databases_for_store_root_seed)?;
-        let member_count = self.read_index(count_database_members)?;
-        let cycle_account_count = self.read_index(count_database_cycle_accounts)?;
-        let mut results = Vec::with_capacity(databases.len());
-        for meta in &databases {
-            results.push(
-                self.database_store(meta)?
-                    .verify_database(&meta.database_id)?,
-            );
-        }
-        Ok(ControllerVerifyAllDatabasesResult {
-            database_count: databases.len() as u64,
-            member_count,
-            cycle_account_count,
-            databases: results,
         })
     }
 
@@ -7727,34 +7543,6 @@ fn allocate_mount_id(conn: &Connection) -> Result<u16, String> {
     Err("database mount_id capacity exhausted".to_string())
 }
 
-fn validate_import_mount_id(mount_id: u16) -> Result<(), String> {
-    if !(MIN_DATABASE_MOUNT_ID..=MAX_DATABASE_MOUNT_ID).contains(&mount_id) {
-        return Err(format!("database mount_id is out of range: {mount_id}"));
-    }
-    Ok(())
-}
-
-fn mount_id_exists(conn: &Connection, mount_id: u16) -> Result<bool, String> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*)
-             FROM databases
-             WHERE mount_id = ?1 OR active_mount_id = ?1",
-            params![i64::from(mount_id)],
-            |row| crate::sqlite::row_get(row, 0),
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(count > 0)
-}
-
-fn normalize_import_profile(profile: Option<&str>) -> Result<String, String> {
-    let profile = profile.unwrap_or("memory").trim();
-    if profile.is_empty() || profile.chars().any(char::is_control) {
-        return Err("database profile is invalid".to_string());
-    }
-    Ok(profile.to_string())
-}
-
 fn record_mount_history(
     conn: &Connection,
     database_id: &str,
@@ -8172,26 +7960,6 @@ fn database_member_count_for_conn(conn: &Connection, database_id: &str) -> Resul
         |row| crate::sqlite::row_get(row, 0),
     )
     .map_err(|error| error.to_string())
-}
-
-fn count_database_members(conn: &Connection) -> Result<u64, String> {
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM database_members", params![], |row| {
-            crate::sqlite::row_get(row, 0)
-        })
-        .map_err(|error| error.to_string())?;
-    u64::try_from(count).map_err(|error| error.to_string())
-}
-
-fn count_database_cycle_accounts(conn: &Connection) -> Result<u64, String> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM database_cycle_accounts",
-            params![],
-            |row| crate::sqlite::row_get(row, 0),
-        )
-        .map_err(|error| error.to_string())?;
-    u64::try_from(count).map_err(|error| error.to_string())
 }
 
 fn role_from_db(role: &str) -> crate::sqlite::Result<DatabaseRole> {

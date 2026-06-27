@@ -23,39 +23,6 @@ type ChildNode = record {
   has_children : bool;
   is_virtual : bool;
 };
-type ControllerFinalizeImportRequest = record { database_id : text };
-type ControllerImportDatabaseMembersRequest = record {
-  members : vec DatabaseMember;
-  database_id : text;
-};
-type ControllerImportDatabaseMetadataRequest = record {
-  name : text;
-  updated_at_ms : int64;
-  created_at_ms : int64;
-  schema_version : text;
-  database_id : text;
-  active_mount_id : opt nat16;
-  profile : opt text;
-};
-type ControllerImportNodesChunkRequest = record {
-  nodes : vec Node;
-  database_id : text;
-};
-type ControllerImportNodesChunkResult = record { imported_count : nat32 };
-type ControllerVerifyAllDatabasesResult = record {
-  database_count : nat64;
-  databases : vec ControllerVerifyDatabaseResult;
-  cycle_account_count : nat64;
-  member_count : nat64;
-};
-type ControllerVerifyDatabaseResult = record {
-  node_count : nat64;
-  integrity_check : text;
-  database_id : text;
-  logical_checksum : text;
-  max_node_updated_at : opt int64;
-  file_count : nat64;
-};
 type CreateDatabaseRequest = record { name : text };
 type CreateDatabaseResult = record { name : text; database_id : text };
 type CyclesBillingConfig = record {
@@ -565,9 +532,6 @@ type Result_43 = variant { Ok : WikiMetrics; Err : text };
 type Result_44 = variant { Ok : vec WikiMetricsPoint; Err : text };
 type Result_45 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_46 = variant { Ok : WriteSourceForGenerationResult; Err : text };
-type Result_5 = variant { Ok : ControllerVerifyDatabaseResult; Err : text };
-type Result_6 = variant { Ok : ControllerImportNodesChunkResult; Err : text };
-type Result_7 = variant { Ok : ControllerVerifyAllDatabasesResult; Err : text };
 type Result_8 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_9 = variant { Ok : DeleteNodeResult; Err : text };
 type SearchNodeHit = record {
@@ -704,18 +668,6 @@ service : (CyclesBillingConfig) -> {
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
     ) query;
-  controller_finalize_import : (ControllerFinalizeImportRequest) -> (Result_5);
-  controller_import_database_members : (
-      ControllerImportDatabaseMembersRequest,
-    ) -> (Result_1);
-  controller_import_database_metadata : (
-      ControllerImportDatabaseMetadataRequest,
-    ) -> (Result_1);
-  controller_import_nodes_chunk : (ControllerImportNodesChunkRequest) -> (
-      Result_6,
-    );
-  controller_verify_all_databases : () -> (Result_7) query;
-  controller_verify_database : (text) -> (Result_5) query;
   create_database : (CreateDatabaseRequest) -> (Result_8);
   delete_database : (DatabaseIdRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_9);
