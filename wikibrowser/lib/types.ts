@@ -111,7 +111,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -121,7 +121,6 @@ export type DatabaseSummary = {
   logicalSizeBytes: string;
   cyclesBalance: string;
   cyclesSuspendedAtMs: string | null;
-  archivedAtMs: string | null;
   deletedAtMs: string | null;
 };
 

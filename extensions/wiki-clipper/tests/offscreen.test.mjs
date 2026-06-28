@@ -318,7 +318,7 @@ test("listWritableDatabases returns active writable database summaries", async (
           Ok: [
             rawDatabase("team-db", "Team Wiki", "Writer", "Active"),
             rawDatabase("reader-db", "Read Wiki", "Reader", "Active"),
-            rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
+            rawDatabase("old-db", "Old Wiki", "Owner", "Deleted")
           ]
         };
       },
@@ -384,7 +384,6 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
             logical_size_bytes: 0n,
             cycles_balance: [balanceCycles],
             cycles_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
-            archived_at_ms: [],
             deleted_at_ms: []
           }
         ]
@@ -412,7 +411,6 @@ function rawDatabase(databaseId, name, role, status) {
     logical_size_bytes: 0n,
     cycles_balance: [20_000n],
     cycles_suspended_at_ms: [],
-    archived_at_ms: [],
     deleted_at_ms: []
   };
 }

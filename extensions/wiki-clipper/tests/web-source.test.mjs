@@ -15,7 +15,7 @@ test("buildWebEvidenceSource emits canonical browser DOM source", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(raw.path, /^\/Sources\/web\/example-post-[a-f0-9]{8}\.md$/);
   assert.equal(raw.path.split("/").at(-2), "web");
   assert.equal(raw.sourceId, `web-${raw.path.split("/").at(-1)?.replace(".md", "")}`);
   assert.match(raw.content, /kind: kinic\.evidence_web_source/);
@@ -42,7 +42,7 @@ test("buildWebEvidenceSource emits canonical browser DOM source", async () => {
   });
 });
 
-test("buildWebEvidenceSource path does not depend on title", async () => {
+test("buildWebEvidenceSource path includes title and url hash", async () => {
   const first = await buildWebEvidenceSource(
     {
       url: "https://example.com/post",
@@ -61,15 +61,26 @@ test("buildWebEvidenceSource path does not depend on title", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(first.path, second.path);
-  assert.match(first.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.notEqual(first.path, second.path);
+  assert.match(first.path, /^\/Sources\/web\/日本語-path-bad-title-x-end-[a-f0-9]{8}\.md$/);
+  assert.match(second.path, /^\/Sources\/web\/example.com-[a-f0-9]{8}\.md$/);
 });
 
 test("webSourcePathForUrl ignores hash fragments", async () => {
   assert.equal(
-    await webSourcePathForUrl("https://example.com/post#section"),
-    await webSourcePathForUrl("https://example.com/post")
+    await webSourcePathForUrl("https://example.com/post#section", "Example Post"),
+    await webSourcePathForUrl("https://example.com/post", "Example Post")
   );
+});
+
+test("buildWebEvidenceSource preserves unicode title slugs", async () => {
+  const raw = await buildWebEvidenceSource({
+    url: "https://example.com/unicode",
+    title: "会議 メモ",
+    text: "Body"
+  });
+
+  assert.match(raw.path, /^\/Sources\/web\/会議-メモ-[a-f0-9]{8}\.md$/);
 });
 
 test("buildWebEvidenceSource truncates oversized browser DOM text", async () => {

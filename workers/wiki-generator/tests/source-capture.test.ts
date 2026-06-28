@@ -114,6 +114,7 @@ test("queued source capture uses source write ack without reading source after w
   assert.equal(vfs.lastRequest?.finishedAt, null);
   assert.equal(vfs.lastRequest?.metadataJson, vfs.requestNode?.metadataJson);
   assert.ok(vfs.lastSourceWrite);
+  assert.match(vfs.lastSourceWrite.path, /^\/Sources\/web\/fetched-title-[a-f0-9]{8}\.md$/);
   const metadata = JSON.parse(vfs.requestNode?.metadataJson ?? "{}");
   assert.equal(metadata.request_type, "source_capture");
   assert.equal(metadata.url, "https://example.com/a");

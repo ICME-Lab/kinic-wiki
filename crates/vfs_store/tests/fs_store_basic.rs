@@ -2605,6 +2605,73 @@ fn root_prefix_searches_all_nodes() {
     assert!(path_search_paths.contains(&"/Other/root-search.md"));
 }
 
+#[test]
+fn root_prefix_search_includes_source_nodes() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Sources/web/root-search-source.md", 19);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Sources/web/root-search-source.md".to_string(),
+                kind: NodeKind::Source,
+                content: "source evidence includes needle-source-token".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            20,
+        )
+        .expect("source write should succeed");
+
+    let search_hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "needle-source-token".to_string(),
+            prefix: Some("/".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::Light),
+        })
+        .expect("root search should include source nodes");
+    let root_hit = search_hits
+        .iter()
+        .find(|hit| hit.path == "/Sources/web/root-search-source.md")
+        .expect("root search should return the source content hit");
+    assert_eq!(root_hit.kind, NodeKind::Source);
+    let root_preview = root_hit
+        .preview
+        .as_ref()
+        .expect("source content hit should include a light preview");
+    assert_eq!(root_preview.field, SearchPreviewField::Content);
+    assert_eq!(root_preview.match_reason, "content_fts");
+    assert!(
+        root_preview
+            .excerpt
+            .as_deref()
+            .expect("source content preview should include excerpt")
+            .contains("needle-source-token")
+    );
+
+    let source_hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "needle-source-token".to_string(),
+            prefix: Some("/Sources".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::Light),
+        })
+        .expect("sources search should include source nodes");
+    assert_eq!(source_hits.len(), 1);
+    assert_eq!(source_hits[0].path, "/Sources/web/root-search-source.md");
+    assert_eq!(source_hits[0].kind, NodeKind::Source);
+    assert!(
+        source_hits[0]
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.excerpt.as_deref())
+            .is_some_and(|excerpt| excerpt.contains("needle-source-token"))
+    );
+}
+
 fn assert_v5_snapshot_revision_without_state_hash(snapshot_revision: &str) {
     let parts = snapshot_revision.split(':').collect::<Vec<_>>();
     assert_eq!(parts.len(), 3);

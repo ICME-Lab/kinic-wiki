@@ -1,7 +1,7 @@
 # CLI
 
 `kinic-vfs-cli` is the shell interface for the canister-backed VFS.
-This document covers wiki/database operator operations: connection, database management, node reads and writes, search, links, and archive/restore.
+This document covers wiki/database operator operations: connection, database management, node reads and writes, search, and links.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
 The canister also exposes read-only Store API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`STORE_API.md`](STORE_API.md).
@@ -74,7 +74,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode identity --dat
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <public-database-id> read-node --path /Knowledge/index.md
 ```
 
-`--identity-mode anonymous` rejects write, owner, archive, and restore commands.
+`--identity-mode anonymous` rejects write and owner commands.
 
 Create a database before reading or writing:
 
@@ -182,7 +182,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --iden
 ```
 
 `--identity-mode anonymous` is valid only for read-only public operations.
-Writes, database grants, archive operations, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
+Writes, database grants, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
 
 ## Context Pack
 
@@ -224,42 +224,6 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
 Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 64 KiB and the total rows payload is capped at 256 KiB. This command cannot query the canister index DB, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables. `query_index_sql_json` is controller-only operational SQL and is not exposed to database readers. Browser Query panel `sql:` uses the same database-scoped API.
 
 `query-sql` uses the same `--identity-mode auto` behavior as read-only DB commands: private DBs use the selected `icp identity`; public-readable DBs use anonymous when the selected identity is not a DB member, and identity when it is a member. Pass `--identity-mode identity` or `--identity-mode anonymous` to force one mode.
-
-## Archive and Restore
-
-Archive exports one database as SQLite snapshot bytes and then finalizes the database into `archived` status.
-Restore imports that snapshot into an `archived` database and returns it to `active`.
-The canister verifies the SHA-256 digest during both flows.
-
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
-  database archive-export <database-id> --output ./database.sqlite --json
-
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
-  database archive-restore <database-id> --input ./database.sqlite --json
-```
-
-Chunks default to 1 MiB, the canister limit. Use a smaller chunk size for local testing:
-
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
-  database archive-export <database-id> --output ./database.sqlite --chunk-size 65536
-```
-
-If an export fails before finalization, the CLI attempts `database archive-cancel <database-id>`.
-Manual cancel is available when a database is left in `archiving`:
-
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database archive-cancel <database-id>
-```
-
-If restore fails after it begins, the CLI attempts to cancel the restore automatically so the database returns to its previous `archived` state. Manual cancel is available for an interrupted restore:
-
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database restore-cancel <database-id>
-```
-
-See [`DB_LIFECYCLE.md`](DB_LIFECYCLE.md) for status, slot reuse, and restore validation details.
 
 ## Search
 
@@ -334,10 +298,9 @@ Maintenance and database lifecycle operations live in their own command groups:
 - `rebuild-index`
 - `rebuild-scope-index`
 - `status`
-- `database archive-export`
-- `database archive-restore`
-- `database archive-cancel`
-- `database restore-cancel`
+- `database create`
+- `database delete`
+- `database purchase-cycles`
 
 ## Link Graph
 

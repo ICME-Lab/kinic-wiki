@@ -100,7 +100,6 @@ type RawDatabaseSummary = {
   name: string;
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
-  archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
 };
 
@@ -1358,7 +1357,6 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
     cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
-    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
 }
@@ -1754,15 +1752,6 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   }
   if ("Pending" in status) {
     return "pending";
-  }
-  if ("Restoring" in status) {
-    return "restoring";
-  }
-  if ("Archiving" in status) {
-    return "archiving";
-  }
-  if ("Archived" in status) {
-    return "archived";
   }
   if ("Deleted" in status) {
     return "deleted";

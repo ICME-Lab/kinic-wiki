@@ -12,6 +12,8 @@ import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 
 const SOURCE_CAPTURE_REQUEST_PREFIX = "/Sources/source-capture-requests";
 const FETCHING_STALE_MS = 15 * 60 * 1000;
+const MAX_SOURCE_STEM_BYTES = 128;
+const SOURCE_STEM_ENCODER = new TextEncoder();
 
 export type SourceCaptureTriggerContext = {
   config: WorkerConfig;
@@ -123,7 +125,7 @@ export async function processSourceCaptureRequest(
         return;
       }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
-      const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl);
+      const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl, fetched.title ?? fetched.finalUrl);
       sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched, config.maxSourceChars);
       current = await writeRequestState(vfs, databaseId, current, { status: "source_written", sourcePath: sourceAck.path, error: null });
     }
@@ -372,14 +374,72 @@ async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string
   return { path: source.path, kind: source.kind, etag: source.etag };
 }
 
-async function sourcePathForUrl(sourcePrefix: string, finalUrl: string): Promise<string> {
-  const id = `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
-  return `${sourcePrefix}/web/${id.slice("web-".length)}.md`;
+async function sourcePathForUrl(sourcePrefix: string, finalUrl: string, title: string): Promise<string> {
+  const hash = (await sha256Hex(finalUrl)).slice(0, 8);
+  return `${sourcePrefix}/web/${sourceStemFromTitleHash(title, hash, hostnameForUrl(finalUrl))}.md`;
 }
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function sourceStemFromTitleHash(title: string, hash: string, fallback: string): string {
+  const slug = slugTitle(title, fallback);
+  return truncateStem(`${slug}-${hash}`, hash);
+}
+
+function slugTitle(value: string, fallback: string): string {
+  const source = String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim();
+  let output = "";
+  let lastWasDash = false;
+  for (const char of source) {
+    if (isSourceStemChar(char)) {
+      output += char;
+      lastWasDash = false;
+    } else if (!lastWasDash) {
+      output += "-";
+      lastWasDash = true;
+    }
+  }
+  const normalized = output
+    .replace(/\.{2,}/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  if (normalized && isUnicodeAlphanumeric([...normalized][0] ?? "")) return normalized;
+  return fallback === value ? "source" : slugTitle(fallback, "source");
+}
+
+function truncateStem(stem: string, hash: string): string {
+  if (SOURCE_STEM_ENCODER.encode(stem).length <= MAX_SOURCE_STEM_BYTES) return stem;
+  const suffix = `-${hash}`;
+  const maxPrefixBytes = MAX_SOURCE_STEM_BYTES - SOURCE_STEM_ENCODER.encode(suffix).length;
+  let prefix = "";
+  for (const char of stem.slice(0, -suffix.length)) {
+    if (SOURCE_STEM_ENCODER.encode(`${prefix}${char}`).length > maxPrefixBytes) break;
+    prefix += char;
+  }
+  const trimmed = prefix.replace(/[._-]+$/g, "") || "source";
+  return `${trimmed}${suffix}`;
+}
+
+function hostnameForUrl(finalUrl: string): string {
+  try {
+    return new URL(finalUrl).hostname || "web-source";
+  } catch {
+    return "web-source";
+  }
+}
+
+function isSourceStemChar(value: string): boolean {
+  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
+}
+
+function isUnicodeAlphanumeric(value: string): boolean {
+  return /^[\p{L}\p{N}]$/u.test(value);
 }
 
 function sourceCaptureStatus(value: string | null | undefined): SourceCaptureRequest["status"] | null {

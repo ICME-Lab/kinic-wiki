@@ -158,7 +158,16 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       await deps.openSettings();
       return { ok: false, error: "config required" };
     }
-    const sourcePath = await webSourcePathForUrl(url);
+    inFlightKey = sourceCaptureInFlightKey(config.databaseId, url);
+    reservedInFlight = await deps.reserveSourceCapture(inFlightKey);
+    if (!reservedInFlight) {
+      const status = busyStatus(url);
+      await deps.writeStatus(status);
+      await deps.setBadge("BUSY", "#5f6368", tabId);
+      return { ok: false, error: status.message };
+    }
+    const evidenceSource = await deps.captureTabSource(tab, url);
+    const sourcePath = evidenceSource.path;
     const existingSource = await deps.findWebSource(config, sourcePath);
     const sourceAlreadyExists = existingSource.exists;
     if (sourceAlreadyExists && !queueGeneration) {
@@ -178,15 +187,6 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
         }
       };
     }
-    inFlightKey = sourceCaptureInFlightKey(config.databaseId, url);
-    reservedInFlight = await deps.reserveSourceCapture(inFlightKey);
-    if (!reservedInFlight) {
-      const status = busyStatus(url);
-      await deps.writeStatus(status);
-      await deps.setBadge("BUSY", "#5f6368", tabId);
-      return { ok: false, error: status.message };
-    }
-    const evidenceSource = await deps.captureTabSource(tab, url);
     await deps.ensureOffscreen();
     const saveResponse = await deps.sendOffscreen({
       target: "offscreen",
@@ -547,7 +547,7 @@ async function refreshTabBadge(tab, deps = defaultActionDeps()) {
       await deps.setBadge("", "#5f6368", tabId);
       return { ok: true, state: "clear", reason: "config required" };
     }
-    const sourcePath = await webSourcePathForUrl(url);
+    const sourcePath = await webSourcePathForUrl(url, tab?.title || "");
     const existingSource = await deps.findWebSource(config, sourcePath);
     if (!existingSource.exists) {
       await deps.setBadge("", "#5f6368", tabId);

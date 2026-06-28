@@ -20,7 +20,8 @@ test("buildEvidenceSource emits canonical source path and metadata", () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(raw.path, "/Sources/chatgpt/abc.md");
+  assert.match(raw.path, /^\/Sources\/chatgpt\/project-chat-[a-f0-9]{8}\.md$/);
+  assert.doesNotMatch(raw.path, /abc\.md$/);
   assert.match(raw.content, /# Evidence Conversation Source/);
   assert.match(raw.content, /- message_count: 2/);
   assert.match(raw.content, /- truncated: false/);
@@ -64,11 +65,11 @@ test("buildEvidenceSource keeps a stable path for Claude conversations", () => {
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/claude/claude-abc.md");
+  assert.match(raw.path, /^\/Sources\/claude\/claude-project-[a-f0-9]{8}\.md$/);
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
-test("buildEvidenceSource truncates long conversation ids to a canonical source filename", () => {
+test("buildEvidenceSource keeps long conversation ids out of source filenames", () => {
   const longId = `conversation-${"a".repeat(220)}`;
   const raw = buildEvidenceSource({
     provider: "chatgpt",
@@ -79,21 +80,33 @@ test("buildEvidenceSource truncates long conversation ids to a canonical source 
   });
   const fileName = raw.path.split("/").at(-1);
 
-  assert.match(raw.path, /^\/Sources\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
-  assert.equal(fileName.length <= 131, true);
+  assert.match(raw.path, /^\/Sources\/chatgpt\/long-id-[a-f0-9]{8}\.md$/);
+  assert.equal(new TextEncoder().encode(fileName.replace(/\.md$/, "")).length <= 128, true);
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, longId);
 });
 
 test("buildEvidenceSource removes dotdot from conversation source filenames", () => {
   const raw = buildEvidenceSource({
     provider: "chatgpt",
-    conversationTitle: "Dotdot",
+    conversationTitle: "A..B",
     url: "https://chatgpt.com/c/a..b",
     capturedAt: "2026-05-01T00:00:00.000Z",
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/chatgpt/a-b.md");
+  assert.match(raw.path, /^\/Sources\/chatgpt\/a-b-[a-f0-9]{8}\.md$/);
+});
+
+test("buildEvidenceSource preserves unicode title slugs", () => {
+  const raw = buildEvidenceSource({
+    provider: "chatgpt",
+    conversationTitle: "会議 メモ",
+    url: "https://chatgpt.com/c/unicode-title",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.match(raw.path, /^\/Sources\/chatgpt\/会議-メモ-[a-f0-9]{8}\.md$/);
 });
 
 test("buildEvidenceSource rejects empty captures", () => {

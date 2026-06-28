@@ -8,10 +8,11 @@ The local cycles smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_C
 
 ```bash
 icp network start -d -e local-wiki
-ICP_ENVIRONMENT=local-wiki scripts/smoke/local_canister_archive_restore.sh
+ICP_ENVIRONMENT=local-wiki scripts/local/setup_kinic_ledger.sh
+ICP_ENVIRONMENT=local-wiki scripts/local/deploy_wiki.sh
 ```
 
-The smoke stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`, deploys the wiki with that ledger ID, approves the wiki canister on the ledger, and verifies archive/restore plus CLI cycle purchase. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
+The ledger setup stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
 
 ## CLI and Browser Read Smoke
 
@@ -50,23 +51,6 @@ In another shell:
 pnpm --dir wikibrowser smoke -- --url "http://127.0.0.1:3000/${DB_ID}/Knowledge/smoke.md"
 pnpm --dir wikibrowser smoke:errors -- --base-url http://127.0.0.1:3000 --database-id "$DB_ID"
 ```
-
-## Archive/Restore Smoke
-
-Run the combined canister and CLI archive smoke:
-
-```bash
-ICP_ENVIRONMENT=local-wiki scripts/smoke/local_canister_archive_restore.sh
-```
-
-That script runs the dedicated Rust archive/restore smoke and then verifies the public CLI commands:
-
-- `database purchase-cycles`
-- `database archive-export`
-- `database archive-restore`
-- `read-node`
-
-The Rust smoke also verifies the deployed local canister path for archive/restore, upgrade persistence, FTS search, outgoing links, and isolation between two databases. The script targets the project-local replica from `icp network status`.
 
 ## Public Deployment Smoke
 

@@ -19,6 +19,9 @@ const ALLOWED_ORIGINS = new Set([
   "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
   "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"
 ]);
+const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "source-capture-requests", "ingest-requests"]);
+const MAX_SOURCE_STEM_BYTES = 128;
+const SOURCE_STEM_ENCODER = new TextEncoder();
 
 let checkSession: CheckSession = defaultCheckSession;
 
@@ -105,16 +108,45 @@ function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
   if (typeof canisterId !== "string" || !canisterId) return "canisterId is required";
   if (typeof databaseId !== "string" || !databaseId) return "databaseId is required";
   if (typeof sourcePath !== "string" || !sourcePath) return "sourcePath is required";
-  if (!isCanonicalSourcePath(sourcePath)) return "sourcePath must use /Sources/<provider>/<id>.md";
+  if (!isCanonicalKnowledgeSourcePath(sourcePath)) return "sourcePath must use /Sources/<provider>/<id>.md";
   if (typeof sourceEtag !== "string" || !sourceEtag) return "sourceEtag is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
   return { canisterId, databaseId, sourcePath, sourceEtag, sessionNonce };
 }
 
-function isCanonicalSourcePath(path: string): boolean {
-  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return !!match && !["raw", "sessions", "skill-runs", "source-capture-requests"].includes(match[1]) && !match[2].includes("..");
+function isCanonicalKnowledgeSourcePath(path: string): boolean {
+  const prefix = "/Sources/";
+  if (!path.startsWith(prefix)) return false;
+  const parts = path.slice(prefix.length).split("/");
+  if (parts.length !== 2) return false;
+  const [provider, fileName] = parts;
+  return isSafeProviderSegment(provider) && !RESERVED_SOURCE_PROVIDERS.has(provider) && isSafeMarkdownFile(fileName);
+}
+
+function isSafeProviderSegment(value: string | undefined): value is string {
+  return /^[a-z0-9]{1,32}$/.test(value ?? "");
+}
+
+function isSafeMarkdownFile(value: string | undefined): boolean {
+  const fileName = value ?? "";
+  if (!fileName.endsWith(".md")) return false;
+  return isSafeSourceStem(fileName.slice(0, -".md".length));
+}
+
+function isSafeSourceStem(value: string): boolean {
+  const chars = [...value];
+  if (chars.length === 0 || SOURCE_STEM_ENCODER.encode(value).length > MAX_SOURCE_STEM_BYTES || value.includes("..")) return false;
+  const [first, ...rest] = chars;
+  return isUnicodeAlphanumeric(first ?? "") && rest.every(isSourceStemChar);
+}
+
+function isSourceStemChar(value: string): boolean {
+  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
+}
+
+function isUnicodeAlphanumeric(value: string): boolean {
+  return /^[\p{L}\p{N}]$/u.test(value);
 }
 
 function allowedOrigin(request: Request): string | null {

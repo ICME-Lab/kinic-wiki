@@ -49,9 +49,9 @@ test("save-source delegates evidence source writes to offscreen", async () => {
     assert.equal(calls[0].type, "save-evidence-source");
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].config.databaseId, "team-db");
-    assert.equal(calls[0].evidenceSource.path, "/Sources/chatgpt/abc.md");
+    assert.match(calls[0].evidenceSource.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, calls[0].evidenceSource.path);
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);
@@ -95,7 +95,7 @@ test("save-source keeps evidence source result when generation queue fails", asy
     );
 
     assert.equal(response.ok, true);
-    assert.equal(response.result.path, "/Sources/chatgpt/abc.md");
+    assert.match(response.result.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(response.result.etag, "etag-1");
     assert.equal(response.result.created, true);
     assert.equal(response.result.generationQueued, false);
@@ -394,13 +394,13 @@ test("action click saves browser source then queues generation", async () => {
   assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
   assert.equal(messages[1].type, "save-evidence-source");
-  assert.equal(messages[1].evidenceSource.path, "/Sources/web/abc.md");
+  assert.equal(messages[1].evidenceSource.path, rawWebSource().path);
   assert.equal(messages[1].config.databaseId, "team-db");
   assert.equal(messages[2].type, "trigger-source-generation");
-  assert.equal(messages[2].sourcePath, "/Sources/web/abc.md");
+  assert.equal(messages[2].sourcePath, rawWebSource().path);
   assert.equal(messages[2].sourceEtag, "etag-source");
   assert.equal(messages[2].sessionNonce, "session-source");
-  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
+  assert.equal(response.result.sourcePath, rawWebSource().path);
   assert.equal(response.result.generationQueued, true);
   assert.deepEqual(badges, [
     { text: "...", tabId: 3 },
@@ -438,11 +438,11 @@ test("action click queues generation for existing browser source", async () => {
   assert.equal(response.result.generationQueued, true);
   assert.equal(messages[0].type, "save-evidence-source");
   assert.equal(messages[1].type, "trigger-source-generation");
-  assert.equal(messages[1].sourcePath, "/Sources/web/abc.md");
+  assert.equal(messages[1].sourcePath, rawWebSource().path);
   assert.equal(messages[1].sourceEtag, "etag-new");
   assert.equal(messages[1].sessionNonce, "session-new");
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.equal(lookupPath, rawWebSource().path);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
@@ -450,7 +450,7 @@ test("action click queues generation for existing browser source", async () => {
   ]);
 });
 
-test("action click skips capture and generation for existing browser source when saving evidence only", async () => {
+test("action click skips write and generation for existing browser source when saving evidence only", async () => {
   const calls = [];
   const response = await handleActionClick(
     { id: 7, url: "https://example.com/#section", title: "Example" },
@@ -474,7 +474,7 @@ test("action click skips capture and generation for existing browser source when
   assert.equal(response.result.sourceEtag, "etag-source");
   assert.equal(response.result.generationQueued, false);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.equal(lookupPath, rawWebSource().path);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
@@ -502,7 +502,7 @@ test("action click keeps source result when generation trigger fails", async () 
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
+  assert.equal(response.result.sourcePath, rawWebSource().path);
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
@@ -611,18 +611,18 @@ test("action click rejects duplicate in-flight source capture", async () => {
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
     assert.equal(duplicate.error, "Source capture is already running for this page.");
-    assert.equal(restore.messages.length, 3);
+    assert.equal(restore.messages.length, 2);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/example-1a2b3c4d.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.length, 7);
+    assert.equal(restore.messages.length, 6);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -737,13 +737,13 @@ test("action click allows a different URL while another URL is in flight", async
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
     assert.equal(restore.messages.length, 5);
-    assert.match(restore.messages[1].evidenceSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[3].evidenceSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[1].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
+    assert.match(restore.messages[3].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
     assert.notEqual(restore.messages[1].evidenceSource.path, restore.messages[3].evidenceSource.path);
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/example-1a2b3c4d.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
   } finally {
@@ -764,7 +764,7 @@ test("action click honors session in-flight TTL", async () => {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
     assert.equal(busy.error, "Source capture is already running for this page.");
-    assert.equal(restore.messages.length, 1);
+    assert.equal(restore.messages.length, 0);
 
     sessionStorage.setItem(
       "kinic-source-capture-in-flight-v1",
@@ -772,7 +772,7 @@ test("action click honors session in-flight TTL", async () => {
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
-    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages.length, 3);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -1137,8 +1137,8 @@ function actionDeps(overrides = {}) {
 
 function rawWebSource() {
   return {
-    path: "/Sources/web/abc.md",
-    sourceId: "web-abc",
+    path: "/Sources/web/example-1a2b3c4d.md",
+    sourceId: "web-example-1a2b3c4d",
     content: "# Example",
     metadataJson: "{}"
   };

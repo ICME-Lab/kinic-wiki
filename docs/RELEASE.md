@@ -1,6 +1,6 @@
 # Release
 
-`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, archive/restore, and Skill Registry maintenance. The Browser remains the primary public UI.
+`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, and Skill Registry maintenance. The Browser remains the primary public UI.
 
 Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Cargo install is a Rust-user fallback; crates.io publication is deferred.
 

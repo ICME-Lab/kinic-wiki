@@ -8,14 +8,7 @@ type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
-  const DatabaseStatus = idl.Variant({
-    Active: idl.Null,
-    Pending: idl.Null,
-    Restoring: idl.Null,
-    Archiving: idl.Null,
-    Archived: idl.Null,
-    Deleted: idl.Null
-  });
+  const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
     role: DatabaseRole,
@@ -24,7 +17,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     name: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesTopUpConfig = idl.Record({ enabled: idl.Bool, threshold_cycles: idl.Nat, launcher_principal: idl.Text });

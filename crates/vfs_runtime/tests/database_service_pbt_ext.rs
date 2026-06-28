@@ -1,5 +1,5 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt_ext.rs
-// What: Supplemental property tests for cycles suspension, mount history, and restore chunks.
+// What: Supplemental property tests for cycles suspension and mount history.
 // Why: The main PBT covers common flows; these tests target branch-risky edge state.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
-use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
 use vfs_runtime::{DEFAULT_MIN_UPDATE_CYCLES, VfsService, cycles_for_payment_amount_e8s};
-use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
+use vfs_types::{DatabaseStatus, DeleteDatabaseRequest};
 
 const OWNER: &str = "owner";
 const DEPOSIT_PAYMENT_E8S: u64 = 1_000;
@@ -25,7 +24,6 @@ enum CyclesOp {
 enum MountOp {
     Create { slot: usize },
     Delete { slot: usize },
-    ArchiveRestore { slot: usize },
 }
 
 struct TestService {
@@ -215,64 +213,6 @@ fn assert_mount_history_unique(root: &Path, expected_len: usize) {
     assert_eq!(ids.len(), rows.len());
 }
 
-fn read_archive(service: &VfsService, database_id: &str, now: i64) -> (Vec<u8>, Vec<u8>, u64) {
-    let archive = service
-        .begin_database_archive(database_id, OWNER, now)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk(database_id, OWNER, 0, archive.size_bytes as u32)
-        .expect("archive bytes should read");
-    let hash = Sha256::digest(&bytes).to_vec();
-    (bytes, hash, archive.size_bytes)
-}
-
-fn finalize_restore_from_bytes(
-    service: &VfsService,
-    database_id: &str,
-    bytes: &[u8],
-    hash: Vec<u8>,
-    size: u64,
-    split: usize,
-    now: i64,
-) {
-    service
-        .begin_database_restore(database_id, OWNER, hash, size, now)
-        .expect("restore should begin");
-    assert!(
-        service
-            .write_database_restore_chunk(database_id, OWNER, size, &[1])
-            .is_err(),
-        "out-of-range restore chunk must fail"
-    );
-    assert!(
-        service
-            .finalize_database_restore(database_id, OWNER, now + 1)
-            .is_err(),
-        "empty restore must fail"
-    );
-    let split = split.min(bytes.len());
-    service
-        .write_database_restore_chunk(database_id, OWNER, split as u64, &bytes[split..])
-        .expect("tail chunk should write");
-    if split > 0 {
-        assert!(
-            service
-                .finalize_database_restore(database_id, OWNER, now + 2)
-                .is_err(),
-            "gapped restore must fail"
-        );
-    }
-    service
-        .write_database_restore_chunk(database_id, OWNER, split as u64, &bytes[split..])
-        .expect("duplicate tail chunk should replace");
-    service
-        .write_database_restore_chunk(database_id, OWNER, 0, &bytes[..split])
-        .expect("head chunk should write");
-    service
-        .finalize_database_restore(database_id, OWNER, now + 3)
-        .expect("complete restore should finalize");
-}
-
 fn cycles_operation_strategy() -> impl Strategy<Value = CyclesOp> {
     prop_oneof![
         4 => (1_u64..=2_000_000).prop_map(|amount| CyclesOp::PurchaseDatabaseCycles { amount }),
@@ -284,7 +224,6 @@ fn mount_operation_strategy() -> impl Strategy<Value = MountOp> {
     prop_oneof![
         5 => (0_usize..4).prop_map(|slot| MountOp::Create { slot }),
         3 => (0_usize..4).prop_map(|slot| MountOp::Delete { slot }),
-        4 => (0_usize..4).prop_map(|slot| MountOp::ArchiveRestore { slot }),
     ]
 }
 
@@ -341,116 +280,7 @@ proptest! {
     }
 
     #[test]
-    fn database_service_pbt_restore_chunks_cancel_and_content(
-        split_bias in 0_usize..4,
-        restore_deleted in any::<bool>(),
-        cancel_first in any::<bool>(),
-    ) {
-        let env = service_with_root();
-        let service = &env.service;
-        let (database_id, _deposit_cycles) = create_billed_database(service, "restore-pbt", 1);
-        let content = format!("restore body split={split_bias} deleted={restore_deleted} cancel={cancel_first}");
-        service
-            .write_node(
-                OWNER,
-                WriteNodeRequest {
-                    database_id: database_id.clone(),
-                    path: "/Knowledge/restore-pbt.md".to_string(),
-                    kind: NodeKind::File,
-                    content: content.clone(),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                },
-                10,
-            )
-            .expect("node should write before archive");
-
-        let (bytes, hash, size) = read_archive(service, &database_id, 20);
-        assert!(
-            service
-                .finalize_database_archive(&database_id, OWNER, vec![9_u8; 32], 21)
-                .is_err(),
-            "wrong archive hash must fail"
-        );
-
-        if restore_deleted {
-            service
-                .cancel_database_archive(&database_id, OWNER, 22)
-                .expect("archive should cancel");
-            service
-                .delete_database(delete_request(&database_id), OWNER, 23)
-                .expect("active database should delete");
-            assert!(
-                service
-                    .list_database_infos()
-                    .expect("database infos should load")
-                    .iter()
-                    .all(|info| info.database_id != database_id)
-            );
-            return Ok(());
-        } else {
-            service
-                .finalize_database_archive(&database_id, OWNER, hash.clone(), 22)
-                .expect("archive should finalize");
-            assert_eq!(
-                status_and_mount(service, &database_id).0,
-                DatabaseStatus::Archived
-            );
-        }
-
-        let bad_hash = vec![8_u8; 32];
-        if bad_hash != hash {
-            service
-                .begin_database_restore(&database_id, OWNER, bad_hash, size, 30)
-                .expect("restore with wrong expected hash can begin");
-            service
-                .write_database_restore_chunk(&database_id, OWNER, 0, &bytes)
-                .expect("restore bytes should write");
-            assert!(
-                service
-                    .finalize_database_restore(&database_id, OWNER, 31)
-                    .is_err(),
-                "wrong expected hash must fail finalize"
-            );
-            service
-                .cancel_database_restore(&database_id, OWNER, 32)
-                .expect("failed hash restore should cancel");
-        }
-
-        if cancel_first {
-            service
-                .begin_database_restore(&database_id, OWNER, hash.clone(), size, 40)
-                .expect("restore should begin");
-            let split = (bytes.len() / 2).max(1).min(bytes.len());
-            service
-                .write_database_restore_chunk(&database_id, OWNER, 0, &bytes[..split])
-                .expect("partial chunk should write");
-            service
-                .cancel_database_restore(&database_id, OWNER, 41)
-                .expect("partial restore should cancel");
-            assert!(matches!(
-                status_and_mount(service, &database_id).0,
-                DatabaseStatus::Archived
-            ));
-        }
-
-        let split = match split_bias {
-            0 => 0,
-            1 => bytes.len() / 3,
-            2 => bytes.len() / 2,
-            _ => bytes.len().saturating_sub(1),
-        };
-        finalize_restore_from_bytes(service, &database_id, &bytes, hash, size, split, 50);
-        assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Active);
-        let restored = service
-            .read_node(&database_id, OWNER, "/Knowledge/restore-pbt.md")
-            .expect("restored node should read")
-            .expect("restored node should exist");
-        assert_eq!(restored.content, content);
-    }
-
-    #[test]
-    fn database_service_pbt_restore_does_not_allocate_mount_ids(
+    fn database_service_pbt_create_delete_mount_ids_are_unique(
         operations in prop::collection::vec(mount_operation_strategy(), 1..30),
     ) {
         let env = service_with_root();
@@ -476,17 +306,6 @@ proptest! {
                         service
                             .delete_database(delete_request(&database_id), OWNER, now)
                             .expect("active slot database should delete");
-                    }
-                }
-                MountOp::ArchiveRestore { slot } => {
-                    if let Some(database_id) = slots[slot].as_ref()
-                        && status_and_mount(service, database_id).0 == DatabaseStatus::Active
-                    {
-                        let (bytes, hash, size) = read_archive(service, database_id, now);
-                        service
-                            .finalize_database_archive(database_id, OWNER, hash.clone(), now + 1)
-                            .expect("archive should finalize");
-                        finalize_restore_from_bytes(service, database_id, &bytes, hash, size, bytes.len() / 2, now + 2);
                     }
                 }
                 _ => {}

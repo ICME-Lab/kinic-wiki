@@ -12,21 +12,20 @@ use ic_agent::{
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
-    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    CyclesBillingConfig, CyclesPurchaseResult, DatabaseCycleEntryPage,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRole,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
+    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -200,63 +199,6 @@ pub trait VfsApi: Sync {
     }
     async fn delete_database(&self, _request: DeleteDatabaseRequest) -> Result<()> {
         Err(anyhow!("delete_database is not implemented by this client"))
-    }
-    async fn begin_database_archive(&self, _database_id: &str) -> Result<DatabaseArchiveInfo> {
-        Err(anyhow!(
-            "begin_database_archive is not implemented by this client"
-        ))
-    }
-    async fn read_database_archive_chunk(
-        &self,
-        _database_id: &str,
-        _offset: u64,
-        _max_bytes: u32,
-    ) -> Result<DatabaseArchiveChunk> {
-        Err(anyhow!(
-            "read_database_archive_chunk is not implemented by this client"
-        ))
-    }
-    async fn finalize_database_archive(
-        &self,
-        _database_id: &str,
-        _snapshot_hash: Vec<u8>,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "finalize_database_archive is not implemented by this client"
-        ))
-    }
-    async fn cancel_database_archive(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "cancel_database_archive is not implemented by this client"
-        ))
-    }
-    async fn begin_database_restore(
-        &self,
-        _database_id: &str,
-        _snapshot_hash: Vec<u8>,
-        _size_bytes: u64,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "begin_database_restore is not implemented by this client"
-        ))
-    }
-    async fn write_database_restore_chunk(
-        &self,
-        _request: DatabaseRestoreChunkRequest,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "write_database_restore_chunk is not implemented by this client"
-        ))
-    }
-    async fn finalize_database_restore(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "finalize_database_restore is not implemented by this client"
-        ))
-    }
-    async fn cancel_database_restore(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "cancel_database_restore is not implemented by this client"
-        ))
     }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
     async fn read_node_context(&self, _request: NodeContextRequest) -> Result<Option<NodeContext>> {
@@ -771,93 +713,6 @@ impl VfsApi for CanisterVfsClient {
 
     async fn delete_database(&self, request: DeleteDatabaseRequest) -> Result<()> {
         let result: Result<(), String> = self.update("delete_database", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
-        let result: Result<DatabaseArchiveInfo, String> = self
-            .update("begin_database_archive", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn read_database_archive_chunk(
-        &self,
-        database_id: &str,
-        offset: u64,
-        max_bytes: u32,
-    ) -> Result<DatabaseArchiveChunk> {
-        let result: Result<DatabaseArchiveChunk, String> = self
-            .query3(
-                "read_database_archive_chunk",
-                &database_id.to_string(),
-                &offset,
-                &max_bytes,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn finalize_database_archive(
-        &self,
-        database_id: &str,
-        snapshot_hash: Vec<u8>,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update2(
-                "finalize_database_archive",
-                &database_id.to_string(),
-                &snapshot_hash,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn cancel_database_archive(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("cancel_database_archive", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn begin_database_restore(
-        &self,
-        database_id: &str,
-        snapshot_hash: Vec<u8>,
-        size_bytes: u64,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update3(
-                "begin_database_restore",
-                &database_id.to_string(),
-                &snapshot_hash,
-                &size_bytes,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn write_database_restore_chunk(
-        &self,
-        request: DatabaseRestoreChunkRequest,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("write_database_restore_chunk", &request)
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn finalize_database_restore(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("finalize_database_restore", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn cancel_database_restore(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("cancel_database_restore", &database_id.to_string())
-            .await?;
         result.map_err(|error| anyhow!(error))
     }
 

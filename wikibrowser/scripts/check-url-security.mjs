@@ -135,6 +135,16 @@ await withEnv(
     );
     assert.equal(reservedSessionSourcePath.status, 400);
 
+    const reservedSourceCaptureRequestPath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/source-capture-requests/abc.md" })
+    );
+    assert.equal(reservedSourceCaptureRequestPath.status, 400);
+
+    const reservedIngestRequestPath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/ingest-requests/abc.md" })
+    );
+    assert.equal(reservedIngestRequestPath.status, 400);
+
     const traversalSourcePath = await sourceRunRouteModule.POST(
       sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/../...md" })
     );

@@ -220,11 +220,13 @@ function ChildrenList({
   childNodesCache: { current: Map<string, ChildNode[]> };
   onSelectedNode: (node: ChildNode) => void;
 }) {
+  const children = childrenState.data ? visibleChildren(childrenState.data) : null;
   return (
     <div>
       {!childrenState.data && !childrenState.error ? <TreeStatus depth={depth + 1} label="Loading" /> : null}
       {childrenState.error ? <TreeStatus depth={depth + 1} label={childrenState.error} /> : null}
-      {childrenState.data ? visibleChildren(childrenState.data).map((child) => (
+      {children?.length === 0 ? <TreeStatus depth={depth + 1} label="No children" /> : null}
+      {children?.map((child) => (
         <TreeNode
           key={child.path}
           canisterId={canisterId}
@@ -237,7 +239,7 @@ function ChildrenList({
           childNodesCache={childNodesCache}
           onSelectedNode={onSelectedNode}
         />
-      )) : null}
+      ))}
     </div>
   );
 }

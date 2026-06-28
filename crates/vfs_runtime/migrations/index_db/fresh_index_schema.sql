@@ -7,10 +7,7 @@ CREATE TABLE databases (
   status TEXT NOT NULL DEFAULT 'active',
   schema_version TEXT NOT NULL,
   logical_size_bytes INTEGER NOT NULL DEFAULT 0,
-  snapshot_hash BLOB,
-  archived_at_ms INTEGER,
   deleted_at_ms INTEGER,
-  restore_size_bytes INTEGER,
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL
 );
@@ -27,18 +24,6 @@ CREATE TABLE database_members (
   PRIMARY KEY (database_id, principal),
   FOREIGN KEY (database_id) REFERENCES databases(database_id)
 );
-
-CREATE TABLE database_restore_chunks (
-  database_id TEXT NOT NULL,
-  offset_bytes INTEGER NOT NULL,
-  end_bytes INTEGER NOT NULL,
-  bytes BLOB,
-  PRIMARY KEY (database_id, offset_bytes, end_bytes),
-  FOREIGN KEY (database_id) REFERENCES databases(database_id)
-);
-
-CREATE INDEX database_restore_chunks_database_id_idx
-  ON database_restore_chunks(database_id, offset_bytes);
 
 CREATE TABLE database_mount_history (
   database_id TEXT NOT NULL,
@@ -91,18 +76,6 @@ CREATE TABLE source_run_sessions (
 
 CREATE INDEX source_run_sessions_expiry_idx
   ON source_run_sessions(expires_at_ms);
-
-CREATE TABLE database_restore_sessions (
-  database_id TEXT PRIMARY KEY,
-  status TEXT NOT NULL,
-  active_mount_id INTEGER,
-  snapshot_hash BLOB,
-  archived_at_ms INTEGER,
-  deleted_at_ms INTEGER,
-  restore_size_bytes INTEGER,
-  created_at_ms INTEGER NOT NULL,
-  FOREIGN KEY (database_id) REFERENCES databases(database_id)
-);
 
 CREATE TABLE database_cycle_accounts (
   database_id TEXT PRIMARY KEY,

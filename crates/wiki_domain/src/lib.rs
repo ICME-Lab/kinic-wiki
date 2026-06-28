@@ -15,8 +15,13 @@ pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
 const MAX_SOURCE_ID_LEN: usize = 128;
-const RESERVED_SOURCE_PROVIDERS: &[&str] =
-    &["raw", "sessions", "skill-runs", "source-capture-requests"];
+const RESERVED_SOURCE_PROVIDERS: &[&str] = &[
+    "raw",
+    "sessions",
+    "skill-runs",
+    "source-capture-requests",
+    "ingest-requests",
+];
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = is_knowledge_source_path_candidate(path)
@@ -143,7 +148,7 @@ fn is_knowledge_source_path_candidate(path: &str) -> bool {
     };
     !matches!(
         provider,
-        "sessions" | "skill-runs" | "source-capture-requests"
+        "sessions" | "skill-runs" | "source-capture-requests" | "ingest-requests"
     )
 }
 
@@ -155,9 +160,7 @@ fn is_safe_source_segment(value: &str) -> bool {
     let Some(first) = chars.next() else {
         return false;
     };
-    is_source_segment_char(first)
-        && first.is_ascii_alphanumeric()
-        && chars.all(is_source_segment_char)
+    is_source_segment_char(first) && first.is_alphanumeric() && chars.all(is_source_segment_char)
 }
 
 fn is_safe_provider_segment(value: &str) -> bool {
@@ -171,7 +174,7 @@ fn is_safe_provider_segment(value: &str) -> bool {
 }
 
 fn is_source_segment_char(value: char) -> bool {
-    value.is_ascii_alphanumeric() || value == '.' || value == '_' || value == '-'
+    value.is_alphanumeric() || value == '.' || value == '_' || value == '-'
 }
 
 fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
@@ -215,6 +218,7 @@ mod tests {
         let path = format!("{KNOWLEDGE_SOURCES_PREFIX}/chatgpt/alpha.md");
         assert!(validate_canonical_source_path(&path).is_ok());
         assert!(validate_canonical_source_path("/Sources/123/alpha.md").is_ok());
+        assert!(validate_canonical_source_path("/Sources/web/会議-メモ-1a2b3c4d.md").is_ok());
     }
 
     #[test]
@@ -261,12 +265,26 @@ mod tests {
     }
 
     #[test]
+    fn canonical_source_path_rejects_unsafe_unicode_source_id_shapes() {
+        for path in [
+            "/Sources/chatgpt/-alpha.md",
+            "/Sources/chatgpt/_alpha.md",
+            "/Sources/chatgpt/.alpha.md",
+            "/Sources/chatgpt/alpha beta.md",
+            "/Sources/chatgpt/alpha/ beta.md",
+        ] {
+            assert!(validate_canonical_source_path(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
     fn canonical_source_path_rejects_reserved_knowledge_providers() {
         for path in [
             "/Sources/raw/alpha.md",
             "/Sources/sessions/alpha.md",
             "/Sources/skill-runs/alpha.md",
             "/Sources/source-capture-requests/alpha.md",
+            "/Sources/ingest-requests/alpha.md",
         ] {
             assert!(validate_knowledge_source_path(path).is_err(), "{path}");
         }

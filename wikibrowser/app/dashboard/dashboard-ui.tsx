@@ -857,10 +857,7 @@ function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): str
   if (!status) return "-";
   const labels: Record<DatabaseSummary["status"], string> = {
     pending: "Pending",
-    archived: "Archived",
-    archiving: "Archiving",
     active: "Active",
-    restoring: "Restoring",
     deleted: "Deleted"
   };
   return labels[status];

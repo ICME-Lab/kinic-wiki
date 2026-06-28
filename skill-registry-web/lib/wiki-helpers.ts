@@ -71,7 +71,7 @@ export function loadingState<T>(path: string): PathLoadState<T> {
   return { path, data: null, error: null, loading: true };
 }
 
-const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "source-capture-requests"]);
+const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "source-capture-requests", "ingest-requests"]);
 
 export function isKnowledgeSourcePath(path: string): boolean {
   const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);

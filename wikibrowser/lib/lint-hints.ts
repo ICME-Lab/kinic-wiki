@@ -11,7 +11,10 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
-const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|source-capture-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
+const sourcePathCandidatePattern = /\/Sources\/[^\s`)\]]+\.md/gu;
+const reservedSourceProviders = new Set(["raw", "sessions", "skill-runs", "source-capture-requests", "ingest-requests"]);
+const maxSourceStemBytes = 128;
+const sourceStemEncoder = new TextEncoder();
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";
@@ -28,7 +31,7 @@ export function collectLintHints(path: string, content: string): LintHint[] {
   if (role === "preferences.md") {
     hints.push(...findLineHints(content, /\b(todo|next action|deadline|scheduled)\b/i, "Possible action item", "preferences.md should hold decision criteria and choices; pending work belongs in plans.md."));
   }
-  if (role === "provenance.md" && !sourcePathPattern.test(content)) {
+  if (role === "provenance.md" && canonicalSourcePathsIn(content).length === 0) {
     hints.push({
       severity: "warning",
       title: "Missing raw source path",
@@ -85,17 +88,18 @@ function findCodeNoteHints(path: string, content: string): LintHint[] {
 
 export function rawSourceLinksFor(path: string, content: string): string[] {
   const links = new Set<string>();
-  if (sourcePathPattern.test(path)) {
+  if (isCanonicalKnowledgeSourcePath(path)) {
     links.add(path);
   }
   if (path.endsWith("/provenance.md")) {
     for (const line of content.split("\n")) {
-      const sourcePath = line.match(sourcePathPattern)?.[0];
-      if (sourcePath) links.add(sourcePath);
+      for (const sourcePath of canonicalSourcePathsIn(line)) {
+        links.add(sourcePath);
+      }
     }
   }
-  for (const match of content.matchAll(new RegExp(sourcePathPattern.source, "g"))) {
-    links.add(match[0]);
+  for (const sourcePath of canonicalSourcePathsIn(content)) {
+    links.add(sourcePath);
   }
   return [...links].slice(0, 8);
 }
@@ -117,6 +121,49 @@ function isCodeNote(path: string, content: string): boolean {
 
 function hasDecisionContext(content: string): boolean {
   return /(^|\n)##\s+(Why|Verification|Current Decision)\b/i.test(content);
+}
+
+function canonicalSourcePathsIn(content: string): string[] {
+  const links = new Set<string>();
+  for (const match of content.matchAll(sourcePathCandidatePattern)) {
+    const sourcePath = match[0];
+    if (isCanonicalKnowledgeSourcePath(sourcePath)) links.add(sourcePath);
+  }
+  return [...links];
+}
+
+function isCanonicalKnowledgeSourcePath(path: string): boolean {
+  const prefix = "/Sources/";
+  if (!path.startsWith(prefix)) return false;
+  const parts = path.slice(prefix.length).split("/");
+  if (parts.length !== 2) return false;
+  const [provider, fileName] = parts;
+  return isSafeProviderSegment(provider) && !reservedSourceProviders.has(provider) && isSafeMarkdownFile(fileName);
+}
+
+function isSafeProviderSegment(value: string | undefined): value is string {
+  return /^[a-z0-9]{1,32}$/.test(value ?? "");
+}
+
+function isSafeMarkdownFile(value: string | undefined): boolean {
+  const fileName = value ?? "";
+  if (!fileName.endsWith(".md")) return false;
+  return isSafeSourceStem(fileName.slice(0, -".md".length));
+}
+
+function isSafeSourceStem(value: string): boolean {
+  const chars = [...value];
+  if (chars.length === 0 || sourceStemEncoder.encode(value).length > maxSourceStemBytes || value.includes("..")) return false;
+  const [first, ...rest] = chars;
+  return isUnicodeAlphanumeric(first ?? "") && rest.every(isSourceStemChar);
+}
+
+function isSourceStemChar(value: string): boolean {
+  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
+}
+
+function isUnicodeAlphanumeric(value: string): boolean {
+  return /^[\p{L}\p{N}]$/u.test(value);
 }
 
 function firstLineOf(content: string, needle: string): number {

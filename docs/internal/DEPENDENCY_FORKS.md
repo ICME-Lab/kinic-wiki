@@ -31,4 +31,3 @@ When changing any patched revision:
 - verify memory IDs above `255` can be allocated and used for a database
 - run `./.local/check.sh`
 - confirm `crates/vfs_canister/vfs.did` still matches the generated Candid interface
-- review archive/restore smoke coverage because restore allocates a fresh memory ID

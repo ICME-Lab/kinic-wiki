@@ -29,7 +29,7 @@ pub enum Command {
         #[command(subcommand)]
         command: CyclesCommand,
     },
-    #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
+    #[command(about = "Manage database creation, workspace links, grants, and lifecycle")]
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
@@ -644,10 +644,6 @@ impl Command {
                     | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
-                    | DatabaseCommand::ArchiveExport { .. }
-                    | DatabaseCommand::ArchiveRestore { .. }
-                    | DatabaseCommand::ArchiveCancel { .. }
-                    | DatabaseCommand::RestoreCancel { .. }
             ),
             Self::Market { command: _ } => true,
             Self::Skill { command } => !matches!(
@@ -1173,34 +1169,6 @@ mod tests {
         else {
             panic!("expected database current command");
         };
-        assert!(json);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "archive-export",
-            "team-db",
-            "--output",
-            "team-db.sqlite",
-            "--chunk-size",
-            "512",
-            "--json",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::ArchiveExport {
-                    database_id,
-                    output,
-                    chunk_size,
-                    json,
-                },
-        } = cli.command
-        else {
-            panic!("expected archive-export command");
-        };
-        assert_eq!(database_id, "team-db");
-        assert_eq!(output.to_string_lossy(), "team-db.sqlite");
-        assert_eq!(chunk_size, 512);
         assert!(json);
     }
 
