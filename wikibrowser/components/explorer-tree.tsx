@@ -34,23 +34,30 @@ export function ExplorerTree({
   const rootRequestKey = nodeRequestKey(canisterId, databaseId, "/", readPrincipal);
   const [rootNodes, setRootNodes] = useState<LoadState<ChildNode[]>>(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
-    return cached ? { data: cached, error: null, loading: false } : { data: null, error: null, loading: true };
+    return cached ? { data: filterStoreRoots(cached), error: null, loading: false } : { data: null, error: null, loading: true };
   });
   const requestedRootKey = useRef<string | null>(null);
-  const visibleRootNodes = rootNodes.data && rootNodes.data.length > 0 ? rootNodes.data : FALLBACK_STORE_ROOT_NODES;
+  const cachedRootNodes = childNodesCache.current.get(rootRequestKey);
+  const rootNodeData = cachedRootNodes ? filterStoreRoots(cachedRootNodes) : rootNodes.data;
+  const rootError = cachedRootNodes ? null : rootNodes.error;
+  const visibleRootNodes = rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
 
   useEffect(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
-    if (cached) {
-      setRootNodes({ data: filterStoreRoots(cached), error: null, loading: false });
-      return;
-    }
+    if (cached) return;
     if (requestedRootKey.current === rootRequestKey) return;
     let cancelled = false;
     requestedRootKey.current = rootRequestKey;
-    setRootNodes({ data: null, error: null, loading: true });
-    import("@/lib/vfs-client")
-      .then((module) => module.listChildren(canisterId, databaseId, "/", readIdentity ?? undefined))
+    Promise.resolve()
+      .then(() => {
+        if (cancelled) return null;
+        setRootNodes({ data: null, error: null, loading: true });
+        return import("@/lib/vfs-client");
+      })
+      .then((module) => {
+        if (!module) return [];
+        return module.listChildren(canisterId, databaseId, "/", readIdentity ?? undefined);
+      })
       .then((data) => {
         if (cancelled) return;
         const roots = filterStoreRoots(data);
@@ -73,7 +80,7 @@ export function ExplorerTree({
       {visibleRootNodes.map((node) => (
         <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
       ))}
-      {rootNodes.error ? <TreeStatus depth={0} label={rootNodes.error} /> : null}
+      {rootError ? <TreeStatus depth={0} label={rootError} /> : null}
     </div>
   );
 }
