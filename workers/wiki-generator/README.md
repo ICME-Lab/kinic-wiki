@@ -60,6 +60,6 @@ Use this order when enabling WikiBrowser source capture:
 3. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
 4. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
 5. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.
-6. Run a smoke from WikiBrowser's `/<database-id>/Knowledge?tab=ingest` route and confirm `/Sources/source-capture-requests/...` plus `/Sources/...` output.
+6. Run a smoke from WikiBrowser's `/db/<database-id>/Knowledge?tab=source-capture` route and confirm `/Sources/source-capture-requests/...` plus `/Sources/...` output.
 
 PDF, authenticated pages, and multi-URL batching are out of scope for this worker path.

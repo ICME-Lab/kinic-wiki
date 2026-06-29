@@ -58,7 +58,7 @@ mod tests {
         let dir = tempdir().expect("temp dir should exist");
         let store = FsStore::new(dir.path().join("wiki.sqlite3"));
         store
-            .run_fs_migrations_for_database("default")
+            .run_fs_migrations()
             .expect("fs migrations should succeed");
         (dir, store)
     }
