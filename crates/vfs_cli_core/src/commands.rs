@@ -659,13 +659,22 @@ async fn run_database_command(
             println!("{}", result.database_id);
         }
         DatabaseCommand::Metadata { database_id, title } => {
+            let metadata = client
+                .list_databases()
+                .await?
+                .into_iter()
+                .find(|database| database.database_id == database_id)
+                .map(|database| database.metadata)
+                .ok_or_else(|| {
+                    anyhow!("database not found in current identity list: {database_id}")
+                })?;
             client
                 .update_database_metadata(UpdateDatabaseMetadataRequest {
                     database_id,
                     title,
-                    description: String::new(),
-                    llm_summary: None,
-                    tags_json: "[]".to_string(),
+                    description: metadata.description,
+                    llm_summary: metadata.llm_summary,
+                    tags_json: metadata.tags_json,
                 })
                 .await?;
         }
@@ -1220,6 +1229,7 @@ mod tests {
         database_cycles_pending: Mutex<Vec<String>>,
         market_entitlements: Mutex<Vec<(Option<String>, u32)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
+        metadata_updates: Mutex<Vec<UpdateDatabaseMetadataRequest>>,
         sql_queries: Mutex<Vec<(String, String, u32)>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1387,6 +1397,7 @@ mod tests {
             &self,
             request: UpdateDatabaseMetadataRequest,
         ) -> Result<vfs_types::DatabaseMetadata> {
+            self.metadata_updates.lock().unwrap().push(request.clone());
             Ok(vfs_types::DatabaseMetadata {
                 title: request.title,
                 description: request.description,
@@ -2205,6 +2216,25 @@ mod tests {
     #[tokio::test]
     async fn database_metadata_parses_and_calls_client() {
         let client = MockClient::default();
+        client
+            .database_summaries
+            .lock()
+            .unwrap()
+            .push(DatabaseSummary {
+                database_id: "db_alpha".to_string(),
+                metadata: vfs_types::DatabaseMetadata {
+                    title: "Alpha".to_string(),
+                    description: "Existing description".to_string(),
+                    llm_summary: Some("Existing summary".to_string()),
+                    tags_json: r#"["existing"]"#.to_string(),
+                },
+                status: DatabaseStatus::Active,
+                role: DatabaseRole::Owner,
+                logical_size_bytes: 42,
+                cycles_balance: Some(1_000_000),
+                cycles_suspended_at_ms: None,
+                deleted_at_ms: None,
+            });
         run_vfs_command(
             &client,
             &test_connection(),
@@ -2217,6 +2247,38 @@ mod tests {
         )
         .await
         .expect("database metadata update should succeed");
+        assert_eq!(*client.database_lists.lock().unwrap(), 1);
+        let updates = client.metadata_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].database_id, "db_alpha");
+        assert_eq!(updates[0].title, "Alpha metadata");
+        assert_eq!(updates[0].description, "Existing description");
+        assert_eq!(updates[0].llm_summary.as_deref(), Some("Existing summary"));
+        assert_eq!(updates[0].tags_json, r#"["existing"]"#);
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_missing_database_summary() {
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_missing".to_string(),
+                    title: "Missing metadata".to_string(),
+                },
+            },
+        )
+        .await
+        .expect_err("missing database should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database not found in current identity list: db_missing")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

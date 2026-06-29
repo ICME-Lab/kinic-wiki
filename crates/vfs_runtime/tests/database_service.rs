@@ -273,11 +273,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:034_database_profile"),
-        1
-    );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:035_drop_database_profile"),
+        schema_migration_count(&root, "database_index:034_database_metadata"),
         1
     );
     assert_eq!(
@@ -311,6 +307,81 @@ fn mainnet_011_index_upgrades_to_latest() {
     assert!(!column_exists(&root, "databases", "archived_at_ms"));
     assert!(!column_exists(&root, "databases", "restore_size_bytes"));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
+}
+
+#[test]
+fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_title() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("listed-migration", "seller", 1)
+        .expect("listed database should create");
+    service
+        .create_database("unlisted-migration", "seller", 2)
+        .expect("unlisted database should create");
+    let fixture_conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    fixture_conn
+        .execute_batch(
+            "
+            DELETE FROM schema_migrations
+             WHERE version IN (
+               'database_index:034_database_metadata',
+               'database_index:036_rename_url_ingest_trigger_sessions',
+               'database_index:037_drop_archive_restore_lifecycle'
+             );
+            ALTER TABLE market_listings ADD COLUMN title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN description TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN llm_summary TEXT;
+            ALTER TABLE market_listings ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+            UPDATE databases
+               SET title = 'Old DB Name'
+             WHERE database_id = 'listed-migration';
+            UPDATE databases
+               SET title = 'Unlisted DB Name'
+             WHERE database_id = 'unlisted-migration';
+            INSERT INTO market_listings
+              (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
+               revision, purchase_count, report_count, created_at_ms, updated_at_ms,
+               title, description, llm_summary, tags_json)
+            VALUES
+              ('listing-old', 'seller', 'aaaaa-aa', 'listed-migration', 100, 'active',
+               0, 0, 0, 10, 20,
+               'Published Listing Title', 'Published Description', 'Published Summary',
+               '[\"published\"]');
+            ",
+        )
+        .expect("old listing metadata fixture should insert");
+    drop(fixture_conn);
+
+    service
+        .run_index_migrations()
+        .expect("metadata migration should rerun");
+
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let listed: (String, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT title, description, llm_summary, tags_json
+             FROM databases
+             WHERE database_id = 'listed-migration'",
+            params![],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("listed metadata should load");
+    let unlisted_title: String = conn
+        .query_row(
+            "SELECT title
+             FROM databases
+             WHERE database_id = 'unlisted-migration'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("unlisted title should load");
+
+    assert_eq!(listed.0, "Published Listing Title");
+    assert_eq!(listed.1, "Published Description");
+    assert_eq!(listed.2.as_deref(), Some("Published Summary"));
+    assert_eq!(listed.3, r#"["published"]"#);
+    assert_eq!(unlisted_title, "Unlisted DB Name");
+    assert!(!column_exists(&root, "market_listings", "title"));
 }
 
 #[test]

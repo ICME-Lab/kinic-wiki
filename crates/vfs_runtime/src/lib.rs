@@ -25,9 +25,8 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
-    MarketListingStatus, MarketListingVerifiedStats, MarketListingView, MarketOrder,
+    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketListingStatus, MarketListingView, MarketOrder,
     MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
@@ -1525,9 +1524,7 @@ impl VfsService {
     }
 
     fn market_listing_detail(&self, listing: MarketListing) -> Result<MarketListingDetail, String> {
-        let Ok(meta) = self.database_meta(&listing.database_id) else {
-            return Ok(empty_market_listing_detail(listing));
-        };
+        let meta = self.database_meta(&listing.database_id)?;
         let view = MarketListingView {
             listing: listing.clone(),
             database_metadata: meta.metadata.clone(),
@@ -3443,7 +3440,14 @@ fn apply_database_metadata_index_migration(conn: &Transaction<'_>) -> Result<(),
         conn.execute_batch(
             "
             UPDATE databases
-               SET description = COALESCE((
+               SET title = COALESCE((
+                     SELECT title
+                       FROM market_listings
+                      WHERE market_listings.database_id = databases.database_id
+                      ORDER BY updated_at_ms DESC, listing_id ASC
+                      LIMIT 1
+                   ), title),
+                   description = COALESCE((
                      SELECT description
                        FROM market_listings
                       WHERE market_listings.database_id = databases.database_id
@@ -5748,41 +5752,6 @@ fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Mar
     })
 }
 
-fn empty_market_listing_detail(listing: MarketListing) -> MarketListingDetail {
-    MarketListingDetail {
-        listing: MarketListingView {
-            listing,
-            database_metadata: DatabaseMetadata {
-                title: String::new(),
-                description: String::new(),
-                llm_summary: None,
-                tags_json: "[]".to_string(),
-            },
-        },
-        verified_stats: MarketListingVerifiedStats {
-            total_nodes: 0,
-            wiki_nodes: 0,
-            source_nodes: 0,
-            folder_nodes: 0,
-            markdown_chars: 0,
-            source_chars: 0,
-            link_edges: 0,
-            logical_size_bytes: 0,
-            last_content_updated_at_ms: None,
-        },
-        preview: MarketListingPreview {
-            top_level_paths: Vec::new(),
-            excerpts: Vec::new(),
-            category_graph: MarketCategoryGraph {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-            },
-            graph_links: Vec::new(),
-            preview_stale: true,
-        },
-    }
-}
-
 fn map_market_listing_view(
     row: &crate::sqlite::Row<'_>,
 ) -> crate::sqlite::Result<MarketListingView> {
@@ -7158,9 +7127,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
         )
         .optional()
     {
-        Ok(Some(status)) if status == "active" || status == "pending" || status == "deleted" => {
-            format!("database is {status}: {database_id}")
-        }
+        Ok(Some(status)) => format!("database is {status}: {database_id}"),
         _ => format!("database not found: {database_id}"),
     }
 }
@@ -7476,7 +7443,9 @@ fn map_database_meta_with_statuses(
     statuses: &[DatabaseStatus],
 ) -> crate::sqlite::Result<DatabaseMeta> {
     let status: String = crate::sqlite::row_get(row, 9).unwrap_or_else(|_| "active".to_string());
-    let status = status_from_db(&status)?;
+    let Ok(status) = status_from_db(&status) else {
+        return Err(crate::sqlite::query_returned_no_rows());
+    };
     if !statuses.contains(&status) {
         return Err(crate::sqlite::query_returned_no_rows());
     }
@@ -8101,11 +8070,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8151,11 +8116,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8169,7 +8130,7 @@ mod tests {
     }
 
     #[test]
-    fn store_roots_pending_index_drops_profile_and_seeds_roots() {
+    fn metadata_pending_index_seeds_roots() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8184,13 +8145,9 @@ mod tests {
         {
             let mut conn = Connection::open(&index_path).expect("index DB should reopen");
             let tx = conn.transaction().expect("transaction should start");
-            tx.execute(
-                "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
-                params![],
-            )
-            .expect("legacy profile column should add");
-            insert_database_profile_history_marker(&tx).expect("profile marker should insert");
-            tx.commit().expect("profile migration should commit");
+            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_METADATA)
+                .expect("metadata marker should insert");
+            tx.commit().expect("metadata marker should commit");
         }
         let service = VfsService::new(index_path.clone(), databases_dir);
 
@@ -8212,11 +8169,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8230,7 +8183,7 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_033_index_applies_profile_drop_noop() {
+    fn mainnet_033_index_applies_database_metadata_migration() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8250,11 +8203,7 @@ mod tests {
             .expect("mainnet 033 index should apply profile-drop noop");
 
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8297,11 +8246,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8347,11 +8292,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8402,11 +8343,7 @@ mod tests {
             0
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(database_profile_column_count(&index_path), 0);
