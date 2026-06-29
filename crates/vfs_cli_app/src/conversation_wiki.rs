@@ -91,25 +91,18 @@ fn source_id_from_path(source_path: &str) -> Result<String> {
         .ok_or_else(|| {
             anyhow!("source path must be under {KNOWLEDGE_SOURCES_PREFIX}: {source_path}")
         })?;
-    let mut segments = relative.split('/');
-    let provider = segments
-        .next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("source path is missing source provider: {source_path}"))?;
-    let file = segments
-        .next()
-        .ok_or_else(|| anyhow!("source path is missing source file: {source_path}"))?;
-    let Some(file_stem) = file.strip_suffix(".md").filter(|value| !value.is_empty()) else {
-        return Err(anyhow!(
-            "source path must use {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
-        ));
+    let mut segments = relative
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let Some(last) = segments.last_mut() else {
+        return Err(anyhow!("source path is missing source file: {source_path}"));
     };
-    if segments.next().is_some() {
-        return Err(anyhow!(
-            "source path must use {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
-        ));
+    if let Some(file_stem) = last.strip_suffix(".md") {
+        *last = file_stem.to_string();
     }
-    Ok(format!("{provider}-{file_stem}"))
+    Ok(segments.join("-"))
 }
 
 fn metadata_value(content: &str, key: &str) -> Option<String> {
@@ -274,11 +267,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_raw_conversation_rejects_noncanonical_source_path() {
+    fn parse_raw_conversation_rejects_unsafe_source_path() {
         let error = parse_raw_conversation("/Sources/../evil.md", RAW)
-            .expect_err("noncanonical raw path should fail");
+            .expect_err("unsafe raw path should fail");
 
-        assert!(error.to_string().contains("canonical form"));
+        assert!(error.to_string().contains("unsafe segment"));
     }
 
     #[test]

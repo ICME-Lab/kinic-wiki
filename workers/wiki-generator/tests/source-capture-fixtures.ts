@@ -1,15 +1,15 @@
-// Where: workers/wiki-generator/tests/url-ingest-fixtures.ts
-// What: Test doubles for URL ingest worker tests.
-// Why: URL ingest state tests need VFS, D1, Queue, and fetch fixtures without bloating the spec file.
+// Where: workers/wiki-generator/tests/source-capture-fixtures.ts
+// What: Test doubles for source capture worker tests.
+// Why: source capture state tests need VFS, D1, Queue, and fetch fixtures without bloating the spec file.
 import type { RuntimeEnv } from "../src/env.js";
-import { parseUrlIngestRequest } from "../src/url-ingest.js";
+import { parseSourceCaptureRequest } from "../src/source-capture.js";
 import type {
   ExportSnapshotPage,
   FetchUpdatesPage,
   NodeKind,
   QueueMessage,
   SearchNodeHit,
-  UrlIngestRequest,
+  SourceCaptureRequest,
   WikiNode,
   WorkerConfig,
   WriteNodeAck,
@@ -64,6 +64,7 @@ export async function withFetchedPage(run: () => Promise<void>, html = "<html><h
 
 export class TestVfsClient implements VfsClient {
   existingSource: WikiNode | null = null;
+  sourceNodes = new Map<string, WikiNode>();
   requestNode: WikiNode | null = null;
   failSessionCheck = false;
   sessionChecks: { databaseId: string; requestPath: string; sessionNonce: string }[] = [];
@@ -75,7 +76,8 @@ export class TestVfsClient implements VfsClient {
   sourceReadsAfterWrite = 0;
   requestReads = 0;
   sourceWrites = 0;
-  lastRequest: UrlIngestRequest | null = null;
+  sourceWriteEtags: string[] = [];
+  lastRequest: SourceCaptureRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
 
   async checkDatabaseWriteCycles(databaseId: string): Promise<void> {
@@ -86,24 +88,27 @@ export class TestVfsClient implements VfsClient {
     this.sourceSessionChecks.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
   }
 
-  async checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {
+  async checkSourceCaptureTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {
     this.sessionChecks.push({ databaseId, requestPath, sessionNonce });
     if (this.failSessionCheck) throw new Error("session denied");
   }
 
   async readNode(_databaseId: string, path: string): Promise<WikiNode | null> {
-    if (path.startsWith("/Sources/ingest-requests/")) {
+    if (path.startsWith("/Sources/source-capture-requests/")) {
       this.requestReads += 1;
       return this.requestNode;
     }
-    if (!path.startsWith("/Sources/")) return null;
-    if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
-    else this.sourceReadsBeforeWrite += 1;
-    return this.existingSource;
+    if (path.startsWith("/Sources/")) {
+      if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
+      else this.sourceReadsBeforeWrite += 1;
+      return this.sourceNodes.get(path) ?? (this.existingSource?.path === path ? this.existingSource : null);
+    }
+    this.requestReads += 1;
+    return this.requestNode;
   }
 
   async writeNode(request: WriteNodeRequest): Promise<WriteNodeAck> {
-    const etag = request.kind === "source" ? "etag-source-write" : `etag-file-${request.path}-${request.content.length}`;
+    const etag = request.kind === "source" ? (this.sourceWriteEtags.shift() ?? "etag-source-write") : `etag-file-${request.path}-${request.content.length}`;
     if (this.failExpectedEtagOnce && request.kind === "file") {
       this.failExpectedEtagOnce = false;
       throw new Error(`expected_etag does not match current etag: ${request.path}`);
@@ -111,6 +116,13 @@ export class TestVfsClient implements VfsClient {
     if (request.kind === "source") {
       this.sourceWrites += 1;
       this.lastSourceWrite = request;
+      this.sourceNodes.set(request.path, {
+        path: request.path,
+        kind: "source",
+        content: request.content,
+        etag,
+        metadataJson: request.metadataJson
+      });
       return { path: request.path, kind: this.sourceAckKind, etag };
     }
     this.requestNode = {
@@ -120,7 +132,7 @@ export class TestVfsClient implements VfsClient {
       etag,
       metadataJson: request.metadataJson
     };
-    const parsed = parseUrlIngestRequest({
+    const parsed = parseSourceCaptureRequest({
       path: request.path,
       kind: "file",
       content: request.content,
@@ -148,8 +160,10 @@ export class TestVfsClient implements VfsClient {
 
 export class TestQueue implements Queue {
   messages: QueueMessage[] = [];
+  failSend = false;
 
   async send(message: unknown): Promise<void> {
+    if (this.failSend) throw new Error("queue unavailable");
     if (isQueueMessage(message)) this.messages.push(message);
   }
 }
@@ -209,7 +223,7 @@ function isQueueMessage(value: unknown): value is QueueMessage {
       typeof value.sourceEtag === "string"
     );
   }
-  if ("kind" in value && value.kind === "url_ingest") {
+  if ("kind" in value && value.kind === "source_capture") {
     return (
       "canisterId" in value &&
       "databaseId" in value &&

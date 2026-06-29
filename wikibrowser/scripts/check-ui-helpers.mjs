@@ -100,7 +100,7 @@ assert.doesNotMatch(wikiBrowserSource, /path: indexNode\.path/);
 assert.match(wikiBrowserSource, /expectedFolderIndexEtag: indexNode\?\.etag \?\? null/);
 assert.doesNotMatch(wikiBrowserSource, /currentFolderIndexNode\.data\?\.path === folderIndexPath\(target\.path\)/);
 assert.match(wikiBrowserSource, /memberDatabases\.find/);
-assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
+assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "source-capture"\]/);
 assert.doesNotMatch(wikiBrowserSource, /ClipperPanel/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
 assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
@@ -248,7 +248,8 @@ assert.doesNotMatch(wikiBrowserSource, /DocumentBreadcrumbs/);
 assert.doesNotMatch(wikiBrowserSource, /readMode/);
 assert.match(documentPaneSource, /DocumentHeaderPath/);
 assert.match(documentPaneSource, /Current knowledge path/);
-assert.match(documentPaneSource, /h-10 w-fit min-w-0 max-w-full/);
+assert.match(documentPaneSource, /h-9 w-fit min-w-0 max-w-full/);
+assert.match(documentPaneSource, /sm:h-10/);
 assert.match(documentPaneSource, /hrefForPath\(canisterId, databaseId, crumbPath/);
 assert.match(documentPaneSource, /label="Edit"/);
 assert.match(documentPaneSource, /Copy path/);
@@ -321,7 +322,11 @@ assert.deepEqual(
 );
 assert.deepEqual(
   rawSourceLinksFor("/Knowledge/demo/provenance.md", "- Raw: /Sources/123/source.md\n- Bad: /Sources/web/a..b.md"),
-  ["/Sources/123/source.md"]
+  ["/Sources/123/source.md", "/Sources/web/a..b.md"]
+);
+assert.deepEqual(
+  rawSourceLinksFor("/Knowledge/demo/provenance.md", "- Raw: /Sources/sessions/codex/run_123.md\n- Raw: /Sources/skill-runs/legal-review/1700000000000.md"),
+  ["/Sources/sessions/codex/run_123.md", "/Sources/skill-runs/legal-review/1700000000000.md"]
 );
 
 assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
@@ -577,11 +582,11 @@ assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Wikipedia/foo.md"), null);
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/SourcesBackup/foo.md"), null);
-assert.equal(inferNoteRole("/Sources/web/abc.md"), "raw_source");
-assert.equal(inferNoteRole("/Sources/123/abc.md"), "raw_source");
-assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "markdown_note");
-assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "markdown_note");
-assert.equal(inferNoteRole("/Sources/raw/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/web/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/123/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/raw/abc.md"), "evidence_source");
 assert.equal(inferNoteRole("/Sourcesfoo/abc.md"), "markdown_note");
 
 const cachedNodeContext = {

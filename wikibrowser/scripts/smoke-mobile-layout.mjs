@@ -12,7 +12,7 @@ const browserRoutes = [
   "/Knowledge?view=raw",
   "/Knowledge?view=edit",
   "/Knowledge?tab=query",
-  "/Knowledge?tab=ingest",
+  "/Knowledge?tab=source-capture",
   "/search?q=Wiki&kind=path",
   "/help",
   "/graph?center=%2FKnowledge&depth=1",
@@ -109,9 +109,9 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link disappears after mobile menu opens");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button is not expanded after click");
     const visibleTabs = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).filter((link) => isVisible(link)).map((link) => link.textContent?.trim()).join(",");
-    if (visibleTabs !== "explorer,query,ingest") failures.push("mobile sidebar tabs are not visible");
-    const ingestLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "ingest");
-    ingestLink?.click();
+    if (visibleTabs !== "explorer,query,source-capture") failures.push("mobile sidebar tabs are not visible");
+    const sourceCaptureLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "source-capture");
+    sourceCaptureLink?.click();
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (!isVisible(explorerPanel)) failures.push("explorer panel closes after mobile sidebar navigation");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button collapses after sidebar navigation");

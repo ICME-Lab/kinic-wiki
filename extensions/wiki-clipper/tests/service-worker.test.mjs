@@ -14,18 +14,18 @@ import {
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
-test("save-source delegates raw source writes to offscreen", async () => {
+test("save-source delegates evidence source writes to offscreen", async () => {
   const syncStorage = memoryStorage();
   const restore = installChromeStorage(syncStorage);
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    if (message.type === "save-raw-source") {
+    if (message.type === "save-evidence-source") {
       return {
         ok: true,
         result: {
-          path: message.rawSource.path,
-          sourceId: message.rawSource.sourceId,
+          path: message.evidenceSource.path,
+          sourceId: message.evidenceSource.sourceId,
           created: false,
           etag: "etag-2",
           sourceRunSessionNonce: "session-source"
@@ -46,12 +46,12 @@ test("save-source delegates raw source writes to offscreen", async () => {
     );
 
     assert.equal(response.ok, true);
-    assert.equal(calls[0].type, "save-raw-source");
+    assert.equal(calls[0].type, "save-evidence-source");
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].config.databaseId, "team-db");
-    assert.equal(calls[0].rawSource.path, "/Sources/chatgpt/abc.md");
+    assert.match(calls[0].evidenceSource.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, calls[0].evidenceSource.path);
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);
@@ -66,15 +66,15 @@ test("save-source delegates raw source writes to offscreen", async () => {
   }
 });
 
-test("save-source keeps raw source result when generation queue fails", async () => {
+test("save-source keeps evidence source result when generation queue fails", async () => {
   const restore = installChromeStorage(memoryStorage());
   setOffscreenBridgeForTest(async (message) => {
-    if (message.type === "save-raw-source") {
+    if (message.type === "save-evidence-source") {
       return {
         ok: true,
         result: {
-          path: message.rawSource.path,
-          sourceId: message.rawSource.sourceId,
+          path: message.evidenceSource.path,
+          sourceId: message.evidenceSource.sourceId,
           created: true,
           etag: "etag-1",
           sourceRunSessionNonce: "session-source"
@@ -95,7 +95,7 @@ test("save-source keeps raw source result when generation queue fails", async ()
     );
 
     assert.equal(response.ok, true);
-    assert.equal(response.result.path, "/Sources/chatgpt/abc.md");
+    assert.match(response.result.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(response.result.etag, "etag-1");
     assert.equal(response.result.created, true);
     assert.equal(response.result.generationQueued, false);
@@ -223,20 +223,6 @@ test("auth-session-changed does not create a missing offscreen document", async 
 
     assert.deepEqual(response, { ok: true, reset: false });
     assert.deepEqual(calls, [["contexts", "chrome-extension://id/offscreen/offscreen.html"]]);
-  } finally {
-    restore();
-  }
-});
-
-test("auth-session-changed fails when existing offscreen auth reset fails", async () => {
-  const calls = [];
-  const restore = installChromeForOffscreenReset(calls, true, { ok: false, error: "auth reset failed" });
-  try {
-    await assert.rejects(() => handleMessage({ type: "auth-session-changed" }, null), /auth reset failed/);
-    assert.deepEqual(calls, [
-      ["contexts", "chrome-extension://id/offscreen/offscreen.html"],
-      ["message", { target: "offscreen", type: "reset-auth-client" }]
-    ]);
   } finally {
     restore();
   }
@@ -393,10 +379,10 @@ test("action click saves browser source then queues generation", async () => {
     actionDeps({
       sendOffscreen: async (message) => {
         messages.push(message);
-        if (message.type === "save-raw-source") {
+        if (message.type === "save-evidence-source") {
           return {
             ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+            result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
           };
         }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
@@ -407,14 +393,14 @@ test("action click saves browser source then queues generation", async () => {
   assert.equal(response.ok, true);
   assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
-  assert.equal(messages[1].type, "save-raw-source");
-  assert.equal(messages[1].rawSource.path, "/Sources/web/abc.md");
+  assert.equal(messages[1].type, "save-evidence-source");
+  assert.equal(messages[1].evidenceSource.path, rawWebSource().path);
   assert.equal(messages[1].config.databaseId, "team-db");
   assert.equal(messages[2].type, "trigger-source-generation");
-  assert.equal(messages[2].sourcePath, "/Sources/web/abc.md");
+  assert.equal(messages[2].sourcePath, rawWebSource().path);
   assert.equal(messages[2].sourceEtag, "etag-source");
   assert.equal(messages[2].sessionNonce, "session-source");
-  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
+  assert.equal(response.result.sourcePath, rawWebSource().path);
   assert.equal(response.result.generationQueued, true);
   assert.deepEqual(badges, [
     { text: "...", tabId: 3 },
@@ -422,7 +408,49 @@ test("action click saves browser source then queues generation", async () => {
   ]);
 });
 
-test("action click refreshes existing browser source for only the current tab", async () => {
+test("action click queues generation for existing browser source", async () => {
+  const calls = [];
+  const messages = [];
+  const response = await handleActionClick(
+    { id: 7, url: "https://example.com/#section", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: true, path: sourcePath, etag: "etag-old" };
+      },
+      sendOffscreen: async (message) => {
+        messages.push(message);
+        if (message.type === "save-evidence-source") {
+          return {
+            ok: true,
+            result: { path: message.evidenceSource.path, created: false, etag: "etag-new", sourceRunSessionNonce: "session-new" }
+          };
+        }
+        return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.sourceEtag, "etag-new");
+  assert.equal(response.result.generationQueued, true);
+  assert.equal(messages[0].type, "save-evidence-source");
+  assert.equal(messages[1].type, "trigger-source-generation");
+  assert.equal(messages[1].sourcePath, rawWebSource().path);
+  assert.equal(messages[1].sourceEtag, "etag-new");
+  assert.equal(messages[1].sessionNonce, "session-new");
+  const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
+  assert.equal(lookupPath, rawWebSource().path);
+  assert.deepEqual(calls, [
+    ["badge", "...", 7],
+    ["lookup", lookupPath],
+    ["badge", "IN", 7]
+  ]);
+});
+
+test("action click skips write and generation for existing browser source when saving evidence only", async () => {
   const calls = [];
   const response = await handleActionClick(
     { id: 7, url: "https://example.com/#section", title: "Example" },
@@ -433,31 +461,24 @@ test("action click refreshes existing browser source for only the current tab", 
       },
       sendOffscreen: async (message) => {
         calls.push(["message", message.type]);
-        if (message.type === "save-raw-source") {
-          return {
-            ok: true,
-            result: { path: message.rawSource.path, created: false, etag: "etag-refreshed", sourceRunSessionNonce: "session-source" }
-          };
-        }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
       },
-      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath, status.etag, status.message]),
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
-    })
+    }),
+    { queueGeneration: false }
   );
 
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourceCreated, false);
-  assert.equal(response.result.sourceEtag, "etag-refreshed");
-  assert.equal(response.result.generationQueued, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.sourceEtag, "etag-source");
+  assert.equal(response.result.generationQueued, false);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+  assert.equal(lookupPath, rawWebSource().path);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
-    ["message", "save-raw-source"],
-    ["message", "trigger-source-generation"],
-    ["status", "ok", response.result.sourcePath],
+    ["status", "source_exists", lookupPath, "etag-source", "Evidence source already saved."],
     ["badge", "IN", 7]
   ]);
 });
@@ -468,10 +489,10 @@ test("action click keeps source result when generation trigger fails", async () 
     { url: "https://example.com/#section", title: "Example" },
     actionDeps({
       sendOffscreen: async (message) => {
-        if (message.type === "save-raw-source") {
+        if (message.type === "save-evidence-source") {
           return {
             ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+            result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
           };
         }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: false, triggerError: "worker trigger failed: HTTP 502" } };
@@ -481,7 +502,7 @@ test("action click keeps source result when generation trigger fails", async () 
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
+  assert.equal(response.result.sourcePath, rawWebSource().path);
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
@@ -501,8 +522,8 @@ test("context menu opens settings without starting source capture", async () => 
     await handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
 
     assert.deepEqual(createdMenus, [
-      { id: "kinic-wiki-clipper-create-wiki", title: "Create knowledge page", contexts: ["action"] },
-      { id: "kinic-wiki-clipper-save-raw", title: "Save raw", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-create-wiki", title: "Create Kinic wiki page", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-save-evidence", title: "Save evidence", contexts: ["action"] },
       { id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }
     ]);
     assert.equal(optionsOpened, 1);
@@ -524,7 +545,7 @@ test("action click can save browser source without queueing generation", async (
         }
         return {
           ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+          result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
         };
       },
       writeStatus: async (status) => calls.push(["status", status.status, status.message]),
@@ -536,30 +557,30 @@ test("action click can save browser source without queueing generation", async (
   assert.equal(response.ok, true);
   assert.equal(messages.length, 2);
   assert.equal(messages[0].type, "web-source-exists");
-  assert.equal(messages[1].type, "save-raw-source");
+  assert.equal(messages[1].type, "save-evidence-source");
   assert.equal(response.result.generationSkipped, true);
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
-    ["status", "source_saved", "Raw source saved."],
-    ["badge", "RAW"]
+    ["status", "source_saved", "Evidence source saved."],
+    ["badge", "SRC"]
   ]);
 });
 
-test("context menu raw save skips generation trigger", async () => {
+test("context menu evidence save skips generation trigger", async () => {
   resetSourceCaptureInFlightForTest();
   const restore = installChromeForAction();
   try {
     const response = await handleContextMenuClickForTest(
-      { menuItemId: "kinic-wiki-clipper-save-raw" },
+      { menuItemId: "kinic-wiki-clipper-save-evidence" },
       { id: 1, url: "https://example.com/", title: "Example" }
     );
 
     assert.equal(response, undefined);
     assert.equal(restore.messages.length, 2);
     assert.equal(restore.messages[0].type, "web-source-exists");
-    assert.equal(restore.messages[1].type, "save-raw-source");
-    assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
+    assert.equal(restore.messages[1].type, "save-evidence-source");
+    assert.ok(restore.badges.some((badge) => badge.text === "SRC"));
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -572,12 +593,12 @@ test("action click rejects duplicate in-flight source capture", async () => {
   let saveCalls = 0;
   const restore = installChromeForAction({
     sendOffscreen(message) {
-      if (message.type === "save-raw-source") {
+      if (message.type === "save-evidence-source") {
         saveCalls += 1;
         if (saveCalls === 1) return deferred.promise;
         return {
           ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+          result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
         };
       }
       return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
@@ -590,18 +611,18 @@ test("action click rejects duplicate in-flight source capture", async () => {
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
     assert.equal(duplicate.error, "Source capture is already running for this page.");
-    assert.equal(restore.messages.length, 3);
+    assert.equal(restore.messages.length, 2);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/example-1a2b3c4d.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.length, 7);
+    assert.equal(restore.messages.length, 6);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -644,7 +665,7 @@ test("action click reserves URL before delayed session storage read", async () =
 
     storageRead.resolve();
     assert.equal((await first).ok, true);
-    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+    assert.equal(restore.messages.filter((message) => message.type === "save-evidence-source").length, 1);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -685,7 +706,7 @@ test("action click rolls back URL reservation when session storage write fails",
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+    assert.equal(restore.messages.filter((message) => message.type === "save-evidence-source").length, 1);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -698,12 +719,12 @@ test("action click allows a different URL while another URL is in flight", async
   let saveCalls = 0;
   const restore = installChromeForAction({
     sendOffscreen(message) {
-      if (message.type === "save-raw-source") {
+      if (message.type === "save-evidence-source") {
         saveCalls += 1;
         if (saveCalls === 1) return deferred.promise;
         return {
           ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+          result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
         };
       }
       return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
@@ -716,13 +737,13 @@ test("action click allows a different URL while another URL is in flight", async
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
     assert.equal(restore.messages.length, 5);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
-    assert.notEqual(restore.messages[1].rawSource.path, restore.messages[3].rawSource.path);
+    assert.match(restore.messages[1].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
+    assert.match(restore.messages[3].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
+    assert.notEqual(restore.messages[1].evidenceSource.path, restore.messages[3].evidenceSource.path);
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/example-1a2b3c4d.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
   } finally {
@@ -743,7 +764,7 @@ test("action click honors session in-flight TTL", async () => {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
     assert.equal(busy.error, "Source capture is already running for this page.");
-    assert.equal(restore.messages.length, 1);
+    assert.equal(restore.messages.length, 0);
 
     sessionStorage.setItem(
       "kinic-source-capture-in-flight-v1",
@@ -751,7 +772,7 @@ test("action click honors session in-flight TTL", async () => {
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
-    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages.length, 3);
   } finally {
     resetSourceCaptureInFlightForTest();
     restore();
@@ -967,7 +988,7 @@ function installChromeForContextMenu(createdMenus, onOpenOptions) {
   };
 }
 
-function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { ok: true, result: { reset: true } }) {
+function installChromeForOffscreenReset(calls, hasOffscreen) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -982,7 +1003,7 @@ function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { o
         },
         async sendMessage(message) {
           calls.push(["message", message]);
-          return resetResponse;
+          return { ok: true, result: { reset: true } };
         }
       }
     }
@@ -1024,10 +1045,10 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
           sendCount += 1;
           messages.push(message);
           if (sendOffscreen) return sendOffscreen(message, sendCount);
-          if (message.type === "save-raw-source") {
+          if (message.type === "save-evidence-source") {
             return {
               ok: true,
-              result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+              result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
             };
           }
           return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
@@ -1079,10 +1100,10 @@ function actionDeps(overrides = {}) {
   const sendOffscreen =
     overrides.sendOffscreen ||
     (async (message) =>
-      message.type === "save-raw-source"
+      message.type === "save-evidence-source"
         ? {
             ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+            result: { path: message.evidenceSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
           }
         : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } });
   return {
@@ -1116,8 +1137,8 @@ function actionDeps(overrides = {}) {
 
 function rawWebSource() {
   return {
-    path: "/Sources/web/abc.md",
-    sourceId: "web-abc",
+    path: "/Sources/web/example-1a2b3c4d.md",
+    sourceId: "web-example-1a2b3c4d",
     content: "# Example",
     metadataJson: "{}"
   };

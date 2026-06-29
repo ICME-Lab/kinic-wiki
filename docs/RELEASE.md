@@ -1,8 +1,13 @@
 # Release
 
-`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, archive/restore, and Skill Registry maintenance. The Browser remains the primary public UI.
+`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, and Skill Registry maintenance. The Browser remains the primary public UI.
 
 Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Cargo install is a Rust-user fallback; crates.io publication is deferred.
+
+## Breaking Changes
+
+- Archive/restore APIs and CLI commands remain removed. Upgrade deploy preflight rejects legacy `archiving`, `archived`, and `restoring` database rows.
+- Source nodes no longer require canonical `/Sources/<provider>/<id>.md` paths. Safe `/Sources/...` paths are accepted, and URL capture writes immutable suffixed paths on collision.
 
 ## npm
 

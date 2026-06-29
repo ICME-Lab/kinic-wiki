@@ -2,7 +2,7 @@
 // What: Popup settings and Internet Identity session controls.
 // Why: Toolbar click runs without UI, but setup/login need a visible extension page.
 import { authSnapshot, loginWithInternetIdentity, logoutInternetIdentity } from "../src/auth-client.js";
-import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/url-ingest-request.js";
+import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/source-capture-request.js";
 import { createDatabase, listWritableDatabases } from "../src/vfs-actor.js";
 import {
   DEFAULT_DATABASE_NAME,

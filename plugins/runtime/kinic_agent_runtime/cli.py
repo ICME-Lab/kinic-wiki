@@ -50,4 +50,3 @@ def run_cli(cli: str, *args: str, check: bool = True) -> subprocess.CompletedPro
         text=True,
         capture_output=True,
     )
-

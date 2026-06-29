@@ -349,30 +349,6 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Export one database archive snapshot")]
-    ArchiveExport {
-        database_id: String,
-        #[arg(long)]
-        output: PathBuf,
-        #[arg(long, default_value_t = 1_048_576)]
-        chunk_size: u32,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Restore one archived database from a snapshot")]
-    ArchiveRestore {
-        database_id: String,
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long, default_value_t = 1_048_576)]
-        chunk_size: u32,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Cancel an interrupted archive export")]
-    ArchiveCancel { database_id: String },
-    #[command(about = "Cancel an interrupted archive restore")]
-    RestoreCancel { database_id: String },
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -58,49 +58,56 @@ export function DocumentHeader({
       setCopyStatus(`${label} copy failed`);
     }
   }
+  const hasStatusBadges = view === "edit" || copyStatus !== null;
   return (
-    <div className="flex min-h-[60px] flex-wrap items-center justify-between gap-2 border-b border-line bg-white px-5 py-3">
-      <div className="flex min-w-0 max-w-full items-center gap-2">
-        <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
-        <div className="flex h-10 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a]">
-          <button
-            aria-label="Copy path"
-            className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
-            title="Copy path"
-            type="button"
-            onClick={() => void copyText("Path", path)}
-          >
-            <Route aria-hidden="true" size={15} />
-          </button>
-        </div>
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="flex rounded-2xl border border-line bg-white p-1 text-sm shadow-[0_4px_10px_#14142b0a]">
-          <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
-          <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
-          {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
-        </div>
-        {rawContent !== null ? (
-          <div className="flex h-10 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a]">
+    <div className="border-b border-line bg-white px-2 py-3 sm:px-5">
+      <div className="flex min-h-9 items-center gap-1 overflow-x-auto whitespace-nowrap sm:min-h-10 sm:gap-2 lg:justify-between lg:overflow-visible">
+        <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+          <div className="hidden min-w-[88px] max-w-[34vw] shrink-0 sm:block sm:max-w-[52vw] lg:max-w-full">
+            <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
+          </div>
+          <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10">
             <button
-              aria-label="Copy raw"
-              className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
-              title="Copy raw"
+              aria-label="Copy path"
+              className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink sm:size-8"
+              title="Copy path"
               type="button"
-              onClick={() => void copyText("Raw", rawContent)}
+              onClick={() => void copyText("Path", path)}
             >
-              <FileCode aria-hidden="true" size={15} />
+              <Route aria-hidden="true" size={15} />
             </button>
           </div>
-        ) : null}
-        <div className="flex min-w-0 flex-wrap items-center gap-1">
+        </div>
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
+            <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
+            <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
+            {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
+          </div>
+          {rawContent !== null ? (
+            <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10">
+              <button
+                aria-label="Copy raw"
+                className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink sm:size-8"
+                title="Copy raw"
+                type="button"
+                onClick={() => void copyText("Raw", rawContent)}
+              >
+                <FileCode aria-hidden="true" size={15} />
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {hasStatusBadges ? (
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1">
           {view === "edit" ? <HeaderBadge label="Editing" tone="blue" /> : null}
           {view === "edit" && editState.dirty ? <HeaderBadge label="Unsaved" tone="yellow" /> : null}
           {view === "edit" && editState.saveState === "saving" ? <HeaderBadge label="Saving" tone="blue" /> : null}
           {view === "edit" && editState.saveState === "saved" ? <HeaderBadge label="Saved" tone="green" /> : null}
           {copyStatus ? <HeaderBadge label={copyStatus} tone={copyStatus.endsWith("failed") ? "yellow" : "green"} /> : null}
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -116,10 +123,10 @@ function DocumentHeaderPath({
 }) {
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
-    return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a]">/</div>;
+    return <div className="flex h-9 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-2 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3">/</div>;
   }
   return (
-    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current knowledge path">
+    <nav className="flex h-9 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-2 font-mono text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3" aria-label="Current knowledge path">
       {segments.map((segment, index) => {
         const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
         const last = index === segments.length - 1;
@@ -777,7 +784,7 @@ function ViewButton({ active, label, onClick }: { active: boolean; label: string
   return (
     <button
       type="button"
-      className={`rounded-xl px-3 py-1.5 ${active ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
+      className={`rounded-xl px-2 py-1.5 sm:px-3 ${active ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
       onClick={onClick}
     >
       {label}

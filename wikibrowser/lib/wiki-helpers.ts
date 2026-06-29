@@ -1,7 +1,7 @@
 import type { ChildNode } from "@/lib/types";
 
 export type ViewMode = "preview" | "raw" | "edit";
-export type ModeTab = "explorer" | "query" | "ingest";
+export type ModeTab = "explorer" | "query" | "source-capture";
 export type ReadIdentityMode = "anonymous" | "user";
 export const DEFAULT_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
 export const OPTIONAL_STORE_ROOT_PATHS = ["/Wiki"] as const;
@@ -42,7 +42,7 @@ export function canExpandChildNode(node: ChildNode): boolean {
 
 export function parseModeTab(value: string | null): ModeTab {
   if (value === "query") return "query";
-  if (value === "ingest" || value === "explorer") return value;
+  if (value === "source-capture" || value === "explorer") return value;
   return "explorer";
 }
 
@@ -95,14 +95,16 @@ export function inferNoteRole(path: string): string {
   if (name === "schema.md") return "schema";
   if (name === "provenance.md") return "provenance";
   if (path.includes("/topics/") && path.endsWith(".md")) return "topics";
-  if (isKnowledgeSourcePath(path)) return "raw_source";
+  if (isKnowledgeSourcePath(path)) return "evidence_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
 }
 
 export function isKnowledgeSourcePath(path: string): boolean {
-  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return !!match && !["raw", "sessions", "skill-runs", "ingest-requests"].includes(match[1]) && !match[2].includes("..");
+  const prefix = "/Sources/";
+  if (!path.startsWith(prefix)) return false;
+  const parts = path.slice(prefix.length).split("/");
+  return parts.every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 export function extractMarkdownLinks(content: string): string[] {

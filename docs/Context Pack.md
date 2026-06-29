@@ -160,7 +160,7 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
 - `references/*.md` uses `kinic.store` and `kinic.store_path`
-- reference `kinic.store_path` stays under a Kinic store root such as `/Sources/<provider>`, `/Sources/sessions`, `/Sources/skill-runs`, or `/Sessions`
+- reference `kinic.store_path` stays under a Kinic store root such as `/Sources`, `/Sources/sessions`, `/Sources/skill-runs`, or `/Sessions`
 - reference concepts include `kinic.etag` and `kinic.content_hash`
 - reference bodies use the fixed metadata-only shape
 - `--fail-on-truncated` fails when `okf.yaml.truncated` is true

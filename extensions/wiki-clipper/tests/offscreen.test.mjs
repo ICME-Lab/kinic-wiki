@@ -7,13 +7,13 @@ import {
   authStatus,
   handleOffscreenMessage,
   listWritableDatabases,
-  saveRawSource,
+  saveEvidenceSource,
   setOffscreenDepsForTest,
   triggerSourceGeneration,
   webSourceExists
 } from "../src/offscreen.js";
 
-test("saveRawSource writes with authenticated identity", async () => {
+test("saveEvidenceSource writes with authenticated identity", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -42,7 +42,7 @@ test("saveRawSource writes with authenticated identity", async () => {
     }
   });
   try {
-    const result = await saveRawSource(rawSource(), config());
+    const result = await saveEvidenceSource(evidenceSource(), config());
 
     assert.equal(result.etag, "etag-2");
     assert.equal(result.principal, "principal-1");
@@ -63,18 +63,18 @@ test("saveRawSource writes with authenticated identity", async () => {
   }
 });
 
-test("saveRawSource rejects unauthenticated sessions", async () => {
+test("saveEvidenceSource rejects unauthenticated sessions", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => saveRawSource(rawSource(), config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => saveEvidenceSource(evidenceSource(), config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
 });
 
-test("webSourceExists returns false when raw source is missing", async () => {
+test("webSourceExists returns false when evidence source is missing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -106,7 +106,7 @@ test("webSourceExists returns false when raw source is missing", async () => {
   }
 });
 
-test("webSourceExists returns true when raw source exists", async () => {
+test("webSourceExists returns true when evidence source exists", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
@@ -135,7 +135,7 @@ test("webSourceExists rejects unauthenticated sessions", async () => {
   }
 });
 
-test("saveRawSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
+test("saveEvidenceSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
   const calls = [];
   let snapshotCalls = 0;
   setOffscreenDepsForTest({
@@ -170,7 +170,7 @@ test("saveRawSource reloads auth client once before writing after a stale unauth
     }
   });
   try {
-    const result = await saveRawSource(rawSource(), config());
+    const result = await saveEvidenceSource(evidenceSource(), config());
 
     assert.equal(result.principal, "principal-2");
     assert.equal(result.etag, "etag-after-reset");
@@ -221,7 +221,25 @@ test("listWritableDatabases reloads auth client once before listing databases", 
   }
 });
 
-test("saveRawSource rejects suspended cycles before writing", async () => {
+test("reset-auth-client message resets offscreen auth state", async () => {
+  let resetCount = 0;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    resetAuthClient: async () => {
+      resetCount += 1;
+    }
+  });
+  try {
+    const result = await handleOffscreenMessage({ target: "offscreen", type: "reset-auth-client" });
+
+    assert.deepEqual(result, { reset: true });
+    assert.equal(resetCount, 1);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveEvidenceSource rejects suspended cycles before writing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -234,11 +252,15 @@ test("saveRawSource rejects suspended cycles before writing", async () => {
       async mkdir_node() {
         calls.push(["mkdir"]);
         return { Ok: { created: true, path: "/Sources" } };
+      },
+      async write_node() {
+        calls.push(["write"]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
       }
     })
   });
   try {
-    await assert.rejects(() => saveRawSource(rawSource(), config()), /cycles are suspended/);
+    await assert.rejects(() => saveEvidenceSource(evidenceSource(), config()), /cycles are suspended/);
 
     assert.deepEqual(calls, []);
   } finally {
@@ -296,7 +318,7 @@ test("listWritableDatabases returns active writable database summaries", async (
           Ok: [
             rawDatabase("team-db", "Team Wiki", "Writer", "Active"),
             rawDatabase("reader-db", "Read Wiki", "Reader", "Active"),
-            rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
+            rawDatabase("old-db", "Old Wiki", "Owner", "Deleted")
           ]
         };
       },
@@ -332,7 +354,7 @@ test("listWritableDatabases returns active writable database summaries", async (
   }
 });
 
-function rawSource() {
+function evidenceSource() {
   return {
     path: "/Sources/chatgpt/abc.md",
     sourceId: "chatgpt-abc",
@@ -362,7 +384,6 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
             logical_size_bytes: 0n,
             cycles_balance: [balanceCycles],
             cycles_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
-            archived_at_ms: [],
             deleted_at_ms: []
           }
         ]
@@ -390,7 +411,6 @@ function rawDatabase(databaseId, name, role, status) {
     logical_size_bytes: 0n,
     cycles_balance: [20_000n],
     cycles_suspended_at_ms: [],
-    archived_at_ms: [],
     deleted_at_ms: []
   };
 }

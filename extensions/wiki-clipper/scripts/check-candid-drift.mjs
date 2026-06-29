@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Active: "null", Pending: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Active: "null", Deleted: "null", Pending: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -20,7 +20,6 @@ const expectedTypes = {
       database_id: "text",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
     }
   },
@@ -179,12 +178,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_10") return "ResultCyclesBillingConfig";
-  if (normalized === "Result_5") return "ResultCreateDatabase";
-  if (normalized === "Result_17") return "ResultDatabases";
-  if (normalized === "Result_29") return "ResultMkdirNode";
-  if (normalized === "Result_35") return "ResultNode";
-  if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
+  if (normalized === "Result_4") return "ResultCreateDatabase";
+  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_28") return "ResultMkdirNode";
+  if (normalized === "Result_33") return "ResultNode";
+  if (normalized === "Result_41") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

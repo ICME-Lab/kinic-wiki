@@ -19,7 +19,6 @@ const ALLOWED_ORIGINS = new Set([
   "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
   "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"
 ]);
-
 let checkSession: CheckSession = defaultCheckSession;
 
 export function setSourceRunDepsForTest(deps: { checkSession?: CheckSession } = {}): void {

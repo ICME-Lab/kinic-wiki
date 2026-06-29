@@ -2,9 +2,7 @@
 // What: Generic VFS command execution helpers.
 // Why: The app-facing CLI package should delegate shared VFS command behavior instead of owning it.
 use std::borrow::Cow;
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
 use std::process::Command as ProcessCommand;
 
 use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
@@ -14,17 +12,15 @@ use crate::connection::{
 };
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
-    DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS,
+    KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketEntitlementPage,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -808,32 +804,6 @@ async fn run_database_command(
                 }
             }
         }
-        DatabaseCommand::ArchiveExport {
-            database_id,
-            output,
-            chunk_size,
-            json,
-        } => {
-            let result = archive_export(client, &database_id, &output, chunk_size).await?;
-            print_archive_result(result, json)?;
-        }
-        DatabaseCommand::ArchiveRestore {
-            database_id,
-            input,
-            chunk_size,
-            json,
-        } => {
-            let result = archive_restore(client, &database_id, &input, chunk_size).await?;
-            print_archive_result(result, json)?;
-        }
-        DatabaseCommand::ArchiveCancel { database_id } => {
-            client.cancel_database_archive(&database_id).await?;
-            println!("{database_id}");
-        }
-        DatabaseCommand::RestoreCancel { database_id } => {
-            client.cancel_database_restore(&database_id).await?;
-            println!("{database_id}");
-        }
     }
     Ok(())
 }
@@ -1046,232 +1016,6 @@ fn cycles_for_payment_amount_e8s(
     Ok(cycles)
 }
 
-#[derive(Debug, serde::Serialize)]
-struct ArchiveCommandResult {
-    database_id: String,
-    path: String,
-    size_bytes: u64,
-    snapshot_hash: String,
-    chunk_size: u32,
-    chunk_count: u64,
-}
-
-async fn archive_export(
-    client: &impl VfsApi,
-    database_id: &str,
-    output: &Path,
-    chunk_size: u32,
-) -> Result<ArchiveCommandResult> {
-    validate_archive_chunk_size(chunk_size)?;
-    let archive = client.begin_database_archive(database_id).await?;
-    let tmp_output = archive_tmp_path(output)?;
-    let mut file = match File::create(&tmp_output) {
-        Ok(file) => file,
-        Err(error) => {
-            let _ = client.cancel_database_archive(database_id).await;
-            return Err(error.into());
-        }
-    };
-    let (snapshot_hash, chunk_count) = archive_export_chunks(
-        client,
-        database_id,
-        archive.size_bytes,
-        &mut file,
-        &tmp_output,
-        chunk_size,
-    )
-    .await?;
-    if let Err(error) = client
-        .finalize_database_archive(database_id, snapshot_hash.clone())
-        .await
-    {
-        cleanup_archive_export(client, database_id, &tmp_output).await;
-        return Err(error);
-    }
-    fs::rename(&tmp_output, output).map_err(|error| {
-        anyhow!(
-            "failed to move archive tmp file {} to {}: {error}",
-            tmp_output.display(),
-            output.display()
-        )
-    })?;
-    Ok(ArchiveCommandResult {
-        database_id: database_id.to_string(),
-        path: output.display().to_string(),
-        size_bytes: archive.size_bytes,
-        snapshot_hash: hex_string(&snapshot_hash),
-        chunk_size,
-        chunk_count,
-    })
-}
-
-async fn archive_restore(
-    client: &impl VfsApi,
-    database_id: &str,
-    input: &Path,
-    chunk_size: u32,
-) -> Result<ArchiveCommandResult> {
-    validate_archive_chunk_size(chunk_size)?;
-    let mut file = File::open(input)?;
-    let size_bytes = file.metadata()?.len();
-    let snapshot_hash = archive_file_hash(&mut file)?;
-    file.seek(SeekFrom::Start(0))?;
-    client
-        .begin_database_restore(database_id, snapshot_hash.clone(), size_bytes)
-        .await?;
-    let chunk_count = match archive_restore_chunks(client, database_id, &mut file, chunk_size).await
-    {
-        Ok(chunk_count) => chunk_count,
-        Err(error) => {
-            return Err(cleanup_archive_restore(client, database_id, error).await);
-        }
-    };
-    if let Err(error) = client.finalize_database_restore(database_id).await {
-        return Err(cleanup_archive_restore(client, database_id, error).await);
-    }
-    Ok(ArchiveCommandResult {
-        database_id: database_id.to_string(),
-        path: input.display().to_string(),
-        size_bytes,
-        snapshot_hash: hex_string(&snapshot_hash),
-        chunk_size,
-        chunk_count,
-    })
-}
-
-async fn archive_restore_chunks(
-    client: &impl VfsApi,
-    database_id: &str,
-    file: &mut File,
-    chunk_size: u32,
-) -> Result<u64> {
-    let mut buffer = vec![0_u8; chunk_size as usize];
-    let mut offset = 0_u64;
-    let mut chunk_count = 0_u64;
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        client
-            .write_database_restore_chunk(DatabaseRestoreChunkRequest {
-                database_id: database_id.to_string(),
-                offset,
-                bytes: buffer[..read].to_vec(),
-            })
-            .await?;
-        offset += read as u64;
-        chunk_count += 1;
-    }
-    Ok(chunk_count)
-}
-
-async fn cleanup_archive_restore(
-    client: &impl VfsApi,
-    database_id: &str,
-    error: anyhow::Error,
-) -> anyhow::Error {
-    match client.cancel_database_restore(database_id).await {
-        Ok(()) => error,
-        Err(cancel_error) => anyhow!("{error}; restore cancel failed: {cancel_error}"),
-    }
-}
-
-async fn archive_export_chunks(
-    client: &impl VfsApi,
-    database_id: &str,
-    archive_size_bytes: u64,
-    writer: &mut impl Write,
-    tmp_output: &Path,
-    chunk_size: u32,
-) -> Result<(Vec<u8>, u64)> {
-    let mut hasher = Sha256::new();
-    let mut offset = 0_u64;
-    let mut chunk_count = 0_u64;
-    while offset < archive_size_bytes {
-        let chunk = match client
-            .read_database_archive_chunk(database_id, offset, chunk_size)
-            .await
-        {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                cleanup_archive_export(client, database_id, tmp_output).await;
-                return Err(error);
-            }
-        };
-        if chunk.bytes.is_empty() {
-            cleanup_archive_export(client, database_id, tmp_output).await;
-            return Err(anyhow!("archive chunk must not be empty before EOF"));
-        }
-        if let Err(error) = writer.write_all(&chunk.bytes) {
-            cleanup_archive_export(client, database_id, tmp_output).await;
-            return Err(error.into());
-        }
-        hasher.update(&chunk.bytes);
-        offset += chunk.bytes.len() as u64;
-        chunk_count += 1;
-    }
-    if let Err(error) = writer.flush() {
-        cleanup_archive_export(client, database_id, tmp_output).await;
-        return Err(error.into());
-    }
-    if offset != archive_size_bytes {
-        cleanup_archive_export(client, database_id, tmp_output).await;
-        return Err(anyhow!("archive byte length mismatch"));
-    }
-    Ok((hasher.finalize().to_vec(), chunk_count))
-}
-
-async fn cleanup_archive_export(client: &impl VfsApi, database_id: &str, tmp_output: &Path) {
-    let _ = client.cancel_database_archive(database_id).await;
-    let _ = fs::remove_file(tmp_output);
-}
-
-fn archive_file_hash(file: &mut File) -> Result<Vec<u8>> {
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher.finalize().to_vec())
-}
-
-fn validate_archive_chunk_size(chunk_size: u32) -> Result<()> {
-    if (1..=1_048_576).contains(&chunk_size) {
-        Ok(())
-    } else {
-        Err(anyhow!("chunk-size must be between 1 and 1048576 bytes"))
-    }
-}
-
-fn archive_tmp_path(output: &Path) -> Result<PathBuf> {
-    let name = output
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("output path must include a file name"))?;
-    Ok(output.with_file_name(format!(".{name}.tmp")))
-}
-
-fn print_archive_result(result: ArchiveCommandResult, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!(
-            "{}\t{}\t{}\t{}",
-            result.database_id, result.path, result.size_bytes, result.snapshot_hash
-        );
-    }
-    Ok(())
-}
-
-fn hex_string(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub fn print_database_current(connection: &ResolvedConnectionPreview, json: bool) -> Result<()> {
     if json {
         println!(
@@ -1478,29 +1222,6 @@ mod tests {
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
         neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
-        archive_begun: Mutex<Vec<String>>,
-        archive_chunks: Mutex<Vec<(u64, u32)>>,
-        archive_finalized: Mutex<Vec<Vec<u8>>>,
-        archive_cancelled: Mutex<Vec<String>>,
-        restore_begun: Mutex<Vec<(String, Vec<u8>, u64)>>,
-        restore_chunks: Mutex<Vec<DatabaseRestoreChunkRequest>>,
-        restore_finalized: Mutex<Vec<String>>,
-        restore_cancelled: Mutex<Vec<String>>,
-        fail_restore_chunk: Mutex<Option<anyhow::Error>>,
-        fail_restore_finalize: Mutex<Option<anyhow::Error>>,
-        fail_restore_cancel: Mutex<Option<anyhow::Error>>,
-    }
-
-    struct FailingWriter;
-
-    impl std::io::Write for FailingWriter {
-        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::other("disk full"))
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
     }
 
     fn test_connection() -> ResolvedConnection {
@@ -1671,94 +1392,8 @@ mod tests {
                 logical_size_bytes: 42,
                 cycles_balance: Some(1_000_000),
                 cycles_suspended_at_ms: None,
-                archived_at_ms: None,
                 deleted_at_ms: None,
             }])
-        }
-        async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
-            self.archive_begun
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(DatabaseArchiveInfo {
-                database_id: database_id.to_string(),
-                size_bytes: b"archive bytes".len() as u64,
-            })
-        }
-        async fn read_database_archive_chunk(
-            &self,
-            _database_id: &str,
-            offset: u64,
-            max_bytes: u32,
-        ) -> Result<DatabaseArchiveChunk> {
-            self.archive_chunks
-                .lock()
-                .unwrap()
-                .push((offset, max_bytes));
-            let bytes = b"archive bytes";
-            let start = offset as usize;
-            let end = (start + max_bytes as usize).min(bytes.len());
-            Ok(DatabaseArchiveChunk {
-                bytes: bytes[start..end].to_vec(),
-            })
-        }
-        async fn finalize_database_archive(
-            &self,
-            _database_id: &str,
-            snapshot_hash: Vec<u8>,
-        ) -> Result<()> {
-            self.archive_finalized.lock().unwrap().push(snapshot_hash);
-            Ok(())
-        }
-        async fn cancel_database_archive(&self, database_id: &str) -> Result<()> {
-            self.archive_cancelled
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
-        }
-        async fn begin_database_restore(
-            &self,
-            database_id: &str,
-            snapshot_hash: Vec<u8>,
-            size_bytes: u64,
-        ) -> Result<()> {
-            self.restore_begun.lock().unwrap().push((
-                database_id.to_string(),
-                snapshot_hash,
-                size_bytes,
-            ));
-            Ok(())
-        }
-        async fn write_database_restore_chunk(
-            &self,
-            request: DatabaseRestoreChunkRequest,
-        ) -> Result<()> {
-            if let Some(error) = self.fail_restore_chunk.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_chunks.lock().unwrap().push(request);
-            Ok(())
-        }
-        async fn finalize_database_restore(&self, database_id: &str) -> Result<()> {
-            if let Some(error) = self.fail_restore_finalize.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_finalized
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
-        }
-        async fn cancel_database_restore(&self, database_id: &str) -> Result<()> {
-            if let Some(error) = self.fail_restore_cancel.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_cancelled
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
         }
         async fn read_node(&self, _database_id: &str, path: &str) -> Result<Option<Node>> {
             Ok(self.nodes.iter().find(|node| node.path == path).cloned())
@@ -2578,200 +2213,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_archive_export_writes_file_and_finalizes_hash() {
-        let dir = tempdir().expect("temp dir should exist");
-        let output = dir.path().join("archive.sqlite");
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveExport {
-                    database_id: "alpha".to_string(),
-                    output: output.clone(),
-                    chunk_size: 5,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect("archive export should succeed");
-        assert_eq!(
-            std::fs::read(&output).expect("archive file"),
-            b"archive bytes"
-        );
-        assert_eq!(
-            client.archive_chunks.lock().unwrap().as_slice(),
-            &[(0, 5), (5, 5), (10, 5)]
-        );
-        assert_eq!(client.archive_finalized.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn database_archive_export_cleans_up_when_local_write_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let tmp_output = dir.path().join(".archive.sqlite.tmp");
-        std::fs::write(&tmp_output, b"partial").expect("tmp file should write");
-        let client = MockClient::default();
-        let mut writer = FailingWriter;
-
-        let error = super::archive_export_chunks(
-            &client,
-            "alpha",
-            b"archive bytes".len() as u64,
-            &mut writer,
-            &tmp_output,
-            5,
-        )
-        .await
-        .expect_err("local write should fail");
-
-        assert!(error.to_string().contains("disk full"));
-        assert_eq!(
-            client.archive_cancelled.lock().unwrap().as_slice(),
-            &["alpha".to_string()]
-        );
-        assert!(!tmp_output.exists());
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_writes_chunks_and_finalizes() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect("archive restore should succeed");
-        let begun = client.restore_begun.lock().unwrap();
-        assert_eq!(begun[0].0, "alpha");
-        assert_eq!(begun[0].2, b"restore bytes".len() as u64);
-        let chunks = client.restore_chunks.lock().unwrap();
-        assert_eq!(chunks[0].offset, 0);
-        assert_eq!(chunks[0].bytes, b"rest");
-        assert_eq!(chunks[1].offset, 4);
-        assert_eq!(chunks[1].bytes, b"ore ");
-        assert_eq!(chunks[2].offset, 8);
-        assert_eq!(chunks[2].bytes, b"byte");
-        assert_eq!(chunks[3].offset, 12);
-        assert_eq!(chunks[3].bytes, b"s");
-        assert_eq!(client.restore_finalized.lock().unwrap()[0], "alpha");
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_cancels_when_chunk_write_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_chunk.lock().unwrap() = Some(anyhow::anyhow!("chunk failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("chunk failure should fail restore");
-
-        assert!(error.to_string().contains("chunk failed"));
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-        assert!(client.restore_finalized.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_cancels_when_finalize_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_finalize.lock().unwrap() = Some(anyhow::anyhow!("finalize failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("finalize failure should fail restore");
-
-        assert!(error.to_string().contains("finalize failed"));
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-        assert_eq!(client.restore_chunks.lock().unwrap().len(), 4);
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_reports_cancel_failure_with_original_error() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_finalize.lock().unwrap() = Some(anyhow::anyhow!("finalize failed"));
-        *client.fail_restore_cancel.lock().unwrap() = Some(anyhow::anyhow!("cancel failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("cancel failure should be reported");
-
-        let message = error.to_string();
-        assert!(message.contains("finalize failed"));
-        assert!(message.contains("restore cancel failed: cancel failed"));
-    }
-
-    #[tokio::test]
-    async fn database_archive_cancel_dispatches() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveCancel {
-                    database_id: "alpha".to_string(),
-                },
-            },
-        )
-        .await
-        .expect("archive cancel should succeed");
-        assert_eq!(client.archive_cancelled.lock().unwrap()[0], "alpha");
-    }
-
-    #[tokio::test]
     async fn query_sql_sends_database_sql_request() {
         let client = MockClient::default();
         run_vfs_command(
@@ -2813,31 +2254,6 @@ mod tests {
         assert_eq!(json.len(), 1);
         assert!(json[0].contains("\"row_count\": 1"));
         assert!(json[0].contains("\"limit\": 20"));
-    }
-
-    #[tokio::test]
-    async fn database_restore_cancel_dispatches() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RestoreCancel {
-                    database_id: "alpha".to_string(),
-                },
-            },
-        )
-        .await
-        .expect("restore cancel should succeed");
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-    }
-
-    #[test]
-    fn archive_chunk_size_is_capped() {
-        assert!(super::validate_archive_chunk_size(1).is_ok());
-        assert!(super::validate_archive_chunk_size(1_048_576).is_ok());
-        assert!(super::validate_archive_chunk_size(0).is_err());
-        assert!(super::validate_archive_chunk_size(1_048_577).is_err());
     }
 
     #[test]

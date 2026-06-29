@@ -10,7 +10,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 2. For local structure checks, inspect the relevant Markdown files directly. `kinic-vfs-cli` no longer provides local mirror lint.
 3. For remote checks, read `/Knowledge/index.md` first with `read-node-context`, then inspect directly linked or role-matched notes before broad search.
 4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, and link commands only to confirm or expand findings after direct note inspection.
-   - For wiki-only inspection, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless raw source material is explicitly in scope.
+   - For wiki-only inspection, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless evidence source material is explicitly in scope.
 5. Group findings into:
    - duplication
    - isolation
@@ -42,7 +42,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Flag future / pending lines inside `facts.md`.
 - Flag recap prose inside `facts.md`.
 - Flag normalized or paraphrased `facts.md` values when the settled source span is materially more exact, for example `1/13` instead of `4/52`, `color` instead of `colour`, or shortened money/date formats.
-- Flag long code blocks, long diffs, generated docs, or schema dumps copied into knowledge notes.
+- Flag long code blocks, long diffs, generated docs, or schema dumps copied into wiki notes.
 - Flag implementation snippets inside `facts.md`; code notes should point to repo source paths and record decisions, not copy code bodies.
 - Flag `summary.md` pages that are mostly README or generated-doc copies instead of recap.
 - Flag code notes that list file paths but omit the decision, rationale, verification, or follow-up that makes the note useful.

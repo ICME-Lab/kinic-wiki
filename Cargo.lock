@@ -1916,6 +1916,8 @@ name = "kinic-wiki-domain"
 version = "0.1.0"
 dependencies = [
  "kinic-vfs-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

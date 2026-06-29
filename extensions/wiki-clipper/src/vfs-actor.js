@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/src/vfs-actor.js
-// What: Minimal write-capable VFS actor for raw source persistence.
+// What: Minimal write-capable VFS actor for evidence source persistence.
 // Why: The wiki browser client is read-only; capture needs source writes plus trigger session APIs.
 export async function createVfsActor({ canisterId, host, identity }) {
   const [{ Actor, HttpAgent }, { Principal }] = await Promise.all([
@@ -18,11 +18,8 @@ function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Active: idl.Null,
-    Pending: idl.Null,
-    Restoring: idl.Null,
-    Archiving: idl.Null,
-    Archived: idl.Null,
-    Deleted: idl.Null
+    Deleted: idl.Null,
+    Pending: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -32,7 +29,6 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesTopUpConfig = idl.Record({

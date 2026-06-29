@@ -46,8 +46,8 @@ import type {
   SearchNodeHit,
   SourceEvidence,
   SourceRunSessionCheckRequest,
-  UrlIngestTriggerSessionCheckRequest,
-  UrlIngestTriggerSessionRequest,
+  SourceCaptureTriggerSessionCheckRequest,
+  SourceCaptureTriggerSessionRequest,
   WikiMetrics,
   WikiMetricsPoint,
   WikiNode,
@@ -100,7 +100,6 @@ type RawDatabaseSummary = {
   name: string;
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
-  archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
 };
 
@@ -389,12 +388,12 @@ type RawMoveNodeResult = {
   overwrote: boolean;
 };
 
-type RawUrlIngestTriggerSessionRequest = {
+type RawSourceCaptureTriggerSessionRequest = {
   database_id: string;
   session_nonce: string;
 };
 
-type RawUrlIngestTriggerSessionCheckRequest = {
+type RawSourceCaptureTriggerSessionCheckRequest = {
   database_id: string;
   request_path: string;
   session_nonce: string;
@@ -464,11 +463,11 @@ type RawQueryContext = {
 type VfsActor = {
   // Query answer wrappers keep the public browser naming while the current canister Candid surface still exposes ops_* session methods.
   authorize_ops_answer_session: (request: RawQueryAnswerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
-  authorize_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
+  authorize_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
-  check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
+  check_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
@@ -1051,24 +1050,24 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
   });
 }
 
-export async function authorizeUrlIngestTriggerSession(
+export async function authorizeSourceCaptureTriggerSession(
   canisterId: string,
   identity: Identity,
-  request: UrlIngestTriggerSessionRequest
+  request: SourceCaptureTriggerSessionRequest
 ): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.authorize_url_ingest_trigger_session(rawUrlIngestTriggerSessionRequest(request));
+    const result = await actor.authorize_source_capture_trigger_session(rawSourceCaptureTriggerSessionRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
   });
 }
 
-export async function checkUrlIngestTriggerSession(canisterId: string, request: UrlIngestTriggerSessionCheckRequest): Promise<void> {
+export async function checkSourceCaptureTriggerSession(canisterId: string, request: SourceCaptureTriggerSessionCheckRequest): Promise<void> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.check_url_ingest_trigger_session(rawUrlIngestTriggerSessionCheckRequest(request));
+    const result = await actor.check_source_capture_trigger_session(rawSourceCaptureTriggerSessionCheckRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1358,7 +1357,6 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
     cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
-    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
 }
@@ -1710,14 +1708,14 @@ function rawOptionalText(value: string | null): [] | [string] {
   return value === null ? [] : [value];
 }
 
-function rawUrlIngestTriggerSessionRequest(request: UrlIngestTriggerSessionRequest): RawUrlIngestTriggerSessionRequest {
+function rawSourceCaptureTriggerSessionRequest(request: SourceCaptureTriggerSessionRequest): RawSourceCaptureTriggerSessionRequest {
   return {
     database_id: request.databaseId,
     session_nonce: request.sessionNonce
   };
 }
 
-function rawUrlIngestTriggerSessionCheckRequest(request: UrlIngestTriggerSessionCheckRequest): RawUrlIngestTriggerSessionCheckRequest {
+function rawSourceCaptureTriggerSessionCheckRequest(request: SourceCaptureTriggerSessionCheckRequest): RawSourceCaptureTriggerSessionCheckRequest {
   return {
     database_id: request.databaseId,
     request_path: request.requestPath,
@@ -1754,15 +1752,6 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   }
   if ("Pending" in status) {
     return "pending";
-  }
-  if ("Restoring" in status) {
-    return "restoring";
-  }
-  if ("Archiving" in status) {
-    return "archiving";
-  }
-  if ("Archived" in status) {
-    return "archived";
   }
   if ("Deleted" in status) {
     return "deleted";

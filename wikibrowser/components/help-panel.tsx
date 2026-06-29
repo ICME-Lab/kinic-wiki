@@ -26,7 +26,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<BookOpen aria-hidden size={17} />}
             title="Browse"
-            body="Use Explorer for store roots, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
+            body="Use Explorer for /Knowledge and /Sources, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
           />
           <HelpItem
             icon={<GitBranch aria-hidden size={17} />}
@@ -36,17 +36,17 @@ export function HelpPanel() {
           <HelpItem
             icon={<MessageSquareText aria-hidden size={17} />}
             title="Query"
-            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, or paste a URL to queue ingest."
+            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, or paste a URL to queue source capture."
           />
           <HelpItem
             icon={<FileText aria-hidden size={17} />}
-            title="Sources and ingest"
-            body="Sources holds raw evidence and ingest requests. Open evidence from provenance links or search when inspection is needed."
+            title="Sources and source capture"
+            body="Sources holds source evidence and source capture requests. Generated wiki pages should be reviewed before relying on them."
           />
           <HelpItem
             icon={<LockKeyhole aria-hidden size={17} />}
             title="Access"
-            body="Public databases can be read anonymously. Internet Identity is required for private reads, URL ingest, and writer or owner edits."
+            body="Public databases can be read anonymously. Internet Identity is required for private reads, source capture, and writer or owner edits."
           />
         </section>
       </article>

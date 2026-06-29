@@ -14,10 +14,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 async function main() {
   const url = readUrl();
   const target = parseSmokeTargetUrl(url);
-  const searchUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/search`;
-  const graphUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/graph?center=${encodeURIComponent(target.nodePath)}&depth=1`;
-  const emptyGraphUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/graph`;
-  const helpUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/help`;
+  const databaseBaseUrl = `${target.origin}/db/${encodeURIComponent(target.databaseId)}`;
+  const searchUrl = `${databaseBaseUrl}/search`;
+  const graphUrl = `${databaseBaseUrl}/graph?center=${encodeURIComponent(target.nodePath)}&depth=1`;
+  const emptyGraphUrl = `${databaseBaseUrl}/graph`;
+  const helpUrl = `${databaseBaseUrl}/help`;
   const targetContext = await readTargetContext(target.databaseId, target.nodePath);
   const targetNode = targetContext.node;
   const contentProbe = contentProbeFor(targetNode.content);
@@ -31,7 +32,7 @@ async function main() {
   run("open", [`${url}?view=raw`]);
   assertSnapshotIncludes(contentProbe);
   run("open", [`${searchUrl}?q=${encodeURIComponent(pathQuery)}&kind=path`]);
-  assertSnapshotIncludes(contentProbe);
+  assertSnapshotIncludes(target.nodePath);
   run("open", [`${searchUrl}?q=${encodeURIComponent(fullQuery)}&kind=full`]);
   assertSnapshotIncludes(target.nodePath);
   assertSnapshotIncludes("Full text");
@@ -41,7 +42,8 @@ async function main() {
   assertSnapshotIncludes("Local link graph");
   assertSnapshotIncludes(target.nodePath);
   run("open", [emptyGraphUrl]);
-  assertSnapshotIncludes("Open Graph from a knowledge page to inspect its local neighborhood.");
+  assertSnapshotIncludes("Database-wide graph");
+  assertSnapshotIncludes("No indexed links found in this database.");
   run("open", [helpUrl]);
   assertSnapshotIncludes("Wiki browser help");
   assertSnapshotIncludes("Path search matches node paths.");

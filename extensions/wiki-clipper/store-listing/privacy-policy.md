@@ -2,7 +2,7 @@
 
 Public URL: `https://kinic.io/privacy-policy`
 
-Before Chrome Web Store submission, verify that the public URL contains the Wiki Clipper-specific behavior described below. The generic Kinic privacy policy is not enough for this extension listing unless it explicitly covers ChatGPT/Claude export, active-tab web snapshots, Internet Identity auth, and selected database storage.
+Before Chrome Web Store submission, verify that the public URL contains the Wiki Clipper-specific behavior described below. The generic Kinic privacy policy is not enough for this extension listing unless it explicitly covers ChatGPT/Claude export, active-tab source capture, Internet Identity auth, and selected database storage.
 
 Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT/Claude conversations into a Kinic Wiki database. The extension requires the user to authenticate with Internet Identity and choose or explicitly create a writable database before writing data.
 
@@ -15,21 +15,21 @@ Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT/Claude conversa
 
 ## Data use
 
-The extension uses this data only to create raw source files in the selected Kinic Wiki database.
+The extension uses this data only to create evidence source files in the selected Kinic Wiki database.
 
 ## Data sharing
 
 Data is sent to:
 
 - the Kinic Wiki canister through `https://icp0.io`;
-- `https://wiki.kinic.xyz` for source generation trigger processing;
+- `https://wiki.kinic.xyz` for Kinic Wiki web app coordination;
 - Internet Identity at `https://id.ai` for authentication.
 
 The extension does not sell user data, use user data for advertising, or transfer user data for unrelated purposes.
 
 ## User control
 
-Users choose the destination database and initiate each web snapshot or ChatGPT/Claude export. Data written to Kinic Wiki is managed through Kinic Wiki access controls and database operations.
+Users choose the destination database and initiate each source capture or ChatGPT/Claude export. Data written to Kinic Wiki is managed through Kinic Wiki access controls and database operations.
 
 ## Contact
 

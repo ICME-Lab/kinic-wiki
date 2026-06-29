@@ -1,16 +1,18 @@
-// Where: extensions/wiki-clipper/src/raw-source.js
-// What: Convert captured conversations into canonical raw source nodes.
-// Why: Raw source evidence is grouped by provider under /Sources/<provider>/<id>.md.
-const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
-const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "ingest-requests"]);
+// Where: extensions/wiki-clipper/src/evidence-source.js
+// What: Convert captured conversations into canonical evidence source nodes.
+// Why: Evidence source is grouped by provider under /Sources/<provider>/<id>.md.
+import { hashText, sourceStemFromTitleHash } from "./source-filename.js";
 
-export function buildRawSource(capture, now = new Date()) {
+const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
+
+export function buildEvidenceSource(capture, now = new Date()) {
   if (!capture.messages || capture.messages.length === 0) {
     throw new Error("no conversation messages found");
   }
   const provider = safeProvider(capture.provider || "conversation");
-  const sourceId = sourceIdForCapture(capture, now, provider);
-  const path = `/Sources/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
+  const sourceId = sourceIdForCapture(capture, provider);
+  const sourceStem = sourceId.slice(provider.length + 1);
+  const path = `/Sources/${provider}/${sourceStem}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,
@@ -35,24 +37,11 @@ export function buildRawSource(capture, now = new Date()) {
   };
 }
 
-function sourceIdForCapture(capture, now, provider = safeProvider(capture.provider || "conversation")) {
-  const conversationId = conversationIdFromUrl(capture.url);
-  if ((capture.provider === "chatgpt" || capture.provider === "claude") && conversationId) {
-    return `${provider}-${safeSourceStem(slug(conversationId))}`;
-  }
-  const title = slug(capture.conversationTitle || "untitled");
-  const date = now.toISOString().slice(0, 10).replace(/-/g, "");
-  const fingerprint = hashText(`${capture.url}\n${capture.conversationTitle}`);
-  return `${provider}-${safeSourceStem(`${date}-${title}-${fingerprint}`)}`;
-}
-
-function sourceFileStemForCapture(capture, sourceId) {
-  const conversationId = conversationIdFromUrl(capture.url);
-  if ((capture.provider === "chatgpt" || capture.provider === "claude") && conversationId) {
-    return safeSourceStem(slug(conversationId));
-  }
-  const provider = safeProvider(capture.provider || "conversation");
-  return safeSourceStem(sourceId.startsWith(`${provider}-`) ? sourceId.slice(provider.length + 1) : sourceId);
+function sourceIdForCapture(capture, provider = safeProvider(capture.provider || "conversation")) {
+  const identity = canonicalConversationIdentity(capture, provider);
+  const fingerprint = hashText(identity);
+  const stem = sourceStemFromTitleHash(capture.conversationTitle, fingerprint, provider);
+  return `${provider}-${stem}`;
 }
 
 function conversationIdFromUrl(value) {
@@ -65,9 +54,25 @@ function conversationIdFromUrl(value) {
   }
 }
 
+function canonicalConversationIdentity(capture, provider) {
+  const conversationId = conversationIdFromUrl(capture.url);
+  if (conversationId) return `${provider}:${conversationId}`;
+  return `${provider}:${normalizedUrlWithoutHash(capture.url)}`;
+}
+
+function normalizedUrlWithoutHash(value) {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return String(value || "");
+  }
+}
+
 function rawMarkdown(capture, sourceText) {
   const lines = [
-    "# Raw Conversation Source",
+    "# Evidence Conversation Source",
     "",
     "## Metadata",
     "",
@@ -113,35 +118,7 @@ function metadataValue(value) {
   return JSON.stringify(String(value || ""));
 }
 
-function slug(value) {
-  const normalized = String(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return normalized || "untitled";
-}
-
 function safeProvider(value) {
   const normalized = String(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return /^[a-z0-9]{1,32}$/.test(normalized) && !RESERVED_SOURCE_PROVIDERS.has(normalized)
-    ? normalized
-    : "conversation";
-}
-
-function safeSourceStem(value) {
-  const normalized = String(value)
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/\.{2,}/g, "-")
-    .replace(/^-+|-+$/g, "") || "source";
-  if (normalized.length <= 128) return normalized;
-  return `${normalized.slice(0, 119)}-${hashText(normalized)}`;
-}
-
-function hashText(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return /^[a-z][a-z0-9]{0,31}$/.test(normalized) ? normalized : "conversation";
 }

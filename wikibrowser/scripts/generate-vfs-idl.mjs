@@ -91,8 +91,8 @@ const typeOrder = [
   "DeleteNodeRequest",
   "MkdirNodeRequest",
   "MoveNodeRequest",
-  "UrlIngestTriggerSessionRequest",
-  "UrlIngestTriggerSessionCheckRequest",
+  "SourceCaptureTriggerSessionRequest",
+  "SourceCaptureTriggerSessionCheckRequest",
   "OpsAnswerSessionRequest",
   "OpsAnswerSessionCheckRequest",
   "OpsAnswerSessionCheckResult",
@@ -148,13 +148,13 @@ const typeOrder = [
 
 const methodOrder = [
   "authorize_ops_answer_session",
-  "authorize_url_ingest_trigger_session",
+  "authorize_source_capture_trigger_session",
   "canister_health",
   "check_database_write_cycles",
   "check_cycles_top_up",
   "check_ops_answer_session",
   "check_source_run_session",
-  "check_url_ingest_trigger_session",
+  "check_source_capture_trigger_session",
   "create_database",
   "delete_database",
   "delete_node",
@@ -388,7 +388,10 @@ function parseDidMethods(source) {
 function splitShapes(value) {
   const trimmed = value.trim();
   if (!trimmed) return [];
-  return trimmed.split(",").map((part) => normalizeShape(part));
+  return trimmed
+    .split(",")
+    .map((part) => normalizeShape(part))
+    .filter(Boolean);
 }
 
 function normalizeShape(value) {

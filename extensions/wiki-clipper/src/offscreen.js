@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/src/offscreen.js
-// What: DOM-backed authenticated URL/source ingest worker for the MV3 extension.
+// What: DOM-backed authenticated source write worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot, resetAuthClient as defaultResetAuthClient } from "./auth-client.js";
 import {
@@ -30,8 +30,8 @@ if (globalThis.chrome?.runtime?.onMessage) {
 }
 
 export function handleOffscreenMessage(message) {
-  return message?.type === "save-raw-source"
-    ? saveRawSource(message.rawSource, message.config)
+  return message?.type === "save-evidence-source"
+    ? saveEvidenceSource(message.evidenceSource, message.config)
     : message?.type === "trigger-source-generation"
       ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
       : message?.type === "web-source-exists"
@@ -45,32 +45,32 @@ export function handleOffscreenMessage(message) {
               : null;
 }
 
-export async function saveRawSource(rawSource, config) {
-  if (!rawSource?.path) throw new Error("raw source path is required");
-  if (typeof rawSource.content !== "string") throw new Error("raw source content is required");
-  if (typeof rawSource.metadataJson !== "string") throw new Error("raw source metadata is required");
+export async function saveEvidenceSource(evidenceSource, config) {
+  if (!evidenceSource?.path) throw new Error("evidence source path is required");
+  if (typeof evidenceSource.content !== "string") throw new Error("evidence source content is required");
+  if (typeof evidenceSource.metadataJson !== "string") throw new Error("evidence source metadata is required");
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
   await requireDatabaseWriteCyclesAvailable(actor, config.databaseId);
-  const existing = await actor.read_node(config.databaseId, rawSource.path);
+  const existing = await actor.read_node(config.databaseId, evidenceSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];
-  await ensureParentFolders(actor, config.databaseId, rawSource.path);
+  await ensureParentFolders(actor, config.databaseId, evidenceSource.path);
   const sessionNonce = crypto.randomUUID();
   const result = await actor.write_source_for_generation({
     database_id: config.databaseId,
-    path: rawSource.path,
-    content: rawSource.content,
-    metadata_json: rawSource.metadataJson,
+    path: evidenceSource.path,
+    content: evidenceSource.content,
+    metadata_json: evidenceSource.metadataJson,
     expected_etag: expected,
     session_nonce: sessionNonce
   });
   if ("Err" in result) throw new Error(result.Err);
   return {
-    path: rawSource.path,
-    sourceId: rawSource.sourceId || "",
+    path: evidenceSource.path,
+    sourceId: evidenceSource.sourceId || "",
     created: result.Ok.write.created,
     principal: snapshot.principal,
     etag: result.Ok.write.node.etag,

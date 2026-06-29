@@ -9,12 +9,12 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 ## Four Stores
 
 - `memory`: short facts, preferences, and active context. `query_context` assembles task-scoped context from canonical role pages, search hits, links, and optional evidence.
-- `knowledge`: long-term notes under `/Knowledge/...` plus raw evidence under `/Sources/<provider>/...`. Wiki links form the knowledge mesh; `source_evidence` resolves store references for a known node.
+- `knowledge`: long-term notes under `/Knowledge/...` plus raw evidence under `/Sources/...`. Wiki links form the knowledge mesh; `source_evidence` resolves store references for a known node.
 - `skill`: reusable `SKILL.md` packages under `/Skills/...`. The Skill Registry CLI owns package upsert, snapshots, discovery, run evidence, rollback, and status workflows.
 - `session`: agent session state under `/Sessions/...` plus session transcript evidence under `/Sources/sessions/...`. Resumable summaries are outside v1.
 
 Context Pack is an export artifact generated from store content. It is not a store.
-Its `Reference` concepts identify Kinic targets with `kinic.store` and `kinic.store_path`, so `/Sources/<provider>/...`, `/Sources/sessions/...`, `/Sources/skill-runs/...`, and `/Sessions/...` can be represented without copying referenced bodies into the bundle.
+Its `Reference` concepts identify Kinic targets with `kinic.store` and `kinic.store_path`, so `/Sources/...`, `/Sources/sessions/...`, `/Sources/skill-runs/...`, and `/Sessions/...` can be represented without copying referenced bodies into the bundle.
 Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
 
 ## Trust Model
@@ -22,10 +22,10 @@ Curator is a future maintenance workflow for skill and knowledge; it is not part
 Kinic store trust follows this lifecycle:
 
 ```text
-/Sources/<provider>/... -> human review -> role page -> query_context
+/Sources/... -> human review -> role page -> query_context
 ```
 
-- `/Sources/<provider>/...` is canonical raw evidence.
+- `/Sources/...` is raw evidence.
 - `/Knowledge/...` is organized knowledge, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
 - Role pages are the memory recall layer when their claims are backed by source evidence or human review.

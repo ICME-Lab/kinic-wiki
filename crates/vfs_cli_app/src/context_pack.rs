@@ -2332,13 +2332,16 @@ mod tests {
         );
         assert_eq!(
             reference_store_for_path("/Sources/sessions/claudecode/bad.txt"),
-            None
+            Some("session_evidence")
         );
         assert_eq!(
             reference_store_for_path("/Sources/skill-runs/review/run-1.md"),
             Some("skill_run_evidence")
         );
-        assert_eq!(reference_store_for_path("/Sources/skill-runs/review"), None);
+        assert_eq!(
+            reference_store_for_path("/Sources/skill-runs/review"),
+            Some("skill_run_evidence")
+        );
         assert_eq!(reference_store_for_path("/Bad/root.md"), None);
     }
 

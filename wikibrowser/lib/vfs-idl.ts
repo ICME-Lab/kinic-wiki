@@ -8,14 +8,7 @@ type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
-  const DatabaseStatus = idl.Variant({
-    Active: idl.Null,
-    Pending: idl.Null,
-    Restoring: idl.Null,
-    Archiving: idl.Null,
-    Archived: idl.Null,
-    Deleted: idl.Null
-  });
+  const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
     role: DatabaseRole,
@@ -24,7 +17,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     name: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesTopUpConfig = idl.Record({ enabled: idl.Bool, threshold_cycles: idl.Nat, launcher_principal: idl.Text });
@@ -380,8 +372,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     overwrite: idl.Bool,
     database_id: idl.Text
   });
-  const UrlIngestTriggerSessionRequest = idl.Record({ database_id: idl.Text, session_nonce: idl.Text });
-  const UrlIngestTriggerSessionCheckRequest = idl.Record({
+  const SourceCaptureTriggerSessionRequest = idl.Record({ database_id: idl.Text, session_nonce: idl.Text });
+  const SourceCaptureTriggerSessionCheckRequest = idl.Record({
     database_id: idl.Text,
     request_path: idl.Text,
     session_nonce: idl.Text
@@ -472,13 +464,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   return idl.Service({
     // The public canister ABI keeps legacy ops_* names; browser code exposes Query Q&A wrappers.
     authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [ResultUnit], []),
-    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [ResultUnit], []),
+    authorize_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_cycles_top_up: idl.Func([], [ResultCyclesTopUpCheck], []),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
-    check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
+    check_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
     delete_database: idl.Func([DatabaseIdRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),

@@ -1,5 +1,5 @@
-// Where: crates/vfs_cli_app/src/purge_url_ingest.rs
-// What: Accident-response cleanup for URL ingest artifacts.
+// Where: crates/vfs_cli_app/src/purge_source_capture.rs
+// What: Accident-response cleanup for source capture artifacts.
 // Why: Operators need one dry-run-first command that finds request/source/knowledge nodes before deleting them.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,7 +9,7 @@ use vfs_client::VfsApi;
 use vfs_types::{DeleteNodeRequest, ListNodesRequest, Node, NodeKind};
 use wiki_domain::validate_knowledge_source_path;
 
-const REQUEST_PREFIX: &str = "/Sources/ingest-requests";
+const REQUEST_PREFIX: &str = "/Sources/source-capture-requests";
 const GENERATED_TARGET_PREFIX: &str = "/Knowledge/conversations";
 const WIDE_DELETE_PATH_COUNT: usize = 1;
 
@@ -57,7 +57,7 @@ enum SourceLookup {
     Skipped(String),
 }
 
-pub async fn purge_url_ingest(
+pub async fn purge_source_capture(
     client: &impl VfsApi,
     database_id: &str,
     url: Option<&str>,
@@ -102,7 +102,7 @@ pub async fn purge_url_ingest(
     print_report(&report, json)?;
     if yes && !report.ok {
         return Err(anyhow!(
-            "purge_url_ingest failed to delete one or more paths"
+            "purge_source_capture failed to delete one or more paths"
         ));
     }
     Ok(())
@@ -127,7 +127,7 @@ async fn find_matching_requests(
     for entry in entries {
         if !is_same_or_descendant(&entry.path, REQUEST_PREFIX) {
             return Err(anyhow!(
-                "list_nodes returned path outside ingest request prefix: {}",
+                "list_nodes returned path outside source capture request prefix: {}",
                 entry.path
             ));
         }
@@ -161,12 +161,12 @@ async fn request_for_source(
     };
     let Some(frontmatter) = parse_frontmatter(&source.content)? else {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: missing raw web source frontmatter"
+            "{source_path}: missing evidence web source frontmatter"
         )));
     };
-    if frontmatter.kind.as_deref() != Some("kinic.raw_web_source") {
+    if frontmatter.kind.as_deref() != Some("kinic.evidence_web_source") {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: not kinic.raw_web_source"
+            "{source_path}: not kinic.evidence_web_source"
         )));
     }
     let entries = client
@@ -180,7 +180,7 @@ async fn request_for_source(
     for entry in entries {
         if !is_same_or_descendant(&entry.path, REQUEST_PREFIX) {
             return Err(anyhow!(
-                "list_nodes returned path outside ingest request prefix: {}",
+                "list_nodes returned path outside source capture request prefix: {}",
                 entry.path
             ));
         }
@@ -198,7 +198,7 @@ async fn request_for_source(
         return Ok(SourceLookup::Matched(matched));
     }
     Ok(SourceLookup::Skipped(format!(
-        "{source_path}: matching ingest request not found"
+        "{source_path}: matching source capture request not found"
     )))
 }
 
@@ -332,7 +332,7 @@ fn parse_request_node(node: &Node) -> Result<Option<MatchedRequest>> {
     let Some(frontmatter) = parse_frontmatter(&node.content)? else {
         return Ok(None);
     };
-    if frontmatter.kind.as_deref() != Some("kinic.url_ingest_request") {
+    if frontmatter.kind.as_deref() != Some("kinic.source_capture_request") {
         return Ok(None);
     }
     let Some(url) = frontmatter.url else {
@@ -411,7 +411,7 @@ fn normalize_request_path(path: &str) -> Result<String> {
     let path = normalize_absolute_path(path, "request_path")?;
     if !is_same_or_descendant(&path, REQUEST_PREFIX) || path == REQUEST_PREFIX {
         return Err(anyhow!(
-            "request_path outside ingest request prefix: {path}"
+            "request_path outside source capture request prefix: {path}"
         ));
     }
     Ok(path)
@@ -493,12 +493,12 @@ mod tests {
     #[test]
     fn parse_frontmatter_requires_whole_line_terminator() {
         let parsed = parse_frontmatter(
-            "---\nkind: kinic.url_ingest_request\nurl: https://example.com\nnote: ---not-a-terminator\nstatus: queued\n---\n# Request\n",
+            "---\nkind: kinic.source_capture_request\nurl: https://example.com\nnote: ---not-a-terminator\nstatus: queued\n---\n# Request\n",
         )
         .expect("frontmatter parse should not fail")
         .expect("frontmatter should be present");
 
-        assert_eq!(parsed.kind.as_deref(), Some("kinic.url_ingest_request"));
+        assert_eq!(parsed.kind.as_deref(), Some("kinic.source_capture_request"));
         assert_eq!(parsed.status.as_deref(), Some("queued"));
     }
 
@@ -612,7 +612,7 @@ mod tests {
 
         assert!(
             plan.paths
-                .contains(&"/Sources/ingest-requests/r1.md".to_string())
+                .contains(&"/Sources/source-capture-requests/r1.md".to_string())
         );
         assert!(plan.paths.contains(&"/Sources/web/1.md".to_string()));
         assert!(
@@ -657,7 +657,7 @@ mod tests {
 
     fn matched_request(target_path: Option<&str>) -> MatchedRequest {
         MatchedRequest {
-            path: "/Sources/ingest-requests/r1.md".to_string(),
+            path: "/Sources/source-capture-requests/r1.md".to_string(),
             url: "https://example.com/page".to_string(),
             source_path: Some("/Sources/web/1.md".to_string()),
             target_path: target_path.map(ToString::to_string),

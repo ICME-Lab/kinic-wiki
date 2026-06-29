@@ -52,12 +52,38 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    statement.query_row(params, f)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_fold<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    init: T,
+    mut f: F,
+) -> Result<T>
+where
+    P: Params,
+    F: FnMut(T, &Row<'_>) -> Result<T>,
+{
+    let mut rows = statement.query(params)?;
+    let mut acc = init;
+    while let Some(row) = rows.next()? {
+        acc = f(acc, row)?;
+    }
+    Ok(acc)
+}
+
 pub(crate) enum QueryTryMapError<E> {
     Sqlite(Error),
     Validation(E),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<E> From<Error> for QueryTryMapError<E> {
     fn from(error: Error) -> Self {
         Self::Sqlite(error)
@@ -65,25 +91,7 @@ impl<E> From<Error> for QueryTryMapError<E> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn query_fold<T, P, F>(
-    statement: &mut Statement<'_>,
-    params: P,
-    mut state: T,
-    mut f: F,
-) -> Result<T>
-where
-    P: Params,
-    F: FnMut(&mut T, &Row<'_>) -> Result<()>,
-{
-    let mut rows = statement.query(params)?;
-    while let Some(row) = rows.next()? {
-        f(&mut state, row)?;
-    }
-    Ok(state)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn query_try_map_limit<T, P, F, E>(
+pub(crate) fn query_try_map_limit<T, E, P, F>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
@@ -105,47 +113,8 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
-where
-    P: Params,
-    F: FnOnce(&Row<'_>) -> Result<T>,
-{
-    statement.query_row(params, f)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn last_insert_rowid(conn: &Connection) -> Result<i64> {
     Ok(conn.last_insert_rowid())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) trait ExecuteValues {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()>;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ExecuteValues for Connection {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
-        self.execute(sql, rusqlite::params_from_iter(values.iter()))
-            .map(|_| ())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ExecuteValues for Transaction<'_> {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
-        self.execute(sql, rusqlite::params_from_iter(values.iter()))
-            .map(|_| ())
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn execute_values(
-    conn: &impl ExecuteValues,
-    sql: &str,
-    values: &[types::Value],
-) -> Result<()> {
-    conn.execute_values(sql, values)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -197,6 +166,36 @@ pub(crate) fn is_interrupted(error: &Error) -> bool {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait ExecuteValues {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ExecuteValues for Connection {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
+        self.execute(sql, rusqlite::params_from_iter(values.iter()))
+            .map(|_| ())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ExecuteValues for Transaction<'_> {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
+        self.execute(sql, rusqlite::params_from_iter(values.iter()))
+            .map(|_| ())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn execute_values(
+    conn: &impl ExecuteValues,
+    sql: &str,
+    values: &[types::Value],
+) -> Result<()> {
+    conn.execute_values(sql, values)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::db::connection::Connection;
 #[cfg(target_arch = "wasm32")]
@@ -216,19 +215,6 @@ use std::ffi::{c_int, c_void};
 pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) enum QueryTryMapError<E> {
-    Sqlite(Error),
-    Validation(E),
-}
-
-#[cfg(target_arch = "wasm32")]
-impl<E> From<Error> for QueryTryMapError<E> {
-    fn from(error: Error) -> Self {
-        Self::Sqlite(error)
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 pub(crate) trait OptionalExtension<T> {
     fn optional(self) -> Result<Option<T>>;
 }
@@ -246,37 +232,43 @@ impl<T> OptionalExtension<T> for Result<T> {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait Params {
-    fn as_params(&self) -> &[&dyn ToSql];
+    fn with_params<T>(&self, f: impl FnOnce(&[&dyn ToSql]) -> T) -> T;
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Params for &[&dyn ToSql] {
-    fn as_params(&self) -> &[&dyn ToSql] {
-        self
+    fn with_params<T>(&self, f: impl FnOnce(&[&dyn ToSql]) -> T) -> T {
+        f(self)
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl<const N: usize> Params for &[&dyn ToSql; N] {
-    fn as_params(&self) -> &[&dyn ToSql] {
-        self.as_slice()
+    fn with_params<T>(&self, f: impl FnOnce(&[&dyn ToSql]) -> T) -> T {
+        f(self.as_slice())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Params for Vec<&dyn ToSql> {
-    fn as_params(&self) -> &[&dyn ToSql] {
-        self.as_slice()
+    fn with_params<T>(&self, f: impl FnOnce(&[&dyn ToSql]) -> T) -> T {
+        f(self.as_slice())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Params for Vec<ic_sqlite_vfs::db::value::Value<'_>> {
+    fn with_params<T>(&self, f: impl FnOnce(&[&dyn ToSql]) -> T) -> T {
+        let refs = self
+            .iter()
+            .map(|value| value as &dyn ToSql)
+            .collect::<Vec<_>>();
+        f(refs.as_slice())
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod types {
-    use ic_sqlite_vfs::DbError;
-    use ic_sqlite_vfs::db::value::ToSql;
-    use ic_sqlite_vfs::sqlite_vfs::ffi;
-    use std::ffi::c_int;
-
     #[derive(Clone, Debug)]
     pub(crate) enum Value {
         Text(String),
@@ -306,21 +298,6 @@ pub(crate) mod types {
     impl From<Vec<u8>> for Value {
         fn from(value: Vec<u8>) -> Self {
             Self::Blob(value)
-        }
-    }
-
-    impl ToSql for Value {
-        fn bind_to(
-            &self,
-            statement: *mut ffi::sqlite3_stmt,
-            index: c_int,
-        ) -> std::result::Result<(), DbError> {
-            match self {
-                Self::Text(value) => value.bind_to(statement, index),
-                Self::Integer(value) => value.bind_to(statement, index),
-                Self::Blob(value) => value.bind_to(statement, index),
-                Self::Null => ic_sqlite_vfs::db::NULL.bind_to(statement, index),
-            }
         }
     }
 }
@@ -421,29 +398,39 @@ where
     P: Params,
     F: FnMut(&Row<'_>) -> Result<T>,
 {
-    statement.query_all(params.as_params(), f)
+    params.with_params(|params| statement.query_all(params, f))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    params.with_params(|params| statement.query_one(params, f))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn query_fold<T, P, F>(
     statement: &mut Statement<'_>,
     params: P,
-    mut state: T,
+    init: T,
     mut f: F,
 ) -> Result<T>
 where
     P: Params,
-    F: FnMut(&mut T, &Row<'_>) -> Result<()>,
+    F: FnMut(T, &Row<'_>) -> Result<T>,
 {
-    let mut rows = statement.query(params.as_params())?;
+    let mut rows = params.with_params(|params| statement.query(params))?;
+    let mut acc = init;
     while let Some(row) = rows.next_row()? {
-        f(&mut state, &row)?;
+        acc = f(acc, &row)?;
     }
-    Ok(state)
+    Ok(acc)
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn query_try_map_limit<T, P, F, E>(
+pub(crate) fn query_try_map_limit<T, E, P, F>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
@@ -453,8 +440,8 @@ where
     P: Params,
     F: FnMut(&Row<'_>) -> std::result::Result<T, QueryTryMapError<E>>,
 {
-    let mut rows = statement
-        .query(params.as_params())
+    let mut rows = params
+        .with_params(|params| statement.query(params))
         .map_err(QueryTryMapError::Sqlite)?;
     let mut output = Vec::new();
     while output.len() < limit {
@@ -467,54 +454,10 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
-where
-    P: Params,
-    F: FnOnce(&Row<'_>) -> Result<T>,
-{
-    statement.query_one(params.as_params(), f)
-}
-
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn last_insert_rowid(conn: &Connection) -> Result<i64> {
     conn.query_row("SELECT last_insert_rowid()", params![], |row| {
         row_get(row, 0)
     })
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) trait ExecuteValues {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()>;
-}
-
-#[cfg(target_arch = "wasm32")]
-impl ExecuteValues for Connection {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
-        let params = params_from_values(values);
-        self.execute(sql, params.as_slice())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl ExecuteValues for Transaction<'_> {
-    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
-        let params = params_from_values(values);
-        self.execute(sql, params.as_slice())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn execute_values(
-    conn: &impl ExecuteValues,
-    sql: &str,
-    values: &[types::Value],
-) -> Result<()> {
-    conn.execute_values(sql, values)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn params_from_values(values: &[types::Value]) -> Vec<&dyn ToSql> {
-    values.iter().map(|value| value as &dyn ToSql).collect()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -538,6 +481,8 @@ impl<'connection> ProgressHandlerGuard<'connection> {
         callback_budget: u32,
     ) -> Self {
         unsafe extern "C" fn progress_callback(state: *mut c_void) -> c_int {
+            // SAFETY: sqlite3 calls this only while ProgressHandlerGuard is alive.
+            // The pointer is the boxed ProgressHandlerState registered in new().
             let state = unsafe { &mut *(state.cast::<ProgressHandlerState>()) };
             state.callbacks = state.callbacks.saturating_add(1);
             c_int::from(state.callbacks > state.callback_budget)
@@ -548,6 +493,8 @@ impl<'connection> ProgressHandlerGuard<'connection> {
             callbacks: 0,
             callback_budget,
         });
+        // SAFETY: raw belongs to conn, and the boxed state is retained by the guard
+        // until Drop unregisters the callback before the box is freed.
         unsafe {
             ffi::sqlite3_progress_handler(
                 raw,
@@ -567,6 +514,8 @@ impl<'connection> ProgressHandlerGuard<'connection> {
 #[cfg(target_arch = "wasm32")]
 impl Drop for ProgressHandlerGuard<'_> {
     fn drop(&mut self) {
+        // SAFETY: raw is the same live sqlite handle used during registration;
+        // passing a null callback clears SQLite's progress handler.
         unsafe {
             ffi::sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
         }
@@ -585,4 +534,57 @@ pub(crate) fn install_progress_handler(
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn is_interrupted(error: &Error) -> bool {
     matches!(error, Error::Sqlite(code, _) if *code == ffi::SQLITE_INTERRUPT)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait ExecuteValues {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()>;
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ExecuteValues for Connection {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
+        let params = params_from_values(values);
+        let param_refs = params
+            .iter()
+            .map(|value| value as &dyn ToSql)
+            .collect::<Vec<_>>();
+        self.execute(sql, param_refs.as_slice())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ExecuteValues for Transaction<'_> {
+    fn execute_values(&self, sql: &str, values: &[types::Value]) -> Result<()> {
+        let params = params_from_values(values);
+        let param_refs = params
+            .iter()
+            .map(|value| value as &dyn ToSql)
+            .collect::<Vec<_>>();
+        self.execute(sql, param_refs.as_slice())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn execute_values(
+    conn: &impl ExecuteValues,
+    sql: &str,
+    values: &[types::Value],
+) -> Result<()> {
+    conn.execute_values(sql, values)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn params_from_values(
+    values: &[types::Value],
+) -> Vec<ic_sqlite_vfs::db::value::Value<'_>> {
+    values
+        .iter()
+        .map(|value| match value {
+            types::Value::Text(value) => ic_sqlite_vfs::db::value::Value::Text(value.as_str()),
+            types::Value::Integer(value) => ic_sqlite_vfs::db::value::Value::Integer(*value),
+            types::Value::Blob(value) => ic_sqlite_vfs::db::value::Value::Blob(value.as_slice()),
+            types::Value::Null => ic_sqlite_vfs::db::value::Value::Null,
+        })
+        .collect()
 }
