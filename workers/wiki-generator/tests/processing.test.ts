@@ -125,8 +125,20 @@ test("context hits rank Sources after database notes", () => {
       contextHit("/Memory/session.md"),
       contextHit("/Sources/raw/b.md"),
       contextHit("/Knowledge/fact.md")
-    ]).map((hit) => hit.path),
+    ], "/Sources").map((hit) => hit.path),
     ["/Memory/session.md", "/Knowledge/fact.md", "/Sources/raw/a.md", "/Sources/raw/b.md"]
+  );
+});
+
+test("context hits rank custom source prefix after database notes", () => {
+  assert.deepEqual(
+    rankContextHits([
+      contextHit("/Evidence/raw/a.md"),
+      contextHit("/Sources/raw/a.md"),
+      contextHit("/Knowledge/fact.md"),
+      contextHit("/Evidence/raw/b.md")
+    ], "/Evidence").map((hit) => hit.path),
+    ["/Sources/raw/a.md", "/Knowledge/fact.md", "/Evidence/raw/a.md", "/Evidence/raw/b.md"]
   );
 });
 

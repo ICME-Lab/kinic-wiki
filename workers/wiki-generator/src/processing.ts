@@ -339,14 +339,14 @@ async function loadContext(vfs: VfsClient, databaseId: string, source: WikiNode,
   const query = contextQuery(source.content, source.path);
   if (!query) return [];
   const hits = await vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
-  return rankContextHits(hits);
+  return rankContextHits(hits, config.sourcePrefix);
 }
 
-export function rankContextHits(hits: SearchNodeHit[]): SearchNodeHit[] {
+export function rankContextHits(hits: SearchNodeHit[], sourcePrefix: string): SearchNodeHit[] {
   const primary: SearchNodeHit[] = [];
   const sources: SearchNodeHit[] = [];
   for (const hit of hits) {
-    if (hit.path === "/Sources" || hit.path.startsWith("/Sources/")) {
+    if (hit.path === sourcePrefix || hit.path.startsWith(`${sourcePrefix}/`)) {
       sources.push(hit);
     } else {
       primary.push(hit);
