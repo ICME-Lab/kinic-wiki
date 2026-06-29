@@ -776,9 +776,9 @@ fn change_log_retains_all_recorded_revisions() {
         })
         .expect("max revision should succeed");
 
-    assert_eq!(revision_count, 268);
+    assert_eq!(revision_count, 269);
     assert_eq!(oldest_revision, 1);
-    assert_eq!(newest_revision, 268);
+    assert_eq!(newest_revision, 269);
 }
 
 #[test]
@@ -806,7 +806,7 @@ fn fs_path_state_tracks_latest_change_revision() {
             |row| row.get::<_, i64>(0),
         )
         .expect("path state should exist");
-    assert_eq!(revision, 10);
+    assert_eq!(revision, 11);
 }
 
 #[test]
@@ -1043,7 +1043,7 @@ fn fs_migrations_are_idempotent() {
             row.get::<_, i64>(0)
         })
         .expect("path state count should succeed");
-    assert_eq!(tracked_paths, 9);
+    assert_eq!(tracked_paths, 10);
 }
 
 #[test]
@@ -1434,7 +1434,11 @@ fn fs_folder_migration_seeds_sources_reserved_folders_from_current_schema() {
     assert_eq!(sources_root.kind, NodeKind::Folder);
     assert_eq!(sources_root.content, "");
     assert_eq!(sources_root.metadata_json, "{}");
-    for path in ["/Sources/sessions", "/Sources/skill-runs"] {
+    for path in [
+        "/Sources/sessions",
+        "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
+    ] {
         let node = store
             .read_node(path)
             .expect("sources reserved folder should read")
@@ -1524,6 +1528,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
         "/Sources/web",
         "/Sources/sessions",
         "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
     ] {
         let node = store
             .read_node(path)
@@ -2469,7 +2474,11 @@ fn list_children_reports_missing_directory_paths() {
             .iter()
             .map(|child| child.path.as_str())
             .collect::<Vec<_>>(),
-        vec!["/Sources/sessions", "/Sources/skill-runs"]
+        vec![
+            "/Sources/sessions",
+            "/Sources/skill-runs",
+            "/Sources/source-capture-requests"
+        ]
     );
 }
 
@@ -3353,7 +3362,7 @@ fn move_node_refreshes_search_indexes_for_path_and_basename_queries() {
 }
 
 #[test]
-fn move_node_allows_noncanonical_target_for_source_nodes() {
+fn move_node_allows_safe_nonstandard_target_for_source_nodes() {
     let (_dir, store) = new_store();
     ensure_parent_folders(&store, "/Sources/source/source.md", 1_909);
     ensure_parent_folders(&store, "/Sources/renamed/wrong.md", 1_909);
@@ -3473,10 +3482,7 @@ fn source_nodes_accept_canonical_paths_under_both_roots() {
             1_940 + index as i64,
         );
 
-        assert!(
-            result.is_ok(),
-            "canonical source path should succeed: {path}"
-        );
+        assert!(result.is_ok(), "safe source path should succeed: {path}");
     }
 }
 

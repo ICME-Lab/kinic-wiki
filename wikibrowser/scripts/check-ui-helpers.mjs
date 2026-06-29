@@ -320,7 +320,11 @@ assert.deepEqual(
 );
 assert.deepEqual(
   rawSourceLinksFor("/Knowledge/demo/provenance.md", "- Raw: /Sources/123/source.md\n- Bad: /Sources/web/a..b.md"),
-  ["/Sources/123/source.md"]
+  ["/Sources/123/source.md", "/Sources/web/a..b.md"]
+);
+assert.deepEqual(
+  rawSourceLinksFor("/Knowledge/demo/provenance.md", "- Raw: /Sources/sessions/codex/run_123.md\n- Raw: /Sources/skill-runs/legal-review/1700000000000.md"),
+  ["/Sources/sessions/codex/run_123.md", "/Sources/skill-runs/legal-review/1700000000000.md"]
 );
 
 assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
@@ -578,9 +582,9 @@ assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/SourcesBackup/foo.md"), null);
 assert.equal(inferNoteRole("/Sources/web/abc.md"), "evidence_source");
 assert.equal(inferNoteRole("/Sources/123/abc.md"), "evidence_source");
-assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "markdown_note");
-assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "markdown_note");
-assert.equal(inferNoteRole("/Sources/raw/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/raw/abc.md"), "evidence_source");
 assert.equal(inferNoteRole("/Sourcesfoo/abc.md"), "markdown_note");
 
 const cachedNodeContext = {

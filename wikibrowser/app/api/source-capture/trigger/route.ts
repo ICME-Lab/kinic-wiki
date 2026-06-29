@@ -82,7 +82,12 @@ export async function POST(request: Request): Promise<Response> {
         authorization: `Bearer ${token}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ canisterId: input.canisterId, databaseId: input.databaseId, requestPath: input.requestPath, sessionNonce: input.sessionNonce })
+      body: JSON.stringify({
+        canisterId: input.canisterId,
+        databaseId: input.databaseId,
+        requestPath: input.requestPath,
+        sessionNonce: input.sessionNonce
+      })
     });
     if (!response.ok) {
       return jsonError(`worker trigger failed: HTTP ${response.status}`, 502, origin);

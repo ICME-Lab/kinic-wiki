@@ -5,9 +5,6 @@ export type ModeTab = "explorer" | "query" | "source-capture";
 export type ReadIdentityMode = "anonymous" | "user";
 export const STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
 export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
-const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "source-capture-requests", "ingest-requests"]);
-const MAX_SOURCE_STEM_BYTES = 128;
-const SOURCE_STEM_ENCODER = new TextEncoder();
 
 export type LoadState<T> = {
   data: T | null;
@@ -105,34 +102,7 @@ export function isKnowledgeSourcePath(path: string): boolean {
   const prefix = "/Sources/";
   if (!path.startsWith(prefix)) return false;
   const parts = path.slice(prefix.length).split("/");
-  if (parts.length !== 2) return false;
-  const [provider, fileName] = parts;
-  return isSafeProviderSegment(provider) && !RESERVED_SOURCE_PROVIDERS.has(provider) && isSafeMarkdownFile(fileName);
-}
-
-function isSafeProviderSegment(value: string | undefined): value is string {
-  return /^[a-z0-9]{1,32}$/.test(value ?? "");
-}
-
-function isSafeMarkdownFile(value: string | undefined): boolean {
-  const fileName = value ?? "";
-  if (!fileName.endsWith(".md")) return false;
-  return isSafeSourceStem(fileName.slice(0, -".md".length));
-}
-
-function isSafeSourceStem(value: string): boolean {
-  const chars = [...value];
-  if (chars.length === 0 || SOURCE_STEM_ENCODER.encode(value).length > MAX_SOURCE_STEM_BYTES || value.includes("..")) return false;
-  const [first, ...rest] = chars;
-  return isUnicodeAlphanumeric(first ?? "") && rest.every(isSourceStemChar);
-}
-
-function isSourceStemChar(value: string): boolean {
-  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
-}
-
-function isUnicodeAlphanumeric(value: string): boolean {
-  return /^[\p{L}\p{N}]$/u.test(value);
+  return parts.every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 export function extractMarkdownLinks(content: string): string[] {

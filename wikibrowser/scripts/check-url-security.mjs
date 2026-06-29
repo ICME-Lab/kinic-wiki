@@ -120,41 +120,6 @@ await withEnv(
     });
     triggerRouteModule.setSourceCaptureTriggerDepsForTest();
 
-    const invalidSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web-abc/web-abc.md" })
-    );
-    assert.equal(invalidSourcePath.status, 400);
-
-    const oldRawSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/abc.md" })
-    );
-    assert.equal(oldRawSourcePath.status, 400);
-
-    const reservedSessionSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/sessions/abc.md" })
-    );
-    assert.equal(reservedSessionSourcePath.status, 400);
-
-    const reservedSourceCaptureRequestPath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/source-capture-requests/abc.md" })
-    );
-    assert.equal(reservedSourceCaptureRequestPath.status, 400);
-
-    const reservedIngestRequestPath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/ingest-requests/abc.md" })
-    );
-    assert.equal(reservedIngestRequestPath.status, 400);
-
-    const traversalSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/../...md" })
-    );
-    assert.equal(traversalSourcePath.status, 400);
-
-    const dotdotSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web/a..b.md" })
-    );
-    assert.equal(dotdotSourcePath.status, 400);
-
     const missingSourceSessionNonce = await sourceRunRouteModule.POST(
       sourceRunRequest("https://kinic.xyz", { sessionNonce: "" })
     );
@@ -219,6 +184,32 @@ await withEnv(
     await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
       const response = await sourceRunRouteModule.POST(
         sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/123/abc.md" })
+      );
+      assert.equal(response.status, 202);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.equal(input.sourcePath, "/Sources/sessions/codex/run_123.md");
+      }
+    });
+    await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
+      const response = await sourceRunRouteModule.POST(
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/sessions/codex/run_123.md" })
+      );
+      assert.equal(response.status, 202);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.equal(input.sourcePath, "/Sources/skill-runs/legal-review/1700000000000.md");
+      }
+    });
+    await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
+      const response = await sourceRunRouteModule.POST(
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/skill-runs/legal-review/1700000000000.md" })
       );
       assert.equal(response.status, 202);
     });

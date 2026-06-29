@@ -63,7 +63,7 @@ export function DocumentHeader({
     <div className="border-b border-line bg-white px-2 py-3 sm:px-5">
       <div className="flex min-h-9 items-center gap-1 overflow-x-auto whitespace-nowrap sm:min-h-10 sm:gap-2 lg:justify-between lg:overflow-visible">
         <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
-          <div className="min-w-[88px] max-w-[34vw] shrink-0 sm:max-w-[52vw] lg:max-w-full">
+          <div className="hidden min-w-[88px] max-w-[34vw] shrink-0 sm:block sm:max-w-[52vw] lg:max-w-full">
             <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
           </div>
           <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10">

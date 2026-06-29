@@ -69,7 +69,7 @@ test("buildEvidenceSource keeps a stable path for Claude conversations", () => {
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
-test("buildEvidenceSource keeps long conversation ids out of source filenames", () => {
+test("buildEvidenceSource truncates long conversation ids to a canonical source filename", () => {
   const longId = `conversation-${"a".repeat(220)}`;
   const raw = buildEvidenceSource({
     provider: "chatgpt",

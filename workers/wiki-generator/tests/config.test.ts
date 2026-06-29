@@ -27,18 +27,25 @@ test("loadConfig respects explicit context prefix override", () => {
   assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Knowledge" }).contextPrefix, "/Knowledge");
 });
 
-test("loadConfig normalizes source prefix", () => {
+test("loadConfig normalizes worker root prefixes", () => {
   const env = testEnv(new TestQueue());
-  delete env.KINIC_WIKI_WORKER_SOURCE_PREFIX;
+  const config = loadConfig({
+    ...env,
+    KINIC_WIKI_WORKER_SOURCE_PREFIX: " /Sources/ ",
+    KINIC_WIKI_WORKER_TARGET_ROOT: "/Knowledge/conversations/",
+    KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Knowledge/"
+  });
 
-  assert.equal(loadConfig(env).sourcePrefix, "/Sources");
-  assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources" }).sourcePrefix, "/Sources");
-  assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources/" }).sourcePrefix, "/Sources");
+  assert.equal(config.sourcePrefix, "/Sources");
+  assert.equal(config.targetRoot, "/Knowledge/conversations");
+  assert.equal(config.contextPrefix, "/Knowledge");
 });
 
-test("loadConfig rejects invalid source prefixes", () => {
+test("loadConfig rejects non-absolute and root-only worker roots", () => {
   const env = testEnv(new TestQueue());
-  for (const value of ["", "   ", "/", "Sources", "/Sources//web", "/Sources/with.dot"]) {
-    assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: value }), /Invalid source prefix/);
-  }
+
+  assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "Sources" }), /absolute path/);
+  assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "/" }), /must not be database root/);
+  assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_TARGET_ROOT: "Knowledge/conversations" }), /absolute path/);
+  assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_TARGET_ROOT: "/" }), /must not be database root/);
 });

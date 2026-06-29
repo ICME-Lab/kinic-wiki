@@ -4,9 +4,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
-import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
+import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, SourceJob, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
-import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./source-capture-fixtures.js";
+import { testEnv, TestQueue, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
 
 test("manual source run queues the validated source etag", async () => {
   const queue = new TestQueue();
@@ -118,6 +118,32 @@ test("manual source run input requires source etag", () => {
   });
 });
 
+test("manual source run accepts session source paths", async () => {
+  const queue = new TestQueue();
+  const vfs = new TestVfsClient();
+  vfs.existingSource = {
+    ...sourceNode("etag-session"),
+    path: "/Sources/sessions/codex/run_123.md"
+  };
+
+  const response = await runManual(
+    testEnv(queue),
+    {
+      databaseId: "db_1",
+      sourcePath: "/Sources/sessions/codex/run_123.md",
+      sourceEtag: "etag-session",
+      dryRun: false
+    },
+    { vfs }
+  );
+
+  assert.equal(response.status, 202);
+  assert.equal(queue.messages.length, 1);
+  const message = queue.messages[0];
+  if (message?.kind !== "source") throw new Error("source queue message expected");
+  assert.equal(message.sourcePath, "/Sources/sessions/codex/run_123.md");
+});
+
 test("context hits rank Sources after database notes", () => {
   assert.deepEqual(
     rankContextHits([
@@ -208,6 +234,22 @@ test("source capture queue message without nonce is invalid", async () => {
     }).kind,
     "invalid"
   );
+  assert.deepEqual(parseQueueMessageEnvelope({
+    kind: "source_capture",
+    canisterId: "canister-1",
+    databaseId: "db_1",
+    requestPath: "/Sources/source-capture-requests/1.md",
+    sessionNonce: "session-1"
+  }), {
+    kind: "valid",
+    message: {
+      kind: "source_capture",
+      canisterId: "canister-1",
+      databaseId: "db_1",
+      requestPath: "/Sources/source-capture-requests/1.md",
+      sessionNonce: "session-1"
+    }
+  });
 });
 
 test("source queue write cycles check failure does not call DeepSeek", async () => {
@@ -252,6 +294,18 @@ test("source queue source run session check failure does not call DeepSeek", asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("source queue accepts skill-run source paths before source lookup", async () => {
+  const db = new RecordingD1();
+
+  await processSourceQueueMessageForTest(
+    { ...testEnv(new TestQueue()), DB: db },
+    { kind: "source", databaseId: "db_1", sourcePath: "/Sources/skill-runs/legal-review/1700000000000.md", sourceEtag: "etag-source" },
+    { config: workerConfig(), vfs: sourceVfs() }
+  );
+
+  assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'failed'")));
 });
 
 test("source queue uses source run session before DeepSeek", async () => {
@@ -314,7 +368,7 @@ test("request-bound source queue without session nonce fails before DeepSeek", a
   }
 });
 
-test("request-bound source queue retries when gate failure cannot be recorded", async () => {
+test("request-bound source queue throws when gate failure cannot be recorded", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;
   globalThis.fetch = async (): Promise<Response> => {
@@ -383,6 +437,92 @@ test("missing queued source is recorded as failed", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("valid queue envelope passes test context to source capture processing", async () => {
+  const queue = new TestQueue();
+  const vfs = new TestVfsClient();
+  vfs.requestNode = ingestQueuedRequestNode();
+
+  await withFetchedPage(async () => {
+    await processQueueMessageEnvelope(
+      testEnv(queue),
+      {
+        kind: "valid",
+        message: {
+          kind: "source_capture",
+          canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+          databaseId: "db_1",
+          requestPath: "/Sources/source-capture-requests/1.md",
+          sessionNonce: "session-1"
+        }
+      },
+      { config: workerConfig(), vfs }
+    );
+  });
+
+  assert.equal(queue.messages.length, 1);
+  assert.equal(vfs.sourceWrites, 1);
+});
+
+test("legacy url_ingest queue messages are acked with an explicit invalid reason", () => {
+  assert.deepEqual(parseQueueMessageEnvelope({ kind: "url_ingest", databaseId: "db_1" }), {
+    kind: "invalid",
+    reason: "legacy url_ingest queue message is unsupported"
+  });
+});
+
+test("stale source etag message attaches request to newer completed job", async () => {
+  const requestWrites: WriteNodeRequest[] = [];
+  const db = new StaticJobD1({
+    database_id: "db_1",
+    source_path: "/Sources/a/a.md",
+    source_etag: "etag-new",
+    status: "completed",
+    target_path: "/Knowledge/conversations/new.md",
+    attempts: 1,
+    last_error: null,
+    updated_at: "2026-05-12T00:00:00.000Z"
+  });
+
+  await processSourceQueueMessageForTest(
+    { ...testEnv(new TestQueue()), DB: db },
+    {
+      kind: "source",
+      databaseId: "db_1",
+      sourcePath: "/Sources/a/a.md",
+      sourceEtag: "etag-old",
+      requestPath: "/Sources/source-capture-requests/1.md",
+      sessionNonce: "session-1"
+    },
+    { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), requestWrites }) }
+  );
+
+  assert.equal(requestWrites.length, 1);
+  assert.match(requestWrites[0]?.content ?? "", /status: "completed"/);
+  assert.match(requestWrites[0]?.content ?? "", /target_path: "\/Knowledge\/conversations\/new.md"/);
+  assert.equal(db.runs.length, 0);
+});
+
+test("stale source etag message does not overwrite newer queued job", async () => {
+  const db = new StaticJobD1({
+    database_id: "db_1",
+    source_path: "/Sources/a/a.md",
+    source_etag: "etag-new",
+    status: "queued",
+    target_path: null,
+    attempts: 0,
+    last_error: null,
+    updated_at: "2026-05-12T00:00:00.000Z"
+  });
+
+  await processSourceQueueMessageForTest(
+    { ...testEnv(new TestQueue()), DB: db },
+    { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-old" },
+    { config: workerConfig(), vfs: sourceVfs() }
+  );
+
+  assert.equal(db.runs.length, 0);
 });
 
 function failingLogVfs(): VfsClient {
@@ -513,6 +653,29 @@ function ingestRequestNode(): WikiNode {
   };
 }
 
+function ingestQueuedRequestNode(): WikiNode {
+  return {
+    ...ingestRequestNode(),
+    content: [
+      "---",
+      "kind: kinic.source_capture_request",
+      "schema_version: 1",
+      "status: queued",
+      'url: "https://example.com/a"',
+      'requested_by: "aaaaa-aa"',
+      'requested_at: "2026-05-12T00:00:00.000Z"',
+      "claimed_at: null",
+      "source_path: null",
+      "target_path: null",
+      "finished_at: null",
+      "error: null",
+      "---",
+      "",
+      "# Source Capture Request"
+    ].join("\n")
+  };
+}
+
 class RecordingD1 implements D1Database {
   readonly runs: { query: string; values: D1Value[] }[] = [];
 
@@ -536,6 +699,42 @@ class RecordingD1Statement implements D1PreparedStatement {
 
   async first<T = unknown>(): Promise<T | null> {
     return null;
+  }
+
+  async run(): Promise<unknown> {
+    this.runs.push({ query: this.query, values: this.values });
+    return { query: this.query, values: this.values };
+  }
+}
+
+class StaticJobD1 implements D1Database {
+  readonly runs: { query: string; values: D1Value[] }[] = [];
+
+  constructor(private readonly job: SourceJob | null) {}
+
+  prepare(query: string): D1PreparedStatement {
+    return new StaticJobD1Statement(query, this.job, this.runs);
+  }
+}
+
+class StaticJobD1Statement implements D1PreparedStatement {
+  private values: D1Value[] = [];
+
+  constructor(
+    private readonly query: string,
+    private readonly job: SourceJob | null,
+    private readonly runs: { query: string; values: D1Value[] }[]
+  ) {}
+
+  bind(...values: D1Value[]): D1PreparedStatement {
+    this.values = values;
+    return this;
+  }
+
+  async first<T = unknown>(): Promise<T | null> {
+    if (!this.query.includes("SELECT database_id, source_path, source_etag, status, target_path")) return null;
+    if (this.job?.database_id !== this.values[0] || this.job.source_path !== this.values[1]) return null;
+    return this.job as T;
   }
 
   async run(): Promise<unknown> {

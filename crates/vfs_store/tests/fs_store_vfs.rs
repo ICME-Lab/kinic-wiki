@@ -1082,7 +1082,7 @@ fn mkdir_node_creates_folder_node() {
             row.get::<_, i64>(0)
         })
         .expect("count should succeed");
-    assert_eq!(count, 8);
+    assert_eq!(count, 9);
 
     let list = store
         .list_nodes(ListNodesRequest {
@@ -1195,6 +1195,7 @@ fn move_node_rejects_protected_root_folders() {
         "/Sources",
         "/Sources/sessions",
         "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
     ] {
         let node = store
             .read_node(path)
@@ -1226,6 +1227,7 @@ fn delete_node_rejects_empty_protected_root_folders() {
         "/Skills",
         "/Sources/sessions",
         "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
     ] {
         let node = store
             .read_node(path)

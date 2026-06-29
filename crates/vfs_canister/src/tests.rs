@@ -2544,10 +2544,10 @@ fn write_nodes_rejects_reader_role() {
 }
 
 #[test]
-fn write_nodes_rejects_invalid_source_path() {
+fn write_nodes_allows_source_paths_without_schema_validation() {
     install_test_service();
 
-    let error = write_nodes(WriteNodesRequest {
+    let results = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
             path: "/Sources/not-raw.md".to_string(),
@@ -2557,10 +2557,11 @@ fn write_nodes_rejects_invalid_source_path() {
             expected_etag: None,
         }],
     })
-    .expect_err("invalid source path should fail");
+    .expect("source path schema should not be checked at entrypoint");
 
-    assert!(error.contains("source path"));
-    assert!(database_charge_methods("default").is_empty());
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].node.path, "/Sources/not-raw.md");
+    assert_eq!(results[0].node.kind, NodeKind::Source);
 }
 
 #[test]
@@ -3255,10 +3256,10 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
 }
 
 #[test]
-fn fs_entrypoints_reject_noncanonical_source_paths() {
+fn fs_entrypoints_allow_source_paths_without_schema_validation() {
     install_test_service();
 
-    let write_error = write_node(WriteNodeRequest {
+    let written = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Sources/source.md".to_string(),
         kind: NodeKind::Source,
@@ -3266,8 +3267,8 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect_err("noncanonical source write should fail");
-    assert!(write_error.contains("source path must"));
+    .expect("source write should not enforce source path schema");
+    assert_eq!(written.node.path, "/Sources/source.md");
 
     ensure_parent_folders("/Sources/source/source.md");
     write_node(WriteNodeRequest {
@@ -3278,9 +3279,9 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
-    let append_error = append_node(AppendNodeRequest {
+    let appended = append_node(AppendNodeRequest {
         database_id: "default".to_string(),
         path: "/Knowledge/topic.md".to_string(),
         content: "next".to_string(),
@@ -3289,8 +3290,8 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
         metadata_json: None,
         kind: Some(NodeKind::Source),
     })
-    .expect_err("noncanonical source append should fail");
-    assert!(append_error.contains("source path must"));
+    .expect("source append should not enforce source path schema");
+    assert_eq!(appended.node.kind, NodeKind::Source);
 
     ensure_parent_folders("/Sources/keep/keep.md");
     let created = write_node(WriteNodeRequest {
@@ -3301,18 +3302,19 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
     ensure_parent_folders("/Sources/renamed-/wrong.md");
-    let move_error = move_node(MoveNodeRequest {
+    let moved = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
         from_path: "/Sources/keep/keep.md".to_string(),
         to_path: "/Sources/renamed-/wrong.md".to_string(),
         expected_etag: Some(created.node.etag),
         overwrite: false,
     })
-    .expect_err("noncanonical source move should fail");
-    assert!(move_error.contains("source path must"));
+    .expect("source move should not enforce source path schema");
+    assert_eq!(moved.node.path, "/Sources/renamed-/wrong.md");
+    assert_eq!(moved.node.kind, NodeKind::Source);
 }
 
 #[test]

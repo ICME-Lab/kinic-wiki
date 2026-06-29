@@ -186,7 +186,7 @@ Writes, database grants, private Skill Registry writes, and owner commands requi
 
 ## Context Pack
 
-`context-pack` exports a local OKF v0.1 markdown bundle from `/Knowledge/...` without copying raw source transcripts from `/Sources/<provider>/...`.
+`context-pack` exports a local OKF v0.1 markdown bundle from `/Knowledge/...` without copying raw source transcripts from `/Sources/...`.
 It is read-only against the selected database.
 
 ```bash
@@ -290,7 +290,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ]
 ```
 
-`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes must use canonical source paths such as `/Sources/<provider>/<id>.md`; legacy one-segment raw source paths are rejected and must be migrated explicitly before regeneration or purge operations.
+`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

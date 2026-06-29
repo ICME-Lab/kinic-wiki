@@ -60,7 +60,7 @@ test("source capture trigger rejects invalid request path before background work
   const response = await fetchWorker(authorizedSourceCaptureRequest({ requestPath: "/Sources/1.md" }), testEnv(queue), context);
 
   assert.equal(response.status, 400);
-  assert.match(await response.text(), /non-canonical source capture request path/);
+  assert.match(await response.text(), /invalid source capture request path/);
   assert.equal(context.waitUntilCount, 0);
   assert.equal(queue.messages.length, 0);
 });
@@ -87,7 +87,7 @@ test("source capture trigger rejects canister mismatches before background work"
   assert.equal(queue.messages.length, 0);
 });
 
-test("queue source capture message failures reject for retry", async () => {
+test("queue source capture message propagates config failures", async () => {
   await assert.rejects(
     processQueueMessage(testEnv(new TestQueue()), {
       kind: "source_capture",

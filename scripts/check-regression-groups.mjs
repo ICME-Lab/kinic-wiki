@@ -10,8 +10,8 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const groups = {
   security_path_validation: [
-    ["crates/wiki_domain/src/lib.rs", "canonical_source_path_rejects_prefix_lookalikes"],
-    ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_reject_noncanonical_source_paths"],
+    ["crates/wiki_domain/src/lib.rs", "source_path_rejects_non_sources_paths"],
+    ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_allow_source_paths_without_schema_validation"],
     ["workers/wiki-generator/tests/source-path.test.ts", "/Sourcesfoo/alpha/alpha.md"],
     ["extensions/wiki-clipper/tests/source-capture-request.test.mjs", "normalizedHttpUrl accepts only http and https"]
   ],
@@ -36,7 +36,7 @@ const groups = {
   worker_jobs: [
     ["workers/wiki-generator/tests/processing.test.ts", "missing queued source is recorded as failed"],
     ["workers/wiki-generator/tests/processing.test.ts", "kind: \"source_capture\""],
-    ["workers/wiki-generator/src/processing.ts", "source_capture requestPath is non-canonical"],
+    ["workers/wiki-generator/src/processing.ts", "source_capture requestPath is invalid"],
     ["workers/wiki-generator/src/jobs.ts", "attempts = 0"],
     ["workers/wiki-generator/src/jobs.ts", "target_path = NULL"],
     ["workers/wiki-generator/tests/openai.test.ts", "non-JSON DeepSeek failures before parsing"]

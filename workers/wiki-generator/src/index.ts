@@ -29,7 +29,13 @@ export default {
         const status = error instanceof SourceCaptureTriggerError ? error.status : 500;
         return jsonResponse({ error: errorMessage(error) }, status);
       }
-      await env.WIKI_GENERATION_QUEUE.send({ kind: "source_capture", ...input });
+      await env.WIKI_GENERATION_QUEUE.send({
+        kind: "source_capture",
+        canisterId: input.canisterId,
+        databaseId: input.databaseId,
+        requestPath: input.requestPath,
+        sessionNonce: input.sessionNonce
+      });
       return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath }, 202);
     }
     if (request.method !== "POST" || url.pathname !== "/run") {

@@ -39,6 +39,7 @@ Databases move through three statuses:
 - `deleted`: hard-deleted from public database lists and normal DB operations
 
 Only `active` DBs are available to normal VFS APIs.
+Archive/restore lifecycle states are intentionally removed. `archiving`, `archived`, and `restoring` rows block latest migration and upgrade deploy preflight; operators must resolve or reinstall before deploying. No archive/restore API or CLI path is restored in v1.
 
 ## Size Tracking
 
@@ -96,6 +97,7 @@ Upgrade compatibility:
 - The first upgrade from the pre-billing mainnet index schema requires a valid `CyclesBillingConfig`; missing or invalid principals trap before migration.
 - After `cycles_billing_config` exists in the index schema, no-arg upgrade is supported and the stored config remains authoritative.
 - The only supported automatic billing upgrade is the production pre-billing mainnet `database_index:011_source_run_sessions` schema to latest. Partial billing schemas and legacy credit schemas are unsupported; recreate or reinstall those DBs instead of auto-converting them.
+- Deploy scripts stop upgrade mode when the index DB still contains `archiving`, `archived`, or `restoring` databases.
 
 Normal operator flow:
 

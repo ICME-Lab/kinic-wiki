@@ -89,8 +89,12 @@ export type SourceQueueMessage = {
   sessionNonce?: string;
 };
 
-export type SourceCaptureQueueMessage = SourceCaptureTriggerInput & {
+export type SourceCaptureQueueMessage = {
   kind: "source_capture";
+  canisterId: string;
+  databaseId: string;
+  requestPath: string;
+  sessionNonce: string;
 };
 
 export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage;

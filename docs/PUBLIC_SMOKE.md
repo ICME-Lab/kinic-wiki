@@ -8,11 +8,21 @@ The local cycles smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_C
 
 ```bash
 icp network start -d -e local-wiki
-ICP_ENVIRONMENT=local-wiki scripts/local/setup_kinic_ledger.sh
-ICP_ENVIRONMENT=local-wiki scripts/local/deploy_wiki.sh
+export ICP_ENVIRONMENT=local-wiki
+export KINIC_LEDGER_CANISTER_ID="$(scripts/local/setup_kinic_ledger.sh | sed -n 's/^KINIC_LEDGER_CANISTER_ID=//p')"
+scripts/local/deploy_wiki.sh
 ```
 
 The ledger setup stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
+Upgrade deploy mode runs an archive/restore preflight. It stops deploy if the canister still has `archiving`, `archived`, or `restoring` database rows.
+
+Run the local upgrade smoke after canister changes:
+
+```bash
+scripts/smoke/local_canister_post_upgrade.sh
+```
+
+The smoke covers VFS read/write, search, link extraction, DB isolation, and upgrade persistence without archive/restore APIs.
 
 ## CLI and Browser Read Smoke
 

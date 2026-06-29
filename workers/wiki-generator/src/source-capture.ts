@@ -5,7 +5,7 @@ import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
-import { validateCanonicalSourcePath } from "./source-path.js";
+import { validateSourceRootPath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
 import type { SourceCaptureRequest, SourceCaptureTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
@@ -41,7 +41,7 @@ export function parseSourceCaptureTriggerInput(value: unknown): SourceCaptureTri
   if (typeof requestPath !== "string" || requestPath.length === 0) return "requestPath is required";
   if (typeof sessionNonce !== "string" || sessionNonce.length === 0) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  if (!isSourceCaptureRequestPath(requestPath)) return `non-canonical source capture request path: ${requestPath}`;
+  if (!isSourceCaptureRequestPath(requestPath)) return `invalid source capture request path: ${requestPath}`;
   return { canisterId, databaseId, requestPath, sessionNonce };
 }
 
@@ -126,20 +126,30 @@ export async function processSourceCaptureRequest(
       }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
       const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl, fetched.title ?? fetched.finalUrl);
-      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched, config.maxSourceChars);
+      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, fetched, config.maxSourceChars);
       current = await writeRequestState(vfs, databaseId, current, { status: "source_written", sourcePath: sourceAck.path, error: null });
     }
     if (!current.sourcePath) throw new Error("source_path is missing after source write");
     validateSourcePath(config.sourcePrefix, current.sourcePath);
     sourceAck = sourceAck ?? (await requireSourceAck(vfs, databaseId, current.sourcePath));
-    const queued = await enqueueSourceJob(env, {
-      kind: "source",
-      databaseId,
-      sourcePath: sourceAck.path,
-      sourceEtag: sourceAck.etag,
-      requestPath: current.path,
-      sessionNonce
-    });
+    let queued: boolean;
+    try {
+      queued = await enqueueSourceJob(env, {
+        kind: "source",
+        databaseId,
+        sourcePath: sourceAck.path,
+        sourceEtag: sourceAck.etag,
+        requestPath: current.path,
+        sessionNonce
+      });
+    } catch (error) {
+      await writeRequestState(vfs, databaseId, current, {
+        status: "failed",
+        targetPath: null,
+        error: `source job enqueue failed: ${errorMessage(error)}`
+      });
+      return;
+    }
     if (!queued) {
       const job = await loadJob(env.DB, databaseId, sourceAck.path);
       if (job?.status === "completed") {
@@ -176,12 +186,10 @@ export async function markSourceCaptureRequestFailed(vfs: VfsClient, databaseId:
 async function writeFetchedSource(
   vfs: VfsClient,
   databaseId: string,
-  path: string,
-  _requestPath: string,
+  basePath: string,
   fetched: FetchedUrlSource,
   maxSourceChars: number
 ): Promise<WriteNodeAck> {
-  const existing = await vfs.readNode(databaseId, path);
   const capturedAt = new Date().toISOString();
   const title = fetched.title ?? fetched.finalUrl;
   const sourceText = limitSourceText(fetched.text, maxSourceChars);
@@ -203,27 +211,39 @@ async function writeFetchedSource(
     },
     [`# ${title}`, "", `Source URL: ${fetched.finalUrl}`, "", sourceText.text].join("\n")
   );
-  await ensureParentFolders(vfs, databaseId, path);
-  const ack = await vfs.writeNode({
-    databaseId,
-    path,
-    kind: "source",
-    content,
-    metadataJson: JSON.stringify({
-      source_type: "url",
-      url: fetched.url,
-      final_url: fetched.finalUrl,
-      truncated: sourceText.truncated,
-      original_chars: sourceText.originalChars,
-      saved_chars: sourceText.savedChars,
-      fetched_truncated: fetched.fetchedTruncated,
-      fetched_bytes: fetched.fetchedBytes,
-      max_fetched_bytes: fetched.maxFetchedBytes
-    }),
-    expectedEtag: existing?.etag ?? null
+  const metadataJson = JSON.stringify({
+    source_type: "url",
+    url: fetched.url,
+    final_url: fetched.finalUrl,
+    truncated: sourceText.truncated,
+    original_chars: sourceText.originalChars,
+    saved_chars: sourceText.savedChars,
+    fetched_truncated: fetched.fetchedTruncated,
+    fetched_bytes: fetched.fetchedBytes,
+    max_fetched_bytes: fetched.maxFetchedBytes
   });
-  if (ack.kind !== "source") throw new Error(`write_node returned non-source kind: ${ack.path}`);
-  return ack;
+  for (let attempt = 1; attempt <= 100; attempt += 1) {
+    const path = sourcePathVariant(basePath, attempt);
+    const existing = await vfs.readNode(databaseId, path);
+    if (existing) continue;
+    await ensureParentFolders(vfs, databaseId, path);
+    try {
+      const ack = await vfs.writeNode({
+        databaseId,
+        path,
+        kind: "source",
+        content,
+        metadataJson,
+        expectedEtag: null
+      });
+      if (ack.kind !== "source") throw new Error(`write_node returned non-source kind: ${ack.path}`);
+      return ack;
+    } catch (error) {
+      if (isEtagMismatch(error)) continue;
+      throw error;
+    }
+  }
+  throw new Error(`source path collision limit exceeded: ${basePath}`);
 }
 
 function limitSourceText(text: string, maxChars: number): { text: string; truncated: boolean; originalChars: number; savedChars: number } {
@@ -239,9 +259,21 @@ async function writeRequestState(
   vfs: VfsClient,
   databaseId: string,
   request: SourceCaptureRequest,
-  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  updates: {
+    status: SourceCaptureRequest["status"];
+    claimedAt?: string | null;
+    sourcePath?: string | null;
+    targetPath?: string | null;
+    finishedAt?: string | null;
+    error?: string | null;
+  }
 ): Promise<SourceCaptureRequest> {
-  const finishedAt = isTerminalStatus(updates.status) ? (request.finishedAt ?? new Date().toISOString()) : request.finishedAt;
+  const finishedAt =
+    updates.finishedAt !== undefined
+      ? updates.finishedAt
+      : isTerminalStatus(updates.status)
+        ? (request.finishedAt ?? new Date().toISOString())
+        : request.finishedAt;
   const fields = {
     kind: "kinic.source_capture_request",
     schema_version: "1",
@@ -249,7 +281,7 @@ async function writeRequestState(
     url: request.url,
     requested_by: request.requestedBy,
     requested_at: request.requestedAt,
-    claimed_at: updates.status === "fetching" ? (updates.claimedAt ?? new Date().toISOString()) : request.claimedAt,
+    claimed_at: updates.claimedAt !== undefined ? updates.claimedAt : updates.status === "fetching" ? new Date().toISOString() : request.claimedAt,
     source_path: updates.sourcePath === undefined ? request.sourcePath : updates.sourcePath,
     target_path: updates.targetPath === undefined ? request.targetPath : updates.targetPath,
     finished_at: finishedAt,
@@ -320,7 +352,7 @@ async function writeLatestRequestState(
   vfs: VfsClient,
   databaseId: string,
   requestPath: string,
-  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
 ): Promise<SourceCaptureRequest | null> {
   const latest = await readSourceCaptureRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status === "generating" || isTerminalStatus(latest.status)) return null;
@@ -336,7 +368,7 @@ async function bestEffortWriteLatestRequestState(
   vfs: VfsClient,
   databaseId: string,
   requestPath: string,
-  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
 ): Promise<void> {
   try {
     await writeLatestRequestState(vfs, databaseId, requestPath, updates);
@@ -349,7 +381,7 @@ async function bestEffortWriteRequestState(
   vfs: VfsClient,
   databaseId: string,
   request: SourceCaptureRequest,
-  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
 ): Promise<void> {
   try {
     await writeRequestState(vfs, databaseId, request, updates);
@@ -377,6 +409,12 @@ async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string
 async function sourcePathForUrl(sourcePrefix: string, finalUrl: string, title: string): Promise<string> {
   const hash = (await sha256Hex(finalUrl)).slice(0, 8);
   return `${sourcePrefix}/web/${sourceStemFromTitleHash(title, hash, hostnameForUrl(finalUrl))}.md`;
+}
+
+function sourcePathVariant(basePath: string, attempt: number): string {
+  if (attempt === 1) return basePath;
+  if (basePath.endsWith(".md")) return `${basePath.slice(0, -".md".length)}-${attempt}.md`;
+  return `${basePath}-${attempt}`;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -491,7 +529,7 @@ function isEtagMismatch(error: unknown): boolean {
 
 function validateSourceCaptureRequestPath(path: string): void {
   if (!isSourceCaptureRequestPath(path)) {
-    throw new SourceCaptureTriggerError(`non-canonical source capture request path: ${path}`, 400);
+    throw new SourceCaptureTriggerError(`invalid source capture request path: ${path}`, 400);
   }
 }
 
@@ -502,10 +540,7 @@ function isSourceCaptureRequestPath(path: string): boolean {
 }
 
 function validateSourcePath(sourcePrefix: string, path: string): void {
-  if (!path.startsWith(`${sourcePrefix}/`)) {
-    throw new Error(`source_path is outside source prefix: ${path}`);
-  }
-  validateCanonicalSourcePath(path, sourcePrefix);
+  validateSourceRootPath(path, sourcePrefix);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
-import { sourceIdFromPath, validateCanonicalSourcePath } from "./source-path.js";
+import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
@@ -19,6 +19,11 @@ export type QueueMessageEnvelope =
   | { kind: "valid"; message: QueueMessage }
   | { kind: "invalid"; reason: string };
 
+type QueueProcessContext = {
+  config?: WorkerConfig;
+  vfs?: VfsClient;
+};
+
 type ExternalCostGateInput = {
   databaseId: string;
   sourcePath?: string;
@@ -29,7 +34,7 @@ type ExternalCostGateInput = {
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
-  validateCanonicalSourcePath(input.sourcePath, config.sourcePrefix);
+  validateSourceRootPath(input.sourcePath, config.sourcePrefix);
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, input.databaseId, input.sourcePath);
   if (source.etag !== input.sourceEtag) {
@@ -68,21 +73,21 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
   );
 }
 
-export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage): Promise<void> {
+export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage, context?: QueueProcessContext): Promise<void> {
   if (message.kind === "source_capture") {
-    await triggerSourceCaptureRequest(env, message);
+    await triggerSourceCaptureRequest(env, message, completeTriggerContext(context));
     return;
   }
-  await processSourceQueueMessage(env, message);
+  await processSourceQueueMessage(env, message, context);
 }
 
 export async function processQueueMessageEnvelope(
   env: RuntimeEnv,
   envelope: QueueMessageEnvelope,
-  context?: { config?: WorkerConfig; vfs?: VfsClient }
+  context?: QueueProcessContext
 ): Promise<void> {
   if (envelope.kind === "valid") {
-    await processQueueMessage(env, envelope.message);
+    await processQueueMessage(env, envelope.message, context);
     return;
   }
   console.warn("invalid wiki-generator queue message acked", envelope.reason);
@@ -96,19 +101,26 @@ export async function processSourceQueueMessageForTest(
   await processSourceQueueMessage(env, message, context);
 }
 
-async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: { config: WorkerConfig; vfs: VfsClient }): Promise<void> {
+async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: QueueProcessContext): Promise<void> {
   const config = context?.config ?? loadConfig(env);
-  validateCanonicalSourcePath(message.sourcePath, config.sourcePrefix);
+  validateSourceRootPath(message.sourcePath, config.sourcePrefix);
   const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
   if (shouldSkipJob(job, message.sourceEtag)) {
     return;
   }
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
+  if (await handleSupersededSourceMessage(vfs, message, job)) {
+    return;
+  }
   await markProcessing(env.DB, message);
   let source: WikiNode;
   try {
     source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
     if (source.etag !== message.sourceEtag) {
+      const latestJob = await loadJob(env.DB, message.databaseId, message.sourcePath);
+      if (await handleSupersededSourceMessage(vfs, message, latestJob)) {
+        return;
+      }
       throw new Error(`source etag mismatch: ${message.sourcePath}`);
     }
   } catch (error) {
@@ -153,6 +165,21 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     }
     await markQueueFailed(env, vfs, message, messageText);
   }
+}
+
+function completeTriggerContext(context: QueueProcessContext | undefined): { config: WorkerConfig; vfs: VfsClient } | undefined {
+  if (!context?.config || !context.vfs) return undefined;
+  return { config: context.config, vfs: context.vfs };
+}
+
+async function handleSupersededSourceMessage(vfs: VfsClient, message: SourceQueueMessage, job: Awaited<ReturnType<typeof loadJob>>): Promise<boolean> {
+  if (!job || job.source_etag === message.sourceEtag) return false;
+  if (job.status === "queued" || job.status === "processing") return true;
+  if (job.status !== "completed") return false;
+  if (message.requestPath && job.target_path) {
+    await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, job.target_path);
+  }
+  return true;
 }
 
 class ExternalCostGateError extends Error {
@@ -272,8 +299,11 @@ export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope 
     if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "source_capture canisterId is missing" };
     if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "source_capture databaseId is missing" };
     if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is missing" };
-    if (!isSourceCaptureRequestPath(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is non-canonical" };
+    if (!isSourceCaptureRequestPath(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is invalid" };
     if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "source_capture sessionNonce is missing" };
+  }
+  if (isObject(value) && value.kind === "url_ingest") {
+    return { kind: "invalid", reason: "legacy url_ingest queue message is unsupported" };
   }
   return { kind: "invalid", reason: "queue message shape is invalid" };
 }
@@ -308,14 +338,14 @@ async function loadContext(vfs: VfsClient, databaseId: string, source: WikiNode,
   const query = contextQuery(source.content, source.path);
   if (!query) return [];
   const hits = await vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
-  return rankContextHits(hits);
+  return rankContextHits(hits, config.sourcePrefix);
 }
 
-export function rankContextHits(hits: SearchNodeHit[]): SearchNodeHit[] {
+export function rankContextHits(hits: SearchNodeHit[], sourcePrefix = "/Sources"): SearchNodeHit[] {
   const primary: SearchNodeHit[] = [];
   const sources: SearchNodeHit[] = [];
   for (const hit of hits) {
-    if (hit.path === "/Sources" || hit.path.startsWith("/Sources/")) {
+    if (hit.path === sourcePrefix || hit.path.startsWith(`${sourcePrefix}/`)) {
       sources.push(hit);
     } else {
       primary.push(hit);

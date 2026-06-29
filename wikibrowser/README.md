@@ -53,7 +53,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Browse `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
 - Create databases and manage database access
 - Edit Markdown notes when the selected node is editable
-- Create web source captures under `/Sources/web/...` from the current database browser route
+- Create web source captures under safe `/Sources/...` paths from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
 - Show incoming backlinks and a lightweight graph view
@@ -74,16 +74,16 @@ Open a database route and select the `source-capture` left-pane tab:
 /<database-id>/Knowledge?tab=source-capture
 ```
 
-Submitting a web page snapshot writes raw evidence to the same database:
+Submitting a web page snapshot writes immutable raw evidence to the same database:
 
 ```text
-/Sources/web/<source-id>.md
+/Sources/...
 ```
 
-Raw web evidence under `/Sources/<provider>/<id>.md` is stored as `source`.
+Raw web evidence under `/Sources/...` is stored as `source`. Repeated captures never overwrite existing evidence; collisions use suffixed paths such as `stem-2.md`.
 
 When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, `/api/source/run` checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `sourcePath`, `sourceEtag`, and `sessionNonce` to the generator Worker with bearer auth. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
-The worker reads `/Sources/<provider>/<id>.md`, then generates review-ready pages under `/Knowledge/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
+The worker reads `/Sources/...`, then generates review-ready pages under `/Knowledge/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
 
 ## Public Access
 

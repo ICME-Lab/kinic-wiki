@@ -334,7 +334,12 @@ fn seed_sources_root_folders(conn: &crate::sqlite::Transaction<'_>) -> Result<()
     let mut changed_folder_paths = Vec::new();
     // This migration is limited to /Sources evidence subroots. Full store root
     // seeding is handled when creating stores and by the runtime index migration.
-    for folder_path in ["/Sources", "/Sources/sessions", "/Sources/skill-runs"] {
+    for folder_path in [
+        "/Sources",
+        "/Sources/sessions",
+        "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
+    ] {
         if ensure_folder_backfill_node(conn, folder_path, 0, 0)? != FolderBackfillChange::Existing {
             changed_folder_paths.push(folder_path.to_string());
         }

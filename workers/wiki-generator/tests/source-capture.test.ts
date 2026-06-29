@@ -58,7 +58,7 @@ test("fresh fetching and generating requests are treated as already accepted", (
   assert.equal(shouldProcessSourceCaptureRequest(generating), false);
 });
 
-test("stale fetching request can be retried", () => {
+test("stale fetching request can be reclaimed", () => {
   const fetching = parseSourceCaptureRequest({
     ...node,
     content: node.content.replace("status: queued", "status: fetching").replace("claimed_at: null", 'claimed_at: "2020-01-01T00:00:00.000Z"')
@@ -79,8 +79,8 @@ test("source capture trigger input carries database and request path", () => {
   assert.deepEqual(
     parseSourceCaptureTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Sources/source-capture-requests/1.md", sessionNonce: "session-1" }),
     {
-    canisterId: "canister-1",
-    databaseId: "db_1",
+      canisterId: "canister-1",
+      databaseId: "db_1",
       requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1"
     }
@@ -92,7 +92,7 @@ test("source capture trigger input carries database and request path", () => {
   );
   assert.equal(
     parseSourceCaptureTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Knowledge/secret.md", sessionNonce: "session-1" }),
-    "non-canonical source capture request path: /Knowledge/secret.md"
+    "invalid source capture request path: /Knowledge/secret.md"
   );
 });
 
@@ -123,6 +123,42 @@ test("queued source capture uses source write ack without reading source after w
   assert.equal(metadata.custom, "preserved");
   assert.doesNotMatch(vfs.lastSourceWrite.content, /request_path/);
   assert.doesNotMatch(vfs.lastSourceWrite.metadataJson, /request_path/);
+});
+
+test("same final URL capture requests write immutable suffixed source paths", async () => {
+  const vfs = new TestVfsClient();
+  vfs.sourceWriteEtags = ["etag-source-a", "etag-source-b"];
+  const queue = new TestQueue();
+
+  await withFetchedPage(async () => {
+    await processSourceCaptureRequest(testEnv(queue), vfs, workerConfig(), "db_1", queuedRequest({ path: "/Sources/source-capture-requests/a.md" }), "session-1");
+    await processSourceCaptureRequest(testEnv(queue), vfs, workerConfig(), "db_1", queuedRequest({ path: "/Sources/source-capture-requests/b.md", etag: "etag-request-b" }), "session-1");
+  });
+
+  assert.equal(queue.messages.length, 2);
+  const first = sourceMessage(queue.messages[0]);
+  const second = sourceMessage(queue.messages[1]);
+  assert.notEqual(first.sourcePath, second.sourcePath);
+  assert.match(first.sourcePath, /^\/Sources\/web\/fetched-title-[a-f0-9]{8}\.md$/);
+  assert.match(second.sourcePath, /^\/Sources\/web\/fetched-title-[a-f0-9]{8}-2\.md$/);
+  assert.equal(first.sourceEtag, "etag-source-a");
+  assert.equal(second.sourceEtag, "etag-source-b");
+  assert.equal(vfs.lastRequest?.status, "generating");
+});
+
+test("source capture marks failed when source job enqueue fails", async () => {
+  const vfs = new TestVfsClient();
+  const queue = new TestQueue();
+  queue.failSend = true;
+
+  await withFetchedPage(async () => {
+    await processSourceCaptureRequest(testEnv(queue), vfs, workerConfig(), "db_1", queuedRequest(), "session-1");
+  });
+
+  assert.equal(queue.messages.length, 0);
+  assert.equal(vfs.sourceWrites, 1);
+  assert.equal(vfs.lastRequest?.status, "failed");
+  assert.match(vfs.lastRequest?.error ?? "", /source job enqueue failed: queue unavailable/);
 });
 
 test("queued source capture without session nonce fails before external URL fetch", async () => {
@@ -329,6 +365,44 @@ test("source_written source capture still reads source to recover etag", async (
   assert.equal(message.sourcePath, "/Sources/retry/retry.md");
 });
 
+test("failed source capture request is terminal", async () => {
+  const vfs = new TestVfsClient();
+  vfs.sourceNodes.set("/Sources/retry/retry.md", {
+    path: "/Sources/retry/retry.md",
+    kind: "source",
+    content: "raw",
+    etag: "etag-existing-source",
+    metadataJson: "{}"
+  });
+  vfs.requestNode = requestNode(
+    queuedRequest({
+      status: "failed",
+      sourcePath: "/Sources/retry/retry.md",
+      targetPath: "/Knowledge/old.md",
+      claimedAt: "2026-05-12T00:01:00.000Z",
+      finishedAt: "2026-05-12T00:02:00.000Z",
+      error: "queue failed"
+    })
+  );
+  const queue = new TestQueue();
+
+  await triggerSourceCaptureRequest(
+    testEnv(queue),
+    {
+      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      databaseId: "db_1",
+      requestPath: "/Sources/source-capture-requests/1.md",
+      sessionNonce: "session-1"
+    },
+    { config: workerConfig(), vfs }
+  );
+
+  assert.equal(vfs.sourceWrites, 0);
+  assert.equal(queue.messages.length, 0);
+  assert.equal(vfs.lastRequest, null);
+  assert.equal(vfs.requestNode?.etag, "etag-request");
+});
+
 test("source_written source capture rejects source_path outside source prefix", async () => {
   const vfs = new TestVfsClient();
   const queue = new TestQueue();
@@ -340,7 +414,7 @@ test("source_written source capture rejects source_path outside source prefix", 
   assert.equal(queue.messages.length, 0);
   assert.equal(vfs.sourceWrites, 0);
   assert.equal(vfs.lastRequest?.status, "failed");
-  assert.match(vfs.lastRequest?.error ?? "", /outside source prefix/);
+  assert.match(vfs.lastRequest?.error ?? "", /under \/Sources/);
 });
 
 test("fetched source instructions cannot change trigger database", async () => {
@@ -402,7 +476,7 @@ test("queued claim etag mismatch re-reads fetching state without failing", async
   assert.equal(vfs.requestNode?.etag, "etag-current");
 });
 
-test("stale fetching request is claimed before retry", async () => {
+test("stale fetching request is claimed before processing", async () => {
   const vfs = new TestVfsClient();
   const queue = new TestQueue();
   vfs.requestNode = requestNode(queuedRequest({ status: "fetching", claimedAt: "2020-01-01T00:00:00.000Z", etag: "etag-stale" }));

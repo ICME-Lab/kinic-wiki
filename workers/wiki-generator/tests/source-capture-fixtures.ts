@@ -64,6 +64,7 @@ export async function withFetchedPage(run: () => Promise<void>, html = "<html><h
 
 export class TestVfsClient implements VfsClient {
   existingSource: WikiNode | null = null;
+  sourceNodes = new Map<string, WikiNode>();
   requestNode: WikiNode | null = null;
   failSessionCheck = false;
   sessionChecks: { databaseId: string; requestPath: string; sessionNonce: string }[] = [];
@@ -75,6 +76,7 @@ export class TestVfsClient implements VfsClient {
   sourceReadsAfterWrite = 0;
   requestReads = 0;
   sourceWrites = 0;
+  sourceWriteEtags: string[] = [];
   lastRequest: SourceCaptureRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
 
@@ -99,14 +101,14 @@ export class TestVfsClient implements VfsClient {
     if (path.startsWith("/Sources/")) {
       if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
       else this.sourceReadsBeforeWrite += 1;
-      return this.existingSource;
+      return this.sourceNodes.get(path) ?? (this.existingSource?.path === path ? this.existingSource : null);
     }
     this.requestReads += 1;
     return this.requestNode;
   }
 
   async writeNode(request: WriteNodeRequest): Promise<WriteNodeAck> {
-    const etag = request.kind === "source" ? "etag-source-write" : `etag-file-${request.path}-${request.content.length}`;
+    const etag = request.kind === "source" ? (this.sourceWriteEtags.shift() ?? "etag-source-write") : `etag-file-${request.path}-${request.content.length}`;
     if (this.failExpectedEtagOnce && request.kind === "file") {
       this.failExpectedEtagOnce = false;
       throw new Error(`expected_etag does not match current etag: ${request.path}`);
@@ -114,6 +116,13 @@ export class TestVfsClient implements VfsClient {
     if (request.kind === "source") {
       this.sourceWrites += 1;
       this.lastSourceWrite = request;
+      this.sourceNodes.set(request.path, {
+        path: request.path,
+        kind: "source",
+        content: request.content,
+        etag,
+        metadataJson: request.metadataJson
+      });
       return { path: request.path, kind: this.sourceAckKind, etag };
     }
     this.requestNode = {
@@ -151,8 +160,10 @@ export class TestVfsClient implements VfsClient {
 
 export class TestQueue implements Queue {
   messages: QueueMessage[] = [];
+  failSend = false;
 
   async send(message: unknown): Promise<void> {
+    if (this.failSend) throw new Error("queue unavailable");
     if (isQueueMessage(message)) this.messages.push(message);
   }
 }
