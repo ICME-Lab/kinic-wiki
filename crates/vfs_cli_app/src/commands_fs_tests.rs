@@ -344,7 +344,7 @@ async fn write_node_allows_non_canonical_source_paths() {
     std::fs::write(&input, "source").expect("input should write");
     let client = MockClient::default();
 
-    for path in [
+    let paths = [
         "/Sources-foo/a/a.md",
         "/Sources/x/y/y.md",
         "/Sources/x/x.txt",
@@ -352,7 +352,9 @@ async fn write_node_allows_non_canonical_source_paths() {
         "/Sources/x/",
         "/Sources/raw/source.md",
         "/Sources/source-capture-requests/source.md",
-    ] {
+    ];
+
+    for path in paths {
         run_command(
             &client,
             Cli {
@@ -380,7 +382,7 @@ async fn write_node_allows_non_canonical_source_paths() {
     }
 
     let writes = client.writes.lock().expect("writes should lock");
-    assert_eq!(writes.len(), 7);
+    assert_eq!(writes.len(), paths.len());
 }
 
 #[tokio::test]

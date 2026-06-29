@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForDatabaseSwitch, hrefForGraph, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
+import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
 import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
@@ -1724,22 +1724,6 @@ function validateCanisterText(canisterId: string): string | null {
   return null;
 }
 
-function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
-  const segments = pathname.split("/").filter(Boolean);
-  if (segments[0] !== "db" || !segments[1]) {
-    return { databaseId: null, nodePath: "/Knowledge" };
-  }
-  const path = segments
-    .slice(2)
-    .filter(Boolean)
-    .map(decodePathSegment)
-    .join("/");
-  return {
-    databaseId: decodePathSegment(segments[1]),
-    nodePath: path ? `/${path}` : "/Knowledge",
-  };
-}
-
 function isBrowserSearchPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
   if (!databaseId) return false;
@@ -1756,12 +1740,4 @@ function isBrowserHelpPathname(canisterId: string, databaseId: string, pathname:
   void canisterId;
   if (!databaseId) return false;
   return pathname === `${databaseRouteBase(databaseId)}/help`;
-}
-
-function decodePathSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
 }

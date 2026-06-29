@@ -3,7 +3,9 @@ import type { ChildNode } from "@/lib/types";
 export type ViewMode = "preview" | "raw" | "edit";
 export type ModeTab = "explorer" | "query" | "source-capture";
 export type ReadIdentityMode = "anonymous" | "user";
-export const STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
+export const DEFAULT_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
+export const OPTIONAL_STORE_ROOT_PATHS = ["/Wiki"] as const;
+export const STORE_ROOT_PATHS = [...DEFAULT_STORE_ROOT_PATHS, ...OPTIONAL_STORE_ROOT_PATHS] as const;
 export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
 
 export type LoadState<T> = {

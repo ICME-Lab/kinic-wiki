@@ -5,6 +5,11 @@ use std::borrow::Cow;
 use std::fs;
 use std::process::Command as ProcessCommand;
 
+use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
+use crate::connection::{
+    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
+    unlink_workspace_database, workspace_config_path,
+};
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use vfs_client::VfsApi;
@@ -16,12 +21,6 @@ use vfs_types::{
     MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
     NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
     WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
-};
-
-use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
-use crate::connection::{
-    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
-    unlink_workspace_database, workspace_config_path,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";

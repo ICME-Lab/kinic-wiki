@@ -1495,7 +1495,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
         .expect("reader grant should succeed");
-    let path = "/Sources/web/abc.md";
+    let path = "/Sources/raw/chatgpt/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 4);
 
     let reader = service
@@ -1555,7 +1555,11 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     let revoke_session = service
         .write_source_for_generation(
             "writer",
-            write_source_for_generation_request("alpha", "/Sources/web/def.md", "session-2"),
+            write_source_for_generation_request(
+                "alpha",
+                "/Sources/raw/chatgpt/def.md",
+                "session-2",
+            ),
             103,
         )
         .expect("writer should authorize second session");
@@ -1566,7 +1570,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/web/def.md",
+                "/Sources/raw/chatgpt/def.md",
                 &revoke_session.write.node.etag,
                 "session-2",
             ),

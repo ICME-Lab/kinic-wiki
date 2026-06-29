@@ -97,7 +97,7 @@ mod tests {
             "/Sources/chatgpt/../alpha.md",
         ] {
             let error =
-                validate_canonical_source_path(&path).expect_err("unsafe source path should fail");
+                validate_canonical_source_path(path).expect_err("unsafe source path should fail");
             assert!(
                 error.contains("source path must stay under")
                     || error.contains("source path contains unsafe segment")
