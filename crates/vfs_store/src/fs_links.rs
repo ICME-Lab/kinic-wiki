@@ -720,9 +720,21 @@ mod tests {
     }
 
     #[test]
+    fn link_parser_extracts_links_with_one_to_three_leading_spaces() {
+        let edges = edges_for(
+            " [[one.md|One]]\n  [[two.md|Two]]\n   [Three](three.md)\n    [[four.md|Four]]\n\t[[tab.md|Tab]]",
+        );
+
+        assert_eq!(edges.len(), 3);
+        assert_eq!(edges[0].target_path, "/Knowledge/topic/three.md");
+        assert_eq!(edges[1].target_path, "/Knowledge/topic/one.md");
+        assert_eq!(edges[2].target_path, "/Knowledge/topic/two.md");
+    }
+
+    #[test]
     fn absolute_internal_link_targets_require_segment_boundary() {
         let edges = edges_for(
-            "[Wiki](/Knowledge) [Wiki page](/Knowledge/a.md) [Sources](/Sources) [Source](/Sources/a.md) [Bad wiki](/Wikipedia/a.md) [Bad source](/SourcesBackup/a.md)",
+            "[Wiki](/Knowledge) [Wiki page](/Knowledge/a.md) [Sources](/Sources) [Source](/Sources/a.md) [Bad wiki](/Knowledgepedia/a.md) [Bad source](/SourcesBackup/a.md)",
         );
 
         assert_eq!(edges.len(), 4);

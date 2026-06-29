@@ -8,12 +8,12 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
+import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
-import { IngestPanel } from "@/components/ingest-panel";
+import { SourceCapturePanel } from "@/components/source-capture-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
+const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
@@ -412,6 +412,7 @@ export function WikiBrowser() {
     : explorerNodeFromSelection(selectedPath, currentNode, currentChildren);
   const explorerWriteDisabledReason = writeDisabledReason(readIdentity, currentDatabaseRole, readIdentity && !currentDatabaseRole ? databaseListError : null, currentDatabaseCycleReason);
   const explorerCreateDirectory = createDirectoryForExplorerNode(selectedExplorerNode);
+  const explorerCreateDisabledReason = explorerCreateDirectory ? null : "Select a database folder or Markdown file first.";
   const explorerMutationTarget = selectedExplorerNode && isMutableExplorerNode(selectedExplorerNode) ? selectedExplorerNode : null;
   const selectedExplorerChildren = selectedExplorerNode?.kind === "folder"
     && currentChildren.path === selectedExplorerNode.path
@@ -552,6 +553,10 @@ export function WikiBrowser() {
     event.preventDefault();
     setExplorerActionError(null);
     if (!explorerActionMode) return;
+    if (explorerActionMode !== "rename" && !explorerCreateDirectory) {
+      setExplorerActionError("Select a database folder or Markdown file first.");
+      return;
+    }
     const normalizedName = explorerActionMode === "folder" || (explorerActionMode === "rename" && explorerMutationTarget?.kind === "folder")
       ? normalizePathSegment(explorerDraftName)
       : normalizeMarkdownFileName(explorerDraftName);
@@ -561,11 +566,14 @@ export function WikiBrowser() {
     }
     setExplorerBusyAction(explorerActionMode);
     try {
-      const created = explorerActionMode === "rename" && explorerMutationTarget
-        ? await renameExplorerNode(explorerMutationTarget, normalizedName)
-        : explorerActionMode === "folder"
+      let created = false;
+      if (explorerActionMode === "rename" && explorerMutationTarget) {
+        created = await renameExplorerNode(explorerMutationTarget, normalizedName);
+      } else if (explorerCreateDirectory) {
+        created = explorerActionMode === "folder"
           ? await createFolderNode(explorerCreateDirectory, normalizedName)
           : await createMarkdownFile(explorerCreateDirectory, normalizedName);
+      }
       if (created) {
         setExplorerActionMode(null);
         setExplorerDraftName("");
@@ -649,13 +657,13 @@ export function WikiBrowser() {
             title={tabTitle(tab)}
             actions={tab === "explorer" ? (
               <ExplorerHeaderActions
-                fileDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
-                folderDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
+                fileDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
+                folderDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
                 renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
                 moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
-                fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
-                folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
+                fileTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New file in ${explorerCreateDirectory}`}
+                folderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
                 deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file or folder without visible children to delete")}
@@ -693,7 +701,7 @@ export function WikiBrowser() {
           {tab === "explorer" && explorerActionMode ? (
             <ExplorerCreateForm
               mode={explorerActionMode}
-              directoryPath={explorerCreateDirectory}
+              directoryPath={explorerCreateDirectory ?? ""}
               draftName={explorerDraftName}
               error={explorerActionError}
               busy={explorerBusyAction === explorerActionMode}
@@ -869,9 +877,9 @@ function LeftPane({
       />
     );
   }
-  if (tab === "ingest") {
+  if (tab === "source-capture") {
     return (
-      <IngestPanel
+      <SourceCapturePanel
         canisterId={canisterId}
         databaseId={databaseId}
         readIdentity={readIdentity}
@@ -1166,17 +1174,17 @@ function normalizePathSegment(name: string): string | null {
   return trimmed;
 }
 
-function createDirectoryForExplorerNode(node: ChildNode | null): string {
+function createDirectoryForExplorerNode(node: ChildNode | null): string | null {
   if (!node) {
-    return "/Knowledge";
+    return null;
   }
   if ((node.kind === "directory" || node.kind === "folder") && isDatabasePath(node.path)) {
     return node.path;
   }
   if (node.kind === "file" && isDatabasePath(node.path)) {
-    return parentPath(node.path) ?? "/Knowledge";
+    return parentPath(node.path);
   }
-  return "/Knowledge";
+  return null;
 }
 
 function isMutableExplorerNode(node: ChildNode): boolean {
@@ -1361,16 +1369,6 @@ function TopBar({
   return (
     <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <button
-          className={`inline-flex items-center justify-center rounded-lg border p-2 lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
-          type="button"
-          aria-expanded={mobileSidebarOpen}
-          aria-controls="wiki-mobile-sidebar"
-          aria-label="Toggle workspace panel"
-          onClick={onMobileSidebarToggle}
-        >
-          <Menu size={18} aria-hidden />
-        </button>
         <Link
           className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
           href="/dashboard"
@@ -1416,15 +1414,18 @@ function TopBar({
             <span className="hidden sm:inline">Share</span>
           </a>
         ) : null}
-        <Link
-          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
-          href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Knowledge") : hrefForHelp(canisterId, databaseId)}
-          aria-label="Help"
-          title={isHelpPage ? "Close help" : "Help"}
+        <button
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
+          type="button"
+          aria-expanded={mobileSidebarOpen}
+          aria-controls="wiki-mobile-sidebar"
+          aria-label="Toggle workspace panel"
+          title="Workspace panel"
+          onClick={onMobileSidebarToggle}
         >
-          <HelpCircle size={18} aria-hidden />
-          <span className="sr-only sm:not-sr-only">Help</span>
-        </Link>
+          <Menu size={18} aria-hidden />
+          <span className="sr-only sm:not-sr-only">Panel</span>
+        </button>
         <Link
           className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={graphHref}
@@ -1517,7 +1518,6 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       logicalSizeBytes: "0",
       cyclesBalance: "0",
       cyclesSuspendedAtMs: null,
-      archivedAtMs: null,
       deletedAtMs: null
     },
     ...databases
@@ -1637,7 +1637,7 @@ function ModeTabs({
 
 function tabTitle(tab: ModeTab): string {
   if (tab === "query") return "Query";
-  if (tab === "ingest") return "Ingest";
+  if (tab === "source-capture") return "Source Capture";
   return "Explorer";
 }
 
@@ -1661,7 +1661,7 @@ function parseView(value: string | null): ViewMode {
 }
 
 function parseSearchKind(value: string | null): "path" | "full" {
-  return value === "full" ? "full" : "path";
+  return value === "path" ? "path" : "full";
 }
 
 function parseGraphDepth(value: string | null): 1 | 2 {

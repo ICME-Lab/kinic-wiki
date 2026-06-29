@@ -82,7 +82,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     changed_nodes: idl.Vec(Node),
     next_cursor: idl.Opt(idl.Text)
   });
-  const UrlIngestTriggerSessionCheckRequest = idl.Record({
+  const SourceCaptureTriggerSessionCheckRequest = idl.Record({
     database_id: idl.Text,
     request_path: idl.Text,
     session_nonce: idl.Text
@@ -106,7 +106,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   return idl.Service({
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
-    check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
+    check_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),

@@ -19,7 +19,7 @@
     "KINIC_WIKI_WORKER_MODEL": "deepseek-v4-flash",
     "KINIC_WIKI_WORKER_TARGET_ROOT": "/Knowledge/conversations",
     "KINIC_WIKI_WORKER_SOURCE_PREFIX": "/Sources",
-    "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/Knowledge"
+    "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/"
   },
   "d1_databases": [
     {

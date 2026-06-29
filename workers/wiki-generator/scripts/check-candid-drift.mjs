@@ -10,8 +10,8 @@ const idl = readFileSync(new URL("../src/vfs-idl.ts", import.meta.url), "utf8");
 
 const didTypeAliases = {
   ...sharedAliases,
-  ResultExportSnapshot: "Result_8",
-  ResultFetchUpdates: "Result_9"
+  ResultExportSnapshot: "Result_7",
+  ResultFetchUpdates: "Result_8"
 };
 
 const expectedTypes = {
@@ -116,7 +116,7 @@ const expectedTypes = {
       next_cursor: "opt text"
     }
   },
-  UrlIngestTriggerSessionCheckRequest: {
+  SourceCaptureTriggerSessionCheckRequest: {
     kind: "record",
     fields: { database_id: "text", request_path: "text", session_nonce: "text" }
   },
@@ -143,7 +143,7 @@ const expectedTypes = {
 const expectedMethods = {
   check_database_write_cycles: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
-  check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
+  check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },

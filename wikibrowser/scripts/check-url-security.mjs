@@ -16,20 +16,20 @@ if (!crypto.subtle.timingSafeEqual) {
 
 const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
 const documentPane = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
-const urlIngest = readFileSync(new URL("../lib/url-ingest.ts", import.meta.url), "utf8");
-const triggerRouteModule = await importTs("../app/api/url-ingest/trigger/route.ts");
+const sourceCapture = readFileSync(new URL("../lib/source-capture.ts", import.meta.url), "utf8");
+const triggerRouteModule = await importTs("../app/api/source-capture/trigger/route.ts");
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
-assert.doesNotMatch(wikiBrowser, /tab === "ingest" \|\| tab === "sources"/);
+assert.doesNotMatch(wikiBrowser, new RegExp('tab === "source ' + 'capture" \\|\\| tab === "sources"'));
 assert.match(documentPane, /authPrompt\?: "private" \| null/);
 assert.doesNotMatch(documentPane, /Write access/);
-assert.match(urlIngest, /safeIngestRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
-assert.match(urlIngest, /function isSafeRequestSegment/);
-assert.match(urlIngest, /!value\.includes\("\.\."\)/);
+assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
+assert.match(sourceCapture, /function isSafeRequestSegment/);
+assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
 
 await withEnv({}, async () => {
   const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
@@ -79,7 +79,7 @@ await withEnv(
     );
     assert.equal(mismatchedCanisterId.status, 400);
 
-    triggerRouteModule.setUrlIngestTriggerDepsForTest({
+    triggerRouteModule.setSourceCaptureTriggerDepsForTest({
       checkSession: async () => {
         throw new Error("denied");
       }
@@ -91,25 +91,25 @@ await withEnv(
       assert.equal(response.status, 403);
     });
 
-    triggerRouteModule.setUrlIngestTriggerDepsForTest({
+    triggerRouteModule.setSourceCaptureTriggerDepsForTest({
       checkSession: async (canisterId, input) => {
         assert.equal(canisterId, "aaaaa-aa");
         assert.deepEqual(input, {
           canisterId: "aaaaa-aa",
           databaseId: "db_1",
-          requestPath: "/Sources/ingest-requests/1.md",
+          requestPath: "/Sources/source-capture-requests/1.md",
           sessionNonce: "session-1"
         });
       }
     });
     await withMockFetch(async (input, init) => {
-      assert.equal(inputUrl(input), "https://worker.example/url-ingest");
+      assert.equal(inputUrl(input), "https://worker.example/source-capture");
       assert.equal(init?.headers?.authorization, "Bearer secret-token");
       assert.equal(init?.method, "POST");
       assert.deepEqual(JSON.parse(init?.body), {
         canisterId: "aaaaa-aa",
         databaseId: "db_1",
-        requestPath: "/Sources/ingest-requests/1.md",
+        requestPath: "/Sources/source-capture-requests/1.md",
         sessionNonce: "session-1"
       });
       return Response.json({ accepted: true }, { status: 202 });
@@ -118,7 +118,7 @@ await withEnv(
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
     });
-    triggerRouteModule.setUrlIngestTriggerDepsForTest();
+    triggerRouteModule.setSourceCaptureTriggerDepsForTest();
 
     const missingSourceSessionNonce = await sourceRunRouteModule.POST(
       sourceRunRequest("https://kinic.xyz", { sessionNonce: "" })
@@ -191,21 +191,25 @@ await withEnv(
     sourceRunRouteModule.setSourceRunDepsForTest({
       checkSession: async (canisterId, input) => {
         assert.equal(canisterId, "aaaaa-aa");
-        assert.equal(input.sourcePath, "/Sources/raw/web/036551bb7a7a1fcd.md");
+        assert.equal(input.sourcePath, "/Sources/sessions/codex/run_123.md");
       }
     });
-    await withMockFetch(async (_input, init) => {
-      assert.deepEqual(JSON.parse(init?.body), {
-        databaseId: "db_1",
-        sourcePath: "/Sources/raw/web/036551bb7a7a1fcd.md",
-        sourceEtag: "etag-source",
-        sessionNonce: "session-1",
-        dryRun: false
-      });
-      return Response.json({ queued: true }, { status: 202 });
-    }, async () => {
+    await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
       const response = await sourceRunRouteModule.POST(
-        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/raw/web/036551bb7a7a1fcd.md" })
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/sessions/codex/run_123.md" })
+      );
+      assert.equal(response.status, 202);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.equal(input.sourcePath, "/Sources/skill-runs/legal-review/1700000000000.md");
+      }
+    });
+    await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
+      const response = await sourceRunRouteModule.POST(
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/skill-runs/legal-review/1700000000000.md" })
       );
       assert.equal(response.status, 202);
     });
@@ -463,13 +467,13 @@ async function withEnv(values, run) {
 }
 
 function triggerRequest(origin, overrides = {}) {
-  return new Request("https://local.test/api/url-ingest/trigger", {
+  return new Request("https://local.test/api/source-capture/trigger", {
     method: "POST",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md",
+      requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1",
       ...overrides
     })

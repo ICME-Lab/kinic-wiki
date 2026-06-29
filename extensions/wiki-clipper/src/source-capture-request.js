@@ -1,6 +1,6 @@
-// Where: extensions/wiki-clipper/src/url-ingest-request.js
+// Where: extensions/wiki-clipper/src/source-capture-request.js
 // What: Normalize extension input URLs and expose fixed runtime defaults.
-// Why: Browser snapshots should save source evidence directly under /Sources.
+// Why: Active-tab capture and settings need stable canister defaults and URL validation.
 
 export const DEFAULT_CANISTER_ID = "xis3j-paaaa-aaaai-axumq-cai";
 export const DEFAULT_IC_HOST = "https://icp0.io";

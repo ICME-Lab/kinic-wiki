@@ -84,7 +84,7 @@ type VfsActor = {
     source_etag: string;
     session_nonce: string;
   }) => Promise<Result<null>>;
-  check_url_ingest_trigger_session: (request: {
+  check_source_capture_trigger_session: (request: {
     database_id: string;
     request_path: string;
     session_nonce: string;
@@ -120,7 +120,7 @@ type VfsActor = {
 export type VfsClient = {
   checkDatabaseWriteCycles(databaseId: string): Promise<void>;
   checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void>;
-  checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
+  checkSourceCaptureTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
   readNode(databaseId: string, path: string): Promise<WikiNode | null>;
   mkdirNode(request: MkdirNodeRequest): Promise<void>;
   writeNode(request: WriteNodeRequest): Promise<WriteNodeAck>;
@@ -153,9 +153,9 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
         })
       );
     },
-    checkUrlIngestTriggerSession: async (databaseId, requestPath, sessionNonce) => {
+    checkSourceCaptureTriggerSession: async (databaseId, requestPath, sessionNonce) => {
       await unwrap(
-        actor.check_url_ingest_trigger_session({
+        actor.check_source_capture_trigger_session({
           database_id: databaseId,
           request_path: requestPath,
           session_nonce: sessionNonce

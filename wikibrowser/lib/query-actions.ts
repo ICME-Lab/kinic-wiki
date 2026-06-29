@@ -4,7 +4,7 @@ export type QueryAction =
   | { kind: "lint"; targetPath: string; sideEffect: "none"; identityMode: QueryIdentityMode }
   | { kind: "sql"; targetPath: "current database"; sideEffect: "none"; identityMode: QueryIdentityMode; sql: string }
   | { kind: "search"; targetPath: "current database"; sideEffect: "none"; identityMode: QueryIdentityMode; query: string }
-  | { kind: "queue_url"; targetPath: "/Sources/ingest-requests"; sideEffect: "queue request"; identityMode: "user"; url: string }
+  | { kind: "queue_url"; targetPath: "/Sources/source-capture-requests"; sideEffect: "queue request"; identityMode: "user"; url: string }
   | { kind: "ask"; targetPath: "/Knowledge"; sideEffect: "none"; identityMode: QueryIdentityMode; question: string };
 
 export function classifyQueryInput(value: string, selectedPath: string, identityMode: QueryIdentityMode): QueryAction | null {
@@ -13,7 +13,7 @@ export function classifyQueryInput(value: string, selectedPath: string, identity
   const sqlText = prefixedText(text, "sql");
   if (sqlText) return { kind: "sql", targetPath: "current database", sideEffect: "none", identityMode, sql: sqlText };
   const url = firstHttpUrl(text);
-  if (url) return { kind: "queue_url", targetPath: "/Sources/ingest-requests", sideEffect: "queue request", identityMode: "user", url };
+  if (url) return { kind: "queue_url", targetPath: "/Sources/source-capture-requests", sideEffect: "queue request", identityMode: "user", url };
   if (/(lint|点検|検査)/i.test(text)) {
     return { kind: "lint", targetPath: /facts\.md|facts|事実/i.test(text) ? "/Knowledge/facts.md" : selectedPath, sideEffect: "none", identityMode };
   }

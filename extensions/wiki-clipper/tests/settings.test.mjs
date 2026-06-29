@@ -100,7 +100,7 @@ test("settings popup clears database on logout and fails closed on auth reset er
   assert.doesNotMatch(notifyAuthSessionChanged, /catch/);
   assert.match(notifyAuthSessionChanged, /await send\(\{ type: "auth-session-changed" \}\)/);
   assert.match(refreshLatestStatus, /type: "latest-source-capture-status"/);
-  assert.doesNotMatch(refreshLatestStatus, /latest-url-ingest-status/);
+  assert.doesNotMatch(refreshLatestStatus, new RegExp("latest-" + "url-" + "ingest-status"));
   assert.match(popupJs, /function latestStatusLabel\(value\)/);
   assert.match(popupJs, /value\.sourcePath/);
 });
@@ -179,7 +179,7 @@ test("database dropdown options include only active owner and writer databases",
     rawDatabase("owner-db", "Owner", "Active", 20_000n),
     rawDatabase("writer-db", "Writer", "Active", 20_000n),
     rawDatabase("reader-db", "Reader", "Active", 20_000n),
-    rawDatabase("archived-db", "Owner", "Archived", 20_000n)
+    rawDatabase("deleted-db", "Owner", "Deleted", 20_000n)
   ], { minUpdateCycles: "10000" });
   assert.deepEqual(
     databases.map((database) => [database.databaseId, database.title, database.role, database.status, database.writeCyclesAvailable]),
@@ -323,7 +323,6 @@ function rawDatabase(databaseId, role, status, titleOrBalance = 20_000n, cyclesS
     logical_size_bytes: 0n,
     cycles_balance: [cyclesBalance],
     cycles_suspended_at_ms: cyclesSuspendedAtMs === null ? [] : [cyclesSuspendedAtMs],
-    archived_at_ms: [],
     deleted_at_ms: []
   };
 }

@@ -3,9 +3,9 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useState } from "react";
-import { createUrlIngestRequest } from "@/lib/url-ingest";
+import { createSourceCaptureRequest } from "@/lib/source-capture";
 
-export function IngestPanel({
+export function SourceCapturePanel({
   canisterId,
   databaseId,
   readIdentity,
@@ -32,13 +32,13 @@ export function IngestPanel({
     setBusy(true);
     setMessage(null);
     try {
-      const created = await createUrlIngestRequest(canisterId, databaseId, readIdentity, url);
+      const created = await createSourceCaptureRequest(canisterId, databaseId, readIdentity, url);
       setTone(created.triggered ? "info" : "error");
       setMessage(created.triggered ? `Queued and accepted ${created.requestPath}` : `Queued ${created.requestPath}. ${created.triggerError}`);
       setUrl("");
     } catch (cause) {
       setTone("error");
-      setMessage(cause instanceof Error ? cause.message : "URL ingest failed.");
+      setMessage(cause instanceof Error ? cause.message : "source capture failed.");
     } finally {
       setBusy(false);
     }
@@ -48,7 +48,7 @@ export function IngestPanel({
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm">
         <div className="rounded-xl border border-line bg-white p-4">
-          <p className="text-muted">Login is required to queue URL ingest for this database.</p>
+          <p className="text-muted">Login is required to queue source capture for this database.</p>
         </div>
       </div>
     );
@@ -60,11 +60,11 @@ export function IngestPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm">
       <form className="grid gap-3" onSubmit={submit}>
         <div>
-          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted" htmlFor="ingest-url">
+          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted" htmlFor="source-capture-url">
             URL
           </label>
           <input
-            id="ingest-url"
+            id="source-capture-url"
             className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
             placeholder="https://example.com/article"
             value={url}

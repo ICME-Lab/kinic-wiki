@@ -1,34 +1,36 @@
-// Where: workers/wiki-generator/src/url-ingest.ts
-// What: URL ingest request parsing, source persistence, and request state writes.
-// Why: Browser-submitted URLs should become raw sources before knowledge page generation.
+// Where: workers/wiki-generator/src/source-capture.ts
+// What: source capture request parsing, source persistence, and request state writes.
+// Why: Browser-submitted URLs should become evidence sources before wiki page generation.
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
 import { validateSourceRootPath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
-import type { UrlIngestRequest, UrlIngestTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
+import type { SourceCaptureRequest, SourceCaptureTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 
-const INGEST_REQUEST_PREFIX = "/Sources/ingest-requests";
+const SOURCE_CAPTURE_REQUEST_PREFIX = "/Sources/source-capture-requests";
 const FETCHING_STALE_MS = 15 * 60 * 1000;
+const MAX_SOURCE_STEM_BYTES = 128;
+const SOURCE_STEM_ENCODER = new TextEncoder();
 
-export type UrlIngestTriggerContext = {
+export type SourceCaptureTriggerContext = {
   config: WorkerConfig;
   vfs: VfsClient;
 };
 
-export class UrlIngestTriggerError extends Error {
+export class SourceCaptureTriggerError extends Error {
   readonly status: number;
 
   constructor(message: string, status: number) {
     super(message);
-    this.name = "UrlIngestTriggerError";
+    this.name = "SourceCaptureTriggerError";
     this.status = status;
   }
 }
 
-export function parseUrlIngestTriggerInput(value: unknown): UrlIngestTriggerInput | string {
+export function parseSourceCaptureTriggerInput(value: unknown): SourceCaptureTriggerInput | string {
   if (!isObject(value)) return "body must include canisterId, databaseId, requestPath, and sessionNonce";
   const canisterId = value.canisterId;
   const databaseId = value.databaseId;
@@ -39,43 +41,43 @@ export function parseUrlIngestTriggerInput(value: unknown): UrlIngestTriggerInpu
   if (typeof requestPath !== "string" || requestPath.length === 0) return "requestPath is required";
   if (typeof sessionNonce !== "string" || sessionNonce.length === 0) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  if (!isIngestRequestPath(requestPath)) return `non-canonical ingest request path: ${requestPath}`;
+  if (!isSourceCaptureRequestPath(requestPath)) return `invalid source capture request path: ${requestPath}`;
   return { canisterId, databaseId, requestPath, sessionNonce };
 }
 
-export function validateUrlIngestTriggerInput(env: RuntimeEnv, input: UrlIngestTriggerInput): WorkerConfig {
+export function validateSourceCaptureTriggerInput(env: RuntimeEnv, input: SourceCaptureTriggerInput): WorkerConfig {
   const config = loadConfig(env);
   if (input.canisterId !== config.canisterId) {
-    throw new UrlIngestTriggerError("canisterId does not match worker canister config", 400);
+    throw new SourceCaptureTriggerError("canisterId does not match worker canister config", 400);
   }
-  validateIngestRequestPath(input.requestPath);
+  validateSourceCaptureRequestPath(input.requestPath);
   return config;
 }
 
-export async function prepareUrlIngestTrigger(env: RuntimeEnv, input: UrlIngestTriggerInput): Promise<UrlIngestTriggerContext> {
-  const config = validateUrlIngestTriggerInput(env, input);
+export async function prepareSourceCaptureTrigger(env: RuntimeEnv, input: SourceCaptureTriggerInput): Promise<SourceCaptureTriggerContext> {
+  const config = validateSourceCaptureTriggerInput(env, input);
   const vfs = await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM);
   return { config, vfs };
 }
 
-export async function triggerUrlIngestRequest(env: RuntimeEnv, input: UrlIngestTriggerInput, context?: UrlIngestTriggerContext): Promise<void> {
-  const triggerContext = context ?? (await prepareUrlIngestTrigger(env, input));
+export async function triggerSourceCaptureRequest(env: RuntimeEnv, input: SourceCaptureTriggerInput, context?: SourceCaptureTriggerContext): Promise<void> {
+  const triggerContext = context ?? (await prepareSourceCaptureTrigger(env, input));
   const { config, vfs } = triggerContext;
   const node = await vfs.readNode(input.databaseId, input.requestPath);
-  if (!node) throw new Error(`ingest request not found: ${input.requestPath}`);
-  const request = parseUrlIngestRequest(node);
-  if (!request) throw new Error(`invalid ingest request: ${input.requestPath}`);
-  if (!shouldProcessIngestRequest(request)) return;
-  await processUrlIngestRequest(env, vfs, config, input.databaseId, request, input.sessionNonce);
+  if (!node) throw new Error(`source capture request not found: ${input.requestPath}`);
+  const request = parseSourceCaptureRequest(node);
+  if (!request) throw new Error(`invalid source capture request: ${input.requestPath}`);
+  if (!shouldProcessSourceCaptureRequest(request)) return;
+  await processSourceCaptureRequest(env, vfs, config, input.databaseId, request, input.sessionNonce);
 }
 
-export function parseUrlIngestRequest(node: WikiNode): UrlIngestRequest | null {
+export function parseSourceCaptureRequest(node: WikiNode): SourceCaptureRequest | null {
   if (node.kind !== "file") return null;
   const document = parseFrontmatter(node.content);
   if (!document) return null;
-  if (document.fields.kind !== "kinic.url_ingest_request") return null;
+  if (document.fields.kind !== "kinic.source_capture_request") return null;
   if (document.fields.schema_version !== "1") return null;
-  const status = ingestStatus(document.fields.status);
+  const status = sourceCaptureStatus(document.fields.status);
   const url = document.fields.url;
   if (!status || !url) return null;
   return {
@@ -94,21 +96,21 @@ export function parseUrlIngestRequest(node: WikiNode): UrlIngestRequest | null {
   };
 }
 
-export function shouldProcessIngestRequest(request: UrlIngestRequest): boolean {
+export function shouldProcessSourceCaptureRequest(request: SourceCaptureRequest): boolean {
   return request.status === "queued" || request.status === "source_written" || (request.status === "fetching" && isStaleFetching(request, new Date()));
 }
 
-export async function processUrlIngestRequest(
+export async function processSourceCaptureRequest(
   env: RuntimeEnv,
   vfs: VfsClient,
   config: WorkerConfig,
   databaseId: string,
-  request: UrlIngestRequest,
+  request: SourceCaptureRequest,
   sessionNonce: string
 ): Promise<void> {
-  let current: UrlIngestRequest | null = request;
+  let current: SourceCaptureRequest | null = request;
   try {
-    current = await claimIngestRequest(vfs, databaseId, request);
+    current = await claimSourceCaptureRequest(vfs, databaseId, request);
     if (!current) return;
     if (!sessionNonce) {
       await bestEffortWriteRequestState(vfs, databaseId, current, { status: "failed", targetPath: null, error: "sessionNonce is required" });
@@ -117,27 +119,37 @@ export async function processUrlIngestRequest(
     let sourceAck: WriteNodeAck | null = null;
     if (current.status === "fetching") {
       try {
-        await vfs.checkUrlIngestTriggerSession(databaseId, current.path, sessionNonce);
+        await vfs.checkSourceCaptureTriggerSession(databaseId, current.path, sessionNonce);
       } catch (error) {
         await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", targetPath: null, error: errorMessage(error) });
         return;
       }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
-      const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl);
-      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched, config.maxSourceChars);
+      const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl, fetched.title ?? fetched.finalUrl);
+      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, fetched, config.maxSourceChars);
       current = await writeRequestState(vfs, databaseId, current, { status: "source_written", sourcePath: sourceAck.path, error: null });
     }
     if (!current.sourcePath) throw new Error("source_path is missing after source write");
     validateSourcePath(config.sourcePrefix, current.sourcePath);
     sourceAck = sourceAck ?? (await requireSourceAck(vfs, databaseId, current.sourcePath));
-    const queued = await enqueueSourceJob(env, {
-      kind: "source",
-      databaseId,
-      sourcePath: sourceAck.path,
-      sourceEtag: sourceAck.etag,
-      requestPath: current.path,
-      sessionNonce
-    });
+    let queued: boolean;
+    try {
+      queued = await enqueueSourceJob(env, {
+        kind: "source",
+        databaseId,
+        sourcePath: sourceAck.path,
+        sourceEtag: sourceAck.etag,
+        requestPath: current.path,
+        sessionNonce
+      });
+    } catch (error) {
+      await writeRequestState(vfs, databaseId, current, {
+        status: "failed",
+        targetPath: null,
+        error: `source job enqueue failed: ${errorMessage(error)}`
+      });
+      return;
+    }
     if (!queued) {
       const job = await loadJob(env.DB, databaseId, sourceAck.path);
       if (job?.status === "completed") {
@@ -155,18 +167,18 @@ export async function processUrlIngestRequest(
   }
 }
 
-export async function markIngestRequestCompleted(vfs: VfsClient, databaseId: string, requestPath: string, sourcePath: string, targetPath: string): Promise<void> {
+export async function markSourceCaptureRequestCompleted(vfs: VfsClient, databaseId: string, requestPath: string, sourcePath: string, targetPath: string): Promise<void> {
   const node = await vfs.readNode(databaseId, requestPath);
   if (!node) return;
-  const request = parseUrlIngestRequest(node);
+  const request = parseSourceCaptureRequest(node);
   if (!request) return;
   await writeRequestState(vfs, databaseId, request, { status: "completed", sourcePath, targetPath, error: null });
 }
 
-export async function markIngestRequestFailed(vfs: VfsClient, databaseId: string, requestPath: string, error: string): Promise<void> {
+export async function markSourceCaptureRequestFailed(vfs: VfsClient, databaseId: string, requestPath: string, error: string): Promise<void> {
   const node = await vfs.readNode(databaseId, requestPath);
   if (!node) return;
-  const request = parseUrlIngestRequest(node);
+  const request = parseSourceCaptureRequest(node);
   if (!request) return;
   await writeRequestState(vfs, databaseId, request, { status: "failed", targetPath: null, error });
 }
@@ -174,18 +186,16 @@ export async function markIngestRequestFailed(vfs: VfsClient, databaseId: string
 async function writeFetchedSource(
   vfs: VfsClient,
   databaseId: string,
-  path: string,
-  _requestPath: string,
+  basePath: string,
   fetched: FetchedUrlSource,
   maxSourceChars: number
 ): Promise<WriteNodeAck> {
-  const existing = await vfs.readNode(databaseId, path);
   const capturedAt = new Date().toISOString();
   const title = fetched.title ?? fetched.finalUrl;
   const sourceText = limitSourceText(fetched.text, maxSourceChars);
   const content = renderFrontmatter(
     {
-      kind: "kinic.raw_web_source",
+      kind: "kinic.evidence_web_source",
       schema_version: "1",
       url: fetched.url,
       final_url: fetched.finalUrl,
@@ -201,27 +211,39 @@ async function writeFetchedSource(
     },
     [`# ${title}`, "", `Source URL: ${fetched.finalUrl}`, "", sourceText.text].join("\n")
   );
-  await ensureParentFolders(vfs, databaseId, path);
-  const ack = await vfs.writeNode({
-    databaseId,
-    path,
-    kind: "source",
-    content,
-    metadataJson: JSON.stringify({
-      source_type: "url",
-      url: fetched.url,
-      final_url: fetched.finalUrl,
-      truncated: sourceText.truncated,
-      original_chars: sourceText.originalChars,
-      saved_chars: sourceText.savedChars,
-      fetched_truncated: fetched.fetchedTruncated,
-      fetched_bytes: fetched.fetchedBytes,
-      max_fetched_bytes: fetched.maxFetchedBytes
-    }),
-    expectedEtag: existing?.etag ?? null
+  const metadataJson = JSON.stringify({
+    source_type: "url",
+    url: fetched.url,
+    final_url: fetched.finalUrl,
+    truncated: sourceText.truncated,
+    original_chars: sourceText.originalChars,
+    saved_chars: sourceText.savedChars,
+    fetched_truncated: fetched.fetchedTruncated,
+    fetched_bytes: fetched.fetchedBytes,
+    max_fetched_bytes: fetched.maxFetchedBytes
   });
-  if (ack.kind !== "source") throw new Error(`write_node returned non-source kind: ${ack.path}`);
-  return ack;
+  for (let attempt = 1; attempt <= 100; attempt += 1) {
+    const path = sourcePathVariant(basePath, attempt);
+    const existing = await vfs.readNode(databaseId, path);
+    if (existing) continue;
+    await ensureParentFolders(vfs, databaseId, path);
+    try {
+      const ack = await vfs.writeNode({
+        databaseId,
+        path,
+        kind: "source",
+        content,
+        metadataJson,
+        expectedEtag: null
+      });
+      if (ack.kind !== "source") throw new Error(`write_node returned non-source kind: ${ack.path}`);
+      return ack;
+    } catch (error) {
+      if (isEtagMismatch(error)) continue;
+      throw error;
+    }
+  }
+  throw new Error(`source path collision limit exceeded: ${basePath}`);
 }
 
 function limitSourceText(text: string, maxChars: number): { text: string; truncated: boolean; originalChars: number; savedChars: number } {
@@ -236,18 +258,30 @@ function limitSourceText(text: string, maxChars: number): { text: string; trunca
 async function writeRequestState(
   vfs: VfsClient,
   databaseId: string,
-  request: UrlIngestRequest,
-  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
-): Promise<UrlIngestRequest> {
-  const finishedAt = isTerminalStatus(updates.status) ? (request.finishedAt ?? new Date().toISOString()) : request.finishedAt;
+  request: SourceCaptureRequest,
+  updates: {
+    status: SourceCaptureRequest["status"];
+    claimedAt?: string | null;
+    sourcePath?: string | null;
+    targetPath?: string | null;
+    finishedAt?: string | null;
+    error?: string | null;
+  }
+): Promise<SourceCaptureRequest> {
+  const finishedAt =
+    updates.finishedAt !== undefined
+      ? updates.finishedAt
+      : isTerminalStatus(updates.status)
+        ? (request.finishedAt ?? new Date().toISOString())
+        : request.finishedAt;
   const fields = {
-    kind: "kinic.url_ingest_request",
+    kind: "kinic.source_capture_request",
     schema_version: "1",
     status: updates.status,
     url: request.url,
     requested_by: request.requestedBy,
     requested_at: request.requestedAt,
-    claimed_at: updates.status === "fetching" ? (updates.claimedAt ?? new Date().toISOString()) : request.claimedAt,
+    claimed_at: updates.claimedAt !== undefined ? updates.claimedAt : updates.status === "fetching" ? new Date().toISOString() : request.claimedAt,
     source_path: updates.sourcePath === undefined ? request.sourcePath : updates.sourcePath,
     target_path: updates.targetPath === undefined ? request.targetPath : updates.targetPath,
     finished_at: finishedAt,
@@ -258,7 +292,7 @@ async function writeRequestState(
     databaseId,
     path: request.path,
     kind: "file",
-    content: renderFrontmatter(fields, "# URL Ingest Request\n"),
+    content: renderFrontmatter(fields, "# Source Capture Request\n"),
     metadataJson: requestMetadataJson(request, fields),
     expectedEtag: request.etag
   });
@@ -279,7 +313,7 @@ async function writeRequestState(
   };
 }
 
-async function claimIngestRequest(vfs: VfsClient, databaseId: string, request: UrlIngestRequest): Promise<UrlIngestRequest | null> {
+async function claimSourceCaptureRequest(vfs: VfsClient, databaseId: string, request: SourceCaptureRequest): Promise<SourceCaptureRequest | null> {
   if (request.status === "source_written") return request;
   if (request.status === "fetching" && isStaleFetching(request, new Date())) {
     return writeRequestState(vfs, databaseId, request, { status: "fetching", error: null, claimedAt: new Date().toISOString() });
@@ -289,8 +323,8 @@ async function claimIngestRequest(vfs: VfsClient, databaseId: string, request: U
     return await writeRequestState(vfs, databaseId, request, { status: "fetching", error: null, claimedAt: new Date().toISOString() });
   } catch (error) {
     if (!isEtagMismatch(error)) throw error;
-    const latest = await readUrlIngestRequest(vfs, databaseId, request.path);
-    if (!latest || !shouldProcessIngestRequest(latest)) return null;
+    const latest = await readSourceCaptureRequest(vfs, databaseId, request.path);
+    if (!latest || !shouldProcessSourceCaptureRequest(latest)) return null;
     if (latest.status === "queued") {
       return writeRequestState(vfs, databaseId, latest, { status: "fetching", error: null, claimedAt: new Date().toISOString() });
     }
@@ -309,18 +343,18 @@ async function reprocessLatestIfRecoverable(
   requestPath: string,
   sessionNonce: string
 ): Promise<void> {
-  const latest = await readUrlIngestRequest(vfs, databaseId, requestPath);
+  const latest = await readSourceCaptureRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status !== "source_written") return;
-  await processUrlIngestRequest(env, vfs, config, databaseId, latest, sessionNonce);
+  await processSourceCaptureRequest(env, vfs, config, databaseId, latest, sessionNonce);
 }
 
 async function writeLatestRequestState(
   vfs: VfsClient,
   databaseId: string,
   requestPath: string,
-  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
-): Promise<UrlIngestRequest | null> {
-  const latest = await readUrlIngestRequest(vfs, databaseId, requestPath);
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
+): Promise<SourceCaptureRequest | null> {
+  const latest = await readSourceCaptureRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status === "generating" || isTerminalStatus(latest.status)) return null;
   try {
     return await writeRequestState(vfs, databaseId, latest, updates);
@@ -334,20 +368,20 @@ async function bestEffortWriteLatestRequestState(
   vfs: VfsClient,
   databaseId: string,
   requestPath: string,
-  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
 ): Promise<void> {
   try {
     await writeLatestRequestState(vfs, databaseId, requestPath, updates);
   } catch (error) {
-    console.warn("failed to record URL ingest non-retry failure", errorMessage(error));
+    console.warn("failed to record source capture non-retry failure", errorMessage(error));
   }
 }
 
 async function bestEffortWriteRequestState(
   vfs: VfsClient,
   databaseId: string,
-  request: UrlIngestRequest,
-  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+  request: SourceCaptureRequest,
+  updates: { status: SourceCaptureRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; finishedAt?: string | null; error?: string | null }
 ): Promise<void> {
   try {
     await writeRequestState(vfs, databaseId, request, updates);
@@ -356,13 +390,13 @@ async function bestEffortWriteRequestState(
       await bestEffortWriteLatestRequestState(vfs, databaseId, request.path, updates);
       return;
     }
-    console.warn("failed to record URL ingest non-retry failure", errorMessage(error));
+    console.warn("failed to record source capture non-retry failure", errorMessage(error));
   }
 }
 
-async function readUrlIngestRequest(vfs: VfsClient, databaseId: string, requestPath: string): Promise<UrlIngestRequest | null> {
+async function readSourceCaptureRequest(vfs: VfsClient, databaseId: string, requestPath: string): Promise<SourceCaptureRequest | null> {
   const node = await vfs.readNode(databaseId, requestPath);
-  return node ? parseUrlIngestRequest(node) : null;
+  return node ? parseSourceCaptureRequest(node) : null;
 }
 
 async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string): Promise<WriteNodeAck> {
@@ -372,9 +406,15 @@ async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string
   return { path: source.path, kind: source.kind, etag: source.etag };
 }
 
-async function sourcePathForUrl(sourcePrefix: string, finalUrl: string): Promise<string> {
-  const id = `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
-  return `${sourcePrefix}/web/${id.slice("web-".length)}.md`;
+async function sourcePathForUrl(sourcePrefix: string, finalUrl: string, title: string): Promise<string> {
+  const hash = (await sha256Hex(finalUrl)).slice(0, 8);
+  return `${sourcePrefix}/web/${sourceStemFromTitleHash(title, hash, hostnameForUrl(finalUrl))}.md`;
+}
+
+function sourcePathVariant(basePath: string, attempt: number): string {
+  if (attempt === 1) return basePath;
+  if (basePath.endsWith(".md")) return `${basePath.slice(0, -".md".length)}-${attempt}.md`;
+  return `${basePath}-${attempt}`;
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -382,26 +422,84 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function ingestStatus(value: string | null | undefined): UrlIngestRequest["status"] | null {
+function sourceStemFromTitleHash(title: string, hash: string, fallback: string): string {
+  const slug = slugTitle(title, fallback);
+  return truncateStem(`${slug}-${hash}`, hash);
+}
+
+function slugTitle(value: string, fallback: string): string {
+  const source = String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim();
+  let output = "";
+  let lastWasDash = false;
+  for (const char of source) {
+    if (isSourceStemChar(char)) {
+      output += char;
+      lastWasDash = false;
+    } else if (!lastWasDash) {
+      output += "-";
+      lastWasDash = true;
+    }
+  }
+  const normalized = output
+    .replace(/\.{2,}/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[._-]+|[._-]+$/g, "");
+  if (normalized && isUnicodeAlphanumeric([...normalized][0] ?? "")) return normalized;
+  return fallback === value ? "source" : slugTitle(fallback, "source");
+}
+
+function truncateStem(stem: string, hash: string): string {
+  if (SOURCE_STEM_ENCODER.encode(stem).length <= MAX_SOURCE_STEM_BYTES) return stem;
+  const suffix = `-${hash}`;
+  const maxPrefixBytes = MAX_SOURCE_STEM_BYTES - SOURCE_STEM_ENCODER.encode(suffix).length;
+  let prefix = "";
+  for (const char of stem.slice(0, -suffix.length)) {
+    if (SOURCE_STEM_ENCODER.encode(`${prefix}${char}`).length > maxPrefixBytes) break;
+    prefix += char;
+  }
+  const trimmed = prefix.replace(/[._-]+$/g, "") || "source";
+  return `${trimmed}${suffix}`;
+}
+
+function hostnameForUrl(finalUrl: string): string {
+  try {
+    return new URL(finalUrl).hostname || "web-source";
+  } catch {
+    return "web-source";
+  }
+}
+
+function isSourceStemChar(value: string): boolean {
+  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
+}
+
+function isUnicodeAlphanumeric(value: string): boolean {
+  return /^[\p{L}\p{N}]$/u.test(value);
+}
+
+function sourceCaptureStatus(value: string | null | undefined): SourceCaptureRequest["status"] | null {
   if (value === "queued" || value === "fetching" || value === "source_written" || value === "generating" || value === "completed" || value === "failed") {
     return value;
   }
   return null;
 }
 
-function isTerminalStatus(status: UrlIngestRequest["status"]): boolean {
+function isTerminalStatus(status: SourceCaptureRequest["status"]): boolean {
   return status === "completed" || status === "failed";
 }
 
-function isStaleFetching(request: UrlIngestRequest, now: Date): boolean {
+function isStaleFetching(request: SourceCaptureRequest, now: Date): boolean {
   if (request.status !== "fetching" || !request.claimedAt) return false;
   const claimedAtMs = Date.parse(request.claimedAt);
   return Number.isFinite(claimedAtMs) && now.getTime() - claimedAtMs > FETCHING_STALE_MS;
 }
 
-function requestMetadataJson(request: UrlIngestRequest, fields: Record<string, string | null>): string {
+function requestMetadataJson(request: SourceCaptureRequest, fields: Record<string, string | null>): string {
   const metadata = parseJsonRecord(request.metadataJson);
-  metadata.request_type = "url_ingest";
+  metadata.request_type = "source_capture";
   metadata.url = request.url;
   metadata.status = fields.status;
   metadata.source_path = fields.source_path;
@@ -429,22 +527,19 @@ function isEtagMismatch(error: unknown): boolean {
   return error instanceof Error && error.message.includes("expected_etag does not match current etag");
 }
 
-function validateIngestRequestPath(path: string): void {
-  if (!isIngestRequestPath(path)) {
-    throw new UrlIngestTriggerError(`non-canonical ingest request path: ${path}`, 400);
+function validateSourceCaptureRequestPath(path: string): void {
+  if (!isSourceCaptureRequestPath(path)) {
+    throw new SourceCaptureTriggerError(`invalid source capture request path: ${path}`, 400);
   }
 }
 
-function isIngestRequestPath(path: string): boolean {
-  if (!path.startsWith(`${INGEST_REQUEST_PREFIX}/`)) return false;
-  const name = path.slice(INGEST_REQUEST_PREFIX.length + 1);
+function isSourceCaptureRequestPath(path: string): boolean {
+  if (!path.startsWith(`${SOURCE_CAPTURE_REQUEST_PREFIX}/`)) return false;
+  const name = path.slice(SOURCE_CAPTURE_REQUEST_PREFIX.length + 1);
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function validateSourcePath(sourcePrefix: string, path: string): void {
-  if (!path.startsWith(`${sourcePrefix}/`)) {
-    throw new Error(`source_path is outside source prefix: ${path}`);
-  }
   validateSourceRootPath(path, sourcePrefix);
 }
 

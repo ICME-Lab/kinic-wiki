@@ -5,7 +5,6 @@ use std::future::Future;
 use std::task::{Context, Poll, Waker};
 
 use candid::{Encode, Nat, Principal};
-use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL, DEFAULT_CYCLES_TOP_UP_THRESHOLD,
@@ -13,9 +12,9 @@ use vfs_runtime::{
 };
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
-    ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
@@ -29,30 +28,26 @@ use super::{
     CyclesTopUpCheckStatus, CyclesTopUpLauncherError, CyclesTopUpLauncherResult,
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
     Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
-    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_cycles_top_up, check_database_write_cycles,
+    SERVICE, TransferFromError, append_node, check_cycles_top_up, check_database_write_cycles,
     clear_cycles_top_up_state_for_test, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database,
     cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
-    finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
-    graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config, glob_nodes,
+    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
+    incoming_links, last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
     market_purchase_access, memory_manifest, mkdir_node, move_node, multi_edit_node,
     outgoing_links, parse_upgrade_cycles_billing_config_arg, purchase_database_cycles,
-    query_context, query_database_sql_json, query_index_sql_json, read_database_archive_chunk,
-    read_node, read_node_context, revoke_database_access, search_node_paths, search_nodes,
-    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
-    set_next_cycles_top_up_launcher_result_for_test,
+    query_context, query_database_sql_json, query_index_sql_json, read_node, read_node_context,
+    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
+    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
     status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    update_database_metadata, wiki_metrics, wiki_metrics_series, write_database_restore_chunk,
-    write_node, write_nodes,
+    update_database_metadata, wiki_metrics, wiki_metrics_series, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -1030,85 +1025,6 @@ fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
 }
 
 #[test]
-fn purchase_database_cycles_rejects_archive_restore_statuses() {
-    install_test_service();
-    let _owner = AuthenticatedCallerGuard::install_principal(Principal::anonymous());
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    clear_last_ledger_memo_for_test();
-    let archiving = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("archiving database should reject purchase")
-    };
-    assert!(archiving.contains("database is archiving"));
-    assert_eq!(last_ledger_memo_for_test(), None);
-
-    let bytes = read_database_archive_chunk(
-        "default".to_string(),
-        0,
-        archive
-            .size_bytes
-            .try_into()
-            .expect("test archive should fit in one chunk"),
-    )
-    .expect("archive chunk should read")
-    .bytes;
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    let archived = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("archived database should reject purchase")
-    };
-    assert!(archived.contains("database is archived"));
-
-    begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
-        .expect("restore should begin");
-    let restoring = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("restoring database should reject purchase")
-    };
-    assert!(restoring.contains("database is restoring"));
-}
-
-#[test]
-fn begin_database_archive_rejects_pending_cycle_purchase() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        title: "Pending lifecycle".to_string(),
-    })
-    .expect("database should create");
-    fund_database(&database.database_id, 1_000_000, 41);
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .begin_database_cycles_purchase(
-                &database.database_id,
-                &Principal::management_canister().to_text(),
-                500,
-                1_700_000_000_001,
-            )
-            .expect("cycle purchase should begin")
-    });
-
-    let error = begin_database_archive(database.database_id)
-        .expect_err("archive should reject pending cycle operation");
-
-    assert!(error.contains("pending cycle operation"));
-}
-
-#[test]
 fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
@@ -1877,10 +1793,6 @@ fn install_low_balance_default_service() {
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
-fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
-    Sha256::digest(bytes).to_vec()
-}
-
 fn ensure_parent_folders(path: &str) {
     let segments = path
         .split('/')
@@ -2464,12 +2376,9 @@ fn suspended_database_rejects_metered_mutations() {
         path: "/Knowledge/suspended-folder".to_string(),
     })
     .expect_err("suspended database should reject mkdir");
-    let cancel = super::cancel_database_restore("default".to_string())
-        .expect_err("suspended database should reject restore cancel before runtime mutation");
 
     assert!(batch.contains("database cycles are suspended"));
     assert!(mkdir.contains("database cycles are suspended"));
-    assert!(cancel.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -3379,7 +3288,7 @@ fn fs_entrypoints_allow_source_paths_without_schema_validation() {
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
     let appended = append_node(AppendNodeRequest {
         database_id: "default".to_string(),
@@ -3402,7 +3311,7 @@ fn fs_entrypoints_allow_source_paths_without_schema_validation() {
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
     ensure_parent_folders("/Sources/renamed-/wrong.md");
     let moved = move_node(MoveNodeRequest {
@@ -3605,314 +3514,4 @@ fn fs_entrypoints_cover_move_glob_and_multi_edit() {
     .expect("read should succeed")
     .expect("node should exist");
     assert_eq!(edited_node.content, "one two");
-}
-
-#[test]
-fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
-    install_test_service();
-
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/archive-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "# Archive Smoke\n\nalpha body [raw](/Sources/smoke/smoke.md)".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-    ensure_parent_folders("/Sources/smoke/smoke.md");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Sources/smoke/smoke.md".to_string(),
-        kind: NodeKind::Source,
-        content: "raw alpha body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("source write should succeed");
-
-    let outgoing = outgoing_links(OutgoingLinksRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/archive-smoke.md".to_string(),
-        limit: 10,
-    })
-    .expect("outgoing should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/smoke/smoke.md");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    assert!(archive.size_bytes > 0);
-    let mut offset = 0_u64;
-    let mut bytes = Vec::new();
-    while offset < archive.size_bytes {
-        let chunk = read_database_archive_chunk("default".to_string(), offset, 17)
-            .expect("archive chunk should read")
-            .bytes;
-        assert!(!chunk.is_empty());
-        offset += chunk.len() as u64;
-        bytes.extend(chunk);
-    }
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    assert!(
-        read_node(
-            "default".to_string(),
-            "/Knowledge/archive-smoke.md".to_string()
-        )
-        .expect_err("archived DB should reject normal reads")
-        .contains("database is archived")
-    );
-
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Archived);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn database_archive_restore_entrypoints_restore_search_and_links() {
-    install_test_service();
-    ensure_parent_folders("/Sources/archive/archive.md");
-
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Sources/archive/archive.md".to_string(),
-        kind: NodeKind::Source,
-        content: "raw archive restore evidence".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("source write should succeed");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/archive-restore.md".to_string(),
-        kind: NodeKind::File,
-        content: "# Archive Restore\n\nalpha restore search [raw](/Sources/archive/archive.md)"
-            .to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    let mut offset = 0_u64;
-    let mut bytes = Vec::new();
-    while offset < archive.size_bytes {
-        let chunk = read_database_archive_chunk("default".to_string(), offset, 23)
-            .expect("archive chunk should read")
-            .bytes;
-        assert!(!chunk.is_empty());
-        offset += chunk.len() as u64;
-        bytes.extend(chunk);
-    }
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    begin_database_restore(
-        "default".to_string(),
-        snapshot_hash.clone(),
-        archive.size_bytes,
-    )
-    .expect("restore should begin");
-
-    let split_at = bytes.len() / 2;
-    write_database_restore_chunk(DatabaseRestoreChunkRequest {
-        database_id: "default".to_string(),
-        offset: split_at as u64,
-        bytes: bytes[split_at..].to_vec(),
-    })
-    .expect("second restore chunk should write");
-    write_database_restore_chunk(DatabaseRestoreChunkRequest {
-        database_id: "default".to_string(),
-        offset: 0,
-        bytes: bytes[..split_at].to_vec(),
-    })
-    .expect("first restore chunk should write");
-    finalize_database_restore("default".to_string()).expect("restore should finalize");
-
-    let node = read_node(
-        "default".to_string(),
-        "/Knowledge/archive-restore.md".to_string(),
-    )
-    .expect("read should succeed")
-    .expect("restored node should exist");
-    assert!(node.content.contains("alpha restore search"));
-
-    let hits = search_nodes(SearchNodesRequest {
-        database_id: "default".to_string(),
-        query_text: "alpha restore".to_string(),
-        prefix: Some("/Knowledge".to_string()),
-        top_k: 10,
-        preview_mode: Some(SearchPreviewMode::None),
-    })
-    .expect("restored search should succeed");
-    assert!(
-        hits.iter()
-            .any(|hit| hit.path == "/Knowledge/archive-restore.md")
-    );
-
-    let links = outgoing_links(OutgoingLinksRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/archive-restore.md".to_string(),
-        limit: 10,
-    })
-    .expect("restored links should load");
-    assert!(
-        links
-            .iter()
-            .any(|edge| edge.target_path == "/Sources/archive/archive.md")
-    );
-
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn begin_database_restore_rolls_back_when_mount_fails() {
-    install_test_service();
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/restore-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "restore body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    let bytes = read_database_archive_chunk("default".to_string(), 0, archive.size_bytes as u32)
-        .expect("archive chunk should read")
-        .bytes;
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-
-    fail_next_mount_database_file_for_test();
-    let error = begin_database_restore(
-        "default".to_string(),
-        snapshot_hash.clone(),
-        archive.size_bytes,
-    )
-    .expect_err("mount failure should fail restore begin");
-    assert!(error.contains("test mount failure"));
-    let rolled_back = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(rolled_back.status, DatabaseStatus::Archived);
-    assert_eq!(rolled_back.role, DatabaseRole::Owner);
-
-    begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
-        .expect("restore begin should retry after rollback");
-    let restoring = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(restoring.status, DatabaseStatus::Restoring);
-    assert_eq!(restoring.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn cancel_database_archive_entrypoint_returns_database_to_active() {
-    install_test_service();
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/cancel-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "cancel body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    begin_database_archive("default".to_string()).expect("archive should begin");
-    assert!(
-        write_node(WriteNodeRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/blocked.md".to_string(),
-            kind: NodeKind::File,
-            content: "blocked".to_string(),
-            metadata_json: "{}".to_string(),
-            expected_etag: None,
-        })
-        .expect_err("archiving DB should reject writes")
-        .contains("database is archiving")
-    );
-
-    cancel_database_archive("default".to_string()).expect("archive cancel should succeed");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Knowledge/after-cancel.md".to_string(),
-        kind: NodeKind::File,
-        content: "after cancel".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("write should succeed after cancel");
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn cancel_database_archive_entrypoint_rejects_non_owner() {
-    let dir = tempdir().expect("tempdir should create");
-    let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
-    service
-        .run_index_migrations()
-        .expect("index migrations should run");
-    service
-        .create_database("default", "owner", 1_700_000_000_000)
-        .expect("default database should create");
-    service
-        .begin_database_cycles_purchase("default", "owner", 1_000_000, 1_700_000_000_001)
-        .and_then(|operation_id| {
-            let cycles = cycles_for_test_payment(&service, 1_000_000);
-            service.complete_database_cycles_purchase_ledger_transfer(
-                operation_id,
-                "default",
-                "owner",
-                cycles,
-                1,
-            )?;
-            service.apply_database_cycles_purchase(
-                operation_id,
-                "default",
-                "owner",
-                cycles,
-                1,
-                1_700_000_000_001,
-            )
-        })
-        .expect("database should have write cycles available");
-    service
-        .begin_database_archive("default", "owner", 1_700_000_000_002)
-        .expect("archive should begin");
-    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
-
-    assert!(
-        cancel_database_archive("default".to_string())
-            .expect_err("non-owner cancel should fail")
-            .contains("principal has no access")
-    );
 }

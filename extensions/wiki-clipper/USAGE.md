@@ -1,8 +1,8 @@
 # Kinic Wiki Clipper Usage
 
-Usage guide for exporting recent ChatGPT/Claude conversations and active-tab raw sources into the mainnet Kinic Wiki canister.
+Usage guide for exporting recent ChatGPT/Claude conversations and active-tab evidence sources into the mainnet Kinic Wiki canister.
 
-ChatGPT/Claude raw-source export and active-tab raw-source capture use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude evidence-source export and active-tab evidence-source capture use Internet Identity and require writer access for the selected database.
 
 ## Prerequisites
 
@@ -75,7 +75,7 @@ The extension fetches ChatGPT conversation data from ChatGPT backend API endpoin
 
 Those `/backend-api/*` and `claude.ai/api/.../chat_conversations/*` endpoints are private provider internals. If a provider changes the response shape, export can fail or omit messages.
 
-Raw sources are saved as:
+Evidence sources are saved as:
 
 ```text
 /Sources/chatgpt/<conversationId>.md
@@ -98,18 +98,18 @@ Non-web pages such as `chrome://extensions` are rejected.
 
 Confirm that `/Sources/...` is created in the selected database after successful exports.
 
-## Generate Knowledge Pages
+## Generate Wiki Pages
 
-ChatGPT/Claude export only writes raw evidence. Generate knowledge pages from the CLI:
+ChatGPT/Claude export only writes source evidence. Generate wiki pages from the CLI:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
 ```
 
-This command creates a knowledge scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
+This command creates a wiki scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
 
 ## Known Limits
 
 - ChatGPT and Claude private API shapes can change.
 - Stopping an export can allow up to 2 in-flight conversations to finish saving.
-- ChatGPT/Claude raw-source export and web snapshot writes require writer access for the logged-in Internet Identity principal.
+- ChatGPT/Claude evidence-source export and active-tab source capture writes require writer access for the logged-in Internet Identity principal.

@@ -29,7 +29,7 @@ pub enum Command {
         #[command(subcommand)]
         command: CyclesCommand,
     },
-    #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
+    #[command(about = "Manage database creation, workspace links, grants, and lifecycle")]
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
@@ -201,8 +201,8 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Remove URL ingest source and generated target nodes")]
-    PurgeUrlIngest {
+    #[command(about = "Remove source capture source and generated target nodes")]
+    PurgeSourceCapture {
         #[arg(
             long,
             conflicts_with = "source_path",
@@ -658,10 +658,6 @@ impl Command {
                     | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
-                    | DatabaseCommand::ArchiveExport { .. }
-                    | DatabaseCommand::ArchiveRestore { .. }
-                    | DatabaseCommand::ArchiveCancel { .. }
-                    | DatabaseCommand::RestoreCancel { .. }
             ),
             Self::Market { command: _ } => true,
             Self::Skill { command } => !matches!(
@@ -686,7 +682,7 @@ impl Command {
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
             | Self::DeleteTree { .. }
-            | Self::PurgeUrlIngest { .. }
+            | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => true,
@@ -755,7 +751,7 @@ impl Command {
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
             | Self::DeleteTree { .. }
-            | Self::PurgeUrlIngest { .. }
+            | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => false,
@@ -884,7 +880,7 @@ impl Command {
                 path: path.clone(),
                 json: *json,
             }),
-            Self::PurgeUrlIngest { .. } => None,
+            Self::PurgeSourceCapture { .. } => None,
             Self::MkdirNode { path, json } => Some(VfsCommand::MkdirNode {
                 path: path.clone(),
                 json: *json,
@@ -1197,34 +1193,6 @@ mod tests {
         else {
             panic!("expected database current command");
         };
-        assert!(json);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "archive-export",
-            "team-db",
-            "--output",
-            "team-db.sqlite",
-            "--chunk-size",
-            "512",
-            "--json",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::ArchiveExport {
-                    database_id,
-                    output,
-                    chunk_size,
-                    json,
-                },
-        } = cli.command
-        else {
-            panic!("expected archive-export command");
-        };
-        assert_eq!(database_id, "team-db");
-        assert_eq!(output.to_string_lossy(), "team-db.sqlite");
-        assert_eq!(chunk_size, 512);
         assert!(json);
     }
 

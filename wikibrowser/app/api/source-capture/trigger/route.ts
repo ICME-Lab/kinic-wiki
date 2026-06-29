@@ -1,5 +1,5 @@
-// Where: wikibrowser/app/api/url-ingest/trigger/route.ts
-// What: Server-side authenticated trigger for URL ingest worker requests.
+// Where: wikibrowser/app/api/source-capture/trigger/route.ts
+// What: Server-side authenticated trigger for source capture worker requests.
 // Why: Browsers and extensions must not receive the worker bearer token.
 
 type TriggerRequest = {
@@ -21,7 +21,7 @@ const ALLOWED_ORIGINS = new Set([
 
 let checkSession: CheckSession = defaultCheckSession;
 
-export function setUrlIngestTriggerDepsForTest(deps: { checkSession?: CheckSession } = {}): void {
+export function setSourceCaptureTriggerDepsForTest(deps: { checkSession?: CheckSession } = {}): void {
   checkSession = deps.checkSession ?? defaultCheckSession;
 }
 
@@ -57,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let endpoint: URL;
   try {
-    endpoint = new URL("/url-ingest", generatorUrl.endsWith("/") ? generatorUrl : `${generatorUrl}/`);
+    endpoint = new URL("/source-capture", generatorUrl.endsWith("/") ? generatorUrl : `${generatorUrl}/`);
   } catch {
     return jsonError("KINIC_WIKI_GENERATOR_URL is invalid", 503, origin);
   }
@@ -72,7 +72,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     await checkSession(input.canisterId, input);
   } catch {
-    return jsonError("url ingest trigger session denied", 403, origin);
+    return jsonError("source capture trigger session denied", 403, origin);
   }
 
   try {
@@ -82,7 +82,12 @@ export async function POST(request: Request): Promise<Response> {
         authorization: `Bearer ${token}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ canisterId: input.canisterId, databaseId: input.databaseId, requestPath: input.requestPath, sessionNonce: input.sessionNonce })
+      body: JSON.stringify({
+        canisterId: input.canisterId,
+        databaseId: input.databaseId,
+        requestPath: input.requestPath,
+        sessionNonce: input.sessionNonce
+      })
     });
     if (!response.ok) {
       return jsonError(`worker trigger failed: HTTP ${response.status}`, 502, origin);
@@ -104,15 +109,15 @@ function parseTriggerRequest(value: unknown): TriggerRequest | string {
   if (typeof requestPath !== "string" || !requestPath) return "requestPath is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  if (!isIngestRequestPath(requestPath)) {
-    return "requestPath must be a URL ingest request path";
+  if (!isSourceCaptureRequestPath(requestPath)) {
+    return "requestPath must be a source capture request path";
   }
   return { canisterId, databaseId, requestPath, sessionNonce };
 }
 
-function isIngestRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/ingest-requests/")) return false;
-  const name = path.slice("/Sources/ingest-requests/".length);
+function isSourceCaptureRequestPath(path: string): boolean {
+  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
+  const name = path.slice("/Sources/source-capture-requests/".length);
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
@@ -140,6 +145,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function defaultCheckSession(canisterId: string, input: TriggerRequest): Promise<void> {
-  const vfsClient: { checkUrlIngestTriggerSession: CheckSession } = await import("@/lib/vfs-client");
-  await vfsClient.checkUrlIngestTriggerSession(canisterId, input);
+  const vfsClient: { checkSourceCaptureTriggerSession: CheckSession } = await import("@/lib/vfs-client");
+  await vfsClient.checkSourceCaptureTriggerSession(canisterId, input);
 }

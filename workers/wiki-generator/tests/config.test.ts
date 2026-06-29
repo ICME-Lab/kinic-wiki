@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { loadConfig } from "../src/config.js";
-import { testEnv, TestQueue } from "./url-ingest-fixtures.js";
+import { testEnv, TestQueue } from "./source-capture-fixtures.js";
 
 test("loadConfig accepts only full positive integer byte limits", () => {
   const env = testEnv(new TestQueue());
@@ -41,7 +41,7 @@ test("loadConfig normalizes worker root prefixes", () => {
   assert.equal(config.contextPrefix, "/Knowledge");
 });
 
-test("loadConfig rejects non-absolute and root-only worker source roots", () => {
+test("loadConfig rejects non-absolute and root-only worker roots", () => {
   const env = testEnv(new TestQueue());
 
   assert.throws(() => loadConfig({ ...env, KINIC_WIKI_WORKER_SOURCE_PREFIX: "Sources" }), /absolute path/);

@@ -5,9 +5,7 @@ mod sqlite;
 
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
-use std::fs::{File, OpenOptions, create_dir_all, remove_file};
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs::{create_dir_all, remove_file};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 #[cfg(any(test, debug_assertions))]
@@ -21,23 +19,24 @@ use sha2::{Digest, Sha256};
 use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseMetadata, DatabaseRole,
-    DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
-    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
-    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
-    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
-    MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    CyclesTopUpConfig, DatabaseCycleEntry, DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase,
+    DatabaseInfo, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
+    MarketListingStatus, MarketListingVerifiedStats, MarketListingView, MarketOrder,
+    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
@@ -47,7 +46,7 @@ const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
 const INDEX_SCHEMA_VERSION_RESTORE_SIZE: &str = "database_index:002_restore_size";
 const INDEX_SCHEMA_VERSION_RESTORE_CHUNKS: &str = "database_index:003_restore_chunks";
 const INDEX_SCHEMA_VERSION_MOUNT_HISTORY: &str = "database_index:005_mount_history";
-const INDEX_SCHEMA_VERSION_URL_INGEST_TRIGGER_SESSIONS: &str =
+const INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS: &str =
     "database_index:006_url_ingest_trigger_sessions";
 const INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS: &str = "database_index:007_ops_answer_sessions";
 const INDEX_SCHEMA_VERSION_RESTORE_SESSIONS: &str = "database_index:008_restore_sessions";
@@ -86,6 +85,10 @@ const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
 const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
 const INDEX_SCHEMA_VERSION_DATABASE_METADATA: &str = "database_index:034_database_metadata";
+const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
+    "database_index:036_rename_url_ingest_trigger_sessions";
+const INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE: &str =
+    "database_index:037_drop_archive_restore_lifecycle";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -99,16 +102,12 @@ const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
-pub const MAX_ARCHIVE_CHUNK_BYTES: u32 = 1024 * 1024;
-pub const MAX_RESTORE_CHUNK_BYTES: usize = 1024 * 1024;
-pub const MAX_DATABASE_SIZE_BYTES: u64 = i64::MAX as u64;
-const URL_INGEST_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
+const SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const OPS_ANSWER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
-const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
+const SOURCE_RUN_SESSION_TTL_MS: i64 = SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS;
 const MAX_PENDING_DATABASES_PER_CALLER: i64 = 3;
 const PENDING_DATABASE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_DATABASE_MEMBERS_PER_DATABASE: i64 = 32;
-const SHA256_DIGEST_BYTES: usize = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
@@ -128,8 +127,6 @@ const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_TITLE_CHARS: usize = 80;
 const MAX_DATABASE_DESCRIPTION_CHARS: usize = 4_000;
 const MAX_DATABASE_JSON_CHARS: usize = 20_000;
-const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 pub const DEFAULT_LLM_WRITER_PRINCIPAL: &str =
     "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe";
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
@@ -164,22 +161,6 @@ pub struct DatabaseMeta {
     pub logical_size_bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DatabaseRestoreBegin {
-    pub meta: DatabaseMeta,
-    pub rollback: DatabaseRestoreRollback,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DatabaseRestoreRollback {
-    database_id: String,
-    status: DatabaseStatus,
-    active_mount_id: Option<u16>,
-    snapshot_hash: Option<Vec<u8>>,
-    archived_at_ms: Option<i64>,
-    restore_size_bytes: Option<u64>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequiredRole {
     Reader,
@@ -209,13 +190,6 @@ pub struct DatabaseCyclesPurchaseWithLedgerDetails<'a> {
 pub struct DatabaseCyclesPurchaseStart {
     pub operation_id: u64,
     pub amount_cycles: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RestoreChunk {
-    offset: u64,
-    end: u64,
-    bytes: Vec<u8>,
 }
 
 pub struct VfsService {
@@ -689,17 +663,19 @@ impl VfsService {
         } else {
             None
         };
-        tx.execute(
+        let values = vec![
+            crate::sqlite::text_value(database_id),
+            crate::sqlite::integer_value(initial_cycles_balance),
+            crate::sqlite::nullable_integer_value(suspended_at_ms),
+            crate::sqlite::integer_value(now),
+        ];
+        crate::sqlite::execute_values(
+            tx,
             "INSERT INTO database_cycle_accounts
              (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
               created_at_ms, updated_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?4, ?4)",
-            params![
-                database_id,
-                initial_cycles_balance,
-                crate::sqlite::nullable_integer_value(suspended_at_ms),
-                now
-            ],
+            &values,
         )
         .map_err(|error| error.to_string())?;
         Ok(DatabaseMeta {
@@ -795,11 +771,6 @@ impl VfsService {
             .map_err(|error| error.to_string())?;
             tx.execute(
                 "DELETE FROM database_members WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
                 params![database_id],
             )
             .map_err(|error| error.to_string())?;
@@ -1554,14 +1525,11 @@ impl VfsService {
     }
 
     fn market_listing_detail(&self, listing: MarketListing) -> Result<MarketListingDetail, String> {
-        let statuses = [
-            DatabaseStatus::Active,
-            DatabaseStatus::Archiving,
-            DatabaseStatus::Restoring,
-        ];
-        let meta = self.database_meta_with_statuses(&listing.database_id, &statuses)?;
+        let Ok(meta) = self.database_meta(&listing.database_id) else {
+            return Ok(empty_market_listing_detail(listing));
+        };
         let view = MarketListingView {
-            listing,
+            listing: listing.clone(),
             database_metadata: meta.metadata.clone(),
         };
         let store = self.database_store(&meta)?;
@@ -2230,334 +2198,6 @@ impl VfsService {
         })
     }
 
-    pub fn begin_database_archive(
-        &self,
-        database_id: &str,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseArchiveInfo, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        self.require_no_pending_cycles_operations(database_id)?;
-        let meta = self.database_meta(database_id)?;
-        let size_bytes = self.database_size(&meta)?;
-        self.write_index(|conn| {
-            conn.execute(
-                "UPDATE databases
-             SET status = 'archiving',
-                 updated_at_ms = ?2,
-                 logical_size_bytes = ?3
-             WHERE database_id = ?1",
-                params![
-                    database_id,
-                    now,
-                    i64::try_from(size_bytes).map_err(|error| error.to_string())?
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })?;
-        Ok(DatabaseArchiveInfo {
-            database_id: database_id.to_string(),
-            size_bytes,
-        })
-    }
-
-    pub fn read_database_archive_chunk(
-        &self,
-        database_id: &str,
-        caller: &str,
-        offset: u64,
-        max_bytes: u32,
-    ) -> Result<Vec<u8>, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Archiving])?;
-        if max_bytes == 0 {
-            return Ok(Vec::new());
-        }
-        if max_bytes > MAX_ARCHIVE_CHUNK_BYTES {
-            return Err(format!(
-                "archive chunk size exceeds limit: {max_bytes} > {MAX_ARCHIVE_CHUNK_BYTES}"
-            ));
-        }
-        let size = meta.logical_size_bytes;
-        if offset >= size {
-            return Ok(Vec::new());
-        }
-        let remaining = size.saturating_sub(offset);
-        let chunk_len = remaining.min(u64::from(max_bytes));
-        self.database_export_chunk(&meta, offset, chunk_len)
-    }
-
-    pub fn finalize_database_archive(
-        &self,
-        database_id: &str,
-        caller: &str,
-        snapshot_hash: Vec<u8>,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Archiving])?;
-        validate_snapshot_hash(&snapshot_hash)?;
-        let actual_hash = self.database_sha256(&meta, meta.logical_size_bytes)?;
-        if actual_hash != snapshot_hash {
-            return Err("snapshot_hash does not match archived database bytes".to_string());
-        }
-        self.write_index(|conn| {
-            conn.execute(
-                "UPDATE databases
-             SET status = 'archived',
-                 snapshot_hash = ?2,
-                 restore_size_bytes = NULL,
-                 archived_at_ms = ?3,
-                 updated_at_ms = ?3
-             WHERE database_id = ?1",
-                params![database_id, snapshot_hash, now],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })?;
-        Ok(meta)
-    }
-
-    pub fn cancel_database_archive(
-        &self,
-        database_id: &str,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Archiving])?;
-        self.write_index(|conn| {
-            conn.execute(
-                "UPDATE databases
-             SET status = 'active',
-                 updated_at_ms = ?2
-             WHERE database_id = ?1",
-                params![database_id, now],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })?;
-        Ok(meta)
-    }
-
-    pub fn begin_database_restore(
-        &self,
-        database_id: &str,
-        caller: &str,
-        snapshot_hash: Vec<u8>,
-        size_bytes: u64,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.begin_database_restore_session(database_id, caller, snapshot_hash, size_bytes, now)
-            .map(|restore| restore.meta)
-    }
-
-    pub fn begin_database_restore_session(
-        &self,
-        database_id: &str,
-        caller: &str,
-        snapshot_hash: Vec<u8>,
-        size_bytes: u64,
-        now: i64,
-    ) -> Result<DatabaseRestoreBegin, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        validate_snapshot_hash(&snapshot_hash)?;
-        if size_bytes > MAX_DATABASE_SIZE_BYTES {
-            return Err(format!(
-                "database size exceeds limit: {size_bytes} > {MAX_DATABASE_SIZE_BYTES}"
-            ));
-        }
-        self.require_no_pending_cycles_operations(database_id)?;
-        let rollback = self.database_restore_rollback(database_id)?;
-        if rollback.status != DatabaseStatus::Archived {
-            return Err("database restore can only begin from archived status".to_string());
-        }
-        let mount_id = rollback
-            .active_mount_id
-            .ok_or_else(|| format!("archived database has no mount: {database_id}"))?;
-        self.write_index(|tx| {
-            record_database_restore_session(tx, &rollback, now)?;
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE databases
-	             SET status = 'restoring',
-	                 active_mount_id = ?2,
-	                 snapshot_hash = ?3,
-	                 archived_at_ms = NULL,
-	                 restore_size_bytes = ?4,
-	                 updated_at_ms = ?5
-             WHERE database_id = ?1",
-                params![
-                    database_id,
-                    i64::from(mount_id),
-                    snapshot_hash,
-                    i64::try_from(size_bytes).map_err(|error| error.to_string())?,
-                    now
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })?;
-        let meta = self.database_meta_allowing_restoring(database_id)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = remove_file(&meta.db_file_name);
-        Ok(DatabaseRestoreBegin { meta, rollback })
-    }
-
-    pub fn rollback_database_restore_begin(
-        &self,
-        rollback: DatabaseRestoreRollback,
-        now: i64,
-    ) -> Result<(), String> {
-        self.write_index(|tx| {
-            let current_status = load_database_status(tx, &rollback.database_id)?;
-            if current_status != DatabaseStatus::Restoring {
-                return Err(format!(
-                    "database restore rollback requires restoring status: {}",
-                    rollback.database_id
-                ));
-            }
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
-                params![rollback.database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            restore_database_state(tx, &rollback, now)?;
-            Ok(())
-        })
-    }
-
-    pub fn cancel_database_restore(
-        &self,
-        database_id: &str,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Restoring])?;
-        let rollback = self.database_restore_session(database_id)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Err(error) = remove_file(&meta.db_file_name)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error.to_string());
-        }
-        self.write_index(|tx| {
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            restore_database_state(tx, &rollback, now)?;
-            Ok(())
-        })?;
-        Ok(meta)
-    }
-
-    pub fn write_database_restore_chunk(
-        &self,
-        database_id: &str,
-        caller: &str,
-        offset: u64,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        if bytes.len() > MAX_RESTORE_CHUNK_BYTES {
-            return Err(format!(
-                "restore chunk size exceeds limit: {} > {MAX_RESTORE_CHUNK_BYTES}",
-                bytes.len()
-            ));
-        }
-        let _meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Restoring])?;
-        let expected_size = self.restore_size_bytes(database_id)?;
-        let end = offset
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| "restore chunk range overflows u64".to_string())?;
-        if end > expected_size {
-            return Err(format!(
-                "restore chunk exceeds expected size: end {end} > {expected_size}"
-            ));
-        }
-        self.write_index(|conn| {
-            conn.execute(
-                "INSERT OR REPLACE INTO database_restore_chunks
-             (database_id, offset_bytes, end_bytes, bytes)
-             VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    database_id,
-                    i64::try_from(offset).map_err(|error| error.to_string())?,
-                    i64::try_from(end).map_err(|error| error.to_string())?,
-                    bytes.to_vec()
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn finalize_database_restore(
-        &self,
-        database_id: &str,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Restoring])?;
-        let expected_size = self.restore_size_bytes(database_id)?;
-        let chunks = self.read_index(|conn| load_restore_chunks(conn, database_id))?;
-        if !restore_chunks_cover_expected_size(&chunks, expected_size)? {
-            return Err(format!(
-                "restore chunks are incomplete for expected size {expected_size} bytes"
-            ));
-        }
-        let expected_hash = self.restore_snapshot_hash(database_id)?;
-        let mut hasher = Sha256::new();
-        let mut checksum = FNV1A64_OFFSET;
-        for chunk in &chunks {
-            hasher.update(&chunk.bytes);
-            checksum = fnv1a64_update(checksum, &chunk.bytes);
-        }
-        let actual_hash = hasher.finalize().to_vec();
-        if actual_hash != expected_hash {
-            return Err("snapshot_hash does not match restored database bytes".to_string());
-        }
-        self.import_database_bytes(&meta, expected_size, checksum, &chunks)?;
-        self.database_store(&meta)?.run_fs_migrations()?;
-        self.write_index(|tx| {
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM database_restore_sessions WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE databases
-             SET status = 'active',
-                 logical_size_bytes = ?2,
-                 restore_size_bytes = NULL,
-                 updated_at_ms = ?3
-             WHERE database_id = ?1",
-                params![
-                    database_id,
-                    i64::try_from(expected_size).map_err(|error| error.to_string())?,
-                    now
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })?;
-        self.database_meta(database_id)
-    }
-
     pub fn grant_database_access(
         &self,
         database_id: &str,
@@ -2701,13 +2341,13 @@ impl VfsService {
         self.with_market_read_database_store(database_id, caller, |store| store.read_node(path))
     }
 
-    pub fn authorize_url_ingest_trigger_session(
+    pub fn authorize_source_capture_trigger_session(
         &self,
         caller: &str,
-        request: UrlIngestTriggerSessionRequest,
+        request: SourceCaptureTriggerSessionRequest,
         now: i64,
     ) -> Result<(), String> {
-        validate_url_ingest_trigger_session_request(&request)?;
+        validate_source_capture_trigger_session_request(&request)?;
         if caller == "2vxsx-fae" {
             return Err("anonymous caller not allowed".to_string());
         }
@@ -2719,9 +2359,9 @@ impl VfsService {
         )
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         self.write_index(|conn| {
-            purge_expired_url_ingest_trigger_sessions(conn, now)?;
+            purge_expired_source_capture_trigger_sessions(conn, now)?;
             conn.execute(
-                "INSERT INTO url_ingest_trigger_sessions
+                "INSERT INTO source_capture_trigger_sessions
              (database_id, session_nonce, principal, expires_at_ms, created_at_ms,
               refreshed_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?5)
@@ -2733,7 +2373,7 @@ impl VfsService {
                     request.database_id,
                     request.session_nonce,
                     caller,
-                    now + URL_INGEST_TRIGGER_SESSION_TTL_MS,
+                    now + SOURCE_CAPTURE_TRIGGER_SESSION_TTL_MS,
                     now
                 ],
             )
@@ -2742,12 +2382,12 @@ impl VfsService {
         })
     }
 
-    pub fn check_url_ingest_trigger_session(
+    pub fn check_source_capture_trigger_session(
         &self,
-        request: UrlIngestTriggerSessionCheckRequest,
+        request: SourceCaptureTriggerSessionCheckRequest,
         now: i64,
     ) -> Result<(), String> {
-        validate_url_ingest_trigger_session_check_request(&request)?;
+        validate_source_capture_trigger_session_check_request(&request)?;
         self.require_role(
             &request.database_id,
             DEFAULT_LLM_WRITER_PRINCIPAL,
@@ -2756,7 +2396,7 @@ impl VfsService {
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         let principal: String = self.read_index(|conn| {
             conn.query_row(
-                "SELECT principal FROM url_ingest_trigger_sessions
+                "SELECT principal FROM source_capture_trigger_sessions
                  WHERE database_id = ?1
                    AND session_nonce = ?2
                    AND expires_at_ms >= ?3",
@@ -2765,12 +2405,12 @@ impl VfsService {
             )
             .optional()
             .map_err(|error| error.to_string())?
-            .ok_or_else(|| "url ingest trigger session is missing or expired".to_string())
+            .ok_or_else(|| "source capture trigger session is missing or expired".to_string())
         })?;
         let node = self
             .read_node(&request.database_id, &principal, &request.request_path)?
-            .ok_or_else(|| format!("url ingest request not found: {}", request.request_path))?;
-        validate_url_ingest_request_node(&node, &principal)?;
+            .ok_or_else(|| format!("source capture request not found: {}", request.request_path))?;
+        validate_source_capture_request_node(&node, &principal)?;
         self.require_database_write_cycles_available(&request.database_id)
     }
 
@@ -3297,17 +2937,6 @@ impl VfsService {
         self.database_meta_with_statuses(database_id, &[DatabaseStatus::Active])
     }
 
-    fn database_meta_allowing_restoring(&self, database_id: &str) -> Result<DatabaseMeta, String> {
-        self.database_meta_with_statuses(
-            database_id,
-            &[
-                DatabaseStatus::Pending,
-                DatabaseStatus::Active,
-                DatabaseStatus::Restoring,
-            ],
-        )
-    }
-
     fn database_meta_with_statuses(
         &self,
         database_id: &str,
@@ -3319,97 +2948,8 @@ impl VfsService {
         })
     }
 
-    fn database_restore_rollback(
-        &self,
-        database_id: &str,
-    ) -> Result<DatabaseRestoreRollback, String> {
-        self.read_index(|conn| {
-            conn.query_row(
-                "SELECT database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-                    restore_size_bytes
-	             FROM databases
-	             WHERE database_id = ?1",
-                params![database_id],
-                |row| {
-                    let active_mount_id: Option<i64> = crate::sqlite::row_get(row, 2)?;
-                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 5)?;
-                    Ok(DatabaseRestoreRollback {
-                        database_id: crate::sqlite::row_get(row, 0)?,
-                        status: status_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
-                        active_mount_id: active_mount_id.map(mount_id_from_db).transpose()?,
-                        snapshot_hash: crate::sqlite::row_get(row, 3)?,
-                        archived_at_ms: crate::sqlite::row_get(row, 4)?,
-                        restore_size_bytes: restore_size_bytes.map(|size| size.max(0) as u64),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("database not found: {database_id}"))
-        })
-    }
-
-    fn database_restore_session(
-        &self,
-        database_id: &str,
-    ) -> Result<DatabaseRestoreRollback, String> {
-        self.read_index(|conn| {
-            conn.query_row(
-                "SELECT database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-                    restore_size_bytes
-	             FROM database_restore_sessions
-	             WHERE database_id = ?1",
-                params![database_id],
-                |row| {
-                    let active_mount_id: Option<i64> = crate::sqlite::row_get(row, 2)?;
-                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 5)?;
-                    Ok(DatabaseRestoreRollback {
-                        database_id: crate::sqlite::row_get(row, 0)?,
-                        status: status_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
-                        active_mount_id: active_mount_id.map(mount_id_from_db).transpose()?,
-                        snapshot_hash: crate::sqlite::row_get(row, 3)?,
-                        archived_at_ms: crate::sqlite::row_get(row, 4)?,
-                        restore_size_bytes: restore_size_bytes.map(|size| size.max(0) as u64),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("database restore session not found: {database_id}"))
-        })
-    }
-
-    fn restore_size_bytes(&self, database_id: &str) -> Result<u64, String> {
-        let size: Option<i64> = self.read_index(|conn| {
-            conn.query_row(
-                "SELECT restore_size_bytes FROM databases WHERE database_id = ?1",
-                params![database_id],
-                |row| crate::sqlite::row_get(row, 0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("database not found: {database_id}"))
-        })?;
-        size.map(|size| size.max(0) as u64)
-            .ok_or_else(|| format!("restore size is missing: {database_id}"))
-    }
-
-    fn restore_snapshot_hash(&self, database_id: &str) -> Result<Vec<u8>, String> {
-        let hash: Option<Vec<u8>> = self.read_index(|conn| {
-            conn.query_row(
-                "SELECT snapshot_hash FROM databases WHERE database_id = ?1",
-                params![database_id],
-                |row| crate::sqlite::row_get(row, 0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("database not found: {database_id}"))
-        })?;
-        hash.ok_or_else(|| format!("snapshot_hash is missing: {database_id}"))
-    }
-
     fn refresh_logical_size(&self, database_id: &str) -> Result<(), String> {
-        let meta = self.database_meta_allowing_restoring(database_id)?;
+        let meta = self.database_meta(database_id)?;
         self.refresh_logical_size_for_meta(database_id, &meta)
     }
 
@@ -3455,91 +2995,6 @@ impl VfsService {
 
     fn database_size(&self, meta: &DatabaseMeta) -> Result<u64, String> {
         self.database_store(meta)?.logical_size_bytes()
-    }
-
-    fn database_export_chunk(
-        &self,
-        meta: &DatabaseMeta,
-        offset: u64,
-        len: u64,
-    ) -> Result<Vec<u8>, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut file = File::open(&meta.db_file_name).map_err(|error| error.to_string())?;
-            file.seek(SeekFrom::Start(offset))
-                .map_err(|error| error.to_string())?;
-            let mut bytes = Vec::with_capacity(len as usize);
-            file.take(len)
-                .read_to_end(&mut bytes)
-                .map_err(|error| error.to_string())?;
-            Ok(bytes)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            (self.database_handle)(meta.mount_id)?
-                .export_chunk(offset, len)
-                .map_err(|error| error.to_string())
-        }
-    }
-
-    fn database_sha256(&self, meta: &DatabaseMeta, _size: u64) -> Result<Vec<u8>, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            file_sha256(&meta.db_file_name)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let mut hasher = Sha256::new();
-            let mut offset = 0_u64;
-            while offset < _size {
-                let len = (_size - offset).min(u64::from(MAX_ARCHIVE_CHUNK_BYTES));
-                hasher.update(self.database_export_chunk(meta, offset, len)?);
-                offset += len;
-            }
-            Ok(hasher.finalize().to_vec())
-        }
-    }
-
-    fn import_database_bytes(
-        &self,
-        meta: &DatabaseMeta,
-        expected_size: u64,
-        _checksum: u64,
-        chunks: &[RestoreChunk],
-    ) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(parent) = Path::new(&meta.db_file_name).parent() {
-                create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
-            let mut file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&meta.db_file_name)
-                .map_err(|error| error.to_string())?;
-            for chunk in chunks {
-                file.write_all(&chunk.bytes)
-                    .map_err(|error| error.to_string())?;
-            }
-            file.set_len(expected_size)
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let handle = (self.database_handle)(meta.mount_id)?;
-            handle
-                .begin_import(expected_size, _checksum)
-                .map_err(|error| error.to_string())?;
-            for chunk in chunks {
-                if let Err(error) = handle.import_chunk(chunk.offset, &chunk.bytes) {
-                    let _ = handle.cancel_import();
-                    return Err(error.to_string());
-                }
-            }
-            handle.finish_import().map_err(|error| error.to_string())
-        }
     }
 
     fn write_source_run_session(
@@ -3719,6 +3174,11 @@ enum IndexSchemaState {
     Mainnet031,
     Mainnet032,
     Mainnet033,
+    RenameSourceCaptureTriggerSessions,
+    RenameSourceCaptureTriggerSessionsStoreRootsPending,
+    DropArchiveRestoreLifecycle,
+    DropArchiveRestoreLifecycleStoreRootsPending,
+    StoreRootsPending,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3732,6 +3192,8 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::Mainnet033 => {
             apply_database_metadata_index_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
@@ -3752,11 +3214,42 @@ fn ensure_existing_index_schema_is_latest(
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
             apply_database_metadata_index_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet032 => {
             apply_database_metadata_index_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::RenameSourceCaptureTriggerSessions => {
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending => {
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::DropArchiveRestoreLifecycle => {
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending => {
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::StoreRootsPending => {
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
@@ -3788,10 +3281,44 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)? {
+    let store_roots_applied = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)?;
+    let database_metadata_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
+    let rename_source_capture_trigger_sessions_applied = migration_applied_tx(
+        conn,
+        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
+    )?;
+    let drop_archive_restore_lifecycle_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
+    if store_roots_applied
+        && database_metadata_applied
+        && rename_source_capture_trigger_sessions_applied
+        && drop_archive_restore_lifecycle_applied
+    {
         return Ok(IndexSchemaState::Latest);
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)? {
+    if store_roots_applied
+        && database_metadata_applied
+        && rename_source_capture_trigger_sessions_applied
+    {
+        return Ok(IndexSchemaState::DropArchiveRestoreLifecycle);
+    }
+    if database_metadata_applied
+        && rename_source_capture_trigger_sessions_applied
+        && drop_archive_restore_lifecycle_applied
+    {
+        return Ok(IndexSchemaState::StoreRootsPending);
+    }
+    if database_metadata_applied && rename_source_capture_trigger_sessions_applied {
+        return Ok(IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending);
+    }
+    if store_roots_applied && database_metadata_applied {
+        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessions);
+    }
+    if database_metadata_applied {
+        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending);
+    }
+    if store_roots_applied {
         return Ok(IndexSchemaState::Mainnet033);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
@@ -3849,6 +3376,8 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
+    apply_rename_source_capture_trigger_sessions_migration(conn)?;
+    apply_drop_archive_restore_lifecycle_migration(conn)?;
     Ok(())
 }
 
@@ -3862,6 +3391,8 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
         insert_schema_migration_now(conn, version)?;
     }
     apply_cycles_top_up_config_migration(conn, None)?;
+    apply_rename_source_capture_trigger_sessions_migration(conn)?;
+    apply_drop_archive_restore_lifecycle_migration(conn)?;
     Ok(())
 }
 
@@ -3972,6 +3503,84 @@ fn apply_database_metadata_index_migration(conn: &Transaction<'_>) -> Result<(),
     }
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
     Ok(())
+}
+
+fn apply_rename_source_capture_trigger_sessions_migration(
+    conn: &Transaction<'_>,
+) -> Result<(), String> {
+    if tx_sqlite_master_entry_exists(conn, "table", "url_ingest_trigger_sessions")? {
+        if tx_sqlite_master_entry_exists(conn, "index", "url_ingest_trigger_sessions_expiry_idx")? {
+            conn.execute(
+                "DROP INDEX url_ingest_trigger_sessions_expiry_idx",
+                params![],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        conn.execute(
+            "ALTER TABLE url_ingest_trigger_sessions RENAME TO source_capture_trigger_sessions",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if !tx_sqlite_master_entry_exists(conn, "index", "source_capture_trigger_sessions_expiry_idx")?
+    {
+        conn.execute(
+            "CREATE INDEX source_capture_trigger_sessions_expiry_idx
+             ON source_capture_trigger_sessions(expires_at_ms)",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    insert_schema_migration_now(
+        conn,
+        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
+    )?;
+    Ok(())
+}
+
+fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)? {
+        return Ok(());
+    }
+    let archived_database_ids = load_archive_restore_database_ids(conn)?;
+    if !archived_database_ids.is_empty() {
+        return Err(format!(
+            "archive/restore lifecycle is no longer supported; unsupported database statuses remain for database_id(s): {}",
+            archived_database_ids.join(", ")
+        ));
+    }
+    if tx_sqlite_master_entry_exists(conn, "table", "database_restore_chunks")? {
+        conn.execute("DROP TABLE database_restore_chunks", params![])
+            .map_err(|error| error.to_string())?;
+    }
+    if tx_sqlite_master_entry_exists(conn, "table", "database_restore_sessions")? {
+        conn.execute("DROP TABLE database_restore_sessions", params![])
+            .map_err(|error| error.to_string())?;
+    }
+    for column in ["snapshot_hash", "archived_at_ms", "restore_size_bytes"] {
+        if index_column_exists(conn, "databases", column)? {
+            conn.execute(
+                &format!("ALTER TABLE databases DROP COLUMN {column}"),
+                params![],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
+    Ok(())
+}
+
+fn load_archive_restore_database_ids(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id
+             FROM databases
+             WHERE status IN ('archiving', 'archived', 'restoring')
+             ORDER BY database_id",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![], |row| crate::sqlite::row_get(row, 0))
+        .map_err(|error| error.to_string())
 }
 
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
@@ -4139,7 +3748,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_RESTORE_SIZE,
     INDEX_SCHEMA_VERSION_RESTORE_CHUNKS,
     INDEX_SCHEMA_VERSION_MOUNT_HISTORY,
-    INDEX_SCHEMA_VERSION_URL_INGEST_TRIGGER_SESSIONS,
+    INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS,
     INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS,
     INDEX_SCHEMA_VERSION_RESTORE_SESSIONS,
     INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES,
@@ -4168,6 +3777,8 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
     INDEX_SCHEMA_VERSION_STORE_ROOTS,
     INDEX_SCHEMA_VERSION_DATABASE_METADATA,
+    INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
+    INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4176,6 +3787,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_restore_chunks",
     "database_mount_history",
     "url_ingest_trigger_sessions",
+    "source_capture_trigger_sessions",
     "ops_answer_sessions",
     "source_run_sessions",
     "database_restore_sessions",
@@ -4382,8 +3994,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
         "schema_migrations",
         "databases",
-        "database_restore_chunks",
-        "database_restore_sessions",
+        "source_capture_trigger_sessions",
         "database_cycle_accounts",
         "database_cycle_ledger",
         "database_cycle_pending_operations",
@@ -4414,17 +4025,21 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "status",
                 "schema_version",
                 "logical_size_bytes",
-                "snapshot_hash",
-                "archived_at_ms",
                 "deleted_at_ms",
-                "restore_size_bytes",
                 "created_at_ms",
                 "updated_at_ms",
             ][..],
         ),
         (
-            "database_restore_chunks",
-            &["database_id", "offset_bytes", "end_bytes", "bytes"][..],
+            "source_capture_trigger_sessions",
+            &[
+                "database_id",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
         ),
         (
             "database_cycle_accounts",
@@ -4546,9 +4161,29 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             }
         }
     }
+    if index_column_exists(conn, "databases", "profile")? {
+        return Err("unsupported index schema: stale column databases.profile".to_string());
+    }
+    for column in ["snapshot_hash", "archived_at_ms", "restore_size_bytes"] {
+        if index_column_exists(conn, "databases", column)? {
+            return Err(format!(
+                "unsupported index schema: stale column databases.{column}"
+            ));
+        }
+    }
+    if tx_sqlite_master_entry_exists(conn, "table", "url_ingest_trigger_sessions")? {
+        return Err(
+            "unsupported index schema: stale table url_ingest_trigger_sessions".to_string(),
+        );
+    }
+    for table in ["database_restore_chunks", "database_restore_sessions"] {
+        if tx_sqlite_master_entry_exists(conn, "table", table)? {
+            return Err(format!("unsupported index schema: stale table {table}"));
+        }
+    }
     for index in [
         "databases_active_mount_id_idx",
-        "database_restore_chunks_database_id_idx",
+        "source_capture_trigger_sessions_expiry_idx",
         "database_cycle_ledger_database_idx",
         "database_cycle_pending_operations_database_idx",
         "market_listings_status_idx",
@@ -4828,8 +4463,8 @@ fn load_metric_principal_activity(
         "SELECT payout_principal, created_at_ms, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT payout_principal, created_at_ms, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
         "SELECT buyer_principal, purchased_at_ms, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
-        "SELECT principal, created_at_ms, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT principal, created_at_ms, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT principal, created_at_ms, created_at_ms FROM source_capture_trigger_sessions WHERE created_at_ms <= ?1",
+        "SELECT principal, created_at_ms, refreshed_at_ms FROM source_capture_trigger_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT principal, created_at_ms, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
         "SELECT principal, created_at_ms, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT principal, created_at_ms, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
@@ -4878,11 +4513,11 @@ fn load_metric_active_databases(
         &mut stmt,
         params![as_of_ms],
         BTreeMap::new(),
-        |databases, row| {
+        |mut databases, row| {
             let database_id: String = crate::sqlite::row_get(row, 0)?;
             let created_at_ms: i64 = crate::sqlite::row_get(row, 1)?;
             databases.insert(database_id, created_at_ms);
-            Ok(())
+            Ok(databases)
         },
     )
     .map_err(|error| error.to_string())
@@ -4903,8 +4538,8 @@ fn load_metric_database_activity(
         "SELECT database_id, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT database_id, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
-        "SELECT database_id, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT database_id, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT database_id, created_at_ms FROM source_capture_trigger_sessions WHERE created_at_ms <= ?1",
+        "SELECT database_id, refreshed_at_ms FROM source_capture_trigger_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
         "SELECT database_id, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
@@ -4955,12 +4590,12 @@ fn load_metric_paid_users_total(conn: &Connection, as_of_ms: i64) -> Result<u64,
             &mut stmt,
             params![as_of_ms],
             principals,
-            |principals, row| {
+            |mut principals, row| {
                 let principal: String = crate::sqlite::row_get(row, 0)?;
                 if !principal.is_empty() && principal != ANONYMOUS_PRINCIPAL {
                     principals.insert(principal);
                 }
-                Ok(())
+                Ok(principals)
             },
         )
         .map_err(|error| error.to_string())?;
@@ -5228,9 +4863,7 @@ fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<()
         "market_entitlements",
         "market_listings",
         "database_members",
-        "database_restore_chunks",
-        "database_restore_sessions",
-        "url_ingest_trigger_sessions",
+        "source_capture_trigger_sessions",
         "ops_answer_sessions",
         "source_run_sessions",
         "databases",
@@ -6115,6 +5748,41 @@ fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Mar
     })
 }
 
+fn empty_market_listing_detail(listing: MarketListing) -> MarketListingDetail {
+    MarketListingDetail {
+        listing: MarketListingView {
+            listing,
+            database_metadata: DatabaseMetadata {
+                title: String::new(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+        },
+        verified_stats: MarketListingVerifiedStats {
+            total_nodes: 0,
+            wiki_nodes: 0,
+            source_nodes: 0,
+            folder_nodes: 0,
+            markdown_chars: 0,
+            source_chars: 0,
+            link_edges: 0,
+            logical_size_bytes: 0,
+            last_content_updated_at_ms: None,
+        },
+        preview: MarketListingPreview {
+            top_level_paths: Vec::new(),
+            excerpts: Vec::new(),
+            category_graph: MarketCategoryGraph {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            },
+            graph_links: Vec::new(),
+            preview_stale: true,
+        },
+    }
+}
+
 fn map_market_listing_view(
     row: &crate::sqlite::Row<'_>,
 ) -> crate::sqlite::Result<MarketListingView> {
@@ -6972,23 +6640,23 @@ fn map_database_cycles_entry(
     })
 }
 
-fn validate_url_ingest_trigger_session_request(
-    request: &UrlIngestTriggerSessionRequest,
+fn validate_source_capture_trigger_session_request(
+    request: &SourceCaptureTriggerSessionRequest,
 ) -> Result<(), String> {
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_url_ingest_trigger_session_nonce(&request.session_nonce)
+    validate_source_capture_trigger_session_nonce(&request.session_nonce)
 }
 
-fn validate_url_ingest_trigger_session_check_request(
-    request: &UrlIngestTriggerSessionCheckRequest,
+fn validate_source_capture_trigger_session_check_request(
+    request: &SourceCaptureTriggerSessionCheckRequest,
 ) -> Result<(), String> {
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_url_ingest_trigger_session_nonce(&request.session_nonce)?;
-    validate_url_ingest_request_path(&request.request_path)
+    validate_source_capture_trigger_session_nonce(&request.session_nonce)?;
+    validate_source_capture_request_path(&request.request_path)
 }
 
 fn validate_ops_answer_session_request(request: &OpsAnswerSessionRequest) -> Result<(), String> {
@@ -7028,7 +6696,7 @@ fn validate_source_run_session_check_request(
     validate_session_nonce(&request.session_nonce)
 }
 
-fn validate_url_ingest_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
+fn validate_source_capture_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
     validate_session_nonce(session_nonce)
 }
 
@@ -7042,37 +6710,39 @@ fn validate_session_nonce(session_nonce: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_url_ingest_request_path(request_path: &str) -> Result<(), String> {
-    if !request_path.starts_with("/Sources/ingest-requests/") || !request_path.ends_with(".md") {
-        return Err("request_path must be a URL ingest request path".to_string());
+fn validate_source_capture_request_path(request_path: &str) -> Result<(), String> {
+    if !request_path.starts_with("/Sources/source-capture-requests/")
+        || !request_path.ends_with(".md")
+    {
+        return Err("request_path must be a source capture request path".to_string());
     }
     Ok(())
 }
 
-fn validate_url_ingest_request_node(node: &Node, caller: &str) -> Result<(), String> {
+fn validate_source_capture_request_node(node: &Node, caller: &str) -> Result<(), String> {
     if node.kind != NodeKind::File {
-        return Err("url ingest request must be a file node".to_string());
+        return Err("source capture request must be a file node".to_string());
     }
     let frontmatter = parse_frontmatter_fields(&node.content)?;
-    expect_frontmatter(&frontmatter, "kind", "kinic.url_ingest_request")?;
+    expect_frontmatter(&frontmatter, "kind", "kinic.source_capture_request")?;
     expect_frontmatter(&frontmatter, "schema_version", "1")?;
     let status = frontmatter
         .get("status")
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| "url ingest request status is required".to_string())?;
+        .ok_or_else(|| "source capture request status is required".to_string())?;
     if status != "queued"
         && status != "fetching"
         && status != "source_written"
         && status != "generating"
     {
-        return Err("url ingest request is not triggerable".to_string());
+        return Err("source capture request is not triggerable".to_string());
     }
     let requested_by = frontmatter
         .get("requested_by")
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| "url ingest request requested_by is required".to_string())?;
+        .ok_or_else(|| "source capture request requested_by is required".to_string())?;
     if requested_by != caller {
-        return Err("url ingest request caller mismatch".to_string());
+        return Err("source capture request caller mismatch".to_string());
     }
     Ok(())
 }
@@ -7080,9 +6750,9 @@ fn validate_url_ingest_request_node(node: &Node, caller: &str) -> Result<(), Str
 fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<String>>, String> {
     let rest = content
         .strip_prefix("---\n")
-        .ok_or_else(|| "url ingest request frontmatter is required".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter is required".to_string())?;
     let end = frontmatter_end(rest)
-        .ok_or_else(|| "url ingest request frontmatter is not closed".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter is not closed".to_string())?;
     let frontmatter = &rest[..end];
     let mut fields = BTreeMap::new();
     for line in frontmatter.lines() {
@@ -7091,7 +6761,7 @@ fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<Str
             continue;
         }
         let Some((key, value)) = trimmed.split_once(':') else {
-            return Err("url ingest request frontmatter is invalid".to_string());
+            return Err("source capture request frontmatter is invalid".to_string());
         };
         fields.insert(key.trim().to_string(), frontmatter_scalar(value.trim())?);
     }
@@ -7122,7 +6792,7 @@ fn parse_json_string_literal(value: &str) -> Result<String, String> {
     let body = value
         .strip_prefix('"')
         .and_then(|inner| inner.strip_suffix('"'))
-        .ok_or_else(|| "url ingest request frontmatter quoted scalar is invalid".to_string())?;
+        .ok_or_else(|| "source capture request frontmatter quoted scalar is invalid".to_string())?;
     let mut chars = body.chars();
     let mut decoded = String::new();
     while let Some(ch) = chars.next() {
@@ -7191,7 +6861,7 @@ fn parse_json_hex4(chars: &mut std::str::Chars<'_>) -> Result<u32, String> {
 }
 
 fn invalid_quoted_scalar() -> String {
-    "url ingest request frontmatter quoted scalar is invalid".to_string()
+    "source capture request frontmatter quoted scalar is invalid".to_string()
 }
 
 fn expect_frontmatter(
@@ -7202,17 +6872,20 @@ fn expect_frontmatter(
     let value = frontmatter
         .get(key)
         .and_then(|value| value.as_deref())
-        .ok_or_else(|| format!("url ingest request {key} is required"))?;
+        .ok_or_else(|| format!("source capture request {key} is required"))?;
     if value == expected {
         Ok(())
     } else {
-        Err(format!("url ingest request {key} is invalid"))
+        Err(format!("source capture request {key} is invalid"))
     }
 }
 
-fn purge_expired_url_ingest_trigger_sessions(conn: &Connection, now: i64) -> Result<(), String> {
+fn purge_expired_source_capture_trigger_sessions(
+    conn: &Connection,
+    now: i64,
+) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM url_ingest_trigger_sessions WHERE expires_at_ms < ?1",
+        "DELETE FROM source_capture_trigger_sessions WHERE expires_at_ms < ?1",
         params![now],
     )
     .map(|_| ())
@@ -7235,129 +6908,6 @@ fn purge_expired_source_run_sessions(conn: &Connection, now: i64) -> Result<(), 
     )
     .map(|_| ())
     .map_err(|error| error.to_string())
-}
-
-fn load_restore_chunks(conn: &Connection, database_id: &str) -> Result<Vec<RestoreChunk>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT offset_bytes, end_bytes, bytes
-             FROM database_restore_chunks
-             WHERE database_id = ?1
-             ORDER BY offset_bytes ASC, end_bytes ASC",
-        )
-        .map_err(|error| error.to_string())?;
-    crate::sqlite::query_map(&mut stmt, params![database_id], |row| {
-        let offset = u64::try_from(crate::sqlite::row_get::<i64>(row, 0)?)
-            .map_err(|_| crate::sqlite::invalid_query())?;
-        let end = u64::try_from(crate::sqlite::row_get::<i64>(row, 1)?)
-            .map_err(|_| crate::sqlite::invalid_query())?;
-        let bytes: Option<Vec<u8>> = crate::sqlite::row_get(row, 2)?;
-        Ok(RestoreChunk {
-            offset,
-            end,
-            bytes: bytes.unwrap_or_default(),
-        })
-    })
-    .map_err(|error| error.to_string())
-}
-
-fn restore_chunks_cover_expected_size(
-    chunks: &[RestoreChunk],
-    expected_size: u64,
-) -> Result<bool, String> {
-    if expected_size == 0 {
-        return Ok(true);
-    }
-    let mut covered_end = 0_u64;
-    for chunk in chunks {
-        if chunk.offset != covered_end {
-            return Ok(false);
-        }
-        if chunk.end > expected_size {
-            return Ok(false);
-        }
-        if chunk.end.saturating_sub(chunk.offset) != chunk.bytes.len() as u64 {
-            return Ok(false);
-        }
-        covered_end = covered_end.max(chunk.end);
-        if covered_end == expected_size {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn record_database_restore_session(
-    conn: &Connection,
-    rollback: &DatabaseRestoreRollback,
-    now: i64,
-) -> Result<(), String> {
-    let values = vec![
-        crate::sqlite::text_value(rollback.database_id.clone()),
-        crate::sqlite::text_value(status_to_db(rollback.status)),
-        crate::sqlite::nullable_integer_value(rollback.active_mount_id.map(i64::from)),
-        crate::sqlite::nullable_blob_value(rollback.snapshot_hash.clone()),
-        crate::sqlite::nullable_integer_value(rollback.archived_at_ms),
-        crate::sqlite::nullable_integer_value(
-            rollback
-                .restore_size_bytes
-                .map(i64::try_from)
-                .transpose()
-                .map_err(|error| error.to_string())?,
-        ),
-        crate::sqlite::integer_value(now),
-    ];
-    crate::sqlite::execute_values(
-        conn,
-        "INSERT INTO database_restore_sessions
-         (database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-          restore_size_bytes, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        &values,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn restore_database_state(
-    conn: &Connection,
-    rollback: &DatabaseRestoreRollback,
-    now: i64,
-) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM database_restore_sessions WHERE database_id = ?1",
-        params![rollback.database_id.as_str()],
-    )
-    .map_err(|error| error.to_string())?;
-    let values = vec![
-        crate::sqlite::text_value(rollback.database_id.clone()),
-        crate::sqlite::text_value(status_to_db(rollback.status)),
-        crate::sqlite::nullable_integer_value(rollback.active_mount_id.map(i64::from)),
-        crate::sqlite::nullable_blob_value(rollback.snapshot_hash.clone()),
-        crate::sqlite::nullable_integer_value(rollback.archived_at_ms),
-        crate::sqlite::nullable_integer_value(
-            rollback
-                .restore_size_bytes
-                .map(i64::try_from)
-                .transpose()
-                .map_err(|error| error.to_string())?,
-        ),
-        crate::sqlite::integer_value(now),
-    ];
-    crate::sqlite::execute_values(
-        conn,
-        "UPDATE databases
-	         SET status = ?2,
-	             active_mount_id = ?3,
-	             snapshot_hash = ?4,
-	             archived_at_ms = ?5,
-	             restore_size_bytes = ?6,
-	             updated_at_ms = ?7
-	        WHERE database_id = ?1",
-        &values,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 fn validate_database_id(database_id: &str) -> Result<(), String> {
@@ -7492,14 +7042,6 @@ fn base32_lower(bytes: &[u8]) -> String {
     output
 }
 
-fn fnv1a64_update(mut hash: u64, bytes: &[u8]) -> u64 {
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV1A64_PRIME);
-    }
-    hash
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn database_file_name(databases_dir: &Path, database_id: &str) -> Result<String, String> {
     validate_database_id(database_id)?;
@@ -7607,31 +7149,6 @@ fn record_mount_history(
     Ok(())
 }
 
-fn validate_snapshot_hash(snapshot_hash: &[u8]) -> Result<(), String> {
-    if snapshot_hash.len() == SHA256_DIGEST_BYTES {
-        Ok(())
-    } else {
-        Err(format!(
-            "snapshot_hash must be a {SHA256_DIGEST_BYTES}-byte SHA-256 digest"
-        ))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn file_sha256(path: &str) -> Result<Vec<u8>, String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher.finalize().to_vec())
-}
-
 fn database_meta_error(conn: &Connection, database_id: &str) -> String {
     match conn
         .query_row(
@@ -7641,13 +7158,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
         )
         .optional()
     {
-        Ok(Some(status))
-            if status == "active"
-                || status == "pending"
-                || status == "archived"
-                || status == "archiving"
-                || status == "restoring" =>
-        {
+        Ok(Some(status)) if status == "active" || status == "pending" || status == "deleted" => {
             format!("database is {status}: {database_id}")
         }
         _ => format!("database not found: {database_id}"),
@@ -7699,14 +7210,15 @@ fn load_pending_database_activation_meta(
 }
 
 fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT database_id, title, description, llm_summary, tags_json,
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id, title, description, llm_summary, tags_json,
                 db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE status IN ('pending', 'active', 'archiving', 'archived', 'restoring') AND active_mount_id IS NOT NULL
+         WHERE status IN ('pending', 'active') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
-    )
-    .map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
         .map_err(|error| error.to_string())
 }
@@ -7824,7 +7336,13 @@ fn update_storage_billing_timer_state(
     billing_now_ms: i64,
     updated_at_ms: i64,
 ) -> Result<(), String> {
-    tx.execute(
+    let values = vec![
+        crate::sqlite::nullable_integer_value(cursor_mount_id.map(i64::from)),
+        crate::sqlite::integer_value(billing_now_ms),
+        crate::sqlite::integer_value(updated_at_ms),
+    ];
+    crate::sqlite::execute_values(
+        tx,
         "INSERT INTO storage_billing_state
          (key, cursor_mount_id, billing_now_ms, updated_at_ms)
          VALUES ('timer', ?1, ?2, ?3)
@@ -7832,11 +7350,7 @@ fn update_storage_billing_timer_state(
            cursor_mount_id = excluded.cursor_mount_id,
            billing_now_ms = excluded.billing_now_ms,
            updated_at_ms = excluded.updated_at_ms",
-        params![
-            crate::sqlite::nullable_integer_value(cursor_mount_id.map(i64::from)),
-            billing_now_ms,
-            updated_at_ms
-        ],
+        &values,
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -7855,7 +7369,7 @@ fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT database_id, title, description, llm_summary, tags_json, status,
-                    active_mount_id, schema_version, logical_size_bytes, snapshot_hash, archived_at_ms
+                    active_mount_id, schema_version, logical_size_bytes
          FROM databases
          ORDER BY database_id ASC",
         )
@@ -7875,8 +7389,6 @@ fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
             mount_id: mount_id.map(mount_id_from_db).transpose()?,
             schema_version: crate::sqlite::row_get(row, 7)?,
             logical_size_bytes: logical_size_bytes.max(0) as u64,
-            snapshot_hash: crate::sqlite::row_get(row, 9)?,
-            archived_at_ms: crate::sqlite::row_get(row, 10)?,
         })
     })
     .map_err(|error| error.to_string())
@@ -7891,7 +7403,7 @@ fn load_database_summaries_for_caller(
             "SELECT d.database_id, d.title, d.description, d.llm_summary, d.tags_json,
                     d.status, m.role, d.logical_size_bytes,
                     COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
-                    d.archived_at_ms, d.deleted_at_ms,
+                    d.deleted_at_ms,
                     0 AS access_source_rank,
                     CASE m.role
                       WHEN 'owner' THEN 0
@@ -7906,16 +7418,16 @@ fn load_database_summaries_for_caller(
              SELECT d.database_id, d.title, d.description, d.llm_summary, d.tags_json,
                     d.status, 'reader' AS role, d.logical_size_bytes,
                     COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
-                    d.archived_at_ms, d.deleted_at_ms,
+                    d.deleted_at_ms,
                     1 AS access_source_rank,
                     2 AS role_rank
              FROM databases d
              INNER JOIN market_entitlements e ON e.database_id = d.database_id
              LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
-             WHERE e.buyer_principal = ?2
-               AND e.status = ?3
-               AND d.status = ?4
-             ORDER BY 1 ASC, 13 ASC, 14 ASC",
+            WHERE e.buyer_principal = ?2
+              AND e.status = ?3
+              AND d.status = ?4
+             ORDER BY 1 ASC, 12 ASC, 13 ASC",
         )
         .map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(
@@ -7942,8 +7454,7 @@ fn load_database_summaries_for_caller(
                 logical_size_bytes: logical_size_bytes.max(0) as u64,
                 cycles_balance: Some(cycles_balance.max(0) as u64),
                 cycles_suspended_at_ms: crate::sqlite::row_get(row, 9)?,
-                archived_at_ms: crate::sqlite::row_get(row, 10)?,
-                deleted_at_ms: crate::sqlite::row_get(row, 11)?,
+                deleted_at_ms: crate::sqlite::row_get(row, 10)?,
             })
         },
     )
@@ -8064,6 +7575,7 @@ fn database_store_seed_nodes() -> Vec<StoreSeedNode> {
         folder_seed("/Sources"),
         folder_seed("/Sources/sessions"),
         folder_seed("/Sources/skill-runs"),
+        folder_seed("/Sources/source-capture-requests"),
     ]
 }
 
@@ -8078,9 +7590,6 @@ fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
     match status {
         "pending" => Ok(DatabaseStatus::Pending),
         "active" => Ok(DatabaseStatus::Active),
-        "archiving" => Ok(DatabaseStatus::Archiving),
-        "archived" => Ok(DatabaseStatus::Archived),
-        "restoring" => Ok(DatabaseStatus::Restoring),
         "deleted" => Ok(DatabaseStatus::Deleted),
         _ => Err(crate::sqlite::invalid_query()),
     }
@@ -8090,9 +7599,6 @@ fn status_to_db(status: DatabaseStatus) -> &'static str {
     match status {
         DatabaseStatus::Pending => "pending",
         DatabaseStatus::Active => "active",
-        DatabaseStatus::Archiving => "archiving",
-        DatabaseStatus::Archived => "archived",
-        DatabaseStatus::Restoring => "restoring",
         DatabaseStatus::Deleted => "deleted",
     }
 }
@@ -8118,15 +7624,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_ingest_frontmatter_requires_whole_line_terminator() {
+    fn source_capture_frontmatter_requires_whole_line_terminator() {
         let fields = parse_frontmatter_fields(
-            "---\nkind: \"kinic.url_ingest_request\"\nstatus: queued\nnote: ---not-a-terminator\nrequested_by: alice\n---\n# Body\n",
+            "---\nkind: \"kinic.source_capture_request\"\nstatus: queued\nnote: ---not-a-terminator\nrequested_by: alice\n---\n# Body\n",
         )
         .expect("frontmatter should parse at the real terminator");
 
         assert_eq!(
             fields.get("kind").and_then(|value| value.as_deref()),
-            Some("kinic.url_ingest_request")
+            Some("kinic.source_capture_request")
         );
         assert_eq!(
             fields
@@ -8137,9 +7643,9 @@ mod tests {
     }
 
     #[test]
-    fn url_ingest_frontmatter_unescapes_json_quoted_scalars() {
+    fn source_capture_frontmatter_unescapes_json_quoted_scalars() {
         let fields = parse_frontmatter_fields(
-            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\\"1\\\"-\\uD83D\\uDE00\"\n---\n# Body\n",
+            "---\nkind: kinic.source_capture_request\nrequested_by: \"principal-\\\"1\\\"-\\uD83D\\uDE00\"\n---\n# Body\n",
         )
         .expect("frontmatter should parse quoted scalars");
 
@@ -8152,9 +7658,9 @@ mod tests {
     }
 
     #[test]
-    fn url_ingest_frontmatter_rejects_invalid_json_quoted_scalars() {
+    fn source_capture_frontmatter_rejects_invalid_json_quoted_scalars() {
         let error = parse_frontmatter_fields(
-            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\q\"\n---\n# Body\n",
+            "---\nkind: kinic.source_capture_request\nrequested_by: \"principal-\\q\"\n---\n# Body\n",
         )
         .expect_err("invalid JSON escape must not be accepted as a raw quoted value");
 
@@ -8471,6 +7977,16 @@ mod tests {
         .expect("schema marker count should load")
     }
 
+    fn database_profile_column_count(index_path: &Path) -> i64 {
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database profile column count should load")
+    }
+
     #[test]
     fn old_upgrade_migrations_require_config() {
         let dir = tempdir().expect("tempdir should create");
@@ -8580,6 +8096,26 @@ mod tests {
             .expect("market table count should load");
         assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8615,9 +8151,120 @@ mod tests {
             1
         );
         assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
+    }
+
+    #[test]
+    fn store_roots_pending_index_drops_profile_and_seeds_roots() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "profile_without_roots",
+            &["/Memory", "/Sessions", "/Skills"],
+        );
+        {
+            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
+            let tx = conn.transaction().expect("transaction should start");
+            tx.execute(
+                "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
+                params![],
+            )
+            .expect("legacy profile column should add");
+            insert_database_profile_history_marker(&tx).expect("profile marker should insert");
+            tx.commit().expect("profile migration should commit");
+        }
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("store-roots-pending index should seed roots");
+
+        for path in ["/Memory", "/Sessions", "/Skills"] {
+            assert!(
+                service
+                    .read_node("profile_without_roots", "owner", path)
+                    .expect("seeded root should read")
+                    .is_some(),
+                "{path} should exist"
+            );
+        }
+        assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
+    }
+
+    #[test]
+    fn mainnet_033_index_applies_profile_drop_noop() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        {
+            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
+            let tx = conn.transaction().expect("transaction should start");
+            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
+                .expect("store roots marker should insert");
+            tx.commit().expect("store roots marker should commit");
+        }
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("mainnet 033 index should apply profile-drop noop");
+
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8649,6 +8296,22 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8683,6 +8346,22 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -8722,6 +8401,15 @@ mod tests {
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             0
         );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(database_profile_column_count(&index_path), 0);
     }
 
     #[test]
@@ -9332,9 +9020,6 @@ mod tests {
         for (database_id, status, mount_id) in [
             ("active", "active", Some(11_i64)),
             ("pending", "pending", Some(12_i64)),
-            ("archiving", "archiving", Some(13_i64)),
-            ("archived", "archived", Some(14_i64)),
-            ("restoring", "restoring", Some(15_i64)),
             ("deleted", "deleted", None),
         ] {
             service
@@ -9434,9 +9119,7 @@ mod tests {
         seed_storage_billing_database(&service, "active", 0);
         for (database_id, status, mount_id) in [
             ("pending", "pending", 100_i64),
-            ("archiving", "archiving", 101_i64),
-            ("archived", "archived", 102_i64),
-            ("restoring", "restoring", 103_i64),
+            ("deleted", "deleted", 101_i64),
         ] {
             service
                 .write_index(|tx| {

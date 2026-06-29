@@ -30,12 +30,6 @@ pub enum DatabaseStatus {
     Active,
     #[serde(alias = "Pending")]
     Pending,
-    #[serde(alias = "Restoring")]
-    Restoring,
-    #[serde(alias = "Archiving")]
-    Archiving,
-    #[serde(alias = "Archived")]
-    Archived,
     #[serde(alias = "Deleted")]
     Deleted,
 }
@@ -48,8 +42,6 @@ pub struct DatabaseInfo {
     pub mount_id: Option<u16>,
     pub schema_version: String,
     pub logical_size_bytes: u64,
-    pub snapshot_hash: Option<Vec<u8>>,
-    pub archived_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -69,7 +61,6 @@ pub struct DatabaseSummary {
     pub logical_size_bytes: u64,
     pub cycles_balance: Option<u64>,
     pub cycles_suspended_at_ms: Option<i64>,
-    pub archived_at_ms: Option<i64>,
     pub deleted_at_ms: Option<i64>,
 }
 
@@ -371,24 +362,6 @@ pub struct DatabaseIdRequest {
 pub type DeleteDatabaseRequest = DatabaseIdRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseArchiveInfo {
-    pub database_id: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseArchiveChunk {
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseRestoreChunkRequest {
-    pub database_id: String,
-    pub offset: u64,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     #[serde(alias = "File")]
@@ -493,13 +466,13 @@ pub struct WriteNodesRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionRequest {
+pub struct SourceCaptureTriggerSessionRequest {
     pub database_id: String,
     pub session_nonce: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionCheckRequest {
+pub struct SourceCaptureTriggerSessionCheckRequest {
     pub database_id: String,
     pub request_path: String,
     pub session_nonce: String,

@@ -491,10 +491,10 @@ fn mkdir_node_request_type_is_fixed_at_interface_boundary() {
         assert!(
             has_method_input(
                 did,
-                "authorize_url_ingest_trigger_session",
-                "UrlIngestTriggerSessionRequest"
+                "authorize_source_capture_trigger_session",
+                "SourceCaptureTriggerSessionRequest"
             ),
-            "authorize_url_ingest_trigger_session must consume UrlIngestTriggerSessionRequest",
+            "authorize_source_capture_trigger_session must consume SourceCaptureTriggerSessionRequest",
         );
         assert!(
             has_query_method_input(did, "outgoing_links", "OutgoingLinksRequest"),

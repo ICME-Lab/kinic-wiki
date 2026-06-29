@@ -15,7 +15,7 @@ const packageRoots = ["manifest.json", "icons", "offscreen", "popup/popup.css", 
 
 await rm(releaseDir, { recursive: true, force: true });
 await mkdir(stagingDir, { recursive: true });
-await writeStoreManifest();
+await writeUploadManifest();
 await copyPackageRoots();
 
 const files = [];
@@ -35,14 +35,14 @@ await rm(stagingDir, { recursive: true, force: true });
 
 console.log(`created ${zipPath}`);
 
-async function writeStoreManifest() {
+async function writeUploadManifest() {
   // Chrome Web Store assigns and signs the production ID. The manifest key is
   // only for unpacked local development and is rejected by store uploads.
-  const { key, ...storeManifest } = manifest;
+  const { key, ...uploadManifest } = manifest;
   void key;
   await writeFile(
     resolve(stagingDir, "manifest.json"),
-    `${JSON.stringify(storeManifest, null, 2)}\n`,
+    `${JSON.stringify(uploadManifest, null, 2)}\n`,
     "utf8"
   );
 }

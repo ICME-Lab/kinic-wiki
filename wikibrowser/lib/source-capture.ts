@@ -1,7 +1,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
-import { authorizeUrlIngestTriggerSession, mkdirNodeAuthenticated, writeNodeAuthenticated } from "@/lib/vfs-client";
+import { authorizeSourceCaptureTriggerSession, mkdirNodeAuthenticated, writeNodeAuthenticated } from "@/lib/vfs-client";
 
-export type CreatedUrlIngestRequest = {
+export type CreatedSourceCaptureRequest = {
   requestPath: string;
   triggered: boolean;
   triggerError: string | null;
@@ -18,11 +18,11 @@ type TriggerSessionCacheEntry = {
 
 const triggerSessionCache = new Map<string, TriggerSessionCacheEntry>();
 
-export async function createUrlIngestRequest(canisterId: string, databaseId: string, identity: Identity, url: string): Promise<CreatedUrlIngestRequest> {
+export async function createSourceCaptureRequest(canisterId: string, databaseId: string, identity: Identity, url: string): Promise<CreatedSourceCaptureRequest> {
   const normalizedUrl = normalizedHttpUrl(url);
-  const session = await ensureUrlIngestTriggerSession(canisterId, databaseId, identity);
-  const requestId = safeIngestRequestId(Date.now(), crypto.randomUUID());
-  const requestPath = `/Sources/ingest-requests/${requestId}.md`;
+  const session = await ensureSourceCaptureTriggerSession(canisterId, databaseId, identity);
+  const requestId = safeSourceCaptureRequestId(Date.now(), crypto.randomUUID());
+  const requestPath = `/Sources/source-capture-requests/${requestId}.md`;
   const requestedAt = new Date().toISOString();
   const requestedBy = identity.getPrincipal().toText();
   await ensureParentFolders(canisterId, databaseId, identity, requestPath);
@@ -32,7 +32,7 @@ export async function createUrlIngestRequest(canisterId: string, databaseId: str
     kind: "file",
     content: [
       "---",
-      "kind: kinic.url_ingest_request",
+      "kind: kinic.source_capture_request",
       "schema_version: 1",
       "status: queued",
       `url: ${JSON.stringify(normalizedUrl)}`,
@@ -45,24 +45,24 @@ export async function createUrlIngestRequest(canisterId: string, databaseId: str
       "error: null",
       "---",
       "",
-      "# URL Ingest Request",
+      "# Source Capture Request",
       ""
     ].join("\n"),
-    metadataJson: JSON.stringify({ request_type: "url_ingest", url: normalizedUrl }),
+    metadataJson: JSON.stringify({ request_type: "source_capture", url: normalizedUrl }),
     expectedEtag: null
   });
   const trigger = await triggerWorker(canisterId, databaseId, requestPath, session);
   return { requestPath, triggered: trigger.ok, triggerError: trigger.error };
 }
 
-export function safeIngestRequestId(timeMs: number, uuid: string): string {
+export function safeSourceCaptureRequestId(timeMs: number, uuid: string): string {
   const suffix = uuid.trim();
   if (!isSafeRequestSegment(suffix) || suffix.length > 96) {
-    throw new Error("URL ingest request id is invalid.");
+    throw new Error("source capture request id is invalid.");
   }
   const requestId = `${timeMs}-${suffix}`;
   if (!isSafeRequestSegment(requestId) || requestId.length > 128) {
-    throw new Error("URL ingest request id is invalid.");
+    throw new Error("source capture request id is invalid.");
   }
   return requestId;
 }
@@ -80,7 +80,7 @@ async function ensureParentFolders(canisterId: string, databaseId: string, ident
   }
 }
 
-export async function ensureUrlIngestTriggerSession(canisterId: string, databaseId: string, identity: Identity): Promise<string> {
+export async function ensureSourceCaptureTriggerSession(canisterId: string, databaseId: string, identity: Identity): Promise<string> {
   const principal = identity.getPrincipal().toText();
   const key = `${canisterId}\n${databaseId}\n${principal}`;
   const now = Date.now();
@@ -92,7 +92,7 @@ export async function ensureUrlIngestTriggerSession(canisterId: string, database
     return cached.promise;
   }
   const sessionNonce = crypto.randomUUID();
-  const promise = authorizeUrlIngestTriggerSession(canisterId, identity, { databaseId, sessionNonce })
+  const promise = authorizeSourceCaptureTriggerSession(canisterId, identity, { databaseId, sessionNonce })
     .then(() => {
       triggerSessionCache.set(key, {
         sessionNonce,
@@ -128,7 +128,7 @@ function normalizedHttpUrl(value: string): string {
 
 async function triggerWorker(canisterId: string, databaseId: string, requestPath: string, sessionNonce: string): Promise<{ ok: boolean; error: string | null }> {
   try {
-    const response = await fetch("/api/url-ingest/trigger", {
+    const response = await fetch("/api/source-capture/trigger", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ canisterId, databaseId, requestPath, sessionNonce })

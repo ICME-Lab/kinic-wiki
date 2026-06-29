@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/src/chatgpt-response.js
-// What: Convert ChatGPT conversation API responses into raw-source captures.
+// What: Convert ChatGPT conversation API responses into evidence-source captures.
 // Why: Direct API export needs stable mapping/current_node conversion.
 import { appendLimitedMessage } from "./conversation-limits.js";
 

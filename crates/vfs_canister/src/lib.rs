@@ -43,9 +43,8 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
-    DatabaseMember, DatabaseMetadata, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
+    DatabaseIdRequest, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
@@ -57,11 +56,12 @@ use vfs_types::{
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult, UpdateDatabaseMetadataRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1084,133 +1084,6 @@ fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
 }
 
 #[update]
-fn begin_database_archive(database_id: String) -> Result<DatabaseArchiveInfo, String> {
-    with_role_metered_update(
-        "begin_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| service.begin_database_archive(&database_id, caller, now),
-    )
-}
-
-#[query]
-fn read_database_archive_chunk(
-    database_id: String,
-    offset: u64,
-    max_bytes: u32,
-) -> Result<DatabaseArchiveChunk, String> {
-    with_service(|service| {
-        service
-            .read_database_archive_chunk(&database_id, &caller_text(), offset, max_bytes)
-            .map(|bytes| DatabaseArchiveChunk { bytes })
-    })
-}
-
-#[update]
-fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Result<(), String> {
-    with_role_metered_update(
-        "finalize_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta =
-                service.finalize_database_archive(&database_id, caller, snapshot_hash, now)?;
-            unmount_database_file(&meta.db_file_name);
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn cancel_database_archive(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "cancel_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            service.cancel_database_archive(&database_id, caller, now)?;
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn begin_database_restore(
-    database_id: String,
-    snapshot_hash: Vec<u8>,
-    size_bytes: u64,
-) -> Result<(), String> {
-    with_role_metered_update(
-        "begin_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let restore = service.begin_database_restore_session(
-                &database_id,
-                caller,
-                snapshot_hash,
-                size_bytes,
-                now,
-            )?;
-            if let Err(error) = mount_database_file(&restore.meta) {
-                service
-                    .rollback_database_restore_begin(restore.rollback, now)
-                    .map_err(|rollback_error| {
-                        format!("{error}; restore rollback failed: {rollback_error}")
-                    })?;
-                return Err(error);
-            }
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<(), String> {
-    let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_database_restore_chunk",
-        Some(database_id),
-        RequiredRole::Owner,
-        |service, caller, _now| {
-            service.write_database_restore_chunk(
-                &request.database_id,
-                caller,
-                request.offset,
-                &request.bytes,
-            )
-        },
-    )
-}
-
-#[update]
-fn finalize_database_restore(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "finalize_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta = service.finalize_database_restore(&database_id, caller, now)?;
-            mount_database_file(&meta)
-        },
-    )
-}
-
-#[update]
-fn cancel_database_restore(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "cancel_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta = service.cancel_database_restore(&database_id, caller, now)?;
-            unmount_database_file(&meta.db_file_name);
-            Ok(())
-        },
-    )
-}
-
-#[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(
@@ -1246,23 +1119,25 @@ fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, Strin
 }
 
 #[update]
-fn authorize_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionRequest,
+fn authorize_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(
-        "authorize_url_ingest_trigger_session",
+        "authorize_source_capture_trigger_session",
         Some(database_id),
         RequiredRole::Writer,
-        |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
+        |service, caller, now| {
+            service.authorize_source_capture_trigger_session(caller, request, now)
+        },
     )
 }
 
 #[query]
-fn check_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionCheckRequest,
+fn check_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionCheckRequest,
 ) -> Result<(), String> {
-    with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
+    with_service(|service| service.check_source_capture_trigger_session(request, now_millis()))
 }
 
 #[query]
@@ -2519,11 +2394,11 @@ fn normalize_candid_interface(interface: String) -> String {
     );
     let normalized = normalize_candid_method_input(
         &normalized,
-        "authorize_url_ingest_trigger_session",
+        "authorize_source_capture_trigger_session",
         "OpsAnswerSessionRequest",
-        "UrlIngestTriggerSessionRequest",
+        "SourceCaptureTriggerSessionRequest",
     );
-    ensure_url_ingest_trigger_session_request(ensure_update_database_metadata_request(
+    ensure_source_capture_trigger_session_request(ensure_update_database_metadata_request(
         ensure_outgoing_links_request(normalized),
     ))
 }
@@ -2571,18 +2446,18 @@ fn ensure_update_database_metadata_request(interface: String) -> String {
         return interface;
     }
     interface.replace(
-        "type DatabaseArchiveChunk = record {",
-        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; title : text; description : text; database_id : text; tags_json : text };\ntype DatabaseArchiveChunk = record {",
+        "type DatabaseMember = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; title : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
     )
 }
 
-fn ensure_url_ingest_trigger_session_request(interface: String) -> String {
-    if interface.contains("type UrlIngestTriggerSessionRequest = record {") {
+fn ensure_source_capture_trigger_session_request(interface: String) -> String {
+    if interface.contains("type SourceCaptureTriggerSessionRequest = record {") {
         return interface;
     }
     interface.replace(
         "type WriteNodeItem = record {",
-        "type UrlIngestTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
+        "type SourceCaptureTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
     )
 }
 

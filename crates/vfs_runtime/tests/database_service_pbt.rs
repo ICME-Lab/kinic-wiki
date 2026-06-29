@@ -1,11 +1,8 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt.rs
-// What: Property tests for database cycles and lifecycle operation sequences.
-// Why: Randomized state-machine checks catch partial updates across balances, status, and mounts.
-use std::path::{Path, PathBuf};
-
+// What: Property tests for database cycles operation sequences.
+// Why: Randomized state-machine checks catch partial updates across balances and mounts.
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
-use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
 use vfs_runtime::{VfsService, cycles_for_payment_amount_e8s};
 use vfs_types::DatabaseStatus;
@@ -17,22 +14,16 @@ const INITIAL_DATABASE_PAYMENT_E8S: u64 = 1_000;
 enum RuntimeOp {
     PurchaseDatabaseCycles { amount: u64 },
     Charge { cycles_delta: u128 },
-    ArchiveFinalize,
-    RestoreArchived,
 }
 
 #[derive(Debug)]
 struct Model {
     database_cycles: u64,
     status: DatabaseStatus,
-    archive_bytes: Option<Vec<u8>>,
-    archive_hash: Option<Vec<u8>>,
-    archive_size: Option<u64>,
 }
 
 struct TestService {
     service: VfsService,
-    root: PathBuf,
     _dir: TempDir,
 }
 
@@ -51,8 +42,6 @@ fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
     prop_oneof![
         4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::PurchaseDatabaseCycles { amount }),
         4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
-        2 => Just(RuntimeOp::ArchiveFinalize),
-        2 => Just(RuntimeOp::RestoreArchived),
     ]
 }
 
@@ -63,11 +52,8 @@ fn service_with_root() -> TestService {
     service
         .run_index_migrations()
         .expect("index migrations should run");
-    TestService {
-        service,
-        root,
-        _dir: dir,
-    }
+    let _ = root;
+    TestService { service, _dir: dir }
 }
 
 fn create_seeded_database(service: &VfsService) -> (String, u64) {
@@ -126,40 +112,6 @@ fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus,
     (info.status, info.mount_id)
 }
 
-fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<u8>, Vec<u8>, u64) {
-    let archive = service
-        .begin_database_archive(database_id, OWNER, 10_000)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk(database_id, OWNER, 0, archive.size_bytes as u32)
-        .expect("archive bytes should read");
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-    let hash = Sha256::digest(&bytes).to_vec();
-
-    let wrong_hash = vec![1_u8; 32];
-    if wrong_hash != hash {
-        assert!(
-            service
-                .finalize_database_archive(database_id, OWNER, wrong_hash, 10_001)
-                .is_err(),
-            "wrong archive hash must fail"
-        );
-        assert_eq!(
-            status_and_mount(service, database_id).0,
-            DatabaseStatus::Archiving
-        );
-    }
-
-    service
-        .finalize_database_archive(database_id, OWNER, hash.clone(), 10_002)
-        .expect("archive should finalize");
-    assert!(
-        root.join("databases").exists(),
-        "database root should survive archive"
-    );
-    (bytes, hash, archive.size_bytes)
-}
-
 fn charge_amount(cycles_delta: u128) -> u64 {
     u64::try_from(cycles_delta).expect("generated charge fits u64")
 }
@@ -194,7 +146,6 @@ fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
 
 fn apply_operation(
     service: &VfsService,
-    root: &Path,
     database_id: &str,
     model: &mut Model,
     operation: RuntimeOp,
@@ -232,69 +183,6 @@ fn apply_operation(
             let charge = model.database_cycles.min(charge_amount(cycles_delta));
             model.database_cycles -= charge;
         }
-        RuntimeOp::ArchiveFinalize => {
-            if model.status == DatabaseStatus::Active {
-                let (bytes, hash, size) = database_bytes(root, service, database_id);
-                model.status = DatabaseStatus::Archived;
-                model.archive_bytes = Some(bytes);
-                model.archive_hash = Some(hash);
-                model.archive_size = Some(size);
-            } else {
-                assert!(
-                    service
-                        .begin_database_archive(database_id, OWNER, step)
-                        .is_err()
-                );
-            }
-        }
-        RuntimeOp::RestoreArchived => {
-            if matches!(model.status, DatabaseStatus::Archived) {
-                let (Some(bytes), Some(hash), Some(size)) = (
-                    model.archive_bytes.as_ref(),
-                    model.archive_hash.as_ref(),
-                    model.archive_size,
-                ) else {
-                    return;
-                };
-                let bytes = bytes.clone();
-                let hash = hash.clone();
-                service
-                    .begin_database_restore(database_id, OWNER, hash, size, step)
-                    .expect("restore should begin");
-                assert_eq!(
-                    status_and_mount(service, database_id).0,
-                    DatabaseStatus::Restoring
-                );
-                assert!(
-                    service
-                        .finalize_database_restore(database_id, OWNER, step + 1)
-                        .is_err(),
-                    "incomplete restore must fail"
-                );
-                let split_at = bytes.len() / 2;
-                service
-                    .write_database_restore_chunk(
-                        database_id,
-                        OWNER,
-                        split_at as u64,
-                        &bytes[split_at..],
-                    )
-                    .expect("tail restore chunk should write");
-                service
-                    .write_database_restore_chunk(database_id, OWNER, 0, &bytes[..split_at])
-                    .expect("head restore chunk should write");
-                service
-                    .finalize_database_restore(database_id, OWNER, step + 2)
-                    .expect("restore should finalize");
-                model.status = DatabaseStatus::Active;
-            } else if !matches!(model.status, DatabaseStatus::Archived) {
-                assert!(
-                    service
-                        .begin_database_restore(database_id, OWNER, vec![1_u8; 32], 1, step)
-                        .is_err()
-                );
-            }
-        }
     }
 }
 
@@ -309,16 +197,12 @@ proptest! {
         let mut model = Model {
             database_cycles: initial_cycles,
             status: DatabaseStatus::Active,
-            archive_bytes: None,
-            archive_hash: None,
-            archive_size: None,
         };
 
         assert_invariants(service, &database_id, &model);
         for (index, operation) in operations.into_iter().enumerate() {
             apply_operation(
                 service,
-                &env.root,
                 &database_id,
                 &mut model,
                 operation,

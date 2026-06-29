@@ -13,7 +13,7 @@ use crate::github_ingest::run_github_command;
 use crate::hermes::run_hermes_command;
 use crate::maintenance::{rebuild_index, rebuild_scope_index};
 use crate::mcp::run_mcp_stdio_server;
-use crate::purge_url_ingest::purge_url_ingest;
+use crate::purge_source_capture::purge_source_capture;
 use crate::skill_registry::run_skill_command;
 use anyhow::{Result, anyhow};
 use vfs_cli::commands::{database_id_or_env, run_vfs_command};
@@ -126,14 +126,14 @@ pub async fn run_command(
                 );
             }
         }
-        Command::PurgeUrlIngest {
+        Command::PurgeSourceCapture {
             url,
             source_path,
             yes,
             force_target_prefix,
             json,
         } => {
-            purge_url_ingest(
+            purge_source_capture(
                 client,
                 require_database_id(database_id)?,
                 url.as_deref(),

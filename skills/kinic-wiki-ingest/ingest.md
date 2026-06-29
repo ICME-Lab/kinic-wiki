@@ -2,17 +2,17 @@
 
 ## Goal
 
-Turn raw source material into review-ready wiki updates under the canister-backed llm-wiki model.
+Turn evidence source material into review-ready wiki updates under the canister-backed llm-wiki model.
 
 ## Workflow
 
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
-3. Decide whether the source should also be persisted under `/Sources/<provider>/...`.
-4. Read existing knowledge context with `read-node-context` by starting from `/Knowledge/index.md` and the canonical role-matched notes before broad search.
-   - If `/Knowledge/index.md` is missing and the workflow will create or reorganize knowledge pages, create or repair it before stopping.
+3. Decide whether the source should also be persisted under `/Sources/...`.
+4. Read existing wiki context with `read-node-context` by starting from `/Knowledge/index.md` and the canonical role-matched notes before broad search.
+   - If `/Knowledge/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
-   - For wiki-only inspection or edits, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless raw source material is explicitly needed.
+   - For wiki-only inspection or edits, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless evidence source material is explicitly needed.
 6. Choose the minimum coherent set of pages to update.
 7. Edit `/Knowledge/...` directly through `kinic-vfs-cli` remote VFS commands.
    - Authenticated CLI writes default to Internet Identity via `icp identity default`.
@@ -30,7 +30,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 Use this workflow only when the user explicitly asks for scoped structure, repairing a thin benchmark import, or converting raw notes into a compounding LLM Wiki.
 
 1. Identify the scope root, for example `/Knowledge/<scope>`, and list existing pages under it before writing.
-2. Confirm raw sources live under `/Sources/<provider>/...`; do not move or rewrite raw source nodes during scope setup.
+2. Confirm evidence sources live under `/Sources/...`; do not move or rewrite evidence source nodes during scope setup.
 3. Create or update only the scope-level pages the scoped structure needs:
    - `index.md`: optional scoped catalog and navigation entry point.
    - `overview.md`: optional corpus-level synthesis and reading guide.
@@ -40,7 +40,7 @@ Use this workflow only when the user explicitly asks for scoped structure, repai
 4. Do not stop with a missing `/Knowledge/index.md`; the root catalog is required.
 5. Keep any scoped `index.md` compact. Link to overview, schema, log, topic pages, and important child pages instead of embedding the full synthesis.
 6. Put corpus-wide meaning in `overview.md`, topic-level synthesis in `topics/*.md`, and source/conversation recap in each child `summary.md`.
-7. When regenerating `summary.md`, read the raw source path and existing `events.md`, `plans.md`, `open_questions.md`, and `provenance.md` first. Write recap, outcome, important decisions, unresolved points, and source links; do not promote exact stable facts into summary.
+7. When regenerating `summary.md`, read the evidence source path and existing `events.md`, `plans.md`, `open_questions.md`, and `provenance.md` first. Write recap, outcome, important decisions, unresolved points, and source links; do not promote exact stable facts into summary.
 8. Use source path-level evidence links by default unless the user asks for turn, line, or claim-level provenance.
 9. After setup, append one `log.md` entry when a log page exists, and update `/Knowledge/index.md`. Rebuild a scope index only when that scoped `index.md` is intended.
 
@@ -48,8 +48,8 @@ Use this workflow only when the user explicitly asks for scoped structure, repai
 
 Use this workflow when turning one raw conversation source into wiki material.
 
-1. Confirm the raw source lives at `/Sources/<provider>/<id>.md`; do not move or rewrite it during synthesis.
-2. Read the full raw source and any existing knowledge page that already cites the same source.
+1. Confirm the evidence source lives at `/Sources/<provider>/<id>.md`; do not move or rewrite it during synthesis.
+2. Read the full evidence source and any existing wiki page that already cites the same source.
 3. Let the LLM choose a concrete, content-specific title from the conversation. Do not use the opaque `source_id` as the public page title unless it is the only meaningful identifier.
 4. Default to one flat page at `/Knowledge/<llm-generated-title>.md`.
 5. In that page, include only the sections that the source actually supports: `Summary`, `Key Facts`, `Decisions`, `Open Questions`, `Follow-ups`, and `Provenance`.
@@ -60,22 +60,22 @@ Use this workflow when turning one raw conversation source into wiki material.
 
 ## Bulk Source Ingest
 
-Use this workflow when ingesting many local files, for example 10 or more raw sources.
+Use this workflow when ingesting many local files, for example 10 or more evidence sources.
 
-1. Normalize every raw source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
-2. Build the full write set before mutating remote state: raw sources, knowledge pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
+1. Normalize every evidence source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
+2. Build the full write set before mutating remote state: evidence sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
 3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
 4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
 
-For bulk repair of existing knowledge nodes without new source material, use `kinic-wiki-edit` instead of this ingest workflow.
+For bulk repair of existing wiki nodes without new source material, use `kinic-wiki-edit` instead of this ingest workflow.
 
 ## Working Rules
 
 - Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, trust model, and current role mapping.
 - Runtime `facts.md` extraction policy follows [docs/STORE_API.md](../../docs/STORE_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
-- Treat local `Wiki/` content as the human review surface.
+- Treat local `/Knowledge/...` content as the human review surface.
 - Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Knowledge/...` is ready.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
@@ -95,7 +95,7 @@ For bulk repair of existing knowledge nodes without new source material, use `ki
 - Prefer one short fact clause per settled value when possible so later query workflows can extract the value without scanning a long recap paragraph.
 - When old and new values both appear in source material, make the current value explicit in `facts.md` instead of leaving only the historical progression in `events.md` or `plans.md`.
 - When ingesting PRs, diffs, review comments, or implementation notes, compress them into decisions, rationale, verification, follow-up, and open questions instead of copying code bodies.
-- Treat repo file paths as `Source of Truth` pointers for code notes. Do not turn knowledge pages into copied implementation references.
+- Treat repo file paths as `Source of Truth` pointers for code notes. Do not turn wiki pages into copied implementation references.
 - Do not persist long diffs, generated docs, schema dumps, or code blocks as wiki knowledge unless the user explicitly asks for a short illustrative example.
 - Keep existing `log.md` pages in sync with every page mutation.
 - Keep `log.md` append-only so recent context can be read with `tail -n 5`.
@@ -120,9 +120,9 @@ For bulk repair of existing knowledge nodes without new source material, use `ki
 
 ## Repo Contract
 
-- Raw source write path: `/Sources/<provider>/<id>.md`
-- Raw source append path: `/Sources/<provider>/<id>.md`
-- Default conversation knowledge path: `/Knowledge/<llm-generated-title>.md`
+- Evidence source write path: `/Sources/<provider>/<id>.md`
+- Evidence source append path: `/Sources/<provider>/<id>.md`
+- Default conversation wiki path: `/Knowledge/<llm-generated-title>.md`
 - Wiki target root: `/Knowledge/...`
 - Preferred primitives:
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
@@ -144,9 +144,9 @@ For bulk repair of existing knowledge nodes without new source material, use `ki
 
 Prefer one of these outputs:
 
-- review-ready knowledge page updates
+- review-ready wiki page updates
 - a page map and update plan before writing
-- persisted raw source plus linked wiki updates
+- persisted evidence source plus linked wiki updates
 
 When useful, also provide:
 

@@ -11,7 +11,7 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
-const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|ingest-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
+const sourcePathCandidatePattern = /\/Sources\/[^\s`)\]]+\.md/gu;
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";
@@ -28,11 +28,11 @@ export function collectLintHints(path: string, content: string): LintHint[] {
   if (role === "preferences.md") {
     hints.push(...findLineHints(content, /\b(todo|next action|deadline|scheduled)\b/i, "Possible action item", "preferences.md should hold decision criteria and choices; pending work belongs in plans.md."));
   }
-  if (role === "provenance.md" && !sourcePathPattern.test(content)) {
+  if (role === "provenance.md" && sourcePathsIn(content).length === 0) {
     hints.push({
       severity: "warning",
       title: "Missing raw source path",
-      detail: "provenance.md should link organized wiki content back to /Sources/<provider> evidence.",
+      detail: "provenance.md should link organized wiki content back to /Sources evidence.",
       line: null,
       preview: null
     });
@@ -85,17 +85,18 @@ function findCodeNoteHints(path: string, content: string): LintHint[] {
 
 export function rawSourceLinksFor(path: string, content: string): string[] {
   const links = new Set<string>();
-  if (sourcePathPattern.test(path)) {
+  if (isSourceRootPath(path)) {
     links.add(path);
   }
   if (path.endsWith("/provenance.md")) {
     for (const line of content.split("\n")) {
-      const sourcePath = line.match(sourcePathPattern)?.[0];
-      if (sourcePath) links.add(sourcePath);
+      for (const sourcePath of sourcePathsIn(line)) {
+        links.add(sourcePath);
+      }
     }
   }
-  for (const match of content.matchAll(new RegExp(sourcePathPattern.source, "g"))) {
-    links.add(match[0]);
+  for (const sourcePath of sourcePathsIn(content)) {
+    links.add(sourcePath);
   }
   return [...links].slice(0, 8);
 }
@@ -117,6 +118,22 @@ function isCodeNote(path: string, content: string): boolean {
 
 function hasDecisionContext(content: string): boolean {
   return /(^|\n)##\s+(Why|Verification|Current Decision)\b/i.test(content);
+}
+
+function sourcePathsIn(content: string): string[] {
+  const links = new Set<string>();
+  for (const match of content.matchAll(sourcePathCandidatePattern)) {
+    const sourcePath = match[0];
+    if (isSourceRootPath(sourcePath)) links.add(sourcePath);
+  }
+  return [...links];
+}
+
+function isSourceRootPath(path: string): boolean {
+  const prefix = "/Sources/";
+  if (!path.startsWith(prefix)) return false;
+  const parts = path.slice(prefix.length).split("/");
+  return parts.every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 function firstLineOf(content: string, needle: string): number {

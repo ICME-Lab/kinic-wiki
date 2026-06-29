@@ -2266,6 +2266,7 @@ fn is_protected_root_folder(path: &str) -> bool {
             | "/Sources"
             | "/Sources/sessions"
             | "/Sources/skill-runs"
+            | "/Sources/source-capture-requests"
     )
 }
 
