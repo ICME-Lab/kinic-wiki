@@ -1,7 +1,6 @@
 // Where: crates/wiki_domain/src/lib.rs
 // What: Wiki-specific path validation layered on top of the reusable VFS.
 // Why: `/Knowledge` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
-use vfs_types::NodeKind;
 
 pub const WIKI_ROOT_PATH: &str = "/Knowledge";
 pub const WIKI_INDEX_PATH: &str = "/Knowledge/index.md";
@@ -16,24 +15,6 @@ pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
 const MAX_SOURCE_ID_LEN: usize = 128;
 const RESERVED_SOURCE_PROVIDERS: &[&str] = &["raw", "sessions", "skill-runs", "ingest-requests"];
-
-pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
-    let is_source_path = is_knowledge_source_path_candidate(path)
-        || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX)
-        || path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX);
-    if *kind == NodeKind::Folder {
-        return Ok(());
-    }
-    if *kind != NodeKind::Source {
-        if is_source_path {
-            return Err(format!(
-                "source path must use source kind under {KNOWLEDGE_SOURCES_PREFIX}/<provider>, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
-            ));
-        }
-        return Ok(());
-    }
-    validate_canonical_source_path(path)
-}
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
     if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
@@ -133,16 +114,6 @@ pub fn validate_knowledge_source_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_knowledge_source_path_candidate(path: &str) -> bool {
-    let Some(relative) = path.strip_prefix(&format!("{KNOWLEDGE_SOURCES_PREFIX}/")) else {
-        return false;
-    };
-    let Some(provider) = relative.split('/').next() else {
-        return false;
-    };
-    !matches!(provider, "sessions" | "skill-runs" | "ingest-requests")
-}
-
 fn is_safe_source_segment(value: &str) -> bool {
     if value.len() > MAX_SOURCE_ID_LEN || value.contains("..") {
         return false;
@@ -198,12 +169,9 @@ fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use vfs_types::NodeKind;
-
     use super::{
         KNOWLEDGE_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, normalize_wiki_remote_path,
-        validate_canonical_source_path, validate_knowledge_source_path,
-        validate_source_path_for_kind, wiki_relative_path,
+        validate_canonical_source_path, validate_knowledge_source_path, wiki_relative_path,
     };
 
     #[test]
@@ -288,15 +256,6 @@ mod tests {
         let error = validate_canonical_source_path("/Sources/sessions/session-1/session-1.md")
             .expect_err("old session source shape should fail");
         assert!(error.contains("canonical form"));
-    }
-
-    #[test]
-    fn skill_runs_prefix_requires_source_kind() {
-        let path = format!("{SKILL_RUNS_PREFIX}/legal-review/1700000000000.md");
-        let error = validate_source_path_for_kind(&path, &NodeKind::File)
-            .expect_err("skill run source path should reject file kind");
-        assert!(error.contains("source kind"));
-        assert!(validate_source_path_for_kind(&path, &NodeKind::Source).is_ok());
     }
 
     #[test]

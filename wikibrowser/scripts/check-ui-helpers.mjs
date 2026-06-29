@@ -54,7 +54,9 @@ const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta
 assert.match(explorerTreeSource, /childNodesCache\.current\.get\(requestKey\)/);
 assert.match(explorerTreeSource, /childNodesCache\.current\.set\(requestKey, data\)/);
 assert.match(explorerTreeSource, /visibleChildren\(childrenState\.data\)/);
-assert.match(explorerTreeSource, /STORE_ROOT_PATHS\.map/);
+assert.match(explorerTreeSource, /DEFAULT_STORE_ROOT_PATHS\.map/);
+assert.match(explorerTreeSource, /listChildren\(canisterId, databaseId, "\/"/);
+assert.match(explorerTreeSource, /STORE_ROOT_PATH_SET\.has\(child\.path\)/);
 assert.match(explorerTreeSource, /onSelectedNode/);
 assert.doesNotMatch(explorerTreeSource, /onCreateMarkdownFile/);
 assert.doesNotMatch(explorerTreeSource, /onDeleteMarkdownNode/);

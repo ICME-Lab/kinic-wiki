@@ -7,6 +7,11 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
+use crate::connection::{
+    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
+    unlink_workspace_database, workspace_config_path,
+};
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -20,13 +25,6 @@ use vfs_types::{
     MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
     SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
     kinic_base_units_per_token,
-};
-use wiki_domain::validate_source_path_for_kind;
-
-use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
-use crate::connection::{
-    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
-    unlink_workspace_database, workspace_config_path,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -140,7 +138,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            validate_source_path_for_write(&path, kind.to_node_kind())?;
             let result = client
                 .write_node(WriteNodeRequest {
                     database_id: database_id.to_string(),
@@ -159,9 +156,6 @@ pub async fn run_vfs_command(
         }
         VfsCommand::WriteNodes { input, json } => {
             let nodes = read_write_nodes_file(&input)?;
-            for node in &nodes {
-                validate_source_path_for_write(&node.path, node.kind.clone())?;
-            }
             let results = client
                 .write_nodes(WriteNodesRequest {
                     database_id: database_id.to_string(),
@@ -189,9 +183,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            if let Some(kind_arg) = kind {
-                validate_source_path_for_write(&path, kind_arg.to_node_kind())?;
-            }
             let result = client
                 .append_node(AppendNodeRequest {
                     database_id: database_id.to_string(),
@@ -290,10 +281,6 @@ pub async fn run_vfs_command(
             overwrite,
             json,
         } => {
-            if let Some(current) = client.read_node(database_id, &from_path).await? {
-                validate_source_path_for_kind(&to_path, &current.kind)
-                    .map_err(anyhow::Error::msg)?;
-            }
             let result = client
                 .move_node(MoveNodeRequest {
                     database_id: database_id.to_string(),
@@ -1386,10 +1373,6 @@ async fn delete_tree(client: &impl VfsApi, database_id: &str, path: &str) -> Res
     Ok(deleted_paths)
 }
 
-fn validate_source_path_for_write(path: &str, kind: vfs_types::NodeKind) -> Result<()> {
-    validate_source_path_for_kind(path, &kind).map_err(anyhow::Error::msg)
-}
-
 fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
     let content = fs::read_to_string(path)?;
     serde_json::from_str(&content).map_err(Into::into)
@@ -2115,7 +2098,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_nodes_rejects_invalid_source_path() {
+    async fn write_nodes_allows_source_kind_without_path_schema() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
@@ -2124,16 +2107,18 @@ mod tests {
         )
         .expect("input should write");
         let client = MockClient::default();
-        let error = run_vfs_command(
+        run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::WriteNodes { input, json: true },
         )
         .await
-        .expect_err("invalid source path should fail");
+        .expect("source kind should not be schema-gated by CLI");
 
-        assert!(error.to_string().contains("source path must stay under"));
-        assert!(client.write_batches.lock().unwrap().is_empty());
+        let batches = client.write_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].nodes[0].path, "/Knowledge/source.md");
+        assert_eq!(batches[0].nodes[0].kind, NodeKind::Source);
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
-import { sourceIdFromPath, validateCanonicalSourcePath } from "./source-path.js";
+import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
@@ -30,7 +30,7 @@ type ExternalCostGateInput = {
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
-  validateCanonicalSourcePath(input.sourcePath, config.sourcePrefix);
+  validateSourceRootPath(input.sourcePath, config.sourcePrefix);
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, input.databaseId, input.sourcePath);
   if (source.etag !== input.sourceEtag) {
@@ -103,7 +103,7 @@ export async function processSourceQueueMessageForTest(
 
 async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: { config: WorkerConfig; vfs: VfsClient }): Promise<void> {
   const config = context?.config ?? loadConfig(env);
-  validateCanonicalSourcePath(message.sourcePath, config.sourcePrefix);
+  validateSourceRootPath(message.sourcePath, config.sourcePrefix);
   const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
   if (shouldSkipJob(job, message.sourceEtag)) {
     return;
@@ -339,14 +339,14 @@ async function loadContext(vfs: VfsClient, databaseId: string, source: WikiNode,
   const query = contextQuery(source.content, source.path);
   if (!query) return [];
   const hits = await vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
-  return rankContextHits(hits);
+  return rankContextHits(hits, config.sourcePrefix);
 }
 
-export function rankContextHits(hits: SearchNodeHit[]): SearchNodeHit[] {
+export function rankContextHits(hits: SearchNodeHit[], sourcePrefix: string): SearchNodeHit[] {
   const primary: SearchNodeHit[] = [];
   const sources: SearchNodeHit[] = [];
   for (const hit of hits) {
-    if (hit.path === "/Sources" || hit.path.startsWith("/Sources/")) {
+    if (hit.path === sourcePrefix || hit.path.startsWith(`${sourcePrefix}/`)) {
       sources.push(hit);
     } else {
       primary.push(hit);

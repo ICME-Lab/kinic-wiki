@@ -105,16 +105,10 @@ function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
   if (typeof canisterId !== "string" || !canisterId) return "canisterId is required";
   if (typeof databaseId !== "string" || !databaseId) return "databaseId is required";
   if (typeof sourcePath !== "string" || !sourcePath) return "sourcePath is required";
-  if (!isCanonicalSourcePath(sourcePath)) return "sourcePath must use /Sources/<provider>/<id>.md";
   if (typeof sourceEtag !== "string" || !sourceEtag) return "sourceEtag is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
   return { canisterId, databaseId, sourcePath, sourceEtag, sessionNonce };
-}
-
-function isCanonicalSourcePath(path: string): boolean {
-  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return !!match && !["raw", "sessions", "skill-runs", "ingest-requests"].includes(match[1]) && !match[2].includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

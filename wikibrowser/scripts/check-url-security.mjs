@@ -120,31 +120,6 @@ await withEnv(
     });
     triggerRouteModule.setUrlIngestTriggerDepsForTest();
 
-    const invalidSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web-abc/web-abc.md" })
-    );
-    assert.equal(invalidSourcePath.status, 400);
-
-    const oldRawSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/abc.md" })
-    );
-    assert.equal(oldRawSourcePath.status, 400);
-
-    const reservedSessionSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/sessions/abc.md" })
-    );
-    assert.equal(reservedSessionSourcePath.status, 400);
-
-    const traversalSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/../...md" })
-    );
-    assert.equal(traversalSourcePath.status, 400);
-
-    const dotdotSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web/a..b.md" })
-    );
-    assert.equal(dotdotSourcePath.status, 400);
-
     const missingSourceSessionNonce = await sourceRunRouteModule.POST(
       sourceRunRequest("https://kinic.xyz", { sessionNonce: "" })
     );
@@ -209,6 +184,28 @@ await withEnv(
     await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
       const response = await sourceRunRouteModule.POST(
         sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/123/abc.md" })
+      );
+      assert.equal(response.status, 202);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.equal(input.sourcePath, "/Sources/raw/web/036551bb7a7a1fcd.md");
+      }
+    });
+    await withMockFetch(async (_input, init) => {
+      assert.deepEqual(JSON.parse(init?.body), {
+        databaseId: "db_1",
+        sourcePath: "/Sources/raw/web/036551bb7a7a1fcd.md",
+        sourceEtag: "etag-source",
+        sessionNonce: "session-1",
+        dryRun: false
+      });
+      return Response.json({ queued: true }, { status: 202 });
+    }, async () => {
+      const response = await sourceRunRouteModule.POST(
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/raw/web/036551bb7a7a1fcd.md" })
       );
       assert.equal(response.status, 202);
     });
