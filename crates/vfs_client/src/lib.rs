@@ -14,7 +14,7 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
     DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DatabaseMember, DatabaseMetadata, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
@@ -24,9 +24,9 @@ use vfs_types::{
     MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -42,11 +42,16 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _title: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
-    async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-        Err(anyhow!("rename_database is not implemented by this client"))
+    async fn update_database_metadata(
+        &self,
+        _request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        Err(anyhow!(
+            "update_database_metadata is not implemented by this client"
+        ))
     }
     async fn purchase_database_cycles(
         &self,
@@ -537,28 +542,24 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, title: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
-                    name: name.to_string(),
+                    title: title.to_string(),
                 },
             )
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn rename_database(&self, database_id: &str, name: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update(
-                "rename_database",
-                &RenameDatabaseRequest {
-                    database_id: database_id.to_string(),
-                    name: name.to_string(),
-                },
-            )
-            .await?;
+    async fn update_database_metadata(
+        &self,
+        request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        let result: Result<DatabaseMetadata, String> =
+            self.update("update_database_metadata", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

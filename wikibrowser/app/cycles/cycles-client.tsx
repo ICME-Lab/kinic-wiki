@@ -152,7 +152,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
               <option value="">Select a database</option>
               {fundableDatabases.map((database) => (
                 <option key={database.databaseId} value={database.databaseId}>
-                  {database.name} · {database.status} · {databaseCyclesView(database, cyclesConfig).summary}
+                  {database.metadata.title} · {database.status} · {databaseCyclesView(database, cyclesConfig).summary}
                 </option>
               ))}
             </select>

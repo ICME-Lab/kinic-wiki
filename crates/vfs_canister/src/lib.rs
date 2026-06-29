@@ -45,8 +45,8 @@ use vfs_types::{
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
     DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseMember, DatabaseMetadata, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
@@ -56,9 +56,9 @@ use vfs_types::{
     MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult, UpdateDatabaseMetadataRequest,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -411,24 +411,24 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
+        let meta = service.reserve_pending_generated_database(&request.title, caller, now)?;
         Ok(CreateDatabaseResult {
             database_id: meta.database_id,
-            name: meta.name,
+            title: meta.metadata.title,
         })
     })
 }
 
 #[update]
-fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
+fn update_database_metadata(
+    request: UpdateDatabaseMetadataRequest,
+) -> Result<DatabaseMetadata, String> {
     let database_id = request.database_id.clone();
     with_role_unmetered_update(
-        "rename_database",
+        "update_database_metadata",
         Some(database_id),
         RequiredRole::Owner,
-        |service, caller, now| {
-            service.rename_database(&request.database_id, caller, &request.name, now)
-        },
+        |service, caller, now| service.update_database_metadata(caller, request, now),
     )
 }
 
@@ -549,12 +549,20 @@ fn icrc21_canister_call_consent_message(
                 Err(error) => return icrc21_unsupported(error),
             };
             let listing = validation.listing;
+            let listing_title = match with_service(|service| {
+                service
+                    .market_get_listing(&payer, &listing.listing_id)
+                    .map(|detail| detail.listing.database_metadata.title)
+            }) {
+                Ok(title) => title,
+                Err(error) => return icrc21_unsupported(error),
+            };
             let access_principal = validation.request.access_principal;
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
                     "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nSeller payout principal: `{payout}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
-                    listing_title = listing.title,
+                    listing_title = listing_title,
                     database_id = listing.database_id,
                     payment = format_e8s(purchase.price_e8s),
                     fee = format_e8s(KINIC_LEDGER_FEE_E8S),
@@ -2511,17 +2519,11 @@ fn normalize_candid_interface(interface: String) -> String {
     );
     let normalized = normalize_candid_method_input(
         &normalized,
-        "rename_database",
-        "CreateDatabaseResult",
-        "RenameDatabaseRequest",
-    );
-    let normalized = normalize_candid_method_input(
-        &normalized,
         "authorize_url_ingest_trigger_session",
         "OpsAnswerSessionRequest",
         "UrlIngestTriggerSessionRequest",
     );
-    ensure_url_ingest_trigger_session_request(ensure_rename_database_request(
+    ensure_url_ingest_trigger_session_request(ensure_update_database_metadata_request(
         ensure_outgoing_links_request(normalized),
     ))
 }
@@ -2564,13 +2566,13 @@ fn ensure_outgoing_links_request(interface: String) -> String {
     )
 }
 
-fn ensure_rename_database_request(interface: String) -> String {
-    if interface.contains("type RenameDatabaseRequest = record {") {
+fn ensure_update_database_metadata_request(interface: String) -> String {
+    if interface.contains("type UpdateDatabaseMetadataRequest = record {") {
         return interface;
     }
     interface.replace(
         "type DatabaseArchiveChunk = record {",
-        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseArchiveChunk = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; title : text; description : text; database_id : text; tags_json : text };\ntype DatabaseArchiveChunk = record {",
     )
 }
 

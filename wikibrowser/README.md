@@ -20,11 +20,11 @@ http://localhost:3010/<database-id>/Knowledge
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-title>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success. The Browser create dialog collects the database name and uses the shared four-store layout.
+`database create <database-title>` creates a generated database ID and prints it on success. The Browser create dialog collects the database title and uses the shared four-store layout.
 `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash

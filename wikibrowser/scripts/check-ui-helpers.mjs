@@ -80,7 +80,7 @@ assert.match(wikiBrowserSource, /<Share2 aria-hidden size=\{18\} \/>/);
 assert.match(wikiBrowserSource, /sr-only sm:not-sr-only/);
 assert.match(wikiBrowserSource, /Share2/);
 assert.match(wikiBrowserSource, /xShareDatabaseHref/);
-assert.match(wikiBrowserSource, /\{publicReadable \? \(\s*<a[\s\S]*xShareDatabaseHref\(\{ databaseId, databaseName: currentDatabaseName \}\)[\s\S]*title="Share on X"[\s\S]*<\/a>\s*\) : null\}/);
+assert.match(wikiBrowserSource, /\{publicReadable \? \(\s*<a[\s\S]*xShareDatabaseHref\(\{ databaseId, databaseTitle: currentDatabaseName \}\)[\s\S]*title="Share on X"[\s\S]*<\/a>\s*\) : null\}/);
 assert.doesNotMatch(wikiBrowserSource, /hidden items-center gap-1 rounded-lg border border-line[\s\S]*md:flex/);
 assert.match(wikiBrowserSource, /value === "edit"/);
 assert.match(wikiBrowserSource, /canLeaveDirtyEdit/);
@@ -103,8 +103,8 @@ assert.match(wikiBrowserSource, /memberDatabases\.find/);
 assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
 assert.doesNotMatch(wikiBrowserSource, /ClipperPanel/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
-assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
-assert.match(inspectorSource, /databaseName: string/);
+assert.match(wikiBrowserSource, /databaseTitle=\{currentDatabase\?\.metadata\.title \?\? databaseId\}/);
+assert.match(inspectorSource, /databaseTitle: string/);
 assert.match(inspectorSource, /label="database"/);
 assert.match(inspectorSource, /label="database_id"/);
 assert.match(inspectorSource, /label="created_at"/);
@@ -152,15 +152,16 @@ assert.match(linkPreviewRegenerateRouteSource, /bucket\.put\(key, imageBytes/);
 assert.match(linkPreviewRegenerateRouteSource, /renderDurationMs/);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);
-assert.doesNotMatch(databasePreviewSource, /listDatabasesPublic/);
+assert.match(databasePreviewSource, /listDatabasesPublic/);
 assert.doesNotMatch(databasePreviewSource, /withTimeout/);
 const databasePreview = await loadDatabasePreview("canister-id", " db_alpha ");
 assert.deepEqual(databasePreview, {
   databaseId: "db_alpha",
-  databaseName: "db_alpha",
+  databaseTitle: "db_alpha",
+  description: "",
   publicReadable: false
 });
-assert.equal(databasePreviewTitle(databasePreview.databaseName), "Kinic Wiki: db_alpha");
+assert.equal(databasePreviewTitle(databasePreview.databaseTitle), "Kinic Wiki: db_alpha");
 assert.equal(databasePreviewDescription(databasePreview), "Browse, search, and query the db_alpha wiki database.");
 assert.equal(databaseLinkPreviewImageKey(" db alpha "), "db-link-preview/v1/db%20alpha.png");
 const imageMiss = await readCachedDatabaseLinkPreviewImage(
@@ -526,7 +527,7 @@ assert.equal(isRoutableDatabaseId("dashboard"), true);
 assert.equal(isRoutableDatabaseId(""), false);
 assert.throws(() => publicDatabasePath(""), /invalid database id/);
 assert.equal(
-  xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
+  xShareDatabaseHref({ databaseId: "alpha db", databaseTitle: "Research DB", origin: "https://wiki.kinic.xyz" }),
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FKnowledge"
 );
 assert.equal(

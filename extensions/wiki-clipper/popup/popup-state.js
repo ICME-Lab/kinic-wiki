@@ -1,16 +1,16 @@
 // Where: extensions/wiki-clipper/popup/popup-state.js
 // What: Pure settings-state helpers for first-run database creation.
 // Why: Popup DOM code needs small testable rules for the no-database path.
-export const DEFAULT_DATABASE_NAME = "My Kinic Wiki";
+export const DEFAULT_DATABASE_TITLE = "My Kinic Wiki";
 
-export function databaseOptionLabel(database, sameNameCount = 1) {
+export function databaseOptionLabel(database, sameTitleCount = 1) {
   const databaseId = String(database?.databaseId || database?.database_id || "").trim();
-  const name = String(database?.name || "").trim();
+  const title = String(database?.title || "").trim();
   const role = databaseRoleLabel(database?.role);
   const suffixes = [];
   if (role) suffixes.push(role);
-  if (!name || sameNameCount > 1) suffixes.push(shortDatabaseId(databaseId));
-  return suffixes.length > 0 ? `${name || databaseId} (${suffixes.join(", ")})` : name;
+  if (!title || sameTitleCount > 1) suffixes.push(shortDatabaseId(databaseId));
+  return suffixes.length > 0 ? `${title || databaseId} (${suffixes.join(", ")})` : title;
 }
 
 export function mergePreferredDatabase(databases, preferredDatabase) {
@@ -27,7 +27,7 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
     ...databases,
     {
       databaseId: preferredDatabaseId,
-      name: String(preferredDatabase.name || preferredDatabaseId),
+      title: String(preferredDatabase.title || preferredDatabaseId),
       role,
       status,
       logicalSizeBytes: String(preferredDatabase.logicalSizeBytes || preferredDatabase.logical_size_bytes || "0")
@@ -45,12 +45,12 @@ export function shouldShowCreateDatabaseForm({ isAuthenticated, writableDatabase
   return Boolean(isAuthenticated) && writableDatabaseCount === 0;
 }
 
-export function validateCreateDatabaseName(value) {
-  const name = String(value || "").trim();
-  if (!name) {
-    throw new Error("Database name is required.");
+export function validateCreateDatabaseTitle(value) {
+  const title = String(value || "").trim();
+  if (!title) {
+    throw new Error("Database title is required.");
   }
-  return name;
+  return title;
 }
 
 function shortDatabaseId(databaseId) {

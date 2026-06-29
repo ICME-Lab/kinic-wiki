@@ -10,14 +10,23 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
   DatabaseStatus: { kind: "variant", fields: { Active: "null", Pending: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseMetadata: {
+    kind: "record",
+    fields: {
+      title: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text"
+    }
+  },
   DatabaseSummary: {
     kind: "record",
     fields: {
       status: "DatabaseStatus",
-      name: "text",
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
+      metadata: "DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
@@ -38,8 +47,8 @@ const expectedTypes = {
     kind: "record",
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  CreateDatabaseRequest: { kind: "record", fields: { title: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { title: "text", database_id: "text" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -184,7 +193,7 @@ function normalizeDidResult(value) {
   if (normalized === "Result_17") return "ResultDatabases";
   if (normalized === "Result_29") return "ResultMkdirNode";
   if (normalized === "Result_35") return "ResultNode";
-  if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_44") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

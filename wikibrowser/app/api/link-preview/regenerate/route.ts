@@ -4,7 +4,10 @@
 
 type DatabaseSummaryForPreview = {
   databaseId: string;
-  name: string;
+  metadata: {
+    title: string;
+    description: string;
+  };
 };
 
 type LinkPreviewImageInput = {
@@ -96,11 +99,13 @@ export async function POST(request: Request): Promise<Response> {
     if (!database) return jsonError("database not found in public list", 404);
     const renderImage = testDeps?.renderImage ?? defaultRenderImage;
     const renderStartMs = performance.now();
+    const title = database.metadata.title;
+    const description = database.metadata.description || `Browse, search, and query the ${title} wiki database.`;
     const image = await renderImage({
       eyebrow: "Kinic Wiki database",
       accent: "Public wiki database",
-      title: database.name,
-      description: `Browse, search, and query the ${database.name} wiki database.`,
+      title,
+      description,
       tags: [database.databaseId, "/Knowledge", "Search", "Query"]
     });
     const renderDurationMs = Math.round((performance.now() - renderStartMs) * 100) / 100;
@@ -117,7 +122,7 @@ export async function POST(request: Request): Promise<Response> {
       },
       customMetadata: {
         databaseId: database.databaseId,
-        databaseName: database.name,
+        databaseTitle: title,
         generatedAt: new Date().toISOString()
       }
     });
@@ -125,7 +130,7 @@ export async function POST(request: Request): Promise<Response> {
       ok: true,
       key,
       databaseId: database.databaseId,
-      databaseName: database.name,
+      databaseTitle: title,
       bytes: imageBytes.byteLength,
       renderDurationMs
     });

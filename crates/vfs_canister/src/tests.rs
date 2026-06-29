@@ -18,11 +18,11 @@ use vfs_types::{
     ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest,
-    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest,
+    StorageBillingBatchRequest, UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -42,16 +42,17 @@ use super::{
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
-    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
-    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
-    purchase_database_cycles, query_context, query_database_sql_json, query_index_sql_json,
-    read_database_archive_chunk, read_node, read_node_context, rename_database,
-    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
-    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
+    market_purchase_access, memory_manifest, mkdir_node, move_node, multi_edit_node,
+    outgoing_links, parse_upgrade_cycles_billing_config_arg, purchase_database_cycles,
+    query_context, query_database_sql_json, query_index_sql_json, read_database_archive_chunk,
+    read_node, read_node_context, revoke_database_access, search_node_paths, search_nodes,
+    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
+    set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
     status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    wiki_metrics, wiki_metrics_series, write_database_restore_chunk, write_node, write_nodes,
+    update_database_metadata, wiki_metrics, wiki_metrics_series, write_database_restore_chunk,
+    write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -207,10 +208,6 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
         payout_principal: Principal::management_canister().to_text(),
-        title: "Private market DB".to_string(),
-        description: "Paid reader access".to_string(),
-        llm_summary: None,
-        tags_json: "[]".to_string(),
         price_e8s,
     }
 }
@@ -841,7 +838,7 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Funded".to_string(),
+        title: "Funded".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -879,7 +876,7 @@ fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Anonymous purchase".to_string(),
+        title: "Anonymous purchase".to_string(),
     })
     .expect("database should create");
     drop(_caller);
@@ -905,7 +902,7 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Duplicate ledger".to_string(),
+        title: "Duplicate ledger".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
@@ -938,7 +935,7 @@ fn list_database_cycle_entries_paginates_with_clamped_limits() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Cycle history pages".to_string(),
+        title: "Cycle history pages".to_string(),
     })
     .expect("database should create");
     for index in 0..105 {
@@ -972,7 +969,7 @@ fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Bad fee".to_string(),
+        title: "Bad fee".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::BadFee {
@@ -1005,7 +1002,7 @@ fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Purchase validation".to_string(),
+        title: "Purchase validation".to_string(),
     })
     .expect("database should create");
 
@@ -1088,7 +1085,7 @@ fn begin_database_archive_rejects_pending_cycle_purchase() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Pending lifecycle".to_string(),
+        title: "Pending lifecycle".to_string(),
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 41);
@@ -1116,7 +1113,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Overflow".to_string(),
+        title: "Overflow".to_string(),
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1153,7 +1150,7 @@ fn purchase_database_cycles_uses_current_config_amount() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Current config".to_string(),
+        title: "Current config".to_string(),
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1192,7 +1189,7 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Rejected".to_string(),
+        title: "Rejected".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::LedgerErr(
@@ -1221,7 +1218,7 @@ fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_review() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Ambiguous".to_string(),
+        title: "Ambiguous".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
@@ -1267,7 +1264,7 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
     let database = {
         let _owner = AuthenticatedCallerGuard::install_principal(owner);
         create_database(CreateDatabaseRequest {
-            name: "Pending".to_string(),
+            title: "Pending".to_string(),
         })
         .expect("database should create")
     };
@@ -1314,7 +1311,7 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Mount review".to_string(),
+        title: "Mount review".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -1360,7 +1357,7 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Apply review".to_string(),
+        title: "Apply review".to_string(),
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
@@ -1414,7 +1411,7 @@ fn purchase_database_cycles_allows_non_owner_payer() {
     let database_id = {
         let _owner = AuthenticatedCallerGuard::install();
         create_database(CreateDatabaseRequest {
-            name: "Public funding".to_string(),
+            title: "Public funding".to_string(),
         })
         .expect("database should create")
         .database_id
@@ -1448,7 +1445,7 @@ fn icrc21_purchase_database_cycles_returns_consent_message() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Consent".to_string(),
+        title: "Consent".to_string(),
     })
     .expect("database should create");
     let request = cycles_purchase_request(&database.database_id, 50_000);
@@ -1525,7 +1522,7 @@ fn icrc21_market_purchase_access_returns_consent_message() {
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
-            name: "Market consent".to_string(),
+            title: "Market consent".to_string(),
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1552,7 +1549,7 @@ fn icrc21_market_purchase_access_returns_consent_message() {
         }
     };
     assert!(message.contains("Purchase marketplace database access"));
-    assert!(message.contains("Listing: `Private market DB`"));
+    assert!(message.contains("Listing: `Market consent`"));
     assert!(message.contains("Payment: `2.5` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
     assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
@@ -1575,7 +1572,7 @@ fn icrc21_market_purchase_access_canonicalizes_access_principal() {
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
-            name: "Market canonical consent".to_string(),
+            title: "Market canonical consent".to_string(),
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1618,7 +1615,7 @@ fn icrc21_market_purchase_access_rejects_price_mismatch() {
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
-            name: "Price mismatch".to_string(),
+            title: "Price mismatch".to_string(),
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 302);
@@ -1654,7 +1651,7 @@ fn icrc21_market_purchase_access_rejects_inactive_listing() {
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
-            name: "Inactive listing".to_string(),
+            title: "Inactive listing".to_string(),
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 303);
@@ -1690,14 +1687,14 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
         let first = create_database(CreateDatabaseRequest {
-            name: "Seller A first".to_string(),
+            title: "Seller A first".to_string(),
         })
         .expect("first database should create");
         fund_database(&first.database_id, 1_000_000, 304);
         market_create_listing(market_listing_request(&first.database_id, 100))
             .expect("first listing should create");
         let second = create_database(CreateDatabaseRequest {
-            name: "Seller A second".to_string(),
+            title: "Seller A second".to_string(),
         })
         .expect("second database should create");
         fund_database(&second.database_id, 1_000_000, 305);
@@ -1707,7 +1704,7 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
         let other = create_database(CreateDatabaseRequest {
-            name: "Seller B listing".to_string(),
+            title: "Seller B listing".to_string(),
         })
         .expect("other database should create");
         fund_database(&other.database_id, 1_000_000, 306);
@@ -1718,13 +1715,19 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     let first_page = market_list_seller_listings(seller_a.to_text(), None, 1)
         .expect("first seller page should load");
     assert_eq!(first_page.listings.len(), 1);
-    assert_eq!(first_page.listings[0].seller_principal, seller_a.to_text());
+    assert_eq!(
+        first_page.listings[0].listing.seller_principal,
+        seller_a.to_text()
+    );
     assert!(first_page.next_cursor.is_some());
 
     let second_page = market_list_seller_listings(seller_a.to_text(), first_page.next_cursor, 10)
         .expect("second seller page should load");
     assert_eq!(second_page.listings.len(), 1);
-    assert_eq!(second_page.listings[0].seller_principal, seller_a.to_text());
+    assert_eq!(
+        second_page.listings[0].listing.seller_principal,
+        seller_a.to_text()
+    );
     assert!(second_page.next_cursor.is_none());
 }
 
@@ -1733,7 +1736,7 @@ fn purchase_database_cycles_sends_operation_memo_to_ledger() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Memo".to_string(),
+        title: "Memo".to_string(),
     })
     .expect("database should create");
     clear_last_ledger_memo_for_test();
@@ -1769,7 +1772,7 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     assert!(missing.contains("database not found"));
 
     let database = create_database(CreateDatabaseRequest {
-        name: "Deleted".to_string(),
+        title: "Deleted".to_string(),
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 44);
@@ -1953,7 +1956,7 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
-fn market_listing_description_allows_newlines() {
+fn database_metadata_description_allows_newlines() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let database_id;
@@ -1961,9 +1964,9 @@ fn market_listing_description_allows_newlines() {
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
-            name: "Multiline market".to_string(),
+            title: "Multiline metadata".to_string(),
         })
-        .expect("market database should create");
+        .expect("database should create");
         database_id = database.database_id;
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(220));
         block_on_ready(purchase_database_cycles(cycles_purchase_request(
@@ -1972,37 +1975,24 @@ fn market_listing_description_allows_newlines() {
         )))
         .expect("market database should activate");
 
-        let mut create = market_listing_request(&database_id, 500);
-        create.description = "Line one\nLine two\r\n\tIndented".to_string();
-        create.llm_summary = Some("Summary one\nSummary two".to_string());
-        let listing = market_create_listing(create).expect("multiline description should create");
-        assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
-        assert_eq!(
-            listing.llm_summary,
-            Some("Summary one\nSummary two".to_string())
-        );
-
-        let updated = market_update_listing(MarketUpdateListingRequest {
-            listing_id: listing.listing_id,
-            expected_revision: listing.revision,
-            payout_principal: Principal::management_canister().to_text(),
-            title: "Updated market DB".to_string(),
-            description: "Updated one\nUpdated two".to_string(),
-            llm_summary: Some("Updated summary\nSecond line".to_string()),
+        let metadata = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id,
+            title: "Multiline metadata".to_string(),
+            description: "Line one\nLine two\r\n\tIndented".to_string(),
+            llm_summary: Some("Summary one\nSummary two".to_string()),
             tags_json: "[]".to_string(),
-            price_e8s: 600,
         })
-        .expect("multiline description should update");
-        assert_eq!(updated.description, "Updated one\nUpdated two");
+        .expect("multiline metadata should update");
+        assert_eq!(metadata.description, "Line one\nLine two\r\n\tIndented");
         assert_eq!(
-            updated.llm_summary,
-            Some("Updated summary\nSecond line".to_string())
+            metadata.llm_summary,
+            Some("Summary one\nSummary two".to_string())
         );
     }
 }
 
 #[test]
-fn market_listing_description_rejects_non_whitespace_control_characters() {
+fn database_metadata_rejects_non_whitespace_control_characters() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let database_id;
@@ -2010,9 +2000,9 @@ fn market_listing_description_rejects_non_whitespace_control_characters() {
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
-            name: "Control market".to_string(),
+            title: "Control metadata".to_string(),
         })
-        .expect("market database should create");
+        .expect("database should create");
         database_id = database.database_id;
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(221));
         block_on_ready(purchase_database_cycles(cycles_purchase_request(
@@ -2021,26 +2011,35 @@ fn market_listing_description_rejects_non_whitespace_control_characters() {
         )))
         .expect("market database should activate");
 
-        let mut bad_description = market_listing_request(&database_id, 500);
-        bad_description.description = "bad\0description".to_string();
-        let description_error = market_create_listing(bad_description)
-            .expect_err("NUL in description should be rejected");
-        assert!(
-            description_error
-                .contains("market listing description may not contain control characters")
-        );
+        let description_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id: database_id.clone(),
+            title: "Control metadata".to_string(),
+            description: "bad\0description".to_string(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })
+        .expect_err("NUL in description should be rejected");
+        assert!(description_error.contains("database description may only contain newline"));
 
-        let mut bad_title = market_listing_request(&database_id, 500);
-        bad_title.title = "bad\ntitle".to_string();
-        let title_error =
-            market_create_listing(bad_title).expect_err("title newline should be rejected");
-        assert!(title_error.contains("market listing title may not contain control characters"));
+        let title_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id: database_id.clone(),
+            title: "bad\ntitle".to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })
+        .expect_err("title newline should be rejected");
+        assert!(title_error.contains("database title may not contain control characters"));
 
-        let mut bad_tags = market_listing_request(&database_id, 500);
-        bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
-        let tags_error =
-            market_create_listing(bad_tags).expect_err("tags newline should be rejected");
-        assert!(tags_error.contains("market listing tags may not contain control characters"));
+        let tags_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id,
+            title: "Control metadata".to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[\"bad\ntag\"]".to_string(),
+        })
+        .expect_err("tags newline should be rejected");
+        assert!(tags_error.contains("database tags may not contain control characters"));
     }
 }
 
@@ -2057,7 +2056,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
-            name: "Private market".to_string(),
+            title: "Private market".to_string(),
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2170,7 +2169,7 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
-            name: "Market character counts".to_string(),
+            title: "Market character counts".to_string(),
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2485,11 +2484,14 @@ fn suspended_database_rejects_grant_but_allows_unmetered_owner_management_operat
     .expect_err("suspended database should reject metered grant");
     assert!(grant.contains("database cycles are suspended"));
 
-    rename_database(RenameDatabaseRequest {
+    update_database_metadata(UpdateDatabaseMetadataRequest {
         database_id: "default".to_string(),
-        name: "Suspended rename".to_string(),
+        title: "Suspended rename".to_string(),
+        description: String::new(),
+        llm_summary: None,
+        tags_json: "[]".to_string(),
     })
-    .expect("suspended database owner should rename");
+    .expect("suspended database owner should update metadata");
     super::delete_database(delete_database_request("default"))
         .expect("suspended database owner should delete");
 }
@@ -2545,7 +2547,7 @@ fn check_database_write_cycles_requires_authenticated_writer() {
     let database_id = {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         create_database(CreateDatabaseRequest {
-            name: "Write cycles check".to_string(),
+            title: "Write cycles check".to_string(),
         })
         .expect("database should create")
         .database_id
@@ -2658,12 +2660,12 @@ fn create_database_returns_result() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let result = create_database(CreateDatabaseRequest {
-        name: " Team skills ".to_string(),
+        title: " Team skills ".to_string(),
     })
     .expect("database should create");
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
-    assert_eq!(result.name, "Team skills");
+    assert_eq!(result.title, "Team skills");
 
     let summaries = list_databases().expect("database summaries should load");
     let summary = summaries
@@ -2704,13 +2706,13 @@ fn create_database_rejects_pending_database_limit() {
 
     for offset in 0..3 {
         create_database(CreateDatabaseRequest {
-            name: format!("Pending {offset}"),
+            title: format!("Pending {offset}"),
         })
         .expect("pending database should create within limit");
     }
 
     let error = create_database(CreateDatabaseRequest {
-        name: "Pending 3".to_string(),
+        title: "Pending 3".to_string(),
     })
     .expect_err("fourth pending database should reject");
     assert!(error.contains("too many pending databases for caller"));
@@ -2725,17 +2727,26 @@ fn create_database_rejects_pending_database_limit() {
 }
 
 #[test]
-fn canister_rename_database_requires_owner() {
+fn canister_update_database_metadata_requires_owner() {
     install_test_service();
 
-    rename_database(RenameDatabaseRequest {
+    update_database_metadata(UpdateDatabaseMetadataRequest {
         database_id: "default".to_string(),
-        name: "Renamed default".to_string(),
+        title: "Renamed default".to_string(),
+        description: "Updated description".to_string(),
+        llm_summary: Some("Updated summary".to_string()),
+        tags_json: "[\"updated\"]".to_string(),
     })
-    .expect("owner should rename database");
+    .expect("owner should update database metadata");
 
     let summaries = list_databases().expect("database summaries should load");
-    assert_eq!(summaries[0].name, "Renamed default");
+    assert_eq!(summaries[0].metadata.title, "Renamed default");
+    assert_eq!(summaries[0].metadata.description, "Updated description");
+    assert_eq!(
+        summaries[0].metadata.llm_summary.as_deref(),
+        Some("Updated summary")
+    );
+    assert_eq!(summaries[0].metadata.tags_json, "[\"updated\"]");
 }
 
 #[test]

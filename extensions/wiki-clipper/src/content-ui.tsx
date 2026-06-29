@@ -263,25 +263,25 @@ function databaseOptions() {
   if (databases.value.length === 0) {
     return <option value="">No writable databases</option>;
   }
-  const counts = databaseNameCounts(databases.value);
+  const counts = databaseTitleCounts(databases.value);
   return databases.value.map((database) => (
     <option key={database.databaseId} value={database.databaseId} title={database.databaseId}>
-      {databaseOptionLabel(database, counts.get(databaseNameKey(database.name)) || 1)}
+      {databaseOptionLabel(database, counts.get(databaseTitleKey(database.title)) || 1)}
     </option>
   ));
 }
 
-function databaseNameCounts(values) {
+function databaseTitleCounts(values) {
   const counts = new Map();
   for (const database of values) {
-    const key = databaseNameKey(database.name);
+    const key = databaseTitleKey(database.title);
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
 }
 
-function databaseNameKey(name) {
-  return String(name || "").trim().toLowerCase();
+function databaseTitleKey(title) {
+  return String(title || "").trim().toLowerCase();
 }
 
 function configWithDefaults(value) {

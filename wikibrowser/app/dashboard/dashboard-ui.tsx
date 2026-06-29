@@ -12,7 +12,7 @@ import { AdminNotice } from "@/components/admin-ui";
 import { formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -57,9 +57,10 @@ export function SummaryPanel({
   const openHref = active && routable ? publicDatabasePath(databaseId) : null;
   const cycles = databaseCyclesView(database, cyclesConfig);
   const purchaseHref = database ? databaseCyclesHref(database) : null;
+  const databaseTitle = database?.metadata.title ?? databaseId;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-      <Field label="Database" value={database?.name ?? databaseId} />
+      <Field label="Database" value={databaseTitle} />
       <Field label="Database ID" value={databaseId} />
       <Field label="Your Role" value={database?.role ?? "-"} />
       <Field label="Status" value={databaseStatusLabel(database?.status)} />
@@ -71,8 +72,8 @@ export function SummaryPanel({
         {active && publicReadable && routable ? (
           <SummaryActionLink
             external
-            ariaLabel={`Share ${database?.name ?? databaseId} on X`}
-            href={xShareDatabaseHref({ databaseId, databaseName: database?.name ?? databaseId })}
+            ariaLabel={`Share ${databaseTitle} on X`}
+            href={xShareDatabaseHref({ databaseId, databaseTitle })}
             icon={<Share2 aria-hidden size={14} />}
             label="Share"
           />
@@ -237,26 +238,27 @@ export function DashboardSettingsPanel(props: {
   activeEntitlementCount: string | null;
   busy: boolean;
   busyAction: BusyAction | null;
-  canRename: boolean;
+  canEditMetadata: boolean;
   cyclesBalance: string;
   databaseId: string;
-  databaseName: string;
+  metadata: DatabaseMetadata;
   onDelete: () => Promise<string | null>;
-  onRename: () => void;
+  onEditMetadata: () => void;
 }) {
   return (
     <div className="grid gap-4">
-      {props.canRename ? (
+      {props.canEditMetadata ? (
         <section className="rounded-lg border border-line bg-paper shadow-sm">
           <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-ink">Rename database</h2>
+              <h2 className="text-lg font-semibold text-ink">Database metadata</h2>
+              {props.metadata.description ? <p className="mt-2 text-sm leading-6 text-muted">{props.metadata.description}</p> : null}
               <p className="mt-2 break-all font-mono text-xs text-muted">
-                {props.databaseName} / {props.databaseId}
+                {props.metadata.title} / {props.databaseId}
               </p>
             </div>
-            <ActionButton disabled={props.busy} loading={props.busyAction?.kind === "rename"} loadingLabel="Saving..." onClick={props.onRename} size="compact" variant="secondary">
-              Rename
+            <ActionButton disabled={props.busy} loading={props.busyAction?.kind === "metadata"} loadingLabel="Saving..." onClick={props.onEditMetadata} size="compact" variant="secondary">
+              Edit
             </ActionButton>
           </div>
         </section>
@@ -267,7 +269,7 @@ export function DashboardSettingsPanel(props: {
         busy={props.busy}
         busyAction={props.busyAction}
         databaseId={props.databaseId}
-        databaseName={props.databaseName}
+        databaseTitle={props.metadata.title}
         onDelete={props.onDelete}
       />
     </div>
@@ -277,7 +279,7 @@ export function DashboardSettingsPanel(props: {
 export function MarketListingsPanel(props: {
   busy: boolean;
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
   error: string | null;
   listings: MarketListing[];
   principal: string | null;
@@ -287,36 +289,26 @@ export function MarketListingsPanel(props: {
   onUpdate: (request: MarketUpdateListingRequest) => void;
 }) {
   const [selectedListingId, setSelectedListingId] = useState("");
-  const [title, setTitle] = useState(props.databaseName);
-  const [description, setDescription] = useState("");
   const [payoutPrincipal, setPayoutPrincipal] = useState(props.principal ?? "");
   const [payoutPrincipalEdited, setPayoutPrincipalEdited] = useState(false);
   const [price, setPrice] = useState("1");
-  const [tags, setTags] = useState<string[]>([]);
   const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
   const priceE8s = parseKinicInput(price);
   const payoutPrincipalInput = selected || payoutPrincipalEdited ? payoutPrincipal : props.principal ?? "";
-  const submitDisabled = props.busy || !title.trim() || !description.trim() || !payoutPrincipalInput.trim() || !priceE8s;
+  const submitDisabled = props.busy || !payoutPrincipalInput.trim() || !priceE8s;
 
   function selectListing(listing: MarketListing) {
     setSelectedListingId(listing.listingId);
-    setTitle(listing.title);
-    setDescription(listing.description);
     setPayoutPrincipal(listing.payoutPrincipal);
     setPayoutPrincipalEdited(false);
     setPrice(decimalFromE8s(listing.priceE8s));
-    setTags(tagsFromJson(listing.tagsJson));
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitDisabled || !priceE8s) return;
     const base = {
-      title: title.trim(),
-      description: description.trim(),
       payoutPrincipal: payoutPrincipalInput.trim(),
-      llmSummary: null,
-      tagsJson: tagsJsonFromTags(tags),
       priceE8s
     };
     if (selected) {
@@ -331,18 +323,6 @@ export function MarketListingsPanel(props: {
         databaseId: props.databaseId
       });
     }
-  }
-
-  function updateTag(index: number, value: string) {
-    setTags((current) => current.map((tag, tagIndex) => (tagIndex === index ? value : tag)));
-  }
-
-  function addTag() {
-    setTags((current) => [...current, ""]);
-  }
-
-  function removeTag(index: number) {
-    setTags((current) => current.filter((_, tagIndex) => tagIndex !== index));
   }
 
   return (
@@ -366,7 +346,7 @@ export function MarketListingsPanel(props: {
           {props.listings.map((listing) => (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={listing.listingId}>
               <div className="min-w-0">
-                <p className="truncate font-semibold text-ink">{listing.title}</p>
+                <p className="truncate font-semibold text-ink">{props.databaseTitle}</p>
                 <p className="font-mono text-xs text-muted">
                   {listing.status} / {formatTokenAmountFromE8s(listing.priceE8s)} / {listing.purchaseCount} purchases
                 </p>
@@ -393,48 +373,20 @@ export function MarketListingsPanel(props: {
       <form className={`${props.listings.length ? "border-t border-line" : ""} grid gap-3 px-4 py-4`} onSubmit={submit}>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
-            <span className="text-xs uppercase text-muted">Title</span>
-            <input className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={title} onChange={(event) => setTitle(event.target.value)} />
-          </label>
-          <label className="grid gap-1 text-sm">
             <span className="text-xs uppercase text-muted">Price KINIC</span>
             <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono outline-none focus:border-accent" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
           </label>
-        </div>
-        <label className="grid gap-1 text-sm">
-          <span className="text-xs uppercase text-muted">Description</span>
-          <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="text-xs uppercase text-muted">Payout principal</span>
-          <input
-            className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent"
-            value={payoutPrincipalInput}
-            onChange={(event) => {
-              setPayoutPrincipalEdited(true);
-              setPayoutPrincipal(event.target.value);
-            }}
-          />
-        </label>
-        <div className="grid gap-2 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs uppercase text-muted">Tags</span>
-            <ActionButton disabled={props.busy} onClick={addTag} size="compact" variant="secondary">
-              Add tag
-            </ActionButton>
-          </div>
-          {tags.length ? (
-            <div className="grid gap-2">
-              {tags.map((tag, index) => (
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" key={index}>
-                  <input aria-label={`Tag ${index + 1}`} className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={tag} onChange={(event) => updateTag(index, event.target.value)} />
-                  <ActionButton disabled={props.busy} onClick={() => removeTag(index)} size="compact" variant="secondary">
-                    Remove
-                  </ActionButton>
-                </div>
-              ))}
-            </div>
-          ) : null}
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase text-muted">Payout principal</span>
+            <input
+              className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+              value={payoutPrincipalInput}
+              onChange={(event) => {
+                setPayoutPrincipalEdited(true);
+                setPayoutPrincipal(event.target.value);
+              }}
+            />
+          </label>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
           <ActionButton disabled={submitDisabled} loading={props.busy} loadingLabel="Saving..." type="submit" variant="primary">
@@ -445,12 +397,9 @@ export function MarketListingsPanel(props: {
               disabled={props.busy}
               onClick={() => {
                 setSelectedListingId("");
-                setTitle(props.databaseName);
-                setDescription("");
                 setPayoutPrincipal(props.principal ?? "");
                 setPayoutPrincipalEdited(false);
                 setPrice("1");
-                setTags([]);
               }}
               variant="secondary"
             >
@@ -516,22 +465,29 @@ export function BuyersPanel(props: {
   );
 }
 
-export function RenameDatabaseDialog(props: {
+export function DatabaseMetadataDialog(props: {
   busy: boolean;
   busyAction: BusyAction | null;
-  databaseName: string;
-  draft: string;
+  metadata: DatabaseMetadata;
   onCancel: () => void;
-  onChange: (value: string) => void;
-  onSubmit: (name: string) => void;
+  onSubmit: (metadata: DatabaseMetadata) => void;
 }) {
-  const trimmed = props.draft.trim();
-  const renameBusy = props.busyAction?.kind === "rename";
-  const submitDisabled = props.busy || trimmed === "" || trimmed === props.databaseName;
+  const [title, setTitle] = useState(props.metadata.title);
+  const [description, setDescription] = useState(props.metadata.description);
+  const [llmSummary, setLlmSummary] = useState(props.metadata.llmSummary ?? "");
+  const [tagsJson, setTagsJson] = useState(props.metadata.tagsJson);
+  const trimmed = title.trim();
+  const metadataBusy = props.busyAction?.kind === "metadata";
+  const submitDisabled = props.busy || trimmed === "";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitDisabled) return;
-    props.onSubmit(trimmed);
+    props.onSubmit({
+      title: trimmed,
+      description: description.trim(),
+      llmSummary: llmSummary.trim() ? llmSummary.trim() : null,
+      tagsJson: tagsJson.trim() || "[]"
+    });
   }
   return (
     <div
@@ -540,24 +496,36 @@ export function RenameDatabaseDialog(props: {
         if (!props.busy && event.target === event.currentTarget) props.onCancel();
       }}
     >
-      <form className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
-        <h3 className="text-lg font-semibold text-ink">Rename database</h3>
+      <form className="w-full max-w-xl rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
+        <h3 className="text-lg font-semibold text-ink">Database metadata</h3>
         <label className="mt-4 grid gap-1 text-sm">
-          <span className="text-xs uppercase tracking-[0.12em] text-muted">Database name</span>
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">Title</span>
           <input
             className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
             maxLength={80}
             type="text"
-            value={props.draft}
-            onChange={(event) => props.onChange(event.target.value)}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
           />
+        </label>
+        <label className="mt-4 grid gap-1 text-sm">
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">Description</span>
+          <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
+        </label>
+        <label className="mt-4 grid gap-1 text-sm">
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">LLM summary</span>
+          <textarea className="min-h-20 rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent" value={llmSummary} onChange={(event) => setLlmSummary(event.target.value)} />
+        </label>
+        <label className="mt-4 grid gap-1 text-sm">
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">Tags JSON</span>
+          <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-ink outline-none focus:border-accent" value={tagsJson} onChange={(event) => setTagsJson(event.target.value)} />
         </label>
         <div className="mt-5 flex justify-end gap-2">
           <ActionButton disabled={props.busy} onClick={props.onCancel} variant="secondary">
             Cancel
           </ActionButton>
-          <ActionButton disabled={submitDisabled} loading={renameBusy} loadingLabel="Saving..." type="submit" variant="primary">
-            Rename
+          <ActionButton disabled={submitDisabled} loading={metadataBusy} loadingLabel="Saving..." type="submit" variant="primary">
+            Save
           </ActionButton>
         </div>
       </form>
@@ -880,20 +848,6 @@ function decimalFromE8s(value: string): string {
   const whole = padded.slice(0, -8).replace(/^0+(?=\d)/, "");
   const fraction = padded.slice(-8).replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole;
-}
-
-function tagsJsonFromTags(value: string[]): string {
-  return JSON.stringify(value.map((tag) => tag.trim()).filter((tag) => tag.length > 0));
-}
-
-function tagsFromJson(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string");
-  } catch {
-    return [];
-  }
 }
 
 function formatBytes(value: string): string {

@@ -1,3 +1,8 @@
+ALTER TABLE databases RENAME COLUMN name TO title;
+ALTER TABLE databases ADD COLUMN description TEXT NOT NULL DEFAULT '';
+ALTER TABLE databases ADD COLUMN llm_summary TEXT;
+ALTER TABLE databases ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+
 CREATE TABLE database_cycle_accounts (
   database_id TEXT PRIMARY KEY,
   balance_cycles INTEGER NOT NULL,
@@ -66,10 +71,6 @@ CREATE TABLE market_listings (
   seller_principal TEXT NOT NULL,
   payout_principal TEXT NOT NULL,
   database_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  llm_summary TEXT,
-  tags_json TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
   status TEXT NOT NULL,
   revision INTEGER NOT NULL,

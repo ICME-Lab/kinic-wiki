@@ -316,7 +316,10 @@ test("listWritableDatabases returns active writable database summaries", async (
     assert.deepEqual(await listWritableDatabases(config()), [
       {
         databaseId: "team-db",
-        name: "Team Wiki",
+        title: "Team Wiki",
+        description: "",
+        llmSummary: null,
+        tagsJson: "[]",
         role: "Writer",
         status: "Active",
         logicalSizeBytes: "0",
@@ -356,7 +359,12 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
         Ok: [
           {
             database_id: databaseId,
-            name: "Team DB",
+            metadata: {
+              title: "Team DB",
+              description: "",
+              llm_summary: [],
+              tags_json: "[]"
+            },
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
@@ -381,10 +389,15 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
   };
 }
 
-function rawDatabase(databaseId, name, role, status) {
+function rawDatabase(databaseId, title, role, status) {
   return {
     database_id: databaseId,
-    name,
+    metadata: {
+      title,
+      description: "",
+      llm_summary: [],
+      tags_json: "[]"
+    },
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,

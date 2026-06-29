@@ -5,11 +5,11 @@ import { authSnapshot, loginWithInternetIdentity, logoutInternetIdentity } from 
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/url-ingest-request.js";
 import { createDatabase, listWritableDatabases } from "../src/vfs-actor.js";
 import {
-  DEFAULT_DATABASE_NAME,
+  DEFAULT_DATABASE_TITLE,
   databaseOptionLabel,
   mergePreferredDatabase,
   shouldShowCreateDatabaseForm,
-  validateCreateDatabaseName
+  validateCreateDatabaseTitle
 } from "./popup-state.js";
 
 const principalText = document.querySelector("#principal");
@@ -17,7 +17,7 @@ const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
 const createDatabaseForm = document.querySelector("#create-database-form");
-const databaseNameInput = document.querySelector("#database-name");
+const databaseTitleInput = document.querySelector("#database-title");
 const createDatabaseButton = document.querySelector("#create-database");
 const statusText = document.querySelector("#status");
 const latestStatusText = document.querySelector("#latest-status");
@@ -59,7 +59,7 @@ createDatabaseForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   createDatabaseButton.disabled = true;
   try {
-    const name = validateCreateDatabaseName(databaseNameInput.value);
+    const title = validateCreateDatabaseTitle(databaseTitleInput.value);
     const snapshot = await authSnapshot();
     if (!snapshot.isAuthenticated || !snapshot.identity) {
       throw new Error("Login to create a database.");
@@ -71,7 +71,7 @@ createDatabaseForm.addEventListener("submit", async (event) => {
         host: DEFAULT_IC_HOST,
         identity: snapshot.identity
       },
-      name
+      title
     );
     await refreshAuthAndDatabases(created);
     statusText.textContent = "Database created. Purchase cycles before capture.";
@@ -156,11 +156,11 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     databaseSelect.disabled = true;
     return "";
   }
-  const nameCounts = databaseNameCounts(databases);
+  const titleCounts = databaseTitleCounts(databases);
   for (const database of databases) {
     const option = document.createElement("option");
     option.value = database.databaseId;
-    const label = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
+    const label = databaseOptionLabel(database, titleCounts.get(databaseTitleKey(database.title)) || 1);
     option.disabled = !database.writeCyclesAvailable;
     option.textContent = database.writeCyclesAvailable ? label : `${label} - ${database.cyclesReason}`;
     option.title = database.databaseId;
@@ -179,23 +179,23 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
   return databaseSelect.value;
 }
 
-function databaseNameCounts(databases) {
+function databaseTitleCounts(databases) {
   const counts = new Map();
   for (const database of databases) {
-    const key = databaseNameKey(database.name);
+    const key = databaseTitleKey(database.title);
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
 }
 
-function databaseNameKey(name) {
-  return String(name || "").trim().toLowerCase();
+function databaseTitleKey(title) {
+  return String(title || "").trim().toLowerCase();
 }
 
 function setCreateDatabaseFormVisible(visible) {
   createDatabaseForm.hidden = !visible;
-  if (visible && !databaseNameInput.value.trim()) {
-    databaseNameInput.value = DEFAULT_DATABASE_NAME;
+  if (visible && !databaseTitleInput.value.trim()) {
+    databaseTitleInput.value = DEFAULT_DATABASE_TITLE;
   }
 }
 

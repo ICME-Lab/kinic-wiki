@@ -23,8 +23,8 @@ use vfs_types::{
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
+    SearchNodePathsRequest, SearchNodesRequest, UpdateDatabaseMetadataRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -657,12 +657,20 @@ async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
-        DatabaseCommand::Create { name } => {
-            let result = client.create_database(&name).await?;
+        DatabaseCommand::Create { title } => {
+            let result = client.create_database(&title).await?;
             println!("{}", result.database_id);
         }
-        DatabaseCommand::Rename { database_id, name } => {
-            client.rename_database(&database_id, &name).await?;
+        DatabaseCommand::Metadata { database_id, title } => {
+            client
+                .update_database_metadata(UpdateDatabaseMetadataRequest {
+                    database_id,
+                    title,
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: "[]".to_string(),
+                })
+                .await?;
         }
         DatabaseCommand::List { json } => {
             let databases = client.list_databases().await?;
@@ -673,7 +681,7 @@ async fn run_database_command(
                     println!(
                         "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
-                        database.name,
+                        database.metadata.title,
                         database.role,
                         database.status,
                         database.logical_size_bytes,
@@ -1542,12 +1550,12 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
+        async fn create_database(&self, title: &str) -> Result<CreateDatabaseResult> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
-                name: name.to_string(),
+                title: title.to_string(),
             })
         }
         async fn purchase_database_cycles(
@@ -1653,8 +1661,16 @@ mod tests {
             }
             Ok(())
         }
-        async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-            Ok(())
+        async fn update_database_metadata(
+            &self,
+            request: UpdateDatabaseMetadataRequest,
+        ) -> Result<vfs_types::DatabaseMetadata> {
+            Ok(vfs_types::DatabaseMetadata {
+                title: request.title,
+                description: request.description,
+                llm_summary: request.llm_summary,
+                tags_json: request.tags_json,
+            })
         }
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
@@ -1665,7 +1681,12 @@ mod tests {
             }
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
-                name: "Alpha".to_string(),
+                metadata: vfs_types::DatabaseMetadata {
+                    title: "Alpha".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: "[]".to_string(),
+                },
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
@@ -2323,14 +2344,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_create_uses_name_and_prints_generated_id() {
+    async fn database_create_uses_title_and_prints_generated_id() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Create {
-                    name: "Team skills".to_string(),
+                    title: "Team skills".to_string(),
                 },
             },
         )
@@ -2546,20 +2567,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_rename_parses_and_calls_client() {
+    async fn database_metadata_parses_and_calls_client() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::Rename {
+                command: super::DatabaseCommand::Metadata {
                     database_id: "db_alpha".to_string(),
-                    name: "Alpha renamed".to_string(),
+                    title: "Alpha metadata".to_string(),
                 },
             },
         )
         .await
-        .expect("database rename should succeed");
+        .expect("database metadata update should succeed");
     }
 
     #[tokio::test]

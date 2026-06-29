@@ -24,12 +24,18 @@ function idlFactory({ IDL: idl }) {
     Archived: idl.Null,
     Deleted: idl.Null
   });
+  const DatabaseMetadata = idl.Record({
+    title: idl.Text,
+    description: idl.Text,
+    llm_summary: idl.Opt(idl.Text),
+    tags_json: idl.Text
+  });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
-    name: idl.Text,
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
+    metadata: DatabaseMetadata,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64),
@@ -47,8 +53,8 @@ function idlFactory({ IDL: idl }) {
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig
   });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ title: idl.Text });
+  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, title: idl.Text });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -90,13 +96,13 @@ function idlFactory({ IDL: idl }) {
   });
 }
 
-export async function createDatabase(config, name) {
+export async function createDatabase(config, title) {
   const actor = await createVfsActor(config);
-  return createDatabaseWithActor(actor, name);
+  return createDatabaseWithActor(actor, title);
 }
 
-export async function createDatabaseWithActor(actor, name) {
-  const result = await actor.create_database({ name });
+export async function createDatabaseWithActor(actor, title) {
+  const result = await actor.create_database({ title });
   if ("Err" in result) {
     throw new Error(result.Err);
   }
@@ -146,14 +152,17 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || "")
+    title: String(raw.title || "")
   };
 }
 
 function normalizeDatabaseSummary(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || ""),
+    title: String(raw.metadata?.title || ""),
+    description: String(raw.metadata?.description || ""),
+    llmSummary: raw.metadata?.llm_summary?.[0] ? String(raw.metadata.llm_summary[0]) : null,
+    tagsJson: String(raw.metadata?.tags_json || "[]"),
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),

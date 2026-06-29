@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
-import type { MarketListing } from "@/lib/types";
+import type { MarketListingView } from "@/lib/types";
 import { errorMessage } from "@/lib/wiki-helpers";
 
 type MarketplaceClientProps = {
@@ -33,7 +33,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [listings, setListings] = useState<MarketListing[]>([]);
+  const [listings, setListings] = useState<MarketListingView[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +45,12 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const nextListings = listings.filter((listing) => {
-      if (needle && !`${listing.title}\n${listing.description}\n${listing.tagsJson}`.toLowerCase().includes(needle)) {
+    const nextListings = listings.filter((view) => {
+      const metadata = view.databaseMetadata;
+      if (needle && !`${metadata.title}\n${metadata.description}\n${metadata.tagsJson}`.toLowerCase().includes(needle)) {
         return false;
       }
-      if (maxPriceE8s !== null && parseBigIntOrZero(listing.priceE8s) > maxPriceE8s) {
+      if (maxPriceE8s !== null && parseBigIntOrZero(view.listing.priceE8s) > maxPriceE8s) {
         return false;
       }
       return true;
@@ -124,16 +125,16 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((listing) => (
-            <Link className="no-underline" href={marketListingPath(listing.listingId)} key={listing.listingId}>
+          {filtered.map((view) => (
+            <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
               <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
               <div className="grid gap-1">
-                <h2 className="line-clamp-2 text-base font-semibold">{listing.title}</h2>
-                <p className="line-clamp-3 text-sm text-muted">{listing.description}</p>
+                <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.title}</h2>
+                <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
               </div>
               <div className="mt-auto flex items-center justify-between gap-3 text-sm">
-                <span className="font-mono font-semibold">{formatTokenAmountFromE8s(listing.priceE8s)}</span>
-                <span className="text-muted">{listing.purchaseCount} sold</span>
+                <span className="font-mono font-semibold">{formatTokenAmountFromE8s(view.listing.priceE8s)}</span>
+                <span className="text-muted">{view.listing.purchaseCount} sold</span>
               </div>
               </AdminPanel>
             </Link>
@@ -236,14 +237,14 @@ function parseMarketSort(value: string | null): MarketSort {
   return "recent";
 }
 
-function compareListings(left: MarketListing, right: MarketListing, sort: MarketSort): number {
+function compareListings(left: MarketListingView, right: MarketListingView, sort: MarketSort): number {
   if (sort === "popular") {
-    return compareBigIntDesc(parseBigIntOrZero(left.purchaseCount), parseBigIntOrZero(right.purchaseCount));
+    return compareBigIntDesc(parseBigIntOrZero(left.listing.purchaseCount), parseBigIntOrZero(right.listing.purchaseCount));
   }
   if (sort === "price_low") {
-    return compareBigIntAsc(parseBigIntOrZero(left.priceE8s), parseBigIntOrZero(right.priceE8s));
+    return compareBigIntAsc(parseBigIntOrZero(left.listing.priceE8s), parseBigIntOrZero(right.listing.priceE8s));
   }
-  return compareBigIntDesc(parseBigIntOrZero(left.updatedAtMs || left.createdAtMs), parseBigIntOrZero(right.updatedAtMs || right.createdAtMs));
+  return compareBigIntDesc(parseBigIntOrZero(left.listing.updatedAtMs || left.listing.createdAtMs), parseBigIntOrZero(right.listing.updatedAtMs || right.listing.createdAtMs));
 }
 
 function compareBigIntAsc(left: bigint, right: bigint): number {

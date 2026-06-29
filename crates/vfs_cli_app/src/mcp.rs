@@ -79,10 +79,7 @@ pub async fn handle_json_rpc_message(
     let Some(method) = object.get("method").and_then(Value::as_str) else {
         return Some(serialize_error(id, -32600, "missing method"));
     };
-    if id.is_none() {
-        return None;
-    }
-    let id = id.expect("checked above");
+    let id = id?;
     let params = object.get("params").cloned().unwrap_or_else(|| json!({}));
     let result = match method {
         "initialize" => Ok(initialize_result()),

@@ -288,9 +288,9 @@ pub enum MarketCommand {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
     #[command(about = "Create a database and print its generated database id")]
-    Create { name: String },
-    #[command(about = "Rename one database")]
-    Rename { database_id: String, name: String },
+    Create { title: String },
+    #[command(about = "Update one database metadata title")]
+    Metadata { database_id: String, title: String },
     #[command(about = "List databases attached to the current identity")]
     List {
         #[arg(long)]

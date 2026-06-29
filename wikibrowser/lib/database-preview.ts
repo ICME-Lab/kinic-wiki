@@ -4,28 +4,47 @@
 
 export type DatabasePreview = {
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
+  description: string;
   publicReadable: boolean;
 };
 
-export async function loadDatabasePreview(_canisterId: string, databaseId: string): Promise<DatabasePreview> {
+export async function loadDatabasePreview(canisterId: string, databaseId: string): Promise<DatabasePreview> {
   const normalizedId = databaseId.trim() || "unknown database";
+  if (canisterId) {
+    try {
+      const { listDatabasesPublic } = await import("@/lib/vfs-client");
+      const database = (await listDatabasesPublic(canisterId)).find((item) => item.databaseId === normalizedId) ?? null;
+      if (database) {
+        return {
+          databaseId: normalizedId,
+          databaseTitle: database.metadata.title,
+          description: database.metadata.description,
+          publicReadable: true
+        };
+      }
+    } catch {
+      return unknownDatabasePreview(normalizedId);
+    }
+  }
   return unknownDatabasePreview(normalizedId);
 }
 
-export function databasePreviewTitle(databaseName: string): string {
-  return `Kinic Wiki: ${databaseName}`;
+export function databasePreviewTitle(databaseTitle: string): string {
+  return `Kinic Wiki: ${databaseTitle}`;
 }
 
 export function databasePreviewDescription(preview: DatabasePreview): string {
-  const subject = preview.publicReadable ? preview.databaseName : preview.databaseId;
+  if (preview.publicReadable && preview.description.trim()) return preview.description;
+  const subject = preview.publicReadable ? preview.databaseTitle : preview.databaseId;
   return `Browse, search, and query the ${subject} wiki database.`;
 }
 
 function unknownDatabasePreview(databaseId: string): DatabasePreview {
   return {
     databaseId,
-    databaseName: databaseId,
+    databaseTitle: databaseId,
+    description: "",
     publicReadable: false
   };
 }

@@ -653,7 +653,7 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::PurchaseCycles { .. }
                     | DatabaseCommand::CyclesHistory { .. }
-                    | DatabaseCommand::Rename { .. }
+                    | DatabaseCommand::Metadata { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
@@ -1112,12 +1112,12 @@ mod tests {
     fn main_cli_parses_database_link_commands() {
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "create", "team-db"]);
         let Command::Database {
-            command: DatabaseCommand::Create { name },
+            command: DatabaseCommand::Create { title },
         } = cli.command
         else {
             panic!("expected database create command");
         };
-        assert_eq!(name, "team-db");
+        assert_eq!(title, "team-db");
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
         let cli = Cli::parse_from([
@@ -1171,15 +1171,15 @@ mod tests {
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "metadata", "db_alpha", "Alpha"]);
         let Command::Database {
-            command: DatabaseCommand::Rename { database_id, name },
+            command: DatabaseCommand::Metadata { database_id, title },
         } = cli.command
         else {
-            panic!("expected database rename command");
+            panic!("expected database metadata command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(name, "Alpha");
+        assert_eq!(title, "Alpha");
 
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "link", "team-db"]);
         let Command::Database {

@@ -10,7 +10,7 @@ import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
-const OFFICIAL_KINIC_WIKI_DATABASE_NAME = "Official Kinic Wiki";
+const OFFICIAL_KINIC_WIKI_DATABASE_TITLE = "Official Kinic Wiki";
 
 export type DatabaseRow = DatabaseSummary & {
   member: boolean;
@@ -201,7 +201,7 @@ export function OfficialKinicWikiPanel() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Official database</p>
-          <h2 className="mt-1 text-lg font-semibold text-ink">{OFFICIAL_KINIC_WIKI_DATABASE_NAME}</h2>
+          <h2 className="mt-1 text-lg font-semibold text-ink">{OFFICIAL_KINIC_WIKI_DATABASE_TITLE}</h2>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">A canister-backed file-system wiki for agent memory: structured paths, raw sources, links, search, and safe edits.</p>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database.</p>
         </div>
@@ -263,7 +263,7 @@ function DatabaseSection({
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
             <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
+              <th className="px-4 py-3 font-medium">Title</th>
               <th className="px-4 py-3 font-medium">ID</th>
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
@@ -301,16 +301,17 @@ function DatabaseSectionHeader({ action, description, publicError = null, title 
 function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   const cycles = databaseCyclesView(database, cyclesConfig);
+  const title = database.metadata.title;
   return (
     <tr className="border-t border-line">
       <td className="px-4 py-3">
         <div className="flex min-w-[180px] flex-wrap items-center gap-2">
           {active ? (
             <Link className="font-semibold text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-              {database.name}
+              {title}
             </Link>
           ) : (
-            <span className="font-semibold text-ink">{database.name}</span>
+            <span className="font-semibold text-ink">{title}</span>
           )}
           {database.publicReadable ? <PublicBadge /> : null}
         </div>
@@ -336,16 +337,17 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
 function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   const cycles = databaseCyclesView(database, cyclesConfig);
+  const title = database.metadata.title;
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="min-w-0 break-words font-semibold">
           {active ? (
             <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-              {database.name}
+              {title}
             </Link>
           ) : (
-            <span className="text-ink">{database.name}</span>
+            <span className="text-ink">{title}</span>
           )}
         </h4>
         {database.publicReadable ? <PublicBadge /> : null}
@@ -369,11 +371,12 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
 }
 
 function ShareDatabaseLink({ database }: { database: DatabaseRow }) {
+  const title = database.metadata.title;
   return (
     <DatabaseActionLink
       external
-      ariaLabel={`Share ${database.name} on X`}
-      href={xShareDatabaseHref({ databaseId: database.databaseId, databaseName: database.name })}
+      ariaLabel={`Share ${title} on X`}
+      href={xShareDatabaseHref({ databaseId: database.databaseId, databaseTitle: title })}
       icon={<Share2 aria-hidden size={14} />}
       label="Share"
     />
@@ -444,10 +447,10 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <AdminNotice tone={tone} message={message} />;
 }
 
-export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string; name: string }) {
+export function CreatedDatabasePanel({ databaseId, title }: { databaseId: string; title: string }) {
   return (
     <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-ink">
-      Created <span className="font-semibold">{name}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
+      Created <span className="font-semibold">{title}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
       <Link className="text-accent no-underline hover:underline" href={`/dashboard/project/${encodeURIComponent(databaseId)}`}>
         Manage reservation
       </Link>

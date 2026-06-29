@@ -626,7 +626,7 @@ export function WikiBrowser() {
         graphCenter={graphCenter}
         databaseOptions={databaseOptions}
         currentDatabase={currentDatabase}
-        currentDatabaseName={currentDatabase?.name ?? databaseId}
+        currentDatabaseName={currentDatabase?.metadata.title ?? databaseId}
         cyclesConfig={cyclesConfig}
         publicReadable={publicDatabaseIds.has(databaseId)}
         databaseListError={databaseListError}
@@ -791,7 +791,7 @@ export function WikiBrowser() {
             <Inspector
               canisterId={canisterId}
               databaseId={databaseId}
-              databaseName={currentDatabase?.name ?? databaseId}
+              databaseTitle={currentDatabase?.metadata.title ?? databaseId}
               path={selectedPath}
               node={currentNode.data}
               childNodes={currentChildren.data ?? []}
@@ -809,7 +809,7 @@ export function WikiBrowser() {
             <Inspector
               canisterId={canisterId}
               databaseId={databaseId}
-              databaseName={currentDatabase?.name ?? databaseId}
+              databaseTitle={currentDatabase?.metadata.title ?? databaseId}
               path={selectedPath}
               node={currentNode.data}
               childNodes={currentChildren.data ?? []}
@@ -1392,7 +1392,7 @@ function TopBar({
           >
             {databaseOptions.map((database) => (
               <option key={database.databaseId} value={database.databaseId}>
-                {database.name}
+                {database.metadata.title}
               </option>
             ))}
           </select>
@@ -1407,7 +1407,7 @@ function TopBar({
           <a
             aria-label={`Share ${currentDatabaseName} on X`}
             className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
-            href={xShareDatabaseHref({ databaseId, databaseName: currentDatabaseName })}
+            href={xShareDatabaseHref({ databaseId, databaseTitle: currentDatabaseName })}
             rel="noreferrer"
             target="_blank"
             title="Share on X"
@@ -1457,7 +1457,7 @@ function TopBar({
 
 function DatabaseCyclesBadge({ cycles, database }: { cycles: ReturnType<typeof databaseCyclesView>; database: DatabaseSummary | null }) {
   const title = database
-    ? `${database.name}: ${cycles.label}; ${formatCycles(cycles.balanceCycles)}`
+    ? `${database.metadata.title}: ${cycles.label}; ${formatCycles(cycles.balanceCycles)}`
     : "Database cycles unavailable";
   const content = (
     <>
@@ -1506,7 +1506,12 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
   return [
     {
       databaseId,
-      name: databaseId,
+      metadata: {
+        title: databaseId,
+        description: "",
+        llmSummary: null,
+        tagsJson: "[]"
+      },
       role: "reader",
       status: "active",
       logicalSizeBytes: "0",

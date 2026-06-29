@@ -43,7 +43,7 @@ pub enum DatabaseStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseInfo {
     pub database_id: String,
-    pub name: String,
+    pub metadata: DatabaseMetadata,
     pub status: DatabaseStatus,
     pub mount_id: Option<u16>,
     pub schema_version: String,
@@ -53,9 +53,17 @@ pub struct DatabaseInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseMetadata {
+    pub title: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub tags_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseSummary {
     pub database_id: String,
-    pub name: String,
+    pub metadata: DatabaseMetadata,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
@@ -151,10 +159,6 @@ pub struct MarketListing {
     pub seller_principal: String,
     pub payout_principal: String,
     pub database_id: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
     pub status: MarketListingStatus,
     pub revision: u64,
@@ -214,15 +218,21 @@ pub struct MarketListingPreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MarketListingDetail {
+pub struct MarketListingView {
     pub listing: MarketListing,
+    pub database_metadata: DatabaseMetadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingDetail {
+    pub listing: MarketListingView,
     pub verified_stats: MarketListingVerifiedStats,
     pub preview: MarketListingPreview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct MarketListingPage {
-    pub listings: Vec<MarketListing>,
+    pub listings: Vec<MarketListingView>,
     pub next_cursor: Option<String>,
 }
 
@@ -230,10 +240,6 @@ pub struct MarketListingPage {
 pub struct MarketCreateListingRequest {
     pub database_id: String,
     pub payout_principal: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
 }
 
@@ -242,10 +248,6 @@ pub struct MarketUpdateListingRequest {
     pub listing_id: String,
     pub expected_revision: u64,
     pub payout_principal: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
 }
 
@@ -343,19 +345,22 @@ pub struct WikiMetricsPoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
-    pub name: String,
+    pub title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseResult {
     pub database_id: String,
-    pub name: String,
+    pub title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct RenameDatabaseRequest {
+pub struct UpdateDatabaseMetadataRequest {
     pub database_id: String,
-    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub tags_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

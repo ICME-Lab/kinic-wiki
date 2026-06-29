@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
   const { databaseId } = await params;
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const preview = await loadDatabasePreview(canisterId, databaseId);
-  const title = databasePreviewTitle(preview.databaseName);
+  const title = databasePreviewTitle(preview.databaseTitle);
   const description = databasePreviewDescription(preview);
   const url = publicDatabasePath(preview.databaseId);
   const routeBase = databaseRouteBase(preview.databaseId);
