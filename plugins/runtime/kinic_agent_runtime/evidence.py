@@ -40,7 +40,6 @@ def record_run(cli: str, skill_id: str, evidence: dict[str, Any], recorded_by: s
             skill_id,
             "--evidence-json",
             str(temp_path),
-            "--create-ready-jobs",
         )
         return True, None
     except subprocess.CalledProcessError as error:
@@ -65,7 +64,6 @@ def record_run_file(cli: str, skill_id: str, evidence_json: Path, recorded_by: s
             skill_id,
             "--evidence-json",
             str(temp_path),
-            "--create-ready-jobs",
             "--json",
         )
         return result.stdout

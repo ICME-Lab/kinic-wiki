@@ -16,13 +16,6 @@ export async function createVfsActor({ canisterId, host, identity }) {
 
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
-  const DatabaseProfile = idl.Variant({
-    Skill: idl.Null,
-    Memory: idl.Null,
-    Workspace: idl.Null,
-    Session: idl.Null,
-    Knowledge: idl.Null
-  });
   const DatabaseStatus = idl.Variant({
     Active: idl.Null,
     Pending: idl.Null,
@@ -37,7 +30,6 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    profile: DatabaseProfile,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64),
@@ -55,8 +47,8 @@ function idlFactory({ IDL: idl }) {
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig
   });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text, profile: DatabaseProfile });
-  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text, profile: DatabaseProfile });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -66,14 +58,6 @@ function idlFactory({ IDL: idl }) {
     updated_at: idl.Int64,
     etag: idl.Text,
     metadata_json: idl.Text
-  });
-  const WriteNodeRequest = idl.Record({
-    database_id: idl.Text,
-    path: idl.Text,
-    kind: NodeKind,
-    content: idl.Text,
-    metadata_json: idl.Text,
-    expected_etag: idl.Opt(idl.Text)
   });
   const WriteSourceForGenerationRequest = idl.Record({
     database_id: idl.Text,
@@ -85,10 +69,6 @@ function idlFactory({ IDL: idl }) {
   });
   const MkdirNodeRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
-  const UrlIngestTriggerSessionRequest = idl.Record({
-    database_id: idl.Text,
-    session_nonce: idl.Text
-  });
   const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
@@ -101,13 +81,11 @@ function idlFactory({ IDL: idl }) {
     session_nonce: idl.Text
   });
   return idl.Service({
-    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
-    write_node: idl.Func([WriteNodeRequest], [idl.Variant({ Ok: WriteNodeResult, Err: idl.Text })], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text })], [])
   });
 }
@@ -118,7 +96,7 @@ export async function createDatabase(config, name) {
 }
 
 export async function createDatabaseWithActor(actor, name) {
-  const result = await actor.create_database({ name, profile: { Workspace: null } });
+  const result = await actor.create_database({ name });
   if ("Err" in result) {
     throw new Error(result.Err);
   }
@@ -168,8 +146,7 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || ""),
-    profile: variantKey(raw.profile)
+    name: String(raw.name || "")
   };
 }
 
@@ -178,7 +155,6 @@ function normalizeDatabaseSummary(raw) {
     databaseId: raw.database_id,
     name: String(raw.name || ""),
     role: variantKey(raw.role),
-    profile: variantKey(raw.profile),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
     cyclesBalance: raw.cycles_balance?.[0]?.toString?.() ?? "0",

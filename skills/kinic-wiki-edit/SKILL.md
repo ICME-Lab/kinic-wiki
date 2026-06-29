@@ -1,16 +1,16 @@
 ---
 name: kinic-wiki-edit
-description: Kinic Wiki workflow skill for safe remote wiki page edits, redactions, leakage cleanup, and multi-node repair with etag-aware VFS commands.
+description: Kinic Wiki workflow skill for safe remote knowledge page edits, redactions, leakage cleanup, and multi-node repair with etag-aware VFS commands.
 ---
 
 # Kinic Wiki Edit
 
 Use this skill when the user wants to:
 
-- remove or redact leaked, stale, duplicated, or invalid text from wiki nodes
-- edit existing `/Wiki/...` pages without new source ingestion
+- remove or redact leaked, stale, duplicated, or invalid text from knowledge nodes
+- edit existing `/Knowledge/...` pages without new source ingestion
 - repair many existing nodes after a lint, search, or incident finding
-- apply the same text replacement across multiple wiki pages
+- apply the same text replacement across multiple knowledge pages
 
 Do not use this skill for:
 
@@ -21,7 +21,7 @@ Do not use this skill for:
 
 Core rules:
 
-- Read [edit.md](edit.md) before mutating remote wiki nodes.
+- Read [edit.md](edit.md) before mutating remote knowledge nodes.
 - Treat the canister wiki as the source of truth.
 - Always read current node content and etag before editing.
 - Prefer etag-aware CLI commands for existing node repair.

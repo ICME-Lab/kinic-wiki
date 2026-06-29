@@ -25,7 +25,7 @@ async fn run() -> Result<()> {
     let result = handle_openai_tool_call(
         &client,
         "read",
-        r#"{"database_id":"<database-id>","path":"/Wiki/index.md"}"#,
+        r#"{"database_id":"<database-id>","path":"/Knowledge/index.md"}"#,
     )
     .await?;
 
@@ -84,4 +84,4 @@ Skill discovery and read tools are read-only runtime helpers.
 Agents should call `skill_find` at task start, inspect promising candidates, read `SKILL.md` and package-local helper files with `skill_read`, then apply those instructions to the current task.
 `skill_record_run` is a write tool for agent-side evidence capture and is excluded from read-only tool sets.
 
-Use the CLI for operational writes such as `skill upsert`, `database link`, imports, and improvement proposal approval.
+Use the CLI for operational writes such as `skill upsert`, `skill rollback`, `database link`, and imports.

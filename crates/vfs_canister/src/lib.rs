@@ -44,22 +44,21 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseProfile,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KnowledgeEvidence,
-    KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
-    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    StoreCapability, StoreManifest, StoreManifestRequest, StoreRoot,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -351,105 +350,43 @@ fn canister_health() -> CanisterHealth {
 }
 
 #[query]
-fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String> {
-    let profile =
-        with_service(|service| service.database_profile(&request.database_id, &caller_text()))?;
-    Ok(store_manifest_for_profile(profile))
-}
-
-fn store_manifest_for_profile(profile: DatabaseProfile) -> StoreManifest {
-    StoreManifest {
+fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
+    with_service(|service| service.status(&request.database_id, &caller_text()))?;
+    Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
-        profile,
-        purpose: store_manifest_purpose(profile).to_string(),
-        enabled_stores: store_manifest_enabled_stores(profile),
-        roots: store_manifest_roots(profile),
-        entry_roots: store_manifest_entry_roots(profile),
+        purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
+            .to_string(),
+        enabled_stores: ["memory", "knowledge", "skill", "session"]
+            .iter()
+            .map(|store| (*store).to_string())
+            .collect(),
+        roots: vec![
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+            store_root("/Sources", "source_evidence"),
+            store_root("/Sources/sessions", "session_evidence"),
+            store_root("/Sources/skill-runs", "skill_run_evidence"),
+        ],
+        entry_roots: vec![
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+        ],
         capabilities: store_capabilities(),
         canonical_roles: canonical_roles(),
-        write_policy: "store_recall_read_only".to_string(),
-        recommended_entrypoint: store_manifest_recommended_entrypoint(profile).to_string(),
+        write_policy: "stores_read_only".to_string(),
+        recommended_entrypoint: "query_context".to_string(),
         max_depth: 2,
         max_query_limit: 100,
         budget_unit: "approx_chars_from_tokens".to_string(),
-    }
+    })
 }
 
-fn store_manifest_purpose(profile: DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Workspace => {
-            "Canister-backed memory, knowledge, skill, and session stores for agents"
-        }
-        DatabaseProfile::Knowledge => "Long-term wiki and digital garden knowledge store",
-        DatabaseProfile::Memory => "Agent memory and recall store with evidence links",
-        DatabaseProfile::Skill => "Skill registry store with run evidence",
-        DatabaseProfile::Session => "Agent session audit and replay source store",
-    }
-}
-
-fn store_manifest_enabled_stores(profile: DatabaseProfile) -> Vec<String> {
-    let stores: &[&str] = match profile {
-        DatabaseProfile::Workspace => &["memory", "knowledge", "skill", "session"],
-        DatabaseProfile::Knowledge => &["knowledge"],
-        DatabaseProfile::Memory => &["memory", "knowledge"],
-        DatabaseProfile::Skill => &["skill", "knowledge"],
-        DatabaseProfile::Session => &["session"],
-    };
-    stores.iter().map(|store| (*store).to_string()).collect()
-}
-
-fn store_manifest_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
-    match profile {
-        DatabaseProfile::Workspace => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "knowledge_evidence"),
-        ],
-        DatabaseProfile::Knowledge => vec![store_root("/Wiki", "knowledge")],
-        DatabaseProfile::Memory => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Sources/raw", "knowledge_evidence"),
-        ],
-        DatabaseProfile::Skill => vec![
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sources/skill-runs", "skill_run_evidence"),
-        ],
-        DatabaseProfile::Session => vec![
-            store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "session_audit_sources"),
-        ],
-    }
-}
-
-fn store_manifest_entry_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
-    match profile {
-        DatabaseProfile::Workspace => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sessions", "session"),
-        ],
-        DatabaseProfile::Knowledge => vec![store_root("/Wiki", "knowledge")],
-        DatabaseProfile::Memory => vec![store_root("/Memory", "memory")],
-        DatabaseProfile::Skill => vec![store_root("/Wiki/skills", "skill")],
-        DatabaseProfile::Session => vec![store_root("/Sessions", "session")],
-    }
-}
-
-fn store_manifest_recommended_entrypoint(profile: DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Workspace | DatabaseProfile::Memory => "memory_recall",
-        DatabaseProfile::Knowledge => "read_node_context:/Wiki/index.md",
-        DatabaseProfile::Skill => "skill inspect",
-        DatabaseProfile::Session => "list_nodes:/Sessions",
-    }
-}
-
-fn store_root(path: &str, kind: &str) -> StoreRoot {
-    StoreRoot {
+fn store_root(path: &str, kind: &str) -> MemoryRoot {
+    MemoryRoot {
         path: path.to_string(),
         kind: kind.to_string(),
     }
@@ -474,16 +411,10 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database_with_profile(
-            &request.name,
-            request.profile,
-            caller,
-            now,
-        )?;
+        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
         Ok(CreateDatabaseResult {
             database_id: meta.database_id,
             name: meta.name,
-            profile: meta.profile,
         })
     })
 }
@@ -1124,7 +1055,7 @@ fn update_cycles_billing_config(update: CyclesBillingConfigUpdate) -> Result<(),
 }
 
 #[update]
-fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_unmetered_update(
         "delete_database",
@@ -1440,13 +1371,13 @@ fn read_node_context(request: NodeContextRequest) -> Result<Option<NodeContext>,
 }
 
 #[query]
-fn memory_recall(request: MemoryRecallRequest) -> Result<MemoryRecall, String> {
-    with_service(|service| service.memory_recall(&caller_text(), request))
+fn query_context(request: QueryContextRequest) -> Result<QueryContext, String> {
+    with_service(|service| service.query_context(&caller_text(), request))
 }
 
 #[query]
-fn knowledge_evidence(request: KnowledgeEvidenceRequest) -> Result<KnowledgeEvidence, String> {
-    with_service(|service| service.knowledge_evidence(&caller_text(), request))
+fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, String> {
+    with_service(|service| service.source_evidence(&caller_text(), request))
 }
 
 #[update]
@@ -2313,18 +2244,18 @@ where
     })
 }
 
-fn store_capabilities() -> Vec<StoreCapability> {
+fn store_capabilities() -> Vec<MemoryCapability> {
     [
         (
-            "store_manifest",
+            "memory_manifest",
             "Discover the four-store API shape, limits, and policy",
         ),
         (
-            "memory_recall",
+            "query_context",
             "Primary memory-store entrypoint for task-scoped recall",
         ),
         (
-            "knowledge_evidence",
+            "source_evidence",
             "Read source-path evidence for one knowledge node",
         ),
         (
@@ -2338,7 +2269,7 @@ fn store_capabilities() -> Vec<StoreCapability> {
         ),
     ]
     .into_iter()
-    .map(|(name, description)| StoreCapability {
+    .map(|(name, description)| MemoryCapability {
         name: name.to_string(),
         description: description.to_string(),
     })

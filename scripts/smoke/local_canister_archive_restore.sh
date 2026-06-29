@@ -173,8 +173,8 @@ CLI_DB="$(cd "$CLI_WORKSPACE" && "${VFS[@]}" database create "$CLI_DB_NAME")"
 (
   cd "$CLI_WORKSPACE"
   "${VFS[@]}" database purchase-cycles "$CLI_DB" "$SMOKE_CYCLE_PURCHASE_KINIC"
-  "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Wiki/smoke.md --input "$INPUT_FILE"
+  "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Knowledge/smoke.md --input "$INPUT_FILE"
   "${VFS[@]}" database archive-export "$CLI_DB" --output "$ARCHIVE_FILE" --chunk-size 65536 --json
   "${VFS[@]}" database archive-restore "$CLI_DB" --input "$ARCHIVE_FILE" --chunk-size 65536 --json
-  "${VFS[@]}" --identity-mode identity --database-id "$CLI_DB" read-node --path /Wiki/smoke.md --fields path,etag --json
+  "${VFS[@]}" --identity-mode identity --database-id "$CLI_DB" read-node --path /Knowledge/smoke.md --fields path,etag --json
 )

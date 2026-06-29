@@ -60,7 +60,7 @@ function isSafeSkillId(value: string): boolean {
 }
 
 export function isSkillRegistryPath(path: string): boolean {
-  return path === "/Wiki/skills" || path.startsWith("/Wiki/skills/");
+  return path === "/Skills" || path.startsWith("/Skills/");
 }
 
 export function isPublicSkillRegistryPath(path: string): boolean {

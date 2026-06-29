@@ -41,7 +41,7 @@ async function main() {
   assertSnapshotIncludes("Local link graph");
   assertSnapshotIncludes(target.nodePath);
   run("open", [emptyGraphUrl]);
-  assertSnapshotIncludes("Open Graph from a wiki page to inspect its local neighborhood.");
+  assertSnapshotIncludes("Open Graph from a knowledge page to inspect its local neighborhood.");
   run("open", [helpUrl]);
   assertSnapshotIncludes("Wiki browser help");
   assertSnapshotIncludes("Path search matches node paths.");
@@ -63,7 +63,7 @@ export function parseSmokeTargetUrl(url) {
   return {
     origin: targetUrl.origin,
     databaseId,
-    nodePath: path ? `/${path}` : "/Wiki"
+    nodePath: path ? `/${path}` : "/Knowledge"
   };
 }
 

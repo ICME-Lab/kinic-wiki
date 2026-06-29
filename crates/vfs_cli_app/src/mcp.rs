@@ -8,7 +8,7 @@ use std::io::{BufRead, Write};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use vfs_cli::skill_kb;
 use vfs_client::VfsApi;
-use vfs_types::{KnowledgeEvidenceRequest, MemoryRecallRequest};
+use vfs_types::{QueryContextRequest, SourceEvidenceRequest};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const MCP_SERVER_NAME: &str = "kinic-store-recall";
@@ -134,19 +134,19 @@ async fn dispatch_tool(
     arguments: Value,
 ) -> Result<Value> {
     match name {
-        "kinic.store_manifest" => {
-            let args: StoreManifestArgs = serde_json::from_value(arguments)?;
+        "kinic.memory_manifest" => {
+            let args: MemoryManifestArgs = serde_json::from_value(arguments)?;
             Ok(json!(
                 client
-                    .store_manifest(&scope.database_id(args.database_id)?)
+                    .memory_manifest(&scope.database_id(args.database_id)?)
                     .await?
             ))
         }
-        "kinic.memory_recall" => {
-            let args: MemoryRecallArgs = serde_json::from_value(arguments)?;
+        "kinic.query_context" => {
+            let args: QueryContextArgs = serde_json::from_value(arguments)?;
             Ok(json!(
                 client
-                    .memory_recall(MemoryRecallRequest {
+                    .query_context(QueryContextRequest {
                         database_id: scope.database_id(args.database_id)?,
                         task: args.task,
                         entities: args.entities.unwrap_or_default(),
@@ -158,11 +158,11 @@ async fn dispatch_tool(
                     .await?
             ))
         }
-        "kinic.knowledge_evidence" => {
-            let args: KnowledgeEvidenceArgs = serde_json::from_value(arguments)?;
+        "kinic.source_evidence" => {
+            let args: SourceEvidenceArgs = serde_json::from_value(arguments)?;
             Ok(json!(
                 client
-                    .knowledge_evidence(KnowledgeEvidenceRequest {
+                    .source_evidence(SourceEvidenceRequest {
                         database_id: scope.database_id(args.database_id)?,
                         node_path: args.node_path,
                     })
@@ -199,7 +199,7 @@ fn tool_result(value: Value, is_error: bool) -> Value {
 fn tool_specs() -> Vec<Value> {
     vec![
         json!({
-            "name": "kinic.store_manifest",
+            "name": "kinic.memory_manifest",
             "description": "Return Store API version, roots, limits, and capability summary for one Kinic database.",
             "inputSchema": {
                 "type": "object",
@@ -211,7 +211,7 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "kinic.memory_recall",
+            "name": "kinic.query_context",
             "description": "Return task-scoped memory context, selected nodes, graph links, and optional evidence.",
             "inputSchema": {
                 "type": "object",
@@ -229,7 +229,7 @@ fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "kinic.knowledge_evidence",
+            "name": "kinic.source_evidence",
             "description": "Return source references and freshness metadata for one known wiki node path.",
             "inputSchema": {
                 "type": "object",
@@ -315,12 +315,12 @@ struct ToolCallRequest {
 }
 
 #[derive(Deserialize)]
-struct StoreManifestArgs {
+struct MemoryManifestArgs {
     database_id: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct MemoryRecallArgs {
+struct QueryContextArgs {
     database_id: Option<String>,
     task: String,
     entities: Option<Vec<String>>,
@@ -331,7 +331,7 @@ struct MemoryRecallArgs {
 }
 
 #[derive(Deserialize)]
-struct KnowledgeEvidenceArgs {
+struct SourceEvidenceArgs {
     database_id: Option<String>,
     node_path: String,
 }
@@ -351,21 +351,21 @@ mod tests {
     use std::sync::Mutex;
     use tokio::io::{AsyncReadExt, BufReader};
     use vfs_types::{
-        AppendNodeRequest, ChildNode, DatabaseProfile, DeleteNodeRequest, DeleteNodeResult,
-        EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
-        FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest,
-        KnowledgeEvidence, KnowledgeEvidenceRef, ListChildrenRequest, ListNodesRequest,
-        MemoryRecall, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-        MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, SearchNodeHit,
-        SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, Status, StoreCapability,
-        StoreManifest, StoreRoot, WriteNodeRequest, WriteNodeResult,
+        AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+        EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+        FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
+        MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+        MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node,
+        NodeEntry, QueryContext, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+        SearchPreviewMode, SourceEvidence, SourceEvidenceRef, Status, WriteNodeRequest,
+        WriteNodeResult,
     };
 
     #[derive(Default)]
     struct McpMockClient {
-        store_manifest_requests: Mutex<Vec<String>>,
-        memory_recall_requests: Mutex<Vec<MemoryRecallRequest>>,
-        knowledge_evidence_requests: Mutex<Vec<KnowledgeEvidenceRequest>>,
+        memory_manifest_requests: Mutex<Vec<String>>,
+        query_context_requests: Mutex<Vec<QueryContextRequest>>,
+        source_evidence_requests: Mutex<Vec<SourceEvidenceRequest>>,
         search_requests: Mutex<Vec<SearchNodesRequest>>,
     }
 
@@ -378,43 +378,42 @@ mod tests {
             })
         }
 
-        async fn store_manifest(&self, database_id: &str) -> Result<StoreManifest> {
-            self.store_manifest_requests
+        async fn memory_manifest(&self, database_id: &str) -> Result<MemoryManifest> {
+            self.memory_manifest_requests
                 .lock()
-                .expect("store manifest lock should succeed")
+                .expect("memory manifest lock should succeed")
                 .push(database_id.to_string());
-            Ok(StoreManifest {
+            Ok(MemoryManifest {
                 api_version: "kinic-stores-v1".to_string(),
-                profile: DatabaseProfile::Memory,
                 purpose: "memory".to_string(),
                 enabled_stores: vec!["memory".to_string()],
-                roots: vec![StoreRoot {
+                roots: vec![MemoryRoot {
                     path: "/Memory".to_string(),
                     kind: "memory".to_string(),
                 }],
-                entry_roots: vec![StoreRoot {
+                entry_roots: vec![MemoryRoot {
                     path: "/Memory".to_string(),
-                    kind: "memory_recall".to_string(),
+                    kind: "query_context".to_string(),
                 }],
-                capabilities: vec![StoreCapability {
-                    name: "memory_recall".to_string(),
+                capabilities: vec![MemoryCapability {
+                    name: "query_context".to_string(),
                     description: "recall".to_string(),
                 }],
                 canonical_roles: Vec::new(),
                 write_policy: "store_recall_read_only".to_string(),
-                recommended_entrypoint: "memory_recall".to_string(),
+                recommended_entrypoint: "query_context".to_string(),
                 max_depth: 2,
                 max_query_limit: 100,
                 budget_unit: "approx_chars_from_tokens".to_string(),
             })
         }
 
-        async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
-            self.memory_recall_requests
+        async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+            self.query_context_requests
                 .lock()
-                .expect("memory recall lock should succeed")
+                .expect("query context lock should succeed")
                 .push(request.clone());
-            Ok(MemoryRecall {
+            Ok(QueryContext {
                 namespace: request.namespace.unwrap_or_else(|| "/Memory".to_string()),
                 task: request.task,
                 search_hits: Vec::new(),
@@ -425,19 +424,16 @@ mod tests {
             })
         }
 
-        async fn knowledge_evidence(
-            &self,
-            request: KnowledgeEvidenceRequest,
-        ) -> Result<KnowledgeEvidence> {
-            self.knowledge_evidence_requests
+        async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+            self.source_evidence_requests
                 .lock()
-                .expect("knowledge evidence lock should succeed")
+                .expect("source evidence lock should succeed")
                 .push(request.clone());
-            Ok(KnowledgeEvidence {
+            Ok(SourceEvidence {
                 node_path: request.node_path,
-                refs: vec![KnowledgeEvidenceRef {
-                    source_path: "/Sources/raw/source.md".to_string(),
-                    via_path: "/Wiki/topic.md".to_string(),
+                refs: vec![SourceEvidenceRef {
+                    source_path: "/Sources/web/source.md".to_string(),
+                    via_path: "/Knowledge/topic.md".to_string(),
                     raw_href: "https://example.com".to_string(),
                     link_text: "source".to_string(),
                     source_etag: Some("etag-1".to_string()),
@@ -574,49 +570,49 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "kinic.store_manifest",
-                "kinic.memory_recall",
-                "kinic.knowledge_evidence",
+                "kinic.memory_manifest",
+                "kinic.query_context",
+                "kinic.source_evidence",
                 "kinic.skill_find"
             ]
         );
     }
 
     #[tokio::test]
-    async fn store_manifest_tool_calls_client() {
+    async fn memory_manifest_tool_calls_client() {
         let client = McpMockClient::default();
         let response = handle_json_rpc_message(
             &client,
             &scope(),
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"kinic.store_manifest","arguments":{"database_id":"db_alpha"}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"kinic.memory_manifest","arguments":{"database_id":"db_alpha"}}}"#,
         )
         .await
         .expect("tools/call should respond");
         assert_tool_ok(&response);
         assert_eq!(
             *client
-                .store_manifest_requests
+                .memory_manifest_requests
                 .lock()
-                .expect("store manifest lock should succeed"),
+                .expect("memory manifest lock should succeed"),
             vec!["db_alpha".to_string()]
         );
     }
 
     #[tokio::test]
-    async fn memory_recall_tool_builds_request() {
+    async fn query_context_tool_builds_request() {
         let client = McpMockClient::default();
         let response = handle_json_rpc_message(
             &client,
             &scope(),
-            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kinic.memory_recall","arguments":{"database_id":"db_alpha","task":"summarize decisions","entities":["project"],"namespace":"/Memory","budget_tokens":1200,"include_evidence":false,"depth":2}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kinic.query_context","arguments":{"database_id":"db_alpha","task":"summarize decisions","entities":["project"],"namespace":"/Memory","budget_tokens":1200,"include_evidence":false,"depth":2}}}"#,
         )
         .await
         .expect("tools/call should respond");
         assert_tool_ok(&response);
         let requests = client
-            .memory_recall_requests
+            .query_context_requests
             .lock()
-            .expect("memory recall lock should succeed");
+            .expect("query context lock should succeed");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].database_id, "db_alpha");
         assert_eq!(requests[0].task, "summarize decisions");
@@ -628,23 +624,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn knowledge_evidence_tool_builds_request() {
+    async fn source_evidence_tool_builds_request() {
         let client = McpMockClient::default();
         let response = handle_json_rpc_message(
             &client,
             &scope(),
-            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"kinic.knowledge_evidence","arguments":{"database_id":"db_alpha","node_path":"/Wiki/topic.md"}}}"#,
+            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"kinic.source_evidence","arguments":{"database_id":"db_alpha","node_path":"/Knowledge/topic.md"}}}"#,
         )
         .await
         .expect("tools/call should respond");
         assert_tool_ok(&response);
         let requests = client
-            .knowledge_evidence_requests
+            .source_evidence_requests
             .lock()
-            .expect("knowledge evidence lock should succeed");
+            .expect("source evidence lock should succeed");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].database_id, "db_alpha");
-        assert_eq!(requests[0].node_path, "/Wiki/topic.md");
+        assert_eq!(requests[0].node_path, "/Knowledge/topic.md");
     }
 
     #[tokio::test]
@@ -675,7 +671,7 @@ mod tests {
         let response = handle_json_rpc_message(
             &client,
             &scope(),
-            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"kinic.store_manifest","arguments":{}}}"#,
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"kinic.memory_manifest","arguments":{}}}"#,
         )
         .await
         .expect("tools/call should respond");
@@ -697,16 +693,16 @@ mod tests {
         let response = handle_json_rpc_message(
             &client,
             &scope(),
-            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"kinic.store_manifest","arguments":{"database_id":"db_beta"}}}"#,
+            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"kinic.memory_manifest","arguments":{"database_id":"db_beta"}}}"#,
         )
         .await
         .expect("tools/call should respond");
         assert_tool_error(&response, "database_id does not match MCP server scope");
         assert!(
             client
-                .store_manifest_requests
+                .memory_manifest_requests
                 .lock()
-                .expect("store manifest lock should succeed")
+                .expect("memory manifest lock should succeed")
                 .is_empty()
         );
     }

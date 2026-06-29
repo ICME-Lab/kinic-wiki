@@ -3,7 +3,7 @@
 // Why: The app-facing CLI package should reuse these shared command shapes without owning the VFS surface.
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use vfs_types::{DatabaseProfile, DatabaseRole, GlobNodeType, NodeKind, SearchPreviewMode};
+use vfs_types::{DatabaseRole, GlobNodeType, NodeKind, SearchPreviewMode};
 
 pub const DEFAULT_VFS_ROOT_PATH: &str = "/";
 
@@ -288,11 +288,7 @@ pub enum MarketCommand {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
     #[command(about = "Create a database and print its generated database id")]
-    Create {
-        #[arg(long, value_enum, default_value_t = DatabaseProfileArg::Workspace)]
-        profile: DatabaseProfileArg,
-        name: String,
-    },
+    Create { name: String },
     #[command(about = "Rename one database")]
     Rename { database_id: String, name: String },
     #[command(about = "List databases attached to the current identity")]
@@ -416,15 +412,6 @@ pub enum DatabaseRoleArg {
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DatabaseProfileArg {
-    Workspace,
-    Knowledge,
-    Memory,
-    Skill,
-    Session,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityModeArg {
     Auto,
     Anonymous,
@@ -436,18 +423,6 @@ impl NodeKindArg {
         match self {
             Self::File => NodeKind::File,
             Self::Source => NodeKind::Source,
-        }
-    }
-}
-
-impl DatabaseProfileArg {
-    pub fn to_database_profile(self) -> DatabaseProfile {
-        match self {
-            Self::Workspace => DatabaseProfile::Workspace,
-            Self::Knowledge => DatabaseProfile::Knowledge,
-            Self::Memory => DatabaseProfile::Memory,
-            Self::Skill => DatabaseProfile::Skill,
-            Self::Session => DatabaseProfile::Session,
         }
     }
 }

@@ -1,11 +1,29 @@
 import { databaseRouteBase } from "./share-links";
 import type { SearchLimit, SearchPreviewMode, SearchScope } from "./search-options";
 
+const INTERNAL_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources", "/Wiki"] as const;
+
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
-    return "/Wiki";
+    return "/Knowledge";
   }
   return `/${segments.join("/")}`;
+}
+
+export function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] !== "db" || !segments[1]) {
+    return { databaseId: null, nodePath: "/Knowledge" };
+  }
+  const path = segments
+    .slice(2)
+    .filter(Boolean)
+    .map(decodePathSegment)
+    .join("/");
+  return {
+    databaseId: decodePathSegment(segments[1]),
+    nodePath: path ? `/${path}` : "/Knowledge",
+  };
 }
 
 export function hrefForPath(
@@ -113,9 +131,9 @@ export function hrefForDatabaseSwitch(
     return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.searchOptions);
   }
   if (state.isGraphPage) {
-    return hrefForGraph(canisterId, databaseId, "/Wiki", state.graphDepth);
+    return hrefForGraph(canisterId, databaseId, "/Knowledge", state.graphDepth);
   }
-  return hrefForPath(canisterId, databaseId, "/Wiki");
+  return hrefForPath(canisterId, databaseId, "/Knowledge");
 }
 
 export function hrefForMarkdownLink(canisterId: string, databaseId: string, currentPath: string, href: string | undefined): string | null {
@@ -149,7 +167,7 @@ export function parentPath(path: string): string | null {
 }
 
 function resolveRelativeWikiPath(currentPath: string, href: string): string {
-  const base = parentPath(currentPath) ?? "/Wiki";
+  const base = parentPath(currentPath) ?? "/Knowledge";
   const parts = [...base.split("/"), ...href.split("/")].filter(Boolean);
   const resolved: string[] = [];
   for (const part of parts) {
@@ -170,7 +188,7 @@ function isExternalHref(href: string): boolean {
 }
 
 function isInternalWikiPath(path: string): boolean {
-  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
+  return INTERNAL_STORE_ROOT_PATHS.some((root) => path === root || path.startsWith(`${root}/`));
 }
 
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget): string {
@@ -184,6 +202,14 @@ function decodeMarkdownHrefPath(path: string): string {
     return decodeURIComponent(path);
   } catch {
     return path;
+  }
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
   }
 }
 

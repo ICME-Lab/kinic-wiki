@@ -50,9 +50,9 @@ Diagnostics must go to stderr.
 
 v0 exposes only read-only Store/Recall tools:
 
-- `kinic.store_manifest`
-- `kinic.memory_recall`
-- `kinic.knowledge_evidence`
+- `kinic.memory_manifest`
+- `kinic.query_context`
+- `kinic.source_evidence`
 - `kinic.skill_find`
 
 Each tool call must pass the same `database_id` used to start the server.

@@ -1,11 +1,11 @@
 // Where: workers/wiki-generator/src/url-ingest.ts
 // What: URL ingest request parsing, source persistence, and request state writes.
-// Why: Browser-submitted URLs should become raw sources before wiki page generation.
+// Why: Browser-submitted URLs should become raw sources before knowledge page generation.
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
-import { validateCanonicalSourcePath } from "./source-path.js";
+import { validateSourceRootPath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
 import type { UrlIngestRequest, UrlIngestTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
@@ -445,7 +445,7 @@ function validateSourcePath(sourcePrefix: string, path: string): void {
   if (!path.startsWith(`${sourcePrefix}/`)) {
     throw new Error(`source_path is outside source prefix: ${path}`);
   }
-  validateCanonicalSourcePath(path, sourcePrefix);
+  validateSourceRootPath(path, sourcePrefix);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

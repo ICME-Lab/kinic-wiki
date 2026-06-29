@@ -1,14 +1,14 @@
 // Where: crates/vfs_cli_app/src/conversation_wiki.rs
-// What: Generate a minimal conversation wiki scope from a persisted raw source node.
-// Why: Chrome capture should only persist evidence; wiki pages are created on demand.
+// What: Generate a minimal conversation knowledge scope from a persisted raw source node.
+// Why: Chrome capture should only persist evidence; knowledge pages are created on demand.
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::Serialize;
 use vfs_client::VfsApi;
 use vfs_types::{NodeKind, WriteNodeRequest};
-use wiki_domain::{RAW_SOURCES_PREFIX, validate_canonical_source_path};
+use wiki_domain::{KNOWLEDGE_SOURCES_PREFIX, validate_knowledge_source_path};
 
-const CONVERSATION_WIKI_PREFIX: &str = "/Wiki/conversations";
+const CONVERSATION_WIKI_PREFIX: &str = "/Knowledge/conversations";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawConversation {
@@ -85,10 +85,12 @@ fn parse_raw_conversation(source_path: &str, content: &str) -> Result<RawConvers
 }
 
 fn source_id_from_path(source_path: &str) -> Result<String> {
-    validate_canonical_source_path(source_path).map_err(anyhow::Error::msg)?;
+    validate_knowledge_source_path(source_path).map_err(anyhow::Error::msg)?;
     let relative = source_path
-        .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
-        .ok_or_else(|| anyhow!("source path must be under {RAW_SOURCES_PREFIX}: {source_path}"))?;
+        .strip_prefix(&format!("{KNOWLEDGE_SOURCES_PREFIX}/"))
+        .ok_or_else(|| {
+            anyhow!("source path must be under {KNOWLEDGE_SOURCES_PREFIX}: {source_path}")
+        })?;
     let mut segments = relative.split('/');
     let provider = segments
         .next()
@@ -99,12 +101,12 @@ fn source_id_from_path(source_path: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("source path is missing source file: {source_path}"))?;
     let Some(file_stem) = file.strip_suffix(".md").filter(|value| !value.is_empty()) else {
         return Err(anyhow!(
-            "source path must use {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
+            "source path must use {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
         ));
     };
     if segments.next().is_some() {
         return Err(anyhow!(
-            "source path must use {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
+            "source path must use {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
         ));
     }
     Ok(format!("{provider}-{file_stem}"))
@@ -253,8 +255,7 @@ mod tests {
 
     #[test]
     fn parse_raw_conversation_reads_metadata() {
-        let raw =
-            parse_raw_conversation("/Sources/raw/chatgpt/abc.md", RAW).expect("raw should parse");
+        let raw = parse_raw_conversation("/Sources/chatgpt/abc.md", RAW).expect("raw should parse");
         assert_eq!(raw.source_id, "chatgpt-abc");
         assert_eq!(raw.provider, "chatgpt");
         assert_eq!(raw.title, "Project Notes");
@@ -264,7 +265,7 @@ mod tests {
     #[test]
     fn parse_raw_conversation_unescapes_quoted_metadata() {
         let raw = parse_raw_conversation(
-            "/Sources/raw/chatgpt/abc.md",
+            "/Sources/chatgpt/abc.md",
             "# Raw Conversation Source\n\n## Metadata\n\n- provider: chatgpt\n- conversation_title: \"Project \\\"Alpha\\\"\"\n- message_count: 1\n",
         )
         .expect("raw should parse");
@@ -274,7 +275,7 @@ mod tests {
 
     #[test]
     fn parse_raw_conversation_rejects_noncanonical_source_path() {
-        let error = parse_raw_conversation("/Sources/raw/../evil.md", RAW)
+        let error = parse_raw_conversation("/Sources/../evil.md", RAW)
             .expect_err("noncanonical raw path should fail");
 
         assert!(error.to_string().contains("canonical form"));
@@ -282,9 +283,8 @@ mod tests {
 
     #[test]
     fn generated_wiki_does_not_copy_transcript_body() {
-        let raw =
-            parse_raw_conversation("/Sources/raw/chatgpt/abc.md", RAW).expect("raw should parse");
-        let docs = build_wiki_documents(&raw, "/Wiki/conversations/chatgpt-abc");
+        let raw = parse_raw_conversation("/Sources/chatgpt/abc.md", RAW).expect("raw should parse");
+        let docs = build_wiki_documents(&raw, "/Knowledge/conversations/chatgpt-abc");
         assert!(docs.iter().any(|doc| doc.path.ends_with("/provenance.md")));
         assert!(docs.iter().all(|doc| !doc.content.contains("secret fact")));
         assert!(docs.iter().all(|doc| !doc.content.contains("answer")));

@@ -90,7 +90,7 @@ fn write_marketplace_manifest(paths: &ClaudePaths) -> Result<()> {
             {
                 "name": PLUGIN_NAME,
                 "displayName": "Kinic Skill Recorder",
-                "description": "Record Kinic Skill Registry run evidence and process skill evolution jobs from Claude Code.",
+                "description": "Record Kinic Skill Registry run evidence from Claude Code.",
                 "version": "0.1.2",
                 "source": "./plugins/kinic-skill-recorder",
                 "category": "Productivity",

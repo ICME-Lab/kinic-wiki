@@ -20,4 +20,4 @@
 - Options page after Internet Identity login.
 - Database selection state.
 - AI conversation export panel.
-- Successful URL ingest status.
+- Successful source capture status.

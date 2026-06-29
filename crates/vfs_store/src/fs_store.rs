@@ -18,15 +18,15 @@ use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence,
-    KnowledgeEvidenceRef, KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge, MarketCategoryGraphNode,
-    MarketListingPreview, MarketListingVerifiedStats, MarketPreviewExcerpt, MemoryRecall,
-    MemoryRecallRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
+    MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
+    MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
-    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, Status, WriteNodeItem,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
+    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
 };
 
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
-const WIKI_ROOT_PATH: &str = "/Wiki";
+const WIKI_ROOT_PATH: &str = "/Knowledge";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
@@ -62,6 +62,9 @@ const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
 const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
 const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
+const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
+const SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "database SQL execution budget exceeded";
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
 const SNAPSHOT_REVISION_CURSOR_REQUIRED: &str = "snapshot_revision is required when cursor is set";
@@ -189,7 +192,7 @@ impl FsStore {
                 top_level_paths: load_marketplace_top_level_paths(conn)?,
                 excerpts: load_marketplace_preview_excerpts(conn)?,
                 category_graph: load_marketplace_category_graph(conn)?,
-                graph_links: load_graph_links(conn, "/Wiki", 100)?,
+                graph_links: load_graph_links(conn, "/Knowledge", 100)?,
                 preview_stale: false,
             };
             Ok((stats, preview))
@@ -251,22 +254,33 @@ impl FsStore {
         validate_database_sql_json_select(sql, "database SQL")?;
         let limit = sql_json_page_limit(limit);
         self.read_conn(|conn| {
+            let _progress_handler = crate::sqlite::install_progress_handler(
+                conn,
+                SQL_JSON_PROGRESS_OP_INTERVAL,
+                SQL_JSON_PROGRESS_CALLBACK_BUDGET,
+            );
             let mut json_object_stmt = conn
                 .prepare(
                     "SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END",
                 )
-                .map_err(|error| error.to_string())?;
-            let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
-            let rows = crate::sqlite::query_map_limit(
+                .map_err(map_sql_json_execution_error)?;
+            let mut stmt = conn.prepare(sql).map_err(map_sql_json_execution_error)?;
+            let mut total_bytes = 0_usize;
+            let rows = crate::sqlite::query_try_map_limit(
                 &mut stmt,
                 params![],
                 limit as usize,
-                |row| {
+                |row| -> std::result::Result<
+                    String,
+                    crate::sqlite::QueryTryMapError<String>,
+                > {
                     if crate::sqlite::row_has_column(row, 1)? {
-                        return Err(crate::sqlite::invalid_query());
+                        return Err(crate::sqlite::invalid_query().into());
                     }
                     let value: Option<String> = crate::sqlite::row_get(row, 0)?;
                     let value = value.ok_or_else(crate::sqlite::invalid_query)?;
+                    validate_sql_json_value_bytes("database SQL", &value, &mut total_bytes)
+                        .map_err(crate::sqlite::QueryTryMapError::Validation)?;
                     let is_object: i64 = crate::sqlite::query_one(
                         &mut json_object_stmt,
                         params![value.as_str()],
@@ -275,16 +289,22 @@ impl FsStore {
                     if is_object == 1 {
                         Ok(value)
                     } else {
-                        Err(crate::sqlite::invalid_query())
+                        Err(crate::sqlite::invalid_query().into())
                     }
                 },
             )
             .map_err(|error| {
+                let error = match error {
+                    crate::sqlite::QueryTryMapError::Sqlite(error) => error,
+                    crate::sqlite::QueryTryMapError::Validation(error) => return error,
+                };
+                if crate::sqlite::is_interrupted(&error) {
+                    return SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string();
+                }
                 format!(
                     "database SQL must return exactly one non-null valid JSON object TEXT column: {error}"
                 )
             })?;
-            validate_sql_json_response_bytes("database SQL", &rows)?;
             Ok(IndexSqlJsonQueryResult {
                 row_count: rows.len() as u32,
                 rows,
@@ -342,6 +362,7 @@ impl FsStore {
             let revision = record_change(tx, &node)?;
             update_path_state(tx, &node.path, revision)?;
             node.etag = compute_node_etag(&node);
+            ensure_missing_store_root_for_path(tx, &node.path, now)?;
             let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
             sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
             sync_node_links(tx, &node)?;
@@ -404,6 +425,13 @@ impl FsStore {
                 }
                 return Err(format!("node already exists and is not a folder: {path}"));
             }
+            if is_protected_root_folder(&path) {
+                ensure_store_root_folder(tx, &path, now)?;
+                return Ok(MkdirNodeResult {
+                    path,
+                    created: true,
+                });
+            }
             let mut node = Node {
                 path: path.clone(),
                 kind: NodeKind::Folder,
@@ -416,6 +444,7 @@ impl FsStore {
             let revision = record_change(tx, &node)?;
             update_path_state(tx, &node.path, revision)?;
             node.etag = compute_node_etag(&node);
+            ensure_missing_store_root_for_path(tx, &node.path, now)?;
             save_node(tx, None, &node)?;
             Ok(MkdirNodeResult {
                 path,
@@ -474,6 +503,7 @@ impl FsStore {
                     let old_path = moved.path.clone();
                     moved.path = rebase_path(&old_path, &from_path, &to_path)?;
                     moved.updated_at = now;
+                    ensure_missing_store_root_for_path(tx, &moved.path, now)?;
                     let from_revision = record_path_removal(tx, &old_path)?;
                     update_path_state(tx, &old_path, from_revision)?;
                     let to_revision = record_change(tx, &moved)?;
@@ -499,6 +529,7 @@ impl FsStore {
             let mut moved = current.node.clone();
             moved.path = to_path.clone();
             moved.updated_at = now;
+            ensure_missing_store_root_for_path(tx, &moved.path, now)?;
             let from_revision = record_path_removal(tx, &from_path)?;
             update_path_state(tx, &from_path, from_revision)?;
             let to_revision = record_change(tx, &moved)?;
@@ -594,47 +625,47 @@ impl FsStore {
     ) -> Result<DeleteNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
         self.write_conn(|tx| {
-        let current =
-            load_stored_node(tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.node.etag != request.expected_etag.unwrap_or_default() {
-            return Err(format!("expected_etag does not match current etag: {path}"));
-        }
-        if current.node.kind == NodeKind::Folder {
-            if is_protected_root_folder(&path) {
-                return Err(format!("cannot delete protected folder: {path}"));
+            let current = load_stored_node(tx, &path)?
+                .ok_or_else(|| format!("node does not exist: {path}"))?;
+            if current.node.etag != request.expected_etag.unwrap_or_default() {
+                return Err(format!("expected_etag does not match current etag: {path}"));
             }
-            let index_path = folder_index_path(&path);
-            let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
-            if has_visible_folder_children(tx, current.row_id, &index_path)? {
-                return Err(format!("folder is not empty: {path}"));
-            }
-            match index_node {
-                Some(index_node) => {
-                    let expected_index_etag = request
-                        .expected_folder_index_etag
-                        .as_deref()
-                        .ok_or_else(|| {
-                            format!("expected_folder_index_etag is required: {index_path}")
-                        })?;
-                    if index_node.node.etag != expected_index_etag {
-                        return Err(format!(
-                            "expected_folder_index_etag does not match current etag: {index_path}"
-                        ));
+            if current.node.kind == NodeKind::Folder {
+                if is_protected_root_folder(&path) {
+                    return Err(format!("cannot delete protected folder: {path}"));
+                }
+                let index_path = folder_index_path(&path);
+                let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
+                if has_visible_folder_children(tx, current.row_id, &index_path)? {
+                    return Err(format!("folder is not empty: {path}"));
+                }
+                match index_node {
+                    Some(index_node) => {
+                        let expected_index_etag = request
+                            .expected_folder_index_etag
+                            .as_deref()
+                            .ok_or_else(|| {
+                                format!("expected_folder_index_etag is required: {index_path}")
+                            })?;
+                        if index_node.node.etag != expected_index_etag {
+                            return Err(format!(
+                                "expected_folder_index_etag does not match current etag: {index_path}"
+                            ));
+                        }
+                        delete_node_with_history(tx, &index_node)?;
                     }
-                    delete_node_with_history(tx, &index_node)?;
+                    None if request.expected_folder_index_etag.is_some() => {
+                        return Err(format!("folder index node does not exist: {index_path}"));
+                    }
+                    None => {}
                 }
-                None if request.expected_folder_index_etag.is_some() => {
-                    return Err(format!("folder index node does not exist: {index_path}"));
-                }
-                None => {}
+            } else if request.expected_folder_index_etag.is_some() {
+                return Err(format!(
+                    "expected_folder_index_etag is only valid for folder deletes: {path}"
+                ));
             }
-        } else if request.expected_folder_index_etag.is_some() {
-            return Err(format!(
-                "expected_folder_index_etag is only valid for folder deletes: {path}"
-            ));
-        }
-        delete_node_with_history(tx, &current)?;
-        Ok(DeleteNodeResult { path })
+            delete_node_with_history(tx, &current)?;
+            Ok(DeleteNodeResult { path })
         })
     }
 
@@ -686,7 +717,7 @@ impl FsStore {
         })
     }
 
-    pub fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall, String> {
+    pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
         if request.depth > 2 {
             return Err("depth must be 0, 1, or 2".to_string());
         }
@@ -762,8 +793,8 @@ impl FsStore {
             let evidence = if request.include_evidence {
                 let mut items = Vec::new();
                 for context in &nodes {
-                    let evidence = knowledge_evidence_for_path(conn, &context.node.path)?;
-                    let evidence_chars = estimate_knowledge_evidence_chars(&evidence);
+                    let evidence = source_evidence_for_path(conn, &context.node.path)?;
+                    let evidence_chars = estimate_source_evidence_chars(&evidence);
                     if !items.is_empty() && used_chars.saturating_add(evidence_chars) > budget_chars
                     {
                         truncated = true;
@@ -783,7 +814,7 @@ impl FsStore {
                 truncated = true;
             }
 
-            Ok(MemoryRecall {
+            Ok(QueryContext {
                 namespace,
                 task: request.task,
                 search_hits,
@@ -795,16 +826,16 @@ impl FsStore {
         })
     }
 
-    pub fn knowledge_evidence(
+    pub fn source_evidence(
         &self,
-        request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence, String> {
+        request: SourceEvidenceRequest,
+    ) -> Result<SourceEvidence, String> {
         let node_path = normalize_node_path(&request.node_path, false)?;
         self.read_conn(|conn| {
             let Some(_) = load_node(conn, &node_path)? else {
                 return Err(format!("node does not exist: {node_path}"));
             };
-            knowledge_evidence_for_path(conn, &node_path)
+            source_evidence_for_path(conn, &node_path)
         })
     }
 
@@ -1168,6 +1199,7 @@ fn write_node_in_tx(
     let revision = record_change(tx, &node)?;
     update_path_state(tx, &node.path, revision)?;
     node.etag = compute_node_etag(&node);
+    ensure_missing_store_root_for_path(tx, &node.path, now)?;
     let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
     sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
     sync_node_links(tx, &node)?;
@@ -1532,7 +1564,7 @@ fn load_marketplace_verified_stats(
     ) = conn
         .query_row(
             "SELECT COUNT(*),
-                    SUM(CASE WHEN path = '/Wiki' OR path LIKE '/Wiki/%' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN path = '/Knowledge' OR path LIKE '/Knowledge/%' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'source' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'folder' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'file' THEN length(content) ELSE 0 END),
@@ -1577,7 +1609,7 @@ fn load_marketplace_top_level_paths(conn: &Connection) -> Result<Vec<String>, St
             "SELECT child.path
              FROM fs_nodes child
              JOIN fs_nodes parent ON parent.id = child.parent_id
-             WHERE parent.path = '/Wiki'
+             WHERE parent.path = '/Knowledge'
              ORDER BY CASE child.kind WHEN 'folder' THEN 0 WHEN 'file' THEN 1 ELSE 2 END,
                       child.path ASC
              LIMIT 12",
@@ -1598,7 +1630,7 @@ fn load_marketplace_preview_excerpts(
                     length(content)
              FROM fs_nodes
              WHERE kind = 'file'
-               AND (path = '/Wiki' OR path LIKE '/Wiki/%')
+               AND (path = '/Knowledge' OR path LIKE '/Knowledge/%')
              ORDER BY path ASC
              LIMIT ?1",
         )
@@ -1620,7 +1652,7 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT path
              FROM fs_nodes
-             WHERE path = '/Wiki' OR path LIKE '/Wiki/%'
+             WHERE path = '/Knowledge' OR path LIKE '/Knowledge/%'
              ORDER BY path ASC",
         )
         .map_err(|error| error.to_string())?;
@@ -1657,8 +1689,8 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT source_path, target_path
              FROM fs_links
-             WHERE (source_path = '/Wiki' OR source_path LIKE '/Wiki/%')
-               AND (target_path = '/Wiki' OR target_path LIKE '/Wiki/%')",
+             WHERE (source_path = '/Knowledge' OR source_path LIKE '/Knowledge/%')
+               AND (target_path = '/Knowledge' OR target_path LIKE '/Knowledge/%')",
         )
         .map_err(|error| error.to_string())?;
     let edges = crate::sqlite::query_map(&mut stmt, params![], |row| {
@@ -1708,12 +1740,12 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
 }
 
 fn marketplace_top_category(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("/Wiki/")?;
+    let rest = path.strip_prefix("/Knowledge/")?;
     let segment = rest.split('/').next()?.trim();
     if segment.is_empty() {
         None
     } else {
-        Some(format!("/Wiki/{segment}"))
+        Some(format!("/Knowledge/{segment}"))
     }
 }
 
@@ -1784,7 +1816,10 @@ fn load_child_rows(
 }
 
 fn allows_empty_directory_listing(path: &str) -> bool {
-    matches!(path, "/" | "/Memory" | "/Sessions" | "/Wiki" | "/Sources")
+    matches!(
+        path,
+        "/" | "/Memory" | "/Knowledge" | "/Skills" | "/Sessions" | "/Sources"
+    )
 }
 
 fn build_child_nodes(parent_path: &str, rows: Vec<ChildRow>) -> Result<Vec<ChildNode>, String> {
@@ -2168,8 +2203,68 @@ fn has_visible_folder_children(
         .map_err(|error| error.to_string())
 }
 
+fn ensure_missing_store_root_for_path(
+    tx: &Transaction<'_>,
+    path: &str,
+    now: i64,
+) -> Result<(), String> {
+    let Some(root_path) = store_root_for_child_path(path) else {
+        return Ok(());
+    };
+    ensure_store_root_folder(tx, root_path, now)
+}
+
+fn ensure_store_root_folder(tx: &Transaction<'_>, path: &str, now: i64) -> Result<(), String> {
+    if let Some(existing) = load_stored_node(tx, path)? {
+        if existing.node.kind == NodeKind::Folder {
+            return Ok(());
+        }
+        return Err(format!("protected root is not a folder: {path}"));
+    }
+    let mut node = Node {
+        path: path.to_string(),
+        kind: NodeKind::Folder,
+        content: String::new(),
+        created_at: now,
+        updated_at: now,
+        etag: String::new(),
+        metadata_json: "{}".to_string(),
+    };
+    let revision = record_change(tx, &node)?;
+    update_path_state(tx, &node.path, revision)?;
+    node.etag = compute_node_etag(&node);
+    save_node(tx, None, &node)?;
+    Ok(())
+}
+
+fn store_root_for_child_path(path: &str) -> Option<&'static str> {
+    let root = path.split('/').nth(1)?;
+    let root_path = match root {
+        "Memory" => "/Memory",
+        "Knowledge" => "/Knowledge",
+        "Skills" => "/Skills",
+        "Sessions" => "/Sessions",
+        "Sources" => "/Sources",
+        _ => return None,
+    };
+    if path == root_path {
+        None
+    } else {
+        Some(root_path)
+    }
+}
+
 fn is_protected_root_folder(path: &str) -> bool {
-    matches!(path, "/Memory" | "/Sessions" | "/Wiki" | "/Sources")
+    matches!(
+        path,
+        "/Memory"
+            | "/Knowledge"
+            | "/Skills"
+            | "/Sessions"
+            | "/Sources"
+            | "/Sources/sessions"
+            | "/Sources/skill-runs"
+    )
 }
 
 fn split_parent_path_and_name(path: &str) -> Result<(Option<String>, String), String> {
@@ -2348,7 +2443,7 @@ fn scope_root_provenance_path_for(node_path: &str) -> Option<String> {
     let mut parts = node_path.trim_matches('/').split('/');
     let root = parts.next()?;
     let scope = parts.next()?;
-    if root != "Wiki" {
+    if root != "Knowledge" {
         return None;
     }
     Some(format!("/{root}/{scope}/provenance.md"))
@@ -2369,10 +2464,7 @@ fn load_node_context_for_memory(
     }))
 }
 
-fn knowledge_evidence_for_path(
-    conn: &Connection,
-    node_path: &str,
-) -> Result<KnowledgeEvidence, String> {
+fn source_evidence_for_path(conn: &Connection, node_path: &str) -> Result<SourceEvidence, String> {
     let mut refs = Vec::new();
     let mut seen = BTreeSet::new();
     collect_source_refs_from_path(conn, node_path, &mut refs, &mut seen)?;
@@ -2382,7 +2474,7 @@ fn knowledge_evidence_for_path(
     if let Some(provenance_path) = scope_root_provenance_path_for(node_path) {
         collect_source_refs_from_path(conn, &provenance_path, &mut refs, &mut seen)?;
     }
-    Ok(KnowledgeEvidence {
+    Ok(SourceEvidence {
         node_path: node_path.to_string(),
         refs,
     })
@@ -2391,7 +2483,7 @@ fn knowledge_evidence_for_path(
 fn collect_source_refs_from_path(
     conn: &Connection,
     path: &str,
-    refs: &mut Vec<KnowledgeEvidenceRef>,
+    refs: &mut Vec<SourceEvidenceRef>,
     seen: &mut BTreeSet<(String, String, String)>,
 ) -> Result<(), String> {
     let Some(_) = load_node(conn, path)? else {
@@ -2408,7 +2500,7 @@ fn collect_source_refs_from_path(
         );
         if seen.insert(key) {
             let source_node = load_node(conn, &edge.target_path)?;
-            refs.push(KnowledgeEvidenceRef {
+            refs.push(SourceEvidenceRef {
                 source_path: edge.target_path,
                 via_path: edge.source_path,
                 raw_href: edge.raw_href,
@@ -2454,7 +2546,7 @@ fn estimate_link_edge_chars(edge: &LinkEdge) -> usize {
         + edge.link_kind.chars().count()
 }
 
-fn estimate_knowledge_evidence_chars(evidence: &KnowledgeEvidence) -> usize {
+fn estimate_source_evidence_chars(evidence: &SourceEvidence) -> usize {
     evidence.node_path.chars().count()
         + evidence
             .refs
@@ -2669,26 +2761,35 @@ fn validate_database_sql_limit(label: &str, tokens: &[String]) -> Result<(), Str
     Ok(())
 }
 
-fn validate_sql_json_response_bytes(label: &str, rows: &[String]) -> Result<(), String> {
-    let mut total = 0_usize;
-    for row in rows {
-        if row.len() > SQL_JSON_ROW_BYTES_MAX {
-            return Err(format!(
-                "{label} row JSON exceeds {SQL_JSON_ROW_BYTES_MAX} bytes"
-            ));
-        }
-        total = total.saturating_add(row.len());
-        if total > SQL_JSON_RESPONSE_BYTES_MAX {
-            return Err(format!(
-                "{label} response JSON exceeds {SQL_JSON_RESPONSE_BYTES_MAX} bytes"
-            ));
-        }
+fn validate_sql_json_value_bytes(
+    label: &str,
+    value: &str,
+    total: &mut usize,
+) -> Result<(), String> {
+    if value.len() > SQL_JSON_ROW_BYTES_MAX {
+        return Err(format!(
+            "{label} row JSON exceeds {SQL_JSON_ROW_BYTES_MAX} bytes"
+        ));
+    }
+    *total = total.saturating_add(value.len());
+    if *total > SQL_JSON_RESPONSE_BYTES_MAX {
+        return Err(format!(
+            "{label} response JSON exceeds {SQL_JSON_RESPONSE_BYTES_MAX} bytes"
+        ));
     }
     Ok(())
 }
 
 fn sql_json_page_limit(limit: u32) -> u32 {
     limit.clamp(1, QUERY_RESULT_LIMIT_MAX)
+}
+
+fn map_sql_json_execution_error(error: crate::sqlite::Error) -> String {
+    if crate::sqlite::is_interrupted(&error) {
+        SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 fn sql_identifier_tokens(sql: &str) -> Vec<String> {

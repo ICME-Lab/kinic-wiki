@@ -21,18 +21,18 @@ Context Pack remains a generated handoff artifact, not an MCP store.
 Implemented v0 MCP tools:
 
 ```text
-kinic.store_manifest
-kinic.memory_recall
-kinic.knowledge_evidence
+kinic.memory_manifest
+kinic.query_context
+kinic.source_evidence
 kinic.skill_find
 ```
 
 Tool roles:
 
-- `kinic.store_manifest(database_id)`: return API version, roots, limits, and capability summary.
-- `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens, include_evidence, depth)`: return task-scoped memory context and evidence. Omitted namespace uses Store API defaults.
-- `kinic.knowledge_evidence(database_id, node_path)`: return source references for one known wiki node.
-- `kinic.skill_find(database_id, query_text)`: find skill store packages for a task.
+- `kinic.memory_manifest(database_id)`: return API version, roots, limits, and capability summary.
+- `kinic.query_context(database_id, task, entities, namespace, budget_tokens, include_evidence, depth)`: return task-scoped memory context and evidence. Omitted namespace uses `/Memory`.
+- `kinic.source_evidence(database_id, node_path)`: return source references for one known knowledge node.
+- `kinic.skill_find(database_id, query)`: find skill store packages for a task.
 
 Tool results must identify whether returned content is verified, truncated, expired, or missing evidence.
 Search hits alone are not evidence; answers should be grounded in returned nodes and source evidence.
@@ -45,12 +45,12 @@ MCP client
   -> existing Rust client or Store API
   -> Kinic Wiki canister
   -> canister-backed VFS
-  -> /Wiki and /Sources/raw nodes
+  -> /Knowledge nodes and /Sources evidence
 ```
 
-`kinic.memory_recall` should map to the same semantics as `memory_recall`.
-`kinic.knowledge_evidence` should map to the same semantics as `knowledge_evidence`.
-`kinic.store_manifest` should expose discovery data and must not be treated as content evidence.
+`kinic.query_context` should map to the same semantics as `query_context`.
+`kinic.source_evidence` should map to the same semantics as `source_evidence`.
+`kinic.memory_manifest` should expose discovery data and must not be treated as content evidence.
 
 Context Pack remains a CLI export and local verification workflow in v0.
 

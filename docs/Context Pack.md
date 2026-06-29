@@ -1,19 +1,18 @@
 # Context Pack
 
-Context Pack exports a Kinic Wiki scope as an Open Knowledge Format (OKF) v0.1 bundle.
+Context Pack exports task-scoped Kinic Wiki context as an Open Knowledge Format (OKF) v0.1 bundle.
 The output is plain Markdown with YAML frontmatter.
 There is no Kinic-specific `manifest.json`, `sources.json`, or `provenance.json` in the bundle.
-It is a generated handoff artifact derived from OKF concept metadata and Markdown bodies, not a fifth Kinic store.
+It is a generated handoff artifact derived from store content, not a fifth Kinic store.
 
 ## Product Concept
 
 The Kinic stores remain the source of truth.
-Each Kinic Wiki node is an OKF concept managed through the VFS.
-The SQLite row keeps concept fields in `metadata_json`; the Markdown body remains human-readable content.
-Context Pack externalizes those concepts as an OKF bundle for agent handoff, review, and portable project context.
+Context Pack is a generated OKF bundle for agent handoff, review, and portable project context.
 
 The bundle is meant to be readable by humans, parseable by agents, and shippable as a directory, archive, or git repository.
 Kinic-specific verification data lives in YAML frontmatter under the `kinic` extension key.
+Bundle-level provenance lives in `okf.yaml`.
 
 ## OKF Bundle Shape
 
@@ -22,6 +21,7 @@ An export writes this directory shape:
 ```text
 index.md
 log.md
+okf.yaml
 facts/*.md
 decisions/*.md
 tasks/*.md
@@ -34,31 +34,21 @@ Reserved files:
 
 - `index.md`: progressive disclosure entrypoint. It has no frontmatter.
 - `log.md`: export history. It has no frontmatter.
+- `okf.yaml`: machine-readable provenance manifest with task, namespace, budget, truncation, counts, and selected node hashes.
 
 Concept files:
 
-- `facts/*.md`: `okf_type: Fact`.
-- `decisions/*.md`: `okf_type: Decision`.
-- `tasks/*.md`: `okf_type: Task`.
-- `policies/*.md`: `okf_type: Policy`.
-- `notes/*.md`: `okf_type: Note`.
-- `references/*.md`: `okf_type: Reference`, without raw source body text.
-
-If node metadata omits `okf_type`, export falls back to the existing path role inference. Normal writes and migrations populate `okf_type`, so path inference is only a safety net for incomplete manual metadata.
+- `facts/*.md`: settled fact concepts from `facts.md` knowledge nodes.
+- `decisions/*.md`: decision concepts from decision knowledge nodes.
+- `tasks/*.md`: pending work from `plans.md` or `tasks.md`.
+- `policies/*.md`: style, preference, and do-not-do concepts.
+- `notes/*.md`: general knowledge notes that do not map to a narrower type.
+- `references/*.md`: store references without target body text.
 
 ## Frontmatter
 
 Every non-reserved `.md` file has YAML frontmatter.
 The required OKF field is `type`.
-Export generates frontmatter from `metadata_json` plus the Markdown body; frontmatter is not the canonical stored form.
-
-Canonical node metadata uses these JSON keys:
-
-- `okf_type`: `Fact`, `Task`, `Decision`, `Policy`, `Note`, or `Reference`.
-- `resource`: `kinic://<database_id><path>`.
-- `source_refs`: array of `{ "path": "/Sources/raw/..." }` objects.
-- `trust_level`: trust label, defaulting to `unreviewed`.
-- `expires_at`: optional RFC3339 expiry.
 
 Example:
 
@@ -66,15 +56,15 @@ Example:
 ---
 type: Decision
 title: sqlite vfs
-description: Generated from Kinic Wiki node /Wiki/projects/acme/decisions/sqlite-vfs.md
-resource: kinic://db_alpha/Wiki/projects/acme/decisions/sqlite-vfs.md
+description: Generated from Kinic Wiki node /Knowledge/projects/acme/decisions/sqlite-vfs.md
+resource: kinic://db_alpha/Knowledge/projects/acme/decisions/sqlite-vfs.md
 tags:
 - kinic
 - decisions
 timestamp: 2026-06-22T00:00:00Z
 kinic:
   database_id: db_alpha
-  root: /Wiki/projects/acme
+  root: /Knowledge/projects/acme
   etag: v4h:...
   content_hash: sha256:...
   trust_level: team-approved
@@ -88,20 +78,21 @@ kinic:
 ...
 ```
 
-Reference concepts add `kinic.source_path`:
+Reference concepts add `kinic.store` and `kinic.store_path`:
 
 ```md
 ---
 type: Reference
 title: source
-resource: kinic://db_alpha/Sources/raw/web/source.md
+resource: kinic://db_alpha/Sources/web/source.md
 tags:
 - kinic
 - reference
 kinic:
   database_id: db_alpha
-  root: /Wiki/projects/acme
-  source_path: /Sources/raw/web/source.md
+  root: /Knowledge/projects/acme
+  store: source_evidence
+  store_path: /Sources/web/source.md
   etag: v4h:...
   content_hash: sha256:...
   expires_at: 2026-09-22T00:00:00Z
@@ -109,16 +100,26 @@ kinic:
 
 # Reference
 
-Raw source content is not copied into this OKF bundle.
+- store: `source_evidence`
+- store_path: `/Sources/web/source.md`
+- via_path: `/Knowledge/projects/acme/facts.md`
+- target_href: `/Sources/web/source.md`
+- link_text: `Raw`
+- etag: `v4h:...`
+- updated_at: `1780000000000`
+- content_hash: `sha256:...`
+
+Referenced store content is not copied into this OKF bundle.
 ```
 
 ## Canonicality Rules
 
-- `/Wiki/...` is the organized knowledge layer.
-- `/Sources/raw/...` is the canonical raw evidence layer.
+- `/Knowledge/...` is the organized knowledge layer.
+- `/Sources/...` is the canonical raw evidence layer.
 - Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
-- Raw source body text is not copied into `references/*.md`.
+- Referenced store body text is not copied into `references/*.md`.
 - `index.md` and `log.md` are OKF reserved files and must not carry frontmatter.
+- `okf.yaml` is the verification source of truth for task scope and selected node metadata.
 - Unknown frontmatter keys are allowed.
 - Expired `kinic.expires_at` makes a concept invalid for trusted agent use.
 
@@ -128,7 +129,8 @@ Export:
 
 ```bash
 kinic-vfs-cli --database-id <database-id> context-pack export \
-  --root /Wiki/projects/acme \
+  --task "review auth token refresh design" \
+  --namespace /Knowledge/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \
@@ -138,11 +140,12 @@ kinic-vfs-cli --database-id <database-id> context-pack export \
 Verify and inspect:
 
 ```bash
-kinic-vfs-cli context-pack verify ./okf
+kinic-vfs-cli context-pack verify ./okf --fail-on-truncated
 kinic-vfs-cli context-pack inspect ./okf --json
 ```
 
 `export` reads the remote database and writes a local OKF bundle.
+`export` uses `query_context`; it does not recursively dump the full namespace.
 `verify` and `inspect` read only the local bundle and do not require a canister connection.
 Pass `--overwrite` to replace existing markdown files in the output directory.
 
@@ -152,14 +155,24 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 
 - every non-reserved `.md` file has parseable YAML frontmatter
 - every concept has non-empty `type`
+- `okf.yaml` exists and its counts, namespace, and selected node metadata match the exported files
 - non-reference concepts with `kinic.content_hash` match the exported Markdown body
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
-- `references/*.md` uses `kinic.source_path` under `/Sources/raw/...`
+- `references/*.md` uses `kinic.store` and `kinic.store_path`
+- reference `kinic.store_path` stays under a Kinic store root such as `/Sources/<provider>`, `/Sources/sessions`, `/Sources/skill-runs`, or `/Sessions`
+- reference concepts include `kinic.etag` and `kinic.content_hash`
+- reference bodies use the fixed metadata-only shape
+- `--fail-on-truncated` fails when `okf.yaml.truncated` is true
 
 `context-pack inspect --json` reports:
 
 - `okf_version`
+- `task`
+- `namespace`
+- `budget_tokens`
+- `depth`
+- `truncated`
 - `concept_count`
 - `types`
 - Kinic database ids and roots
@@ -169,6 +182,6 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 ## Limits
 
 - Context Pack is generated from memory and knowledge store content; it is not a separate canonical store.
-- Skill and session stores may be referenced by exported knowledge, but Context Pack does not manage those stores.
+- Skill, session, and evidence store paths may be referenced by exported knowledge, but Context Pack does not manage those stores.
 - Context Pack does not define write-back, patch approval, or checkpoint APIs.
 - OKF remains the bundle format; Kinic metadata stays inside `kinic` frontmatter.

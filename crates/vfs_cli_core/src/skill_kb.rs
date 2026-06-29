@@ -13,7 +13,7 @@ use vfs_types::{
     SearchPreviewMode, WriteNodeRequest,
 };
 
-const PRIVATE_SKILL_ROOT: &str = "/Wiki/skills";
+const PRIVATE_SKILL_ROOT: &str = "/Skills";
 const SKILL_RUN_ROOT: &str = "/Sources/skill-runs";
 
 #[derive(Default)]

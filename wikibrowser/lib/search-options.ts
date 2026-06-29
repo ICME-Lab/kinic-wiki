@@ -2,7 +2,7 @@
 // What: shared parsing and defaults for header/search page options.
 // Why: search URLs should stay stable while invalid query params fall back safely.
 
-export type SearchScope = "wiki" | "sources" | "root" | "custom";
+export type SearchScope = "sources" | "root" | "custom";
 export type SearchLimit = 10 | 20 | 50 | 100;
 export type SearchPreviewMode = "default" | "none" | "light" | "content-start";
 
@@ -14,8 +14,8 @@ export type SearchOptions = {
 };
 
 export const DEFAULT_SEARCH_OPTIONS: SearchOptions = {
-  scope: "wiki",
-  prefix: "/Wiki",
+  scope: "root",
+  prefix: "/",
   limit: 20,
   preview: "default"
 };
@@ -33,7 +33,7 @@ export function parseSearchOptions(params: { get(name: string): string | null })
 
 export function parseSearchScope(value: string | null): SearchScope {
   if (value === "sources" || value === "root" || value === "custom") return value;
-  return "wiki";
+  return DEFAULT_SEARCH_OPTIONS.scope;
 }
 
 export function parseSearchLimit(value: string | null): SearchLimit {

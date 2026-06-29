@@ -14,29 +14,33 @@ const compiled = ts.transpileModule(source, {
   }
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, pathFromSegments } = await import(moduleUrl);
+const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await import(moduleUrl);
 
-assert.equal(pathFromSegments([]), "/Wiki");
-assert.equal(pathFromSegments(["Wiki", "100%.md"]), "/Wiki/100%.md");
+assert.equal(pathFromSegments([]), "/Knowledge");
+assert.equal(pathFromSegments(["Knowledge", "100%.md"]), "/Knowledge/100%.md");
+assert.deepEqual(parseWikiRoute("/db/db_1"), { databaseId: "db_1", nodePath: "/Knowledge" });
+assert.deepEqual(parseWikiRoute("/db/db_1/Wiki"), { databaseId: "db_1", nodePath: "/Wiki" });
+assert.deepEqual(parseWikiRoute("/db/db_1/Wiki/page.md"), { databaseId: "db_1", nodePath: "/Wiki/page.md" });
+assert.deepEqual(parseWikiRoute("/db/db%201/Wiki/space%20name.md"), { databaseId: "db 1", nodePath: "/Wiki/space name.md" });
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/100%.md"),
-  "/db/alpha/Wiki/100%25.md"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/100%.md"),
+  "/db/alpha/Knowledge/100%25.md"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/space name.md", "raw"),
-  "/db/alpha/Wiki/space%20name.md?view=raw"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/space name.md", "raw"),
+  "/db/alpha/Knowledge/space%20name.md?view=raw"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/space name.md", "edit"),
-  "/db/alpha/Wiki/space%20name.md?view=edit"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/space name.md", "edit"),
+  "/db/alpha/Knowledge/space%20name.md?view=edit"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "query"),
-  "/db/alpha/Wiki?tab=query"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge", undefined, "query"),
+  "/db/alpha/Knowledge?tab=query"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/conversations/日本語記事.md"),
-  "/db/alpha/Wiki/conversations/%E6%97%A5%E6%9C%AC%E8%AA%9E%E8%A8%98%E4%BA%8B.md"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/conversations/日本語記事.md"),
+  "/db/alpha/Knowledge/conversations/%E6%97%A5%E6%9C%AC%E8%AA%9E%E8%A8%98%E4%BA%8B.md"
 );
 assert.equal(
   hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "", "path"),
@@ -61,15 +65,15 @@ assert.equal(
 assert.equal(
   hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "alpha beta", "path", {
     scope: "custom",
-    prefix: "/Wiki/project notes",
+    prefix: "/Knowledge/project notes",
     limit: 100,
     preview: "none"
   }),
-  "/db/alpha/search?q=alpha+beta&kind=path&scope=custom&prefix=%2FWiki%2Fproject+notes&limit=100&preview=none"
+  "/db/alpha/search?q=alpha+beta&kind=path&scope=custom&prefix=%2FKnowledge%2Fproject+notes&limit=100&preview=none"
 );
 assert.equal(
-  hrefForGraph("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", 2),
-  "/db/alpha/graph?center=%2FWiki%2Findex.md&depth=2"
+  hrefForGraph("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/index.md", 2),
+  "/db/alpha/graph?center=%2FKnowledge%2Findex.md&depth=2"
 );
 assert.equal(
   hrefForHelp("t63gs-up777-77776-aaaba-cai", "alpha"),
@@ -83,7 +87,7 @@ assert.equal(
     searchKind: "full",
     graphDepth: 2
   }),
-  "/db/beta/Wiki"
+  "/db/beta/Knowledge"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
@@ -104,7 +108,7 @@ assert.equal(
     searchKind: "path",
     graphDepth: 2
   }),
-  "/db/beta/graph?center=%2FWiki&depth=2"
+  "/db/beta/graph?center=%2FKnowledge&depth=2"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
@@ -118,39 +122,39 @@ assert.equal(
   "/db/beta/help"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md"),
-  "/db/alpha/Wiki/beam-full-reset/7/facts.md"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/beam-full-reset/7/index.md", "facts.md"),
+  "/db/alpha/Knowledge/beam-full-reset/7/facts.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md?view=raw#evidence"),
-  "/db/alpha/Wiki/beam-full-reset/7/facts.md?view=raw#evidence"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/beam-full-reset/7/index.md", "facts.md?view=raw#evidence"),
+  "/db/alpha/Knowledge/beam-full-reset/7/facts.md?view=raw#evidence"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md?view=raw&tab=query#evidence"),
-  "/db/alpha/Wiki/beam-full-reset/7/facts.md?view=raw&tab=query#evidence"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/beam-full-reset/7/index.md", "facts.md?view=raw&tab=query#evidence"),
+  "/db/alpha/Knowledge/beam-full-reset/7/facts.md?view=raw&tab=query#evidence"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "/Wiki/demo.md#evidence"),
-  "/db/alpha/Wiki/demo.md#evidence"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/beam-full-reset/7/index.md", "/Knowledge/demo.md#evidence"),
+  "/db/alpha/Knowledge/demo.md#evidence"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/space name.md"),
-  "/db/alpha/Wiki/space%20name.md"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/index.md", "/Knowledge/space name.md"),
+  "/db/alpha/Knowledge/space%20name.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/100%25.md"),
-  "/db/alpha/Wiki/100%25.md"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/index.md", "/Knowledge/100%25.md"),
+  "/db/alpha/Knowledge/100%25.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%23b.md"),
-  "/db/alpha/Wiki/a%23b.md"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/index.md", "/Knowledge/a%23b.md"),
+  "/db/alpha/Knowledge/a%23b.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%3Fb.md"),
-  "/db/alpha/Wiki/a%3Fb.md"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/index.md", "/Knowledge/a%3Fb.md"),
+  "/db/alpha/Knowledge/a%3Fb.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/demo/index.md", "https://example.com"),
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/demo/index.md", "https://example.com"),
   null
 );
 assert.match(browserSource, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);

@@ -7,6 +7,11 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
+use crate::connection::{
+    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
+    unlink_workspace_database, workspace_config_path,
+};
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -20,13 +25,6 @@ use vfs_types::{
     MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
     SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
     kinic_base_units_per_token,
-};
-use wiki_domain::validate_source_path_for_kind;
-
-use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
-use crate::connection::{
-    ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
-    unlink_workspace_database, workspace_config_path,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -140,7 +138,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            validate_source_path_for_write(&path, kind.to_node_kind())?;
             let result = client
                 .write_node(WriteNodeRequest {
                     database_id: database_id.to_string(),
@@ -159,9 +156,6 @@ pub async fn run_vfs_command(
         }
         VfsCommand::WriteNodes { input, json } => {
             let nodes = read_write_nodes_file(&input)?;
-            for node in &nodes {
-                validate_source_path_for_write(&node.path, node.kind.clone())?;
-            }
             let results = client
                 .write_nodes(WriteNodesRequest {
                     database_id: database_id.to_string(),
@@ -189,9 +183,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            if let Some(kind_arg) = kind {
-                validate_source_path_for_write(&path, kind_arg.to_node_kind())?;
-            }
             let result = client
                 .append_node(AppendNodeRequest {
                     database_id: database_id.to_string(),
@@ -290,10 +281,6 @@ pub async fn run_vfs_command(
             overwrite,
             json,
         } => {
-            if let Some(current) = client.read_node(database_id, &from_path).await? {
-                validate_source_path_for_kind(&to_path, &current.kind)
-                    .map_err(anyhow::Error::msg)?;
-            }
             let result = client
                 .move_node(MoveNodeRequest {
                     database_id: database_id.to_string(),
@@ -670,10 +657,8 @@ async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
-        DatabaseCommand::Create { name, profile } => {
-            let result = client
-                .create_database(&name, profile.to_database_profile())
-                .await?;
+        DatabaseCommand::Create { name } => {
+            let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
         }
         DatabaseCommand::Rename { database_id, name } => {
@@ -1388,10 +1373,6 @@ async fn delete_tree(client: &impl VfsApi, database_id: &str, path: &str) -> Res
     Ok(deleted_paths)
 }
 
-fn validate_source_path_for_write(path: &str, kind: vfs_types::NodeKind) -> Result<()> {
-    validate_source_path_for_kind(path, &kind).map_err(anyhow::Error::msg)
-}
-
 fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
     let content = fs::read_to_string(path)?;
     serde_json::from_str(&content).map_err(Into::into)
@@ -1455,7 +1436,7 @@ fn default_metadata_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::{command_requires_write_cycles_available, run_vfs_command};
-    use crate::cli::{CyclesCommand, DatabaseProfileArg, NodeKindArg, VfsCommand};
+    use crate::cli::{CyclesCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
@@ -1561,17 +1542,12 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(
-            &self,
-            name: &str,
-            profile: vfs_types::DatabaseProfile,
-        ) -> Result<CreateDatabaseResult> {
+        async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
                 name: name.to_string(),
-                profile,
             })
         }
         async fn purchase_database_cycles(
@@ -1690,7 +1666,6 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
-                profile: DatabaseProfile::Workspace,
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
@@ -1830,7 +1805,7 @@ mod tests {
         async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
             self.child_lists.lock().unwrap().push(request);
             Ok(vec![ChildNode {
-                path: "/Wiki/alpha.md".to_string(),
+                path: "/Knowledge/alpha.md".to_string(),
                 name: "alpha.md".to_string(),
                 kind: NodeEntryKind::File,
                 updated_at: Some(10),
@@ -1933,7 +1908,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -1957,7 +1932,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -1986,7 +1961,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::MkdirNode {
-                path: "/Wiki/new".to_string(),
+                path: "/Knowledge/new".to_string(),
                 json: false,
             },
         )
@@ -2005,7 +1980,7 @@ mod tests {
     fn cycles_gate_covers_content_mutation_commands_only() {
         assert!(command_requires_write_cycles_available(
             &VfsCommand::WriteNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKindArg::File,
                 input: PathBuf::from("a.md"),
                 metadata_json: "{}".to_string(),
@@ -2015,7 +1990,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::AppendNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 input: PathBuf::from("a.md"),
                 kind: None,
                 metadata_json: None,
@@ -2026,7 +2001,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::EditNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 old_text: "a".to_string(),
                 new_text: "b".to_string(),
                 expected_etag: None,
@@ -2036,7 +2011,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::DeleteNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 expected_etag: None,
                 expected_folder_index_etag: None,
                 json: false,
@@ -2044,20 +2019,20 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::DeleteTree {
-                path: "/Wiki/a".to_string(),
+                path: "/Knowledge/a".to_string(),
                 json: false,
             }
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MkdirNode {
-                path: "/Wiki/a".to_string(),
+                path: "/Knowledge/a".to_string(),
                 json: false,
             }
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MoveNode {
-                from_path: "/Wiki/a.md".to_string(),
-                to_path: "/Wiki/b.md".to_string(),
+                from_path: "/Knowledge/a.md".to_string(),
+                to_path: "/Knowledge/b.md".to_string(),
                 expected_etag: None,
                 overwrite: false,
                 json: false,
@@ -2065,7 +2040,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MultiEditNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 edits_file: PathBuf::from("edits.json"),
                 expected_etag: None,
                 json: false,
@@ -2073,7 +2048,7 @@ mod tests {
         ));
         assert!(!command_requires_write_cycles_available(
             &VfsCommand::ReadNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 metadata_only: false,
                 fields: None,
                 json: false,
@@ -2096,8 +2071,8 @@ mod tests {
         std::fs::write(
             &input,
             r#"[
-  {"path": "/Wiki/a.md", "kind": "file", "content": "alpha"},
-  {"path": "/Sources/raw/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
+  {"path": "/Knowledge/a.md", "kind": "file", "content": "alpha"},
+  {"path": "/Sources/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
 ]"#,
         )
         .expect("input should write");
@@ -2123,25 +2098,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_nodes_rejects_invalid_source_path() {
+    async fn write_nodes_allows_source_kind_without_path_schema() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/source.md", "kind": "source", "content": "source"}]"#,
+            r#"[{"path": "/Knowledge/source.md", "kind": "source", "content": "source"}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
-        let error = run_vfs_command(
+        run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::WriteNodes { input, json: true },
         )
         .await
-        .expect_err("invalid source path should fail");
+        .expect("source kind should not be schema-gated by CLI");
 
-        assert!(error.to_string().contains("source path must stay under"));
-        assert!(client.write_batches.lock().unwrap().is_empty());
+        let batches = client.write_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].nodes[0].path, "/Knowledge/source.md");
+        assert_eq!(batches[0].nodes[0].kind, NodeKind::Source);
     }
 
     #[tokio::test]
@@ -2186,7 +2163,7 @@ mod tests {
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/a.md", "kind": "file", "content": "alpha", "expected_etga": "etag"}]"#,
+            r#"[{"path": "/Knowledge/a.md", "kind": "file", "content": "alpha", "expected_etga": "etag"}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
@@ -2208,7 +2185,7 @@ mod tests {
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/folder", "kind": "folder", "content": ""}]"#,
+            r#"[{"path": "/Knowledge/folder", "kind": "folder", "content": ""}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
@@ -2231,21 +2208,21 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::ListChildren {
-                path: "/Wiki".to_string(),
+                path: "/Knowledge".to_string(),
                 json: true,
             },
         )
         .await
         .expect("list children should succeed");
-        assert_eq!(client.child_lists.lock().unwrap()[0].path, "/Wiki");
+        assert_eq!(client.child_lists.lock().unwrap()[0].path, "/Knowledge");
     }
 
     #[tokio::test]
     async fn delete_node_autofills_folder_index_etag() {
         let client = MockClient {
             nodes: vec![
-                node("/Wiki/topic", NodeKind::Folder, "etag-folder"),
-                node("/Wiki/topic/index.md", NodeKind::File, "etag-index"),
+                node("/Knowledge/topic", NodeKind::Folder, "etag-folder"),
+                node("/Knowledge/topic/index.md", NodeKind::File, "etag-index"),
             ],
             ..MockClient::default()
         };
@@ -2253,7 +2230,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteNode {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 expected_etag: Some("etag-folder".to_string()),
                 expected_folder_index_etag: None,
                 json: true,
@@ -2263,7 +2240,7 @@ mod tests {
         .expect("folder delete should succeed");
 
         let deletes = client.deletes.lock().unwrap();
-        assert_eq!(deletes[0].path, "/Wiki/topic");
+        assert_eq!(deletes[0].path, "/Knowledge/topic");
         assert_eq!(deletes[0].expected_etag.as_deref(), Some("etag-folder"));
         assert_eq!(
             deletes[0].expected_folder_index_etag.as_deref(),
@@ -2275,8 +2252,8 @@ mod tests {
     async fn delete_node_keeps_explicit_folder_index_etag() {
         let client = MockClient {
             nodes: vec![
-                node("/Wiki/topic", NodeKind::Folder, "etag-folder"),
-                node("/Wiki/topic/index.md", NodeKind::File, "etag-index"),
+                node("/Knowledge/topic", NodeKind::Folder, "etag-folder"),
+                node("/Knowledge/topic/index.md", NodeKind::File, "etag-index"),
             ],
             ..MockClient::default()
         };
@@ -2284,7 +2261,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteNode {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 expected_etag: Some("etag-folder".to_string()),
                 expected_folder_index_etag: Some("stale".to_string()),
                 json: true,
@@ -2303,10 +2280,18 @@ mod tests {
     #[tokio::test]
     async fn delete_tree_autofills_folder_index_etag_for_folder_entries() {
         let client = MockClient {
-            nodes: vec![node("/Wiki/topic/index.md", NodeKind::File, "etag-index")],
+            nodes: vec![node(
+                "/Knowledge/topic/index.md",
+                NodeKind::File,
+                "etag-index",
+            )],
             entries: vec![
-                entry("/Wiki/topic/index.md", NodeEntryKind::File, "etag-index"),
-                entry("/Wiki/topic", NodeEntryKind::Folder, "etag-folder"),
+                entry(
+                    "/Knowledge/topic/index.md",
+                    NodeEntryKind::File,
+                    "etag-index",
+                ),
+                entry("/Knowledge/topic", NodeEntryKind::Folder, "etag-folder"),
             ],
             ..MockClient::default()
         };
@@ -2314,7 +2299,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteTree {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 json: true,
             },
         )
@@ -2324,12 +2309,12 @@ mod tests {
         let deletes = client.deletes.lock().unwrap();
         let index_delete = deletes
             .iter()
-            .find(|request| request.path == "/Wiki/topic/index.md")
+            .find(|request| request.path == "/Knowledge/topic/index.md")
             .expect("index delete should dispatch");
         assert!(index_delete.expected_folder_index_etag.is_none());
         let folder_delete = deletes
             .iter()
-            .find(|request| request.path == "/Wiki/topic")
+            .find(|request| request.path == "/Knowledge/topic")
             .expect("folder delete should dispatch");
         assert_eq!(
             folder_delete.expected_folder_index_etag.as_deref(),
@@ -2345,7 +2330,6 @@ mod tests {
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Create {
-                    profile: DatabaseProfileArg::Workspace,
                     name: "Team skills".to_string(),
                 },
             },
@@ -2816,14 +2800,14 @@ mod tests {
     #[test]
     fn sql_json_query_output_formats_rows_and_envelope() {
         let result = IndexSqlJsonQueryResult {
-            rows: vec![r#"{"path":"/Wiki/a.md"}"#.to_string()],
+            rows: vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()],
             row_count: 1,
             limit: 20,
         };
 
         assert_eq!(
             super::sql_json_query_output_lines(&result, false).expect("text output"),
-            vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]
+            vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()]
         );
         let json = super::sql_json_query_output_lines(&result, true).expect("json output");
         assert_eq!(json.len(), 1);
@@ -2876,7 +2860,7 @@ mod tests {
     #[test]
     fn node_field_view_can_omit_content() {
         let node = vfs_types::Node {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             kind: vfs_types::NodeKind::File,
             content: "large body".to_string(),
             created_at: 1,
@@ -2886,7 +2870,7 @@ mod tests {
         };
         let metadata = super::node_field_view(&node, true, None).expect("metadata view");
         assert!(metadata.get("content").is_none());
-        assert_eq!(metadata["path"], "/Wiki/index.md");
+        assert_eq!(metadata["path"], "/Knowledge/index.md");
 
         let fields =
             super::node_field_view(&node, false, Some("path,kind,etag")).expect("field view");
@@ -2919,7 +2903,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::ReadNodeContext {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 link_limit: 7,
                 json: true,
             },
@@ -2927,7 +2911,7 @@ mod tests {
         .await
         .expect("read context should succeed");
         let contexts = client.contexts.lock().unwrap();
-        assert_eq!(contexts[0].path, "/Wiki/a.md");
+        assert_eq!(contexts[0].path, "/Knowledge/a.md");
         assert_eq!(contexts[0].link_limit, 7);
     }
 
@@ -2938,7 +2922,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::GraphNeighborhood {
-                center_path: "/Wiki/a.md".to_string(),
+                center_path: "/Knowledge/a.md".to_string(),
                 depth: 2,
                 limit: 9,
                 json: true,
@@ -2947,7 +2931,7 @@ mod tests {
         .await
         .expect("graph neighborhood should succeed");
         let neighborhoods = client.neighborhoods.lock().unwrap();
-        assert_eq!(neighborhoods[0].center_path, "/Wiki/a.md");
+        assert_eq!(neighborhoods[0].center_path, "/Knowledge/a.md");
         assert_eq!(neighborhoods[0].depth, 2);
         assert_eq!(neighborhoods[0].limit, 9);
     }

@@ -37,6 +37,7 @@ loginButton.addEventListener("click", async () => {
 logoutButton.addEventListener("click", async () => {
   try {
     await logoutInternetIdentity();
+    await saveDatabaseSelection("");
     await notifyAuthSessionChanged();
     await refreshAuthAndDatabases();
     statusText.textContent = "Logged out";
@@ -101,11 +102,7 @@ async function send(message) {
 }
 
 async function notifyAuthSessionChanged() {
-  try {
-    await send({ type: "auth-session-changed" });
-  } catch (error) {
-    console.warn("failed to notify auth session change", error);
-  }
+  await send({ type: "auth-session-changed" });
 }
 
 async function saveDatabaseSelection(databaseId) {
@@ -203,7 +200,7 @@ function setCreateDatabaseFormVisible(visible) {
 }
 
 async function refreshLatestStatus() {
-  const response = await send({ type: "latest-url-ingest-status" });
+  const response = await send({ type: "latest-source-capture-status" });
   const value = response.value ? JSON.parse(response.value) : null;
   latestStatusText.textContent = value ? latestStatusLabel(value) : "No run yet.";
 }
@@ -215,5 +212,5 @@ function latestStatusLabel(value) {
       : value.status === "source_exists"
         ? "already saved"
         : value.status;
-  return `${prefix}: ${value.message}${value.requestPath ? ` ${value.requestPath}` : ""}`;
+  return `${prefix}: ${value.message}${value.sourcePath ? ` ${value.sourcePath}` : ""}`;
 }

@@ -3,9 +3,9 @@ export type QueryIdentityMode = "anonymous" | "user";
 export type QueryAction =
   | { kind: "lint"; targetPath: string; sideEffect: "none"; identityMode: QueryIdentityMode }
   | { kind: "sql"; targetPath: "current database"; sideEffect: "none"; identityMode: QueryIdentityMode; sql: string }
-  | { kind: "search"; targetPath: "/Wiki"; sideEffect: "none"; identityMode: QueryIdentityMode; query: string }
+  | { kind: "search"; targetPath: "current database"; sideEffect: "none"; identityMode: QueryIdentityMode; query: string }
   | { kind: "queue_url"; targetPath: "/Sources/ingest-requests"; sideEffect: "queue request"; identityMode: "user"; url: string }
-  | { kind: "ask"; targetPath: "/Wiki"; sideEffect: "none"; identityMode: QueryIdentityMode; question: string };
+  | { kind: "ask"; targetPath: "/Knowledge"; sideEffect: "none"; identityMode: QueryIdentityMode; question: string };
 
 export function classifyQueryInput(value: string, selectedPath: string, identityMode: QueryIdentityMode): QueryAction | null {
   const text = value.trim();
@@ -15,16 +15,16 @@ export function classifyQueryInput(value: string, selectedPath: string, identity
   const url = firstHttpUrl(text);
   if (url) return { kind: "queue_url", targetPath: "/Sources/ingest-requests", sideEffect: "queue request", identityMode: "user", url };
   if (/(lint|点検|検査)/i.test(text)) {
-    return { kind: "lint", targetPath: /facts\.md|facts|事実/i.test(text) ? "/Wiki/facts.md" : selectedPath, sideEffect: "none", identityMode };
+    return { kind: "lint", targetPath: /facts\.md|facts|事実/i.test(text) ? "/Knowledge/facts.md" : selectedPath, sideEffect: "none", identityMode };
   }
   const askText = prefixedText(text, "ask");
-  if (askText) return { kind: "ask", targetPath: "/Wiki", sideEffect: "none", identityMode, question: askText };
+  if (askText) return { kind: "ask", targetPath: "/Knowledge", sideEffect: "none", identityMode, question: askText };
   const searchText = prefixedText(text, "search");
-  if (searchText) return { kind: "search", targetPath: "/Wiki", sideEffect: "none", identityMode, query: searchText };
+  if (searchText) return { kind: "search", targetPath: "current database", sideEffect: "none", identityMode, query: searchText };
   if (!looksLikeQuestion(text) && looksLikeKeywordSearch(text)) {
-    return { kind: "search", targetPath: "/Wiki", sideEffect: "none", identityMode, query: text };
+    return { kind: "search", targetPath: "current database", sideEffect: "none", identityMode, query: text };
   }
-  return { kind: "ask", targetPath: "/Wiki", sideEffect: "none", identityMode, question: text };
+  return { kind: "ask", targetPath: "/Knowledge", sideEffect: "none", identityMode, question: text };
 }
 
 export function queryAnswerSearchTerms(value: string): string[] {

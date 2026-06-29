@@ -355,7 +355,7 @@ proptest! {
                 OWNER,
                 WriteNodeRequest {
                     database_id: database_id.clone(),
-                    path: "/Wiki/restore-pbt.md".to_string(),
+                    path: "/Knowledge/restore-pbt.md".to_string(),
                     kind: NodeKind::File,
                     content: content.clone(),
                     metadata_json: "{}".to_string(),
@@ -443,7 +443,7 @@ proptest! {
         finalize_restore_from_bytes(service, &database_id, &bytes, hash, size, split, 50);
         assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Active);
         let restored = service
-            .read_node(&database_id, OWNER, "/Wiki/restore-pbt.md")
+            .read_node(&database_id, OWNER, "/Knowledge/restore-pbt.md")
             .expect("restored node should read")
             .expect("restored node should exist");
         assert_eq!(restored.content, content);

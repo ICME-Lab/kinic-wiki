@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Where: plugins/claude-code/scripts/record-session.sh
-# What: Record Claude Code SessionEnd hook input as a Kinic raw source.
+# What: Record Claude Code SessionEnd hook input as Kinic session evidence.
 # Why: Session capture must be best-effort and must never block Claude Code shutdown.
 set -euo pipefail
 

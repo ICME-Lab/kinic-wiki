@@ -18,7 +18,6 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      profile: "DatabaseProfile",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
@@ -39,9 +38,8 @@ const expectedTypes = {
     kind: "record",
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
-  DatabaseProfile: { kind: "variant", fields: { Skill: "null", Memory: "null", Workspace: "null", Session: "null", Knowledge: "null" } },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text", profile: "DatabaseProfile" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text", profile: "DatabaseProfile" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -53,17 +51,6 @@ const expectedTypes = {
       updated_at: "int64",
       etag: "text",
       metadata_json: "text"
-    }
-  },
-  WriteNodeRequest: {
-    kind: "record",
-    fields: {
-      database_id: "text",
-      path: "text",
-      kind: "NodeKind",
-      content: "text",
-      metadata_json: "text",
-      expected_etag: "opt text"
     }
   },
   WriteSourceForGenerationRequest: {
@@ -79,19 +66,16 @@ const expectedTypes = {
   },
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
-  UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
   NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const expectedMethods = {
-  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
-  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };
 
@@ -197,8 +181,8 @@ function normalizeDidResult(value) {
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_10") return "ResultCyclesBillingConfig";
   if (normalized === "Result_5") return "ResultCreateDatabase";
-  if (normalized === "Result_18") return "ResultDatabases";
-  if (normalized === "Result_30") return "ResultMkdirNode";
+  if (normalized === "Result_17") return "ResultDatabases";
+  if (normalized === "Result_29") return "ResultMkdirNode";
   if (normalized === "Result_35") return "ResultNode";
   if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";

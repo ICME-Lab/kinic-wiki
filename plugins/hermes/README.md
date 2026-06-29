@@ -1,19 +1,13 @@
 # Kinic Hermes Plugin
 
 Hermes専用のKinic連携plugin。
-`kinic-vfs-cli` はVFS/Skill Registryの正本操作を担当し、`plugins/runtime/kinic_agent_runtime` が記録/evolution runnerの共通処理を担当する。
+`kinic-vfs-cli` はVFS/Skill Registryの正本操作を担当し、`plugins/runtime/kinic_agent_runtime` がrun evidence記録の共通処理を担当する。
 このpackageはHermes hookとHermes adapterだけを持つ。
 
 ## Normal Flow
 
 ```bash
 kinic-vfs-cli hermes setup
-```
-
-Hermes内:
-
-```text
-/kinic_evolve_job
 ```
 
 `hermes setup` が `$HERMES_HOME/plugins/kinic` へ自己完結pluginを配置し、`plugins.enabled` に `kinic` を追加し、reviewed/promoted skill のprojection syncを行う。既存configは書換前にbackupされ、root / `plugins` / `plugins.enabled` のshapeが不正なら修復せず失敗する。
@@ -47,9 +41,8 @@ pnpm --dir skill-registry-web build
 
 - `KINIC_VFS_CLI`: 使用する `kinic-vfs-cli` のパス。未指定ならPATHから探索する。
 - `KINIC_HOME`: pending evidenceとplugin logの保存先。既定値は `~/.kinic`。
-- `KINIC_SKILL_EVOLVE`: `kinic-skill-evolve` のパス。未指定ならPATHから探索し、最後にpackage内shimへfallbackする。
 
-run evidenceは `kinic-vfs-cli skill record-run --create-ready-jobs` 経由で記録する。
+run evidenceは `kinic-vfs-cli skill record-run --json` 経由で記録する。
 記録に失敗したrun evidenceは `KINIC_HOME/pending-runs` に保存する。
 plugin logは `KINIC_HOME/hermes-plugin.log` に追記する。
 通常の自動captureはtool名、redact/truncate済みargs/result excerpt、final response、usage delta、`redacted` / `truncated` / `max_chars` metadataを保存する。
@@ -60,14 +53,8 @@ plugin logは `KINIC_HOME/hermes-plugin.log` に追記する。
 `KINIC_VFS_CLI_ALLOW_NON_II=1` を設定した場合だけ、pluginは `kinic-vfs-cli` 呼び出しに `--allow-non-ii-identity` を付ける。
 未指定時はInternet Identity identity前提のまま。
 
-Codex と Claude Code の記録と改善 job 処理は Hermes を経由しない。
+Codex と Claude Code の記録は Hermes を経由しない。
 詳細は [`../codex/README.md`](../codex/README.md) と [`../claude-code/README.md`](../claude-code/README.md) を参照する。
-
-Metrics route:
-
-- Hermes: `generator=hermes-plugin`, `llm_route=hermes-ctx-llm`
-- Codex: `generator=codex-plugin`, `llm_route=codex-skill`
-- Claude Code: `generator=claude-code-plugin`, `llm_route=claude-code-skill`
 
 確認:
 
@@ -76,16 +63,3 @@ target/debug/kinic-vfs-cli list-nodes --prefix /Sources/skill-runs --recursive -
 ls ~/.kinic/pending-runs
 tail ~/.kinic/hermes-plugin.log
 ```
-
-## Internal Commands
-
-```bash
-kinic-skill-evolve prepare-job [job-id] --json
-kinic-skill-evolve finish-job <job-id> --candidate-file ./candidate.md
-kinic-skill-evolve sync-local <skill-id> --projection-dir ~/.kinic/hermes-current/skills
-kinic-skill-evolve history <skill-id>
-```
-
-`prepare-job` はplugin内部用。queued jobをclaimし、Hermes `ctx.llm` に渡すmessagesを作る。
-`finish-job` はplugin内部用。候補SKILL.mdをproposalへ保存し、gate通過後に `kinic-vfs-cli skill apply-proposal` を呼ぶ。
-`sync-local` と `history` はdebug用。

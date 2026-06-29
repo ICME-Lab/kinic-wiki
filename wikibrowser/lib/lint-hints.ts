@@ -11,7 +11,7 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
-const sourcePathPattern = /\/Sources\/raw\/[^\s)`'"]+/;
+const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|ingest-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";
@@ -32,7 +32,7 @@ export function collectLintHints(path: string, content: string): LintHint[] {
     hints.push({
       severity: "warning",
       title: "Missing raw source path",
-      detail: "provenance.md should link organized wiki content back to /Sources/raw evidence.",
+      detail: "provenance.md should link organized wiki content back to /Sources/<provider> evidence.",
       line: null,
       preview: null
     });
@@ -85,23 +85,23 @@ function findCodeNoteHints(path: string, content: string): LintHint[] {
 
 export function rawSourceLinksFor(path: string, content: string): string[] {
   const links = new Set<string>();
-  if (path.startsWith("/Sources/raw/")) {
+  if (sourcePathPattern.test(path)) {
     links.add(path);
   }
   if (path.endsWith("/provenance.md")) {
     for (const line of content.split("\n")) {
-      const sourcePath = line.match(/\/Sources\/raw\/[^\s)`'"]+/)?.[0];
+      const sourcePath = line.match(sourcePathPattern)?.[0];
       if (sourcePath) links.add(sourcePath);
     }
   }
-  for (const match of content.matchAll(/\/Sources\/raw\/[^\s)`'"]+/g)) {
+  for (const match of content.matchAll(new RegExp(sourcePathPattern.source, "g"))) {
     links.add(match[0]);
   }
   return [...links].slice(0, 8);
 }
 
 export function provenancePathFor(path: string): string | null {
-  if (!path.startsWith("/Wiki/") || path.endsWith("/provenance.md")) {
+  if (!path.startsWith("/Knowledge/") || path.endsWith("/provenance.md")) {
     return null;
   }
   const index = path.lastIndexOf("/");
