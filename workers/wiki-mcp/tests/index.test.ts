@@ -449,8 +449,16 @@ describe("wiki mcp worker", () => {
     expect(mocks.listNodes).toHaveBeenCalledWith(env, "db_alpha", "/", true, 4);
   });
 
-  it("uses the effective list limit when the requested limit would prevent over-fetch", async () => {
-    await listDatabaseNodes(env, { database_id: "db_alpha", prefix: "/", recursive: false, limit: 100 });
+  it("clamps list to 99 while preserving one-row over-fetch", async () => {
+    await expect(listDatabaseNodes(env, { database_id: "db_alpha", prefix: "/", recursive: false, limit: 100 })).resolves.toMatchObject({
+      metadata: {
+        database_id: "db_alpha",
+        prefix: "/",
+        recursive: false,
+        limit: 99,
+        truncated: false
+      }
+    });
 
     expect(mocks.listNodes).toHaveBeenCalledWith(env, "db_alpha", "/", false, 100);
   });
@@ -536,30 +544,30 @@ describe("wiki mcp worker", () => {
   });
 
   it("returns item-level read_paths errors when the SQL batch fails", async () => {
-    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 262144 bytes"));
+    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 1048576 bytes"));
 
     await expect(readPaths(env, { database_id: "db_alpha", paths: ["/Knowledge/a.md", "/Knowledge/b.md"] })).resolves.toMatchObject({
       results: [
         {
           path: "/Knowledge/a.md",
-          error: "batch read failed: response JSON exceeds 262144 bytes",
+          error: "batch read failed: response JSON exceeds 1048576 bytes",
           is_error: true
         },
         {
           path: "/Knowledge/b.md",
-          error: "batch read failed: response JSON exceeds 262144 bytes",
+          error: "batch read failed: response JSON exceeds 1048576 bytes",
           is_error: true
         }
       ],
       metadata: {
-        batch_error: "batch read failed: response JSON exceeds 262144 bytes"
+        batch_error: "batch read failed: response JSON exceeds 1048576 bytes"
       }
     });
     expect(mocks.readNode).not.toHaveBeenCalled();
   });
 
   it("returns item-level fetch_many errors when the SQL batch fails", async () => {
-    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 262144 bytes"));
+    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 1048576 bytes"));
     const firstId = encodeSearchResultId({
       version: 1,
       canister_id: "canister-a",
@@ -577,12 +585,12 @@ describe("wiki mcp worker", () => {
       results: [
         {
           id: firstId,
-          error: "batch read failed: response JSON exceeds 262144 bytes",
+          error: "batch read failed: response JSON exceeds 1048576 bytes",
           is_error: true
         },
         {
           id: secondId,
-          error: "batch read failed: response JSON exceeds 262144 bytes",
+          error: "batch read failed: response JSON exceeds 1048576 bytes",
           is_error: true
         }
       ]

@@ -665,7 +665,7 @@ fn index_sql_json_rejects_oversized_row_at_entrypoint() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     let error = query_index_sql_json(
-        "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1".to_string(),
+        "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1".to_string(),
         1,
     )
     .expect_err("oversized index SQL row should reject");

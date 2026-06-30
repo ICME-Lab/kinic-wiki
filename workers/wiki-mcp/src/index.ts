@@ -36,9 +36,9 @@ const DEFAULT_DATABASE_LIMIT = 10;
 const MAX_DATABASE_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 20;
-const DEFAULT_LIST_LIMIT = 100;
-const MAX_LIST_LIMIT = 100;
-const EFFECTIVE_MAX_LIST_LIMIT = MAX_LIST_LIMIT - 1;
+const DEFAULT_LIST_LIMIT = 99;
+const MAX_LIST_LIMIT = 99;
+const LIST_OVERFETCH_LIMIT = MAX_LIST_LIMIT + 1;
 const MAX_FETCH_MANY_IDS = 10;
 const MAX_READ_PATHS = 10;
 const DEFAULT_CONTEXT_BUDGET_TOKENS = 2000;
@@ -459,8 +459,8 @@ export async function listDatabaseNodes(env: RuntimeEnv, input: ListInput) {
   }
   const prefix = normalizePrefix(input.prefix);
   const recursive = input.recursive ?? false;
-  const limit = clampInt(input.limit, DEFAULT_LIST_LIMIT, EFFECTIVE_MAX_LIST_LIMIT);
-  const fetchLimit = limit + 1;
+  const limit = clampInt(input.limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+  const fetchLimit = Math.min(limit + 1, LIST_OVERFETCH_LIMIT);
   const entries = await listNodes(env, databaseId, prefix, recursive, fetchLimit);
   const truncated = entries.length > limit;
   return {

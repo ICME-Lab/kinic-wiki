@@ -51,7 +51,7 @@ Route behavior:
   - Reads 2 to 10 known paths with one restricted `query_database_sql_json` call
   - Use for multiple paths from `list`, `context`, or `search` metadata
 - `list`
-  - Input: `{ "database_id": "db_...", "prefix": "/", "recursive": false, "limit": 100 }`
+  - Input: `{ "database_id": "db_...", "prefix": "/", "recursive": false, "limit": 99 }`
   - Calls canister `list_nodes`
   - Use for inventory and prefix discovery; it does not return node content
 - `context`

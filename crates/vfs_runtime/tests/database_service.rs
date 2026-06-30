@@ -3812,7 +3812,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let row_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1",
+            "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1",
             1,
         )
         .expect_err("oversized index SQL row should reject");
@@ -3820,7 +3820,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let response_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) LIMIT 5",
+            "SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) LIMIT 5",
             5,
         )
         .expect_err("oversized index SQL response should reject");
@@ -4326,7 +4326,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                 database_id: "size-sql-db".to_string(),
                 path: "/Knowledge/too-large.md".to_string(),
                 kind: NodeKind::File,
-                content: "x".repeat(66 * 1024),
+                content: "x".repeat(270 * 1024),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -4364,7 +4364,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                     database_id: "size-sql-db".to_string(),
                     path: format!("/Knowledge/large-{index}.md"),
                     kind: NodeKind::File,
-                    content: "x".repeat(60 * 1024),
+                    content: "x".repeat(220 * 1024),
                     metadata_json: "{}".to_string(),
                     expected_etag: None,
                 },
@@ -4382,6 +4382,41 @@ fn database_sql_json_rejects_oversized_row_and_response() {
         )
         .expect_err("oversized response should reject");
     assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn database_sql_json_accepts_mcp_sized_multibyte_content() {
+    let service = service();
+    service
+        .create_database("multibyte-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "multibyte-sql-db".to_string(),
+                path: "/Knowledge/japanese.md".to_string(),
+                kind: NodeKind::File,
+                content: "あ".repeat(40_000),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("multibyte node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "multibyte-sql-db",
+            "owner",
+            "SELECT json_object('content', substr(content, 1, 40000), 'content_truncated', length(content) > 40000) FROM fs_nodes WHERE path = '/Knowledge/japanese.md' LIMIT 1",
+            1,
+        )
+        .expect("MCP-sized multibyte row should fit SQL JSON row limit");
+
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.rows[0].contains("\"content_truncated\":0"));
 }
 
 #[test]

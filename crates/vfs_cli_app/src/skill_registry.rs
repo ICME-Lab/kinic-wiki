@@ -588,19 +588,25 @@ pub(crate) async fn export_skill(
     id: &str,
     out: &Path,
 ) -> Result<serde_json::Value> {
+    const EXPORT_LIST_LIMIT: u32 = 100;
     let skill_id = SkillId::parse(id)?;
     let base_path = skill_base_path(&skill_id);
     let mut exported = Vec::new();
     std::fs::create_dir_all(out).with_context(|| format!("failed to create {}", out.display()))?;
-    for entry in client
+    let entries = client
         .list_nodes(ListNodesRequest {
             database_id: database_id.to_string(),
             prefix: base_path.clone(),
             recursive: true,
-            limit: 100,
+            limit: EXPORT_LIST_LIMIT,
         })
-        .await?
-    {
+        .await?;
+    if entries.len() >= EXPORT_LIST_LIMIT as usize {
+        return Err(anyhow!(
+            "export may be truncated; list_nodes pagination is required before exporting skill: {id}"
+        ));
+    }
+    for entry in entries {
         if entry.kind != NodeEntryKind::File {
             continue;
         }

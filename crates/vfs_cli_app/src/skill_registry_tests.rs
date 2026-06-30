@@ -73,6 +73,7 @@ impl VfsApi for SkillMockClient {
                 etag: node.etag.clone(),
                 has_children: false,
             })
+            .take(request.limit as usize)
             .collect())
     }
 
@@ -681,6 +682,37 @@ async fn skill_record_run_evidence_export_and_correction() {
                 .as_str()
                 .unwrap()
                 .contains(".correction."))
+    );
+}
+
+#[tokio::test]
+async fn export_skill_rejects_limit_sized_listing() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    for index in 0..99 {
+        write_skill_file(
+            &client,
+            "team-db",
+            &format!("/Skills/legal-review/overflow-{index:03}.md"),
+            "overflow",
+        )
+        .await;
+    }
+
+    let error = export_skill(
+        &client,
+        "team-db",
+        "legal-review",
+        &temp.path().join("export"),
+    )
+    .await
+    .expect_err("limit-sized listing should reject");
+
+    assert!(
+        error
+            .to_string()
+            .contains("export may be truncated; list_nodes pagination is required")
     );
 }
 
