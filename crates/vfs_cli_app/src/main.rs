@@ -25,11 +25,7 @@ use vfs_client::CanisterVfsClient;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let database_id_arg = cli
-        .connection
-        .database_id
-        .clone()
-        .or_else(|| cli.command.database_id_override());
+    let database_id_arg = cli.connection.database_id.clone();
     if let Command::Database { command } = &cli.command {
         match command {
             DatabaseCommand::Current { json } => {

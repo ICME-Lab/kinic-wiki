@@ -158,19 +158,13 @@ impl FsStore {
     }
 
     pub fn run_fs_migrations(&self) -> Result<(), String> {
-        self.run_fs_migrations_for_database("db_local")
-    }
-
-    pub fn run_fs_migrations_for_database(&self, database_id: &str) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut conn = self.open()?;
-            let _ = database_id;
             schema::run_fs_migrations(&mut conn)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = database_id;
             self.write_conn(schema::run_fs_migrations_in_tx)
         }
     }
@@ -226,9 +220,14 @@ impl FsStore {
 
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
+        let limit = capped_list_nodes_limit(request.limit);
         self.read_conn(|conn| {
-            let rows = load_scoped_entry_rows(conn, &prefix)?;
-            Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
+            let rows = load_scoped_entry_rows(conn, &prefix, request.recursive.then_some(limit))?;
+            let mut entries = build_entries_from_rows(&rows, &prefix, request.recursive);
+            if !request.recursive {
+                entries.truncate(limit as usize);
+            }
+            Ok(entries)
         })
     }
 
@@ -562,7 +561,7 @@ impl FsStore {
             .unwrap_or_else(|| "/".to_string());
         let node_type = request.node_type.unwrap_or(GlobNodeType::Any);
         self.read_conn(|conn| {
-            let rows = load_scoped_entry_rows(conn, &prefix)?;
+            let rows = load_scoped_entry_rows(conn, &prefix, None)?;
             let entries = build_glob_entries_from_rows(&rows, &prefix);
             let mut hits = Vec::new();
             for entry in entries {
@@ -1319,6 +1318,10 @@ fn parse_target_snapshot_revision(
 
 fn capped_query_limit(requested: u32) -> i64 {
     i64::from(requested.clamp(1, QUERY_RESULT_LIMIT_MAX))
+}
+
+fn capped_list_nodes_limit(requested: u32) -> u32 {
+    requested.clamp(1, QUERY_RESULT_LIMIT_MAX)
 }
 
 fn sync_page_limit(requested: u32) -> Result<i64, String> {

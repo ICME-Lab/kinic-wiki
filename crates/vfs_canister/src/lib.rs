@@ -55,8 +55,8 @@ use vfs_types::{
     MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
@@ -411,12 +411,23 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database(&request.title, caller, now)?;
+        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
         Ok(CreateDatabaseResult {
             database_id: meta.database_id,
-            title: meta.metadata.title,
+            name: meta.metadata.name,
         })
     })
+}
+
+#[update]
+fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
+        "rename_database",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, now| service.rename_database(caller, request, now),
+    )
 }
 
 #[update]
@@ -550,9 +561,7 @@ fn icrc21_canister_call_consent_message(
             };
             let listing = validation.listing;
             let listing_title = match with_service(|service| {
-                service
-                    .market_get_listing(&payer, &listing.listing_id)
-                    .map(|detail| detail.listing.database_metadata.title)
+                service.market_listing_database_name_for_consent(&listing.listing_id)
             }) {
                 Ok(title) => title,
                 Err(error) => return icrc21_unsupported(error),
@@ -2398,8 +2407,14 @@ fn normalize_candid_interface(interface: String) -> String {
         "OpsAnswerSessionRequest",
         "SourceCaptureTriggerSessionRequest",
     );
-    ensure_source_capture_trigger_session_request(ensure_update_database_metadata_request(
-        ensure_outgoing_links_request(normalized),
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "rename_database",
+        "CreateDatabaseResult",
+        "RenameDatabaseRequest",
+    );
+    ensure_source_capture_trigger_session_request(ensure_rename_database_request(
+        ensure_update_database_metadata_request(ensure_outgoing_links_request(normalized)),
     ))
 }
 
@@ -2447,7 +2462,17 @@ fn ensure_update_database_metadata_request(interface: String) -> String {
     }
     interface.replace(
         "type DatabaseMember = record {",
-        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; title : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; name : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+    )
+}
+
+fn ensure_rename_database_request(interface: String) -> String {
+    if interface.contains("type RenameDatabaseRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type DeleteNodeRequest = record {",
+        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DeleteNodeRequest = record {",
     )
 }
 

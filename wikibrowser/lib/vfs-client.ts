@@ -99,14 +99,15 @@ type RawDatabaseSummary = {
   role: Variant;
   logical_size_bytes: bigint;
   database_id: string;
-  metadata: RawDatabaseMetadata;
+  name: string;
+  metadata: [] | [RawDatabaseMetadata];
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
 };
 
 type RawDatabaseMetadata = {
-  title: string;
+  name: string;
   description: string;
   llm_summary: [] | [string];
   tags_json: string;
@@ -303,7 +304,7 @@ type RawDeleteDatabaseRequest = {
 
 type RawCreateDatabaseResult = {
   database_id: string;
-  title: string;
+  name: string;
 };
 
 type RawUpdateDatabaseMetadataRequest = RawDatabaseMetadata & {
@@ -479,7 +480,7 @@ type VfsActor = {
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
-  create_database: (request: { title: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
@@ -927,10 +928,10 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, title: string): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database({ title });
+    const result = await actor.create_database({ name });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1366,7 +1367,8 @@ function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): CyclesBillin
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
-    metadata: normalizeDatabaseMetadata(raw.metadata),
+    name: raw.name,
+    metadata: normalizeDatabaseMetadata(requiredDatabaseMetadata(raw.metadata)),
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
@@ -1376,9 +1378,17 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   };
 }
 
+function requiredDatabaseMetadata(raw: [] | [RawDatabaseMetadata]): RawDatabaseMetadata {
+  const metadata = raw[0];
+  if (!metadata) {
+    throw new ApiError("Database metadata is required", 502);
+  }
+  return metadata;
+}
+
 function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {
   return {
-    title: raw.title,
+    name: raw.name,
     description: raw.description,
     llmSummary: raw.llm_summary[0] ?? null,
     tagsJson: raw.tags_json
@@ -1594,7 +1604,7 @@ function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): Raw
 function rawUpdateDatabaseMetadataRequest(request: UpdateDatabaseMetadataRequest): RawUpdateDatabaseMetadataRequest {
   return {
     database_id: request.databaseId,
-    title: request.title,
+    name: request.name,
     description: request.description,
     llm_summary: rawOptionalText(request.llmSummary),
     tags_json: request.tagsJson

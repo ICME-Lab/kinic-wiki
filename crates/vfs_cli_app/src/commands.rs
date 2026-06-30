@@ -12,7 +12,6 @@ use crate::conversation_wiki::generate_conversation_wiki;
 use crate::github_ingest::run_github_command;
 use crate::hermes::run_hermes_command;
 use crate::maintenance::{rebuild_index, rebuild_scope_index};
-use crate::mcp::run_mcp_stdio_server;
 use crate::purge_source_capture::purge_source_capture;
 use crate::skill_registry::run_skill_command;
 use anyhow::{Result, anyhow};
@@ -94,9 +93,6 @@ pub async fn run_command(
         },
         Command::Hermes { command } => {
             run_hermes_command(client, database_id, command).await?;
-        }
-        Command::Mcp { command: _ } => {
-            run_mcp_stdio_server(client, require_database_id(database_id)?).await?;
         }
         Command::Codex { command } => {
             run_codex_command(command)?;

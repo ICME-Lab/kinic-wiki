@@ -132,7 +132,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
               <div className="min-w-0 space-y-4">
                 <div className="grid gap-3">
                   {detail.preview.previewStale ? <span className="w-fit rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold uppercase text-amber-950">Preview stale</span> : null}
-                  <h1 className="break-words text-3xl font-semibold leading-tight text-ink">{metadata?.title ?? listing.databaseId}</h1>
+                  <h1 className="break-words text-3xl font-semibold leading-tight text-ink">{metadata?.name}</h1>
                   <p className="max-w-3xl whitespace-pre-wrap text-sm leading-6 text-muted">{metadata?.description ?? ""}</p>
                   <Link className="inline-flex max-w-full items-center gap-2 break-all font-mono text-xs text-muted underline-offset-4 hover:text-accent hover:underline" href={marketSellerPath(listing.sellerPrincipal)}>
                     <User aria-hidden className="shrink-0" size={14} />

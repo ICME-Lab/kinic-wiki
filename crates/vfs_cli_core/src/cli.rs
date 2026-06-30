@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use vfs_types::{DatabaseRole, GlobNodeType, NodeKind, SearchPreviewMode};
 
 pub const DEFAULT_VFS_ROOT_PATH: &str = "/";
+pub const DEFAULT_LIST_NODES_LIMIT: u32 = 100;
 
 #[derive(Parser, Debug)]
 #[command(name = "kinic-vfs-cli")]
@@ -30,7 +31,10 @@ pub struct ConnectionArgs {
     #[arg(long, help = "Override replica host from config")]
     pub replica_host: Option<String>,
 
-    #[arg(long, help = "Override VFS_CANISTER_ID or user config")]
+    #[arg(
+        long,
+        help = "Override the mainnet default, VFS_CANISTER_ID, or user config"
+    )]
     pub canister_id: Option<String>,
 
     #[arg(
@@ -83,6 +87,8 @@ pub enum VfsCommand {
         prefix: String,
         #[arg(long)]
         recursive: bool,
+        #[arg(long, default_value_t = DEFAULT_LIST_NODES_LIMIT)]
+        limit: u32,
         #[arg(long)]
         json: bool,
     },
@@ -288,9 +294,15 @@ pub enum MarketCommand {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
     #[command(about = "Create a database and print its generated database id")]
-    Create { title: String },
-    #[command(about = "Update one database metadata title")]
-    Metadata { database_id: String, title: String },
+    Create { name: String },
+    #[command(about = "Update one database metadata record from JSON")]
+    Metadata {
+        database_id: String,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "List databases attached to the current identity")]
     List {
         #[arg(long)]

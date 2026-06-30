@@ -173,9 +173,14 @@ async fn dispatch_tool_call_impl(
         }
         "ls" => {
             let args: ListArgs = serde_json::from_value(input)?;
-            tool_ok(
-                json!({ "entries": client.list_nodes(ListNodesRequest { database_id: database_id(args.database_id)?, prefix: args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()), recursive: args.recursive.unwrap_or(false) }).await? }),
-            )
+            tool_ok(json!({
+                "entries": client.list_nodes(ListNodesRequest {
+                    database_id: database_id(args.database_id)?,
+                    prefix: args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()),
+                    recursive: args.recursive.unwrap_or(false),
+                    limit: 100,
+                }).await?
+            }))
         }
         "mkdir" => {
             let args: MkdirArgs = serde_json::from_value(input)?;

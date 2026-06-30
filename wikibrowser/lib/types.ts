@@ -114,7 +114,7 @@ export type DatabaseRole = "reader" | "writer" | "owner";
 export type DatabaseStatus = "pending" | "active" | "deleted";
 
 export type DatabaseMetadata = {
-  title: string;
+  name: string;
   description: string;
   llmSummary: string | null;
   tagsJson: string;
@@ -122,6 +122,7 @@ export type DatabaseMetadata = {
 
 export type DatabaseSummary = {
   databaseId: string;
+  name: string;
   metadata: DatabaseMetadata;
   role: DatabaseRole;
   status: DatabaseStatus;

@@ -881,6 +881,7 @@ where
         database_id: database_id.clone(),
         prefix: list_prefix(&args.prefix, args.directory_shape),
         recursive: false,
+        limit: 100,
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {
@@ -904,6 +905,7 @@ where
         database_id: database_id.clone(),
         prefix: list_prefix(&args.prefix, args.directory_shape),
         recursive: false,
+        limit: 100,
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {

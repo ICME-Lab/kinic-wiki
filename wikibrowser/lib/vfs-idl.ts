@@ -10,7 +10,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
   const DatabaseMetadata = idl.Record({
-    title: idl.Text,
+    name: idl.Text,
     description: idl.Text,
     llm_summary: idl.Opt(idl.Text),
     tags_json: idl.Text
@@ -20,7 +20,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    metadata: DatabaseMetadata,
+    name: idl.Text,
+    metadata: idl.Opt(DatabaseMetadata),
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
@@ -212,10 +213,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
-  const CreateDatabaseRequest = idl.Record({ title: idl.Text });
-  const CreateDatabaseResult = idl.Record({ title: idl.Text, database_id: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const UpdateDatabaseMetadataRequest = idl.Record({
-    title: idl.Text,
+    name: idl.Text,
     description: idl.Text,
     llm_summary: idl.Opt(idl.Text),
     tags_json: idl.Text,
@@ -511,6 +513,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
+    rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),

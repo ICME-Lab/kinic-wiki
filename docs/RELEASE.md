@@ -6,7 +6,7 @@ Primary distribution is npm. The npm package downloads GitHub Release assets and
 
 ## Breaking Changes
 
-- Archive/restore APIs and CLI commands remain removed. Upgrade deploy preflight rejects legacy `archiving`, `archived`, and `restoring` database rows.
+- Archive/restore APIs and CLI commands remain removed.
 - Source nodes no longer require canonical `/Sources/<provider>/<id>.md` paths. Safe `/Sources/...` paths are accepted, and URL capture writes immutable suffixed paths on collision.
 
 ## npm
@@ -45,7 +45,7 @@ target/release/kinic-vfs-cli --help
 Use the binary with the same flags documented in [`CLI.md`](CLI.md):
 
 ```bash
-target/release/kinic-vfs-cli --canister-id <canister-id> database current
+target/release/kinic-vfs-cli database current
 ```
 
 ## GitHub Release

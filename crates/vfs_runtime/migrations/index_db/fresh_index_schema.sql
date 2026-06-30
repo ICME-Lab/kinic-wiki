@@ -1,6 +1,6 @@
 CREATE TABLE databases (
   database_id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
+  name TEXT NOT NULL,
   description TEXT NOT NULL,
   llm_summary TEXT,
   tags_json TEXT NOT NULL,

@@ -13,7 +13,7 @@ const expectedTypes = {
   DatabaseMetadata: {
     kind: "record",
     fields: {
-      title: "text",
+      name: "text",
       description: "text",
       llm_summary: "opt text",
       tags_json: "text"
@@ -26,7 +26,8 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      metadata: "DatabaseMetadata",
+      name: "text",
+      metadata: "opt DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
@@ -46,8 +47,8 @@ const expectedTypes = {
     kind: "record",
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
-  CreateDatabaseRequest: { kind: "record", fields: { title: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { title: "text", database_id: "text" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",

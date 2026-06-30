@@ -154,6 +154,7 @@ pub async fn inspect_skill(client: &impl VfsApi, database_id: &str, id: &str) ->
             database_id: database_id.to_string(),
             prefix: base_path.clone(),
             recursive: true,
+            limit: 100,
         })
         .await?
     {
@@ -169,6 +170,7 @@ pub async fn inspect_skill(client: &impl VfsApi, database_id: &str, id: &str) ->
             database_id: database_id.to_string(),
             prefix: format!("{SKILL_RUN_ROOT}/{id}"),
             recursive: true,
+            limit: 100,
         })
         .await?
         .into_iter()
@@ -335,6 +337,7 @@ async fn run_summary(client: &impl VfsApi, database_id: &str, id: &str) -> Resul
             database_id: database_id.to_string(),
             prefix: format!("{SKILL_RUN_ROOT}/{id}"),
             recursive: true,
+            limit: 100,
         })
         .await?
     {

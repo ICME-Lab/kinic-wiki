@@ -57,10 +57,10 @@ export function SummaryPanel({
   const openHref = active && routable ? publicDatabasePath(databaseId) : null;
   const cycles = databaseCyclesView(database, cyclesConfig);
   const purchaseHref = database ? databaseCyclesHref(database) : null;
-  const databaseTitle = database?.metadata.title ?? databaseId;
+  const databaseName = database?.metadata.name ?? "";
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-      <Field label="Database" value={databaseTitle} />
+      <Field label="Database" value={databaseName} />
       <Field label="Database ID" value={databaseId} />
       <Field label="Your Role" value={database?.role ?? "-"} />
       <Field label="Status" value={databaseStatusLabel(database?.status)} />
@@ -72,8 +72,8 @@ export function SummaryPanel({
         {active && publicReadable && routable ? (
           <SummaryActionLink
             external
-            ariaLabel={`Share ${databaseTitle} on X`}
-            href={xShareDatabaseHref({ databaseId, databaseTitle })}
+            ariaLabel={`Share ${databaseName} on X`}
+            href={xShareDatabaseHref({ databaseId, databaseTitle: databaseName })}
             icon={<Share2 aria-hidden size={14} />}
             label="Share"
           />
@@ -254,7 +254,7 @@ export function DashboardSettingsPanel(props: {
               <h2 className="text-lg font-semibold text-ink">Database metadata</h2>
               {props.metadata.description ? <p className="mt-2 text-sm leading-6 text-muted">{props.metadata.description}</p> : null}
               <p className="mt-2 break-all font-mono text-xs text-muted">
-                {props.metadata.title} / {props.databaseId}
+                {props.metadata.name} / {props.databaseId}
               </p>
             </div>
             <ActionButton disabled={props.busy} loading={props.busyAction?.kind === "metadata"} loadingLabel="Saving..." onClick={props.onEditMetadata} size="compact" variant="secondary">
@@ -269,7 +269,7 @@ export function DashboardSettingsPanel(props: {
         busy={props.busy}
         busyAction={props.busyAction}
         databaseId={props.databaseId}
-        databaseTitle={props.metadata.title}
+        databaseTitle={props.metadata.name}
         onDelete={props.onDelete}
       />
     </div>
@@ -472,18 +472,18 @@ export function DatabaseMetadataDialog(props: {
   onCancel: () => void;
   onSubmit: (metadata: DatabaseMetadata) => void;
 }) {
-  const [title, setTitle] = useState(props.metadata.title);
+  const [name, setName] = useState(props.metadata.name);
   const [description, setDescription] = useState(props.metadata.description);
   const [llmSummary, setLlmSummary] = useState(props.metadata.llmSummary ?? "");
   const [tagsJson, setTagsJson] = useState(props.metadata.tagsJson);
-  const trimmed = title.trim();
+  const trimmed = name.trim();
   const metadataBusy = props.busyAction?.kind === "metadata";
   const submitDisabled = props.busy || trimmed === "";
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitDisabled) return;
     props.onSubmit({
-      title: trimmed,
+      name: trimmed,
       description: description.trim(),
       llmSummary: llmSummary.trim() ? llmSummary.trim() : null,
       tagsJson: tagsJson.trim() || "[]"
@@ -499,13 +499,13 @@ export function DatabaseMetadataDialog(props: {
       <form className="w-full max-w-xl rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
         <h3 className="text-lg font-semibold text-ink">Database metadata</h3>
         <label className="mt-4 grid gap-1 text-sm">
-          <span className="text-xs uppercase tracking-[0.12em] text-muted">Title</span>
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">Name</span>
           <input
             className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
             maxLength={80}
             type="text"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
           />
         </label>
         <label className="mt-4 grid gap-1 text-sm">

@@ -7,12 +7,12 @@ import test from "node:test";
 import { AUTH_OPTIONS } from "../src/auth-client.js";
 import { createDatabaseWithActor, normalizeWritableDatabases } from "../src/vfs-actor.js";
 import {
-  DEFAULT_DATABASE_TITLE,
+  DEFAULT_DATABASE_NAME,
   databaseOptionLabel,
   isSelectedWritableDatabase,
   mergePreferredDatabase,
   shouldShowCreateDatabaseForm,
-  validateCreateDatabaseTitle
+  validateCreateDatabaseName
 } from "../popup/popup-state.js";
 import {
   AUTH_SESSION_TTL_MS,
@@ -27,10 +27,11 @@ test("settings popup omits fixed runtime inputs", () => {
   const html = readFileSync(new URL("../popup/popup.html", import.meta.url), "utf8");
   assert.match(html, /<select id="database-id">/);
   assert.match(html, /<form id="create-database-form"/);
-  assert.match(html, /Database title/);
+  assert.match(html, /Database name/);
   assert.match(html, /id="create-database"/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
+  assert.doesNotMatch(html, /Database title/);
   assert.doesNotMatch(html, /refresh-databases/);
   assert.doesNotMatch(html, /save-settings/);
   assert.doesNotMatch(html, /settings-actions/);
@@ -137,14 +138,14 @@ test("database creation delegates create_database and normalizes result", async 
     {
       async create_database(request) {
         calls.push(request);
-        return { Ok: { database_id: "db_created", title: request.title } };
+        return { Ok: { database_id: "db_created", name: request.name } };
       }
     },
     "My Team Wiki"
   );
 
-  assert.deepEqual(calls, [{ title: "My Team Wiki" }]);
-  assert.deepEqual(result, { databaseId: "db_created", title: "My Team Wiki" });
+  assert.deepEqual(calls, [{ name: "My Team Wiki" }]);
+  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki" });
 });
 
 test("database creation surfaces canister errors", async () => {
@@ -153,25 +154,25 @@ test("database creation surfaces canister errors", async () => {
       createDatabaseWithActor(
         {
           async create_database() {
-            return { Err: "database title is too long" };
+            return { Err: "database name is too long" };
           }
         },
         "x"
       ),
-    /database title is too long/
+    /database name is too long/
   );
 });
 
 test("create database form only appears for authenticated users without writable databases", () => {
-  assert.equal(DEFAULT_DATABASE_TITLE, "My Kinic Wiki");
+  assert.equal(DEFAULT_DATABASE_NAME, "My Kinic Wiki");
   assert.equal(shouldShowCreateDatabaseForm({ isAuthenticated: true, writableDatabaseCount: 0 }), true);
   assert.equal(shouldShowCreateDatabaseForm({ isAuthenticated: true, writableDatabaseCount: 1 }), false);
   assert.equal(shouldShowCreateDatabaseForm({ isAuthenticated: false, writableDatabaseCount: 0 }), false);
 });
 
-test("create database title validation trims and rejects empty titles", () => {
-  assert.equal(validateCreateDatabaseTitle("  Team Wiki  "), "Team Wiki");
-  assert.throws(() => validateCreateDatabaseTitle("  "), /Database title is required/);
+test("create database name validation trims and rejects empty names", () => {
+  assert.equal(validateCreateDatabaseName("  Team Wiki  "), "Team Wiki");
+  assert.throws(() => validateCreateDatabaseName("  "), /Database name is required/);
 });
 
 test("database dropdown options include only active owner and writer databases", () => {
@@ -182,10 +183,10 @@ test("database dropdown options include only active owner and writer databases",
     rawDatabase("deleted-db", "Owner", "Deleted", 20_000n)
   ], { minUpdateCycles: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.title, database.role, database.status, database.writeCyclesAvailable]),
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCyclesAvailable]),
     [
-      ["owner-db", "owner-db title", "Owner", "Active", true],
-      ["writer-db", "writer-db title", "Writer", "Active", true]
+      ["owner-db", "owner-db name", "Owner", "Active", true],
+      ["writer-db", "writer-db name", "Writer", "Active", true]
     ]
   );
 });
@@ -216,13 +217,14 @@ test("database dropdown disables writer databases when cycles config is unavaila
   );
 });
 
-test("database dropdown labels prefer titles and disambiguate duplicates", () => {
+test("database dropdown labels prefer names and disambiguate duplicates", () => {
   assert.equal(databaseOptionLabel(normalizedDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
   assert.equal(
     databaseOptionLabel(normalizedDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
     "Team Wiki (Owner, team-db-2-...)"
   );
   assert.equal(databaseOptionLabel(normalizedDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel({ databaseId: "title-only-db", title: "Legacy Wiki", role: "Writer" }), "title-only-db (Writer, title-only-db)");
 });
 
 test("export requires the selected database to be verified writable", () => {
@@ -233,20 +235,21 @@ test("export requires the selected database to be verified writable", () => {
 });
 
 test("preferred created database is kept only when it is active and writable", () => {
-  assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", title: "Created Wiki" }), []);
+  assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), []);
   assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
   assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], { databaseId: "legacy-title-db", title: "Legacy Wiki", role: "Owner", status: "Active" }), []);
   assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("db_created", "Owner", "Active", "Created Wiki")), [
     {
       databaseId: "db_created",
-      title: "Created Wiki",
+      name: "Created Wiki",
       role: "Owner",
       status: "Active",
       logicalSizeBytes: "0"
     }
   ]);
   const databases = normalizeWritableDatabases([rawDatabase("db_created", "Owner", "Active", "Created Wiki")]);
-  assert.equal(mergePreferredDatabase(databases, { databaseId: "db_created", title: "Created Wiki" }), databases);
+  assert.equal(mergePreferredDatabase(databases, { databaseId: "db_created", name: "Created Wiki" }), databases);
 });
 
 test("Internet Identity options use 29 day TTL and derivation origin", () => {
@@ -307,17 +310,18 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status, titleOrBalance = 20_000n, cyclesSuspendedAtMs = null) {
-  const title = typeof titleOrBalance === "string" ? titleOrBalance : `${databaseId} title`;
-  const cyclesBalance = typeof titleOrBalance === "bigint" ? titleOrBalance : 20_000n;
+function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSuspendedAtMs = null) {
+  const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
+  const cyclesBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
-    metadata: {
-      title,
+    name,
+    metadata: [{
+      name,
       description: "",
       llm_summary: [],
       tags_json: "[]"
-    },
+    }],
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
@@ -327,10 +331,10 @@ function rawDatabase(databaseId, role, status, titleOrBalance = 20_000n, cyclesS
   };
 }
 
-function normalizedDatabase(databaseId, role, status, title) {
-  return normalizeWritableDatabases([rawDatabase(databaseId, role, status, title)])[0] ?? {
+function normalizedDatabase(databaseId, role, status, name) {
+  return normalizeWritableDatabases([rawDatabase(databaseId, role, status, name)])[0] ?? {
     databaseId,
-    title,
+    name,
     role,
     status,
     logicalSizeBytes: "0"

@@ -304,6 +304,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
                 database_id: "default".to_string(),
                 prefix: "/Skills/legal-review/versions".to_string(),
                 recursive: true,
+                limit: 100,
             })
             .await
             .expect("list versions after first upsert")
@@ -366,6 +367,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
             database_id: "default".to_string(),
             prefix: "/Skills/legal-review/versions".to_string(),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("list versions after second upsert");
@@ -419,6 +421,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
             database_id: "default".to_string(),
             prefix: "/Skills/legal-review/versions".to_string(),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("list versions after prune");
@@ -1814,6 +1817,7 @@ async fn pbt_remote_package_paths(client: &SkillMockClient, id: &str) -> BTreeSe
             database_id: "team-db".to_string(),
             prefix: format!("/Skills/{id}"),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("package nodes should list")
@@ -1859,6 +1863,7 @@ async fn assert_single_run_plus_corrections(client: &SkillMockClient, id: &str, 
             database_id: "team-db".to_string(),
             prefix: run_prefix,
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("run entries should list");

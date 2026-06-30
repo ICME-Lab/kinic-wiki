@@ -83,12 +83,13 @@ impl VfsApi for MockClient {
     async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
         Ok(vec![DatabaseSummary {
             database_id: "default".to_string(),
-            metadata: DatabaseMetadata {
-                title: "Default".to_string(),
+            name: "Default".to_string(),
+            metadata: Some(DatabaseMetadata {
+                name: "Default".to_string(),
                 description: String::new(),
                 llm_summary: None,
                 tags_json: "[]".to_string(),
-            },
+            }),
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,

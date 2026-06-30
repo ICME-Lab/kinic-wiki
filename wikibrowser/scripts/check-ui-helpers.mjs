@@ -103,7 +103,7 @@ assert.match(wikiBrowserSource, /memberDatabases\.find/);
 assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "source-capture"\]/);
 assert.doesNotMatch(wikiBrowserSource, /ClipperPanel/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
-assert.match(wikiBrowserSource, /databaseTitle=\{currentDatabase\?\.metadata\.title \?\? databaseId\}/);
+assert.match(wikiBrowserSource, /databaseTitle=\{currentDatabase\?\.metadata\.name \?\? ""\}/);
 assert.match(inspectorSource, /databaseTitle: string/);
 assert.match(inspectorSource, /label="database"/);
 assert.match(inspectorSource, /label="database_id"/);

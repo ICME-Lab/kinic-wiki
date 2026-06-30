@@ -23,8 +23,8 @@ type ChildNode = record {
   has_children : bool;
   is_virtual : bool;
 };
-type CreateDatabaseRequest = record { title : text };
-type CreateDatabaseResult = record { title : text; database_id : text };
+type CreateDatabaseRequest = record { name : text };
+type CreateDatabaseResult = record { name : text; database_id : text };
 type CyclesBillingConfig = record {
   billing_authority_id : text;
   kinic_ledger_canister_id : text;
@@ -112,7 +112,7 @@ type DatabaseMember = record {
 };
 type DatabaseMetadata = record {
   llm_summary : opt text;
-  title : text;
+  name : text;
   description : text;
   tags_json : text;
 };
@@ -121,13 +121,15 @@ type DatabaseStatus = variant { Active; Deleted; Pending };
 type DatabaseSummary = record {
   status : DatabaseStatus;
   cycles_balance : opt nat64;
-  metadata : DatabaseMetadata;
+  metadata : opt DatabaseMetadata;
+  name : text;
   role : DatabaseRole;
   logical_size_bytes : nat64;
   cycles_suspended_at_ms : opt int64;
   database_id : text;
   deleted_at_ms : opt int64;
 };
+type RenameDatabaseRequest = record { name : text; database_id : text };
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -265,6 +267,7 @@ type LinkEdge = record {
 type ListChildrenRequest = record { path : text; database_id : text };
 type ListNodesRequest = record {
   recursive : bool;
+  limit : nat32;
   database_id : text;
   prefix : text;
 };
@@ -581,7 +584,7 @@ type StorageBillingBatchResult = record {
 };
 type UpdateDatabaseMetadataRequest = record {
   llm_summary : opt text;
-  title : text;
+  name : text;
   description : text;
   database_id : text;
   tags_json : text;
@@ -702,6 +705,7 @@ service : (CyclesBillingConfig) -> {
   query_index_sql_json : (text, nat32) -> (Result_32) query;
   read_node : (text, text) -> (Result_33) query;
   read_node_context : (NodeContextRequest) -> (Result_34) query;
+  rename_database : (RenameDatabaseRequest) -> (Result_1);
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_35) query;
   search_nodes : (SearchNodesRequest) -> (Result_35) query;

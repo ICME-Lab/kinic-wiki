@@ -50,7 +50,7 @@ export function DashboardHomeClient() {
   const [warning, setWarning] = useState<string | null>(null);
   const [walletMessage, setWalletMessage] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [newDatabaseTitle, setNewDatabaseTitle] = useState("");
+  const [newDatabaseName, setNewDatabaseName] = useState("");
   const [creating, setCreating] = useState(false);
 
   const refreshDatabases = useCallback(
@@ -123,7 +123,7 @@ export function DashboardHomeClient() {
       setCyclesBillingConfig(null);
       setPurchasedDatabaseIds(new Set());
       setCreateDialogOpen(false);
-      setNewDatabaseTitle("");
+      setNewDatabaseName("");
       setWalletMessage(null);
     });
     return () => {
@@ -136,8 +136,8 @@ export function DashboardHomeClient() {
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
-    const databaseTitleInput = newDatabaseTitle.trim();
-    const validationError = databaseTitleError(databaseTitleInput);
+    const databaseNameInput = newDatabaseName.trim();
+    const validationError = databaseNameError(databaseNameInput);
     if (validationError) {
       setError(validationError);
       setLoadState("error");
@@ -149,10 +149,10 @@ export function DashboardHomeClient() {
     setWalletMessage(null);
     let createdDatabaseId: string | null = null;
     try {
-      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseTitleInput);
+      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
-      setNewDatabaseTitle("");
+      setNewDatabaseName("");
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
@@ -180,8 +180,8 @@ export function DashboardHomeClient() {
   const myDatabases = databases.filter((database) => database.member && !purchasedDatabaseIds.has(database.databaseId));
   const purchasedDatabases = databases.filter((database) => database.member && purchasedDatabaseIds.has(database.databaseId));
   const publicDatabases = databases.filter((database) => !database.member && database.publicReadable);
-  const trimmedDatabaseTitle = newDatabaseTitle.trim();
-  const databaseTitleValidationError = databaseTitleError(trimmedDatabaseTitle);
+  const trimmedDatabaseName = newDatabaseName.trim();
+  const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
   const createUnavailable = !principal || loadState === "loading" || walletBusyProvider !== null;
   const selectedPaymentReady = walletPaymentAvailable;
   const createDisabled =
@@ -189,7 +189,7 @@ export function DashboardHomeClient() {
     createUnavailable ||
     walletBalanceLoading ||
     !selectedPaymentReady ||
-    databaseTitleValidationError !== null;
+    databaseNameValidationError !== null;
   const createButtonLabel = databaseCreateButtonLabel({
     creating,
     iiConnected: Boolean(principal),
@@ -220,16 +220,16 @@ export function DashboardHomeClient() {
           createDisabled={createDisabled}
           createLabel="Create with wallet"
           creating={creating}
-          databaseTitle={newDatabaseTitle}
+          databaseName={newDatabaseName}
           open={createDialogOpen}
           requiredBalanceLabel={formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
-          validationError={databaseTitleValidationError}
+          validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
             setCreateDialogOpen(false);
-            setNewDatabaseTitle("");
+            setNewDatabaseName("");
           }}
-          onChange={setNewDatabaseTitle}
+          onChange={setNewDatabaseName}
           onSubmit={() => void createDatabase()}
         />
 
@@ -356,8 +356,8 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Unexpected error";
 }
 
-function databaseTitleError(databaseTitle: string): string | null {
-  if (databaseTitle.length === 0) return "Database title is required.";
-  if ([...databaseTitle].length > 80) return "Database title must be 1..80 characters.";
-  return /[\u0000-\u001f\u007f]/.test(databaseTitle) ? "Database title may not contain control characters." : null;
+function databaseNameError(databaseName: string): string | null {
+  if (databaseName.length === 0) return "Database name is required.";
+  if ([...databaseName].length > 80) return "Database name must be 1..80 characters.";
+  return /[\u0000-\u001f\u007f]/.test(databaseName) ? "Database name may not contain control characters." : null;
 }

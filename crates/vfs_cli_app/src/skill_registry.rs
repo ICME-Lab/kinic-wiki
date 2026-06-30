@@ -597,6 +597,7 @@ pub(crate) async fn export_skill(
             database_id: database_id.to_string(),
             prefix: base_path.clone(),
             recursive: true,
+            limit: 100,
         })
         .await?
     {
@@ -772,6 +773,7 @@ pub(crate) async fn skill_history(
             database_id: database_id.to_string(),
             prefix: versions_prefix.clone(),
             recursive: true,
+            limit: 100,
         })
         .await?
     {
@@ -828,6 +830,7 @@ pub(crate) async fn skill_history(
             database_id: database_id.to_string(),
             prefix: runs_prefix,
             recursive: true,
+            limit: 100,
         })
         .await?
     {
@@ -983,6 +986,7 @@ async fn prune_package_files(
             database_id: database_id.to_string(),
             prefix: base_path.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?
     {
@@ -1305,6 +1309,7 @@ async fn github_export_files(
             database_id: database_id.to_string(),
             prefix: base_path.clone(),
             recursive: true,
+            limit: 100,
         })
         .await?
     {

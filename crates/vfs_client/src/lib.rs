@@ -19,13 +19,13 @@ use vfs_types::{
     FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
     ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
-    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -41,7 +41,7 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(&self, _title: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
     async fn update_database_metadata(
@@ -136,7 +136,7 @@ pub trait VfsApi: Sync {
             "market_list_database_listings is not implemented by this client"
         ))
     }
-    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListingDetail> {
         Err(anyhow!(
             "market_get_listing is not implemented by this client"
         ))
@@ -484,12 +484,12 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn create_database(&self, title: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
-                    title: title.to_string(),
+                    name: name.to_string(),
                 },
             )
             .await?;
@@ -623,8 +623,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListing> {
-        let result: Result<MarketListing, String> = self
+    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListingDetail> {
+        let result: Result<MarketListingDetail, String> = self
             .query("market_get_listing", &listing_id.to_string())
             .await?;
         result.map_err(|error| anyhow!(error))

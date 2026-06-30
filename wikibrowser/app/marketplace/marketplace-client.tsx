@@ -47,7 +47,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
     const needle = query.trim().toLowerCase();
     const nextListings = listings.filter((view) => {
       const metadata = view.databaseMetadata;
-      if (needle && !`${metadata.title}\n${metadata.description}\n${metadata.tagsJson}`.toLowerCase().includes(needle)) {
+      if (needle && !`${metadata.name}\n${metadata.description}\n${metadata.tagsJson}`.toLowerCase().includes(needle)) {
         return false;
       }
       if (maxPriceE8s !== null && parseBigIntOrZero(view.listing.priceE8s) > maxPriceE8s) {
@@ -129,7 +129,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
             <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
               <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
               <div className="grid gap-1">
-                <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.title}</h2>
+                <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.name}</h2>
                 <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
               </div>
               <div className="mt-auto flex items-center justify-between gap-3 text-sm">

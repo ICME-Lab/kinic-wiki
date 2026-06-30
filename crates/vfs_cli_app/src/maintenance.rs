@@ -27,6 +27,7 @@ pub async fn rebuild_index(client: &impl VfsApi, database_id: &str) -> Result<()
             database_id: database_id.to_string(),
             prefix: WIKI_ROOT_PATH.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?;
     let mut scopes = Vec::new();
@@ -75,6 +76,7 @@ pub async fn rebuild_scope_index(
                 database_id: database_id.to_string(),
                 prefix: scope_prefix.clone(),
                 recursive: true,
+                limit: 100,
             })
             .await?;
         let entries = with_ensured_index_entries(entries, &ensured_index_paths, &scope_prefix);

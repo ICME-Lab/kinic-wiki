@@ -79,7 +79,7 @@ approveCyclesAllowance(ledgerCanister);
 for (const fixture of FIXTURES) {
   const created = callOk(
     "create_database",
-    candidRecord({ title: candidText(fixture.title) })
+    candidRecord({ name: candidText(fixture.title) })
   );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
@@ -87,7 +87,7 @@ for (const fixture of FIXTURES) {
     "update_database_metadata",
     candidRecord({
       database_id: candidText(databaseId),
-      title: candidText(fixture.title),
+      name: candidText(fixture.title),
       description: candidText(fixture.description),
       llm_summary: `opt ${candidText(fixture.summary)}`,
       tags_json: candidText(JSON.stringify(fixture.tags))

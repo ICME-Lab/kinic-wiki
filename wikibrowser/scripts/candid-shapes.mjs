@@ -5,7 +5,7 @@ export const expectedTypes = {
   DatabaseMetadata: {
     kind: "record",
     fields: {
-      title: "text",
+      name: "text",
       description: "text",
       llm_summary: "opt text",
       tags_json: "text"
@@ -18,7 +18,8 @@ export const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      metadata: "DatabaseMetadata",
+      name: "text",
+      metadata: "opt DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
@@ -293,12 +294,13 @@ export const expectedTypes = {
     kind: "record",
     fields: { url: "text", name: "text" }
   },
-  CreateDatabaseRequest: { kind: "record", fields: { title: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { title: "text", database_id: "text" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
   UpdateDatabaseMetadataRequest: {
     kind: "record",
     fields: {
-      title: "text",
+      name: "text",
       description: "text",
       llm_summary: "opt text",
       tags_json: "text",
@@ -722,6 +724,7 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
+  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },

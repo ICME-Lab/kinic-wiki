@@ -19,7 +19,6 @@ pub mod hermes;
 pub mod identity;
 pub mod identity_mode;
 pub mod maintenance;
-pub mod mcp;
 mod plugin_payload;
 mod purge_source_capture;
 pub mod skill_registry;
