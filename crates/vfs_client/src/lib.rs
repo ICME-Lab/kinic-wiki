@@ -13,18 +13,18 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRole,
-    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseMetadata,
+    DatabaseRole, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
+    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
     ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
-    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
@@ -44,8 +44,13 @@ pub trait VfsApi: Sync {
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
-    async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-        Err(anyhow!("rename_database is not implemented by this client"))
+    async fn update_database_metadata(
+        &self,
+        _request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        Err(anyhow!(
+            "update_database_metadata is not implemented by this client"
+        ))
     }
     async fn purchase_database_cycles(
         &self,
@@ -131,7 +136,7 @@ pub trait VfsApi: Sync {
             "market_list_database_listings is not implemented by this client"
         ))
     }
-    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListingDetail> {
         Err(anyhow!(
             "market_get_listing is not implemented by this client"
         ))
@@ -491,16 +496,12 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn rename_database(&self, database_id: &str, name: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update(
-                "rename_database",
-                &RenameDatabaseRequest {
-                    database_id: database_id.to_string(),
-                    name: name.to_string(),
-                },
-            )
-            .await?;
+    async fn update_database_metadata(
+        &self,
+        request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        let result: Result<DatabaseMetadata, String> =
+            self.update("update_database_metadata", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -622,8 +623,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListing> {
-        let result: Result<MarketListing, String> = self
+    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListingDetail> {
+        let result: Result<MarketListingDetail, String> = self
             .query("market_get_listing", &listing_id.to_string())
             .await?;
         result.map_err(|error| anyhow!(error))

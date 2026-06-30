@@ -104,18 +104,24 @@ type DatabaseCyclesPurchaseRequest = record {
   min_expected_cycles : nat64;
 };
 type DatabaseIdRequest = record { database_id : text };
-type RenameDatabaseRequest = record { name : text; database_id : text };
 type DatabaseMember = record {
   "principal" : text;
   role : DatabaseRole;
   created_at_ms : int64;
   database_id : text;
 };
+type DatabaseMetadata = record {
+  llm_summary : opt text;
+  name : text;
+  description : text;
+  tags_json : text;
+};
 type DatabaseRole = variant { Reader; Writer; Owner };
 type DatabaseStatus = variant { Active; Deleted; Pending };
 type DatabaseSummary = record {
   status : DatabaseStatus;
   cycles_balance : opt nat64;
+  metadata : opt DatabaseMetadata;
   name : text;
   role : DatabaseRole;
   logical_size_bytes : nat64;
@@ -123,6 +129,7 @@ type DatabaseSummary = record {
   database_id : text;
   deleted_at_ms : opt int64;
 };
+type RenameDatabaseRequest = record { name : text; database_id : text };
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -260,6 +267,7 @@ type LinkEdge = record {
 type ListChildrenRequest = record { path : text; database_id : text };
 type ListNodesRequest = record {
   recursive : bool;
+  limit : nat32;
   database_id : text;
   prefix : text;
 };
@@ -274,13 +282,9 @@ type MarketCategoryGraphEdge = record {
 };
 type MarketCategoryGraphNode = record { node_count : nat64; category : text };
 type MarketCreateListingRequest = record {
-  llm_summary : opt text;
-  title : text;
-  description : text;
   database_id : text;
   payout_principal : text;
   price_e8s : nat64;
-  tags_json : text;
 };
 type MarketEntitlement = record {
   status : text;
@@ -296,10 +300,7 @@ type MarketEntitlementPage = record {
 };
 type MarketListing = record {
   status : MarketListingStatus;
-  llm_summary : opt text;
-  title : text;
   report_count : nat64;
-  description : text;
   updated_at_ms : int64;
   created_at_ms : int64;
   seller_principal : text;
@@ -309,15 +310,14 @@ type MarketListing = record {
   listing_id : text;
   price_e8s : nat64;
   revision : nat64;
-  tags_json : text;
 };
 type MarketListingDetail = record {
-  listing : MarketListing;
+  listing : MarketListingView;
   preview : MarketListingPreview;
   verified_stats : MarketListingVerifiedStats;
 };
 type MarketListingPage = record {
-  listings : vec MarketListing;
+  listings : vec MarketListingView;
   next_cursor : opt text;
 };
 type MarketListingPreview = record {
@@ -338,6 +338,10 @@ type MarketListingVerifiedStats = record {
   wiki_nodes : nat64;
   markdown_chars : nat64;
   link_edges : nat64;
+};
+type MarketListingView = record {
+  listing : MarketListing;
+  database_metadata : DatabaseMetadata;
 };
 type MarketOrder = record {
   created_at_ms : int64;
@@ -372,14 +376,10 @@ type MarketPurchaseRequest = record {
   price_e8s : nat64;
 };
 type MarketUpdateListingRequest = record {
-  llm_summary : opt text;
-  title : text;
-  description : text;
   payout_principal : text;
   listing_id : text;
   price_e8s : nat64;
   expected_revision : nat64;
-  tags_json : text;
 };
 type MemoryCapability = record { name : text; description : text };
 type MemoryManifest = record {
@@ -507,11 +507,12 @@ type Result_34 = variant { Ok : opt NodeContext; Err : text };
 type Result_35 = variant { Ok : vec SearchNodeHit; Err : text };
 type Result_36 = variant { Ok : StorageBillingBatchResult; Err : text };
 type Result_37 = variant { Ok : SourceEvidence; Err : text };
-type Result_38 = variant { Ok : WikiMetrics; Err : text };
-type Result_39 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_38 = variant { Ok : DatabaseMetadata; Err : text };
+type Result_39 = variant { Ok : WikiMetrics; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
-type Result_40 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_41 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_40 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_41 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_42 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
@@ -580,6 +581,13 @@ type StorageBillingBatchResult = record {
   next_cursor_mount_id : opt nat16;
   charged_databases : nat32;
   processed_databases : nat32;
+};
+type UpdateDatabaseMetadataRequest = record {
+  llm_summary : opt text;
+  name : text;
+  description : text;
+  database_id : text;
+  tags_json : text;
 };
 type WikiMetrics = record {
   charged_kinic_30d_e8s : nat64;
@@ -707,11 +715,12 @@ service : (CyclesBillingConfig) -> {
   source_evidence : (SourceEvidenceRequest) -> (Result_37) query;
   status : (text) -> (Status) query;
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
-  wiki_metrics : () -> (Result_38) query;
-  wiki_metrics_series : (nat32) -> (Result_39) query;
+  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_38);
+  wiki_metrics : () -> (Result_39) query;
+  wiki_metrics_series : (nat32) -> (Result_40) query;
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_40);
+  write_nodes : (WriteNodesRequest) -> (Result_41);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_41,
+      Result_42,
     );
 }

@@ -44,8 +44,8 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseIdRequest, DatabaseMember, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseIdRequest, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
@@ -59,8 +59,9 @@ use vfs_types::{
     SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -413,7 +414,7 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
         let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
         Ok(CreateDatabaseResult {
             database_id: meta.database_id,
-            name: meta.name,
+            name: meta.metadata.name,
         })
     })
 }
@@ -425,9 +426,20 @@ fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
         "rename_database",
         Some(database_id),
         RequiredRole::Owner,
-        |service, caller, now| {
-            service.rename_database(&request.database_id, caller, &request.name, now)
-        },
+        |service, caller, now| service.rename_database(caller, request, now),
+    )
+}
+
+#[update]
+fn update_database_metadata(
+    request: UpdateDatabaseMetadataRequest,
+) -> Result<DatabaseMetadata, String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
+        "update_database_metadata",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, now| service.update_database_metadata(caller, request, now),
     )
 }
 
@@ -548,12 +560,18 @@ fn icrc21_canister_call_consent_message(
                 Err(error) => return icrc21_unsupported(error),
             };
             let listing = validation.listing;
+            let listing_title = match with_service(|service| {
+                service.market_listing_database_name_for_consent(&listing.listing_id)
+            }) {
+                Ok(title) => title,
+                Err(error) => return icrc21_unsupported(error),
+            };
             let access_principal = validation.request.access_principal;
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
                     "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nSeller payout principal: `{payout}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
-                    listing_title = listing.title,
+                    listing_title = listing_title,
                     database_id = listing.database_id,
                     payment = format_e8s(purchase.price_e8s),
                     fee = format_e8s(KINIC_LEDGER_FEE_E8S),
@@ -2385,18 +2403,18 @@ fn normalize_candid_interface(interface: String) -> String {
     );
     let normalized = normalize_candid_method_input(
         &normalized,
-        "rename_database",
-        "CreateDatabaseResult",
-        "RenameDatabaseRequest",
-    );
-    let normalized = normalize_candid_method_input(
-        &normalized,
         "authorize_source_capture_trigger_session",
         "OpsAnswerSessionRequest",
         "SourceCaptureTriggerSessionRequest",
     );
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "rename_database",
+        "CreateDatabaseResult",
+        "RenameDatabaseRequest",
+    );
     ensure_source_capture_trigger_session_request(ensure_rename_database_request(
-        ensure_outgoing_links_request(normalized),
+        ensure_update_database_metadata_request(ensure_outgoing_links_request(normalized)),
     ))
 }
 
@@ -2438,13 +2456,23 @@ fn ensure_outgoing_links_request(interface: String) -> String {
     )
 }
 
+fn ensure_update_database_metadata_request(interface: String) -> String {
+    if interface.contains("type UpdateDatabaseMetadataRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type DatabaseMember = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; name : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+    )
+}
+
 fn ensure_rename_database_request(interface: String) -> String {
     if interface.contains("type RenameDatabaseRequest = record {") {
         return interface;
     }
     interface.replace(
-        "type DatabaseMember = record {",
-        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseMember = record {",
+        "type DeleteNodeRequest = record {",
+        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DeleteNodeRequest = record {",
     )
 }
 

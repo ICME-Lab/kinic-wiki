@@ -105,6 +105,8 @@ pub enum Command {
         prefix: String,
         #[arg(long)]
         recursive: bool,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
         #[arg(long)]
         json: bool,
     },
@@ -639,7 +641,7 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::PurchaseCycles { .. }
                     | DatabaseCommand::CyclesHistory { .. }
-                    | DatabaseCommand::Rename { .. }
+                    | DatabaseCommand::Metadata { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
@@ -780,10 +782,12 @@ impl Command {
             Self::ListNodes {
                 prefix,
                 recursive,
+                limit,
                 json,
             } => Some(VfsCommand::ListNodes {
                 prefix: prefix.clone(),
                 recursive: *recursive,
+                limit: *limit,
                 json: *json,
             }),
             Self::ListChildren { path, json } => Some(VfsCommand::ListChildren {
@@ -979,6 +983,7 @@ mod tests {
         SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
+    use std::path::PathBuf;
     use vfs_cli::cli::VfsCommand;
 
     #[test]
@@ -1053,6 +1058,30 @@ mod tests {
         };
         assert_eq!(path, "/Knowledge/a.md");
         assert_eq!(link_limit, 7);
+        assert!(json);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "list-nodes",
+            "--prefix",
+            "/Knowledge",
+            "--recursive",
+            "--limit",
+            "50",
+            "--json",
+        ]);
+        let Command::ListNodes {
+            prefix,
+            recursive,
+            limit,
+            json,
+        } = cli.command
+        else {
+            panic!("expected list-nodes command");
+        };
+        assert_eq!(prefix, "/Knowledge");
+        assert!(recursive);
+        assert_eq!(limit, 50);
         assert!(json);
 
         let cli = Cli::parse_from([
@@ -1143,15 +1172,29 @@ mod tests {
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "metadata",
+            "db_alpha",
+            "--input",
+            "metadata.json",
+            "--json",
+        ]);
         let Command::Database {
-            command: DatabaseCommand::Rename { database_id, name },
+            command:
+                DatabaseCommand::Metadata {
+                    database_id,
+                    input,
+                    json,
+                },
         } = cli.command
         else {
-            panic!("expected database rename command");
+            panic!("expected database metadata command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(name, "Alpha");
+        assert_eq!(input, PathBuf::from("metadata.json"));
+        assert!(json);
 
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "link", "team-db"]);
         let Command::Database {
@@ -1362,6 +1405,19 @@ mod tests {
 
     #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
+        let status_with_database =
+            Cli::parse_from(["kinic-vfs-cli", "--database-id", "db_x", "status"]);
+        assert_eq!(
+            status_with_database.connection.database_id.as_deref(),
+            Some("db_x")
+        );
+        assert!(!status_with_database.command.requires_identity());
+        assert!(
+            status_with_database
+                .command
+                .probes_anonymous_database_read()
+        );
+
         let read = Cli::parse_from([
             "kinic-vfs-cli",
             "read-node",

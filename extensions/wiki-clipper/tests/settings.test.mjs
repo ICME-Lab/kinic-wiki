@@ -31,6 +31,7 @@ test("settings popup omits fixed runtime inputs", () => {
   assert.match(html, /id="create-database"/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
+  assert.doesNotMatch(html, /Database title/);
   assert.doesNotMatch(html, /refresh-databases/);
   assert.doesNotMatch(html, /save-settings/);
   assert.doesNotMatch(html, /settings-actions/);
@@ -217,12 +218,13 @@ test("database dropdown disables writer databases when cycles config is unavaila
 });
 
 test("database dropdown labels prefer names and disambiguate duplicates", () => {
-  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
+  assert.equal(databaseOptionLabel(normalizedDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
   assert.equal(
-    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
+    databaseOptionLabel(normalizedDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
     "Team Wiki (Owner, team-db-2-...)"
   );
-  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel(normalizedDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel({ databaseId: "title-only-db", title: "Legacy Wiki", role: "Writer" }), "title-only-db (Writer, title-only-db)");
 });
 
 test("export requires the selected database to be verified writable", () => {
@@ -234,9 +236,10 @@ test("export requires the selected database to be verified writable", () => {
 
 test("preferred created database is kept only when it is active and writable", () => {
   assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("db_created", "Owner", "Active", "Created Wiki")), [
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], { databaseId: "legacy-title-db", title: "Legacy Wiki", role: "Owner", status: "Active" }), []);
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("db_created", "Owner", "Active", "Created Wiki")), [
     {
       databaseId: "db_created",
       name: "Created Wiki",
@@ -313,12 +316,28 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSu
   return {
     database_id: databaseId,
     name,
+    metadata: [{
+      name,
+      description: "",
+      llm_summary: [],
+      tags_json: "[]"
+    }],
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
     cycles_balance: [cyclesBalance],
     cycles_suspended_at_ms: cyclesSuspendedAtMs === null ? [] : [cyclesSuspendedAtMs],
     deleted_at_ms: []
+  };
+}
+
+function normalizedDatabase(databaseId, role, status, name) {
+  return normalizeWritableDatabases([rawDatabase(databaseId, role, status, name)])[0] ?? {
+    databaseId,
+    name,
+    role,
+    status,
+    logicalSizeBytes: "0"
   };
 }
 

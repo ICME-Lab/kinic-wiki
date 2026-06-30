@@ -18,7 +18,7 @@ For operator use, build the binary once:
 ```bash
 cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release
 target/release/kinic-vfs-cli --help
-target/release/kinic-vfs-cli --canister-id <canister-id> database current
+target/release/kinic-vfs-cli database current
 ```
 
 GitHub Actions also produces unsigned `kinic-vfs-cli` artifacts with SHA-256 checksums. See [`RELEASE.md`](RELEASE.md).
@@ -32,14 +32,14 @@ Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to 
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> status
 ```
 
 Use `--local` for the default local replica host, or `--replica-host` for a project-local network on a custom port.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local --database-id <database-id> status
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8011 --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local --canister-id <local-canister-id> --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8011 --canister-id <local-canister-id> --database-id <database-id> status
 ```
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
@@ -58,7 +58,7 @@ Without `--canister-id`, the CLI reads configuration from:
 Link a workspace once to avoid repeating `--database-id`:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link <database-id>
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link <database-id>
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
 ```
@@ -79,16 +79,16 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --da
 Create a database before reading or writing:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> cycles config
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- cycles config
 # Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-cycles "$DB_ID" 1.25
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-history "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-pending "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "<database-name>")"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database list
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database purchase-cycles "$DB_ID" 1.25
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database cycles "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database cycles-history "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database cycles-pending "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database grant "$DB_ID" <principal> reader
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Knowledge/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Knowledge --top-k 10 --json
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" --limit 20 --json
@@ -109,7 +109,23 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills"
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
+`database metadata <database-id> --input <metadata.json> [--json]` replaces the database discovery metadata. The input JSON must include `name`, `description`, `tags_json`, and may set `llm_summary` to a string or `null`. `tags_json` is itself a JSON string containing an array of strings.
 Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. source capture and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
+
+Database metadata input example:
+
+```json
+{
+  "name": "KINIC-WIKI",
+  "description": "Public Kinic Wiki knowledge for operations, structure, clipper usage, and agent workflows.",
+  "llm_summary": "Covers Kinic Wiki operations, VFS structure, wiki browser behavior, clipper usage, agent query/ingest/lint workflows, compatibility decisions, and repo documentation. Useful FTS queries include \"clipper usage\", \"wiki structure\", \"operation skills\", \"agent docs\", and \"database lifecycle\". Does not cover private user memory or non-public DB content.",
+  "tags_json": "[\"kinic-wiki\",\"wiki\",\"vfs\",\"clipper\",\"agent\",\"operations\",\"ingest\",\"query\",\"lint\",\"architecture\"]"
+}
+```
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database metadata "$DB_ID" --input metadata.json --json
+```
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 
@@ -138,7 +154,7 @@ The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase,
 For public browser reads, grant anonymous reader access explicitly:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database grant <database-id> 2vxsx-fae reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
 ```
 
@@ -221,7 +237,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
   --limit 20 --json
 ```
 
-Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 64 KiB and the total rows payload is capped at 256 KiB. This command cannot query the canister index DB, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables. `query_index_sql_json` is controller-only operational SQL and is not exposed to database readers. Browser Query panel `sql:` uses the same database-scoped API.
+Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 256 KiB and the total rows payload is capped at 1 MiB. This command cannot query the canister index DB, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables. `query_index_sql_json` is controller-only operational SQL and is not exposed to database readers. Browser Query panel `sql:` uses the same database-scoped API.
 
 `query-sql` uses the same `--identity-mode auto` behavior as read-only DB commands: private DBs use the selected `icp identity`; public-readable DBs use anonymous when the selected identity is not a DB member, and identity when it is a member. Pass `--identity-mode identity` or `--identity-mode anonymous` to force one mode.
 
@@ -264,7 +280,7 @@ Common read and write commands:
 - `read-node --path /Knowledge/file.md`
 - `read-node-context --path /Knowledge/file.md --link-limit 20 --json`
 - `list-children --path /Knowledge --json`
-- `list-nodes --prefix /Knowledge --recursive --json`
+- `list-nodes --prefix /Knowledge --recursive --limit 100 --json`
 - `write-node --path /Knowledge/file.md --input file.md`
 - `write-nodes --input nodes.json --json`
 - `append-node --path /Knowledge/file.md --input append.md`
@@ -275,7 +291,7 @@ Common read and write commands:
 - `glob-nodes "**/*.md" --path /Knowledge --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
-Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
+Use `list-nodes --prefix <path> --recursive --limit 100 --json` for bulk repair, lint, inventory, and destructive operation review.
 Use `write-nodes` for one atomic batch write when the full node bodies are already prepared:
 
 ```json
@@ -291,7 +307,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ```
 
 `kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required.
-`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
+`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:
 

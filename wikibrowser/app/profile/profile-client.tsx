@@ -263,9 +263,9 @@ async function loadSellerStats(canisterId: string, principal: string): Promise<S
   let totalSales = 0n;
   do {
     const page = await marketListSellerListings(canisterId, principal, cursor, PROFILE_PAGE_LIMIT);
-    for (const listing of page.listings) {
+    for (const view of page.listings) {
       sellerListings += 1;
-      totalSales += parseNonNegativeBigInt(listing.purchaseCount);
+      totalSales += parseNonNegativeBigInt(view.listing.purchaseCount);
     }
     cursor = page.nextCursor;
   } while (cursor);

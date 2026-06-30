@@ -2,6 +2,15 @@ export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
   DatabaseStatus: { kind: "variant", cases: { Active: "null", Deleted: "null", Pending: "null" } },
+  DatabaseMetadata: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text"
+    }
+  },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -10,6 +19,7 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
+      metadata: "opt DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
@@ -95,13 +105,9 @@ export const expectedTypes = {
   MarketCreateListingRequest: {
     kind: "record",
     fields: {
-      llm_summary: "opt text",
-      title: "text",
-      description: "text",
       database_id: "text",
       payout_principal: "text",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
     }
   },
   MarketEntitlement: {
@@ -123,10 +129,7 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       status: "MarketListingStatus",
-      llm_summary: "opt text",
-      title: "text",
       report_count: "nat64",
-      description: "text",
       updated_at_ms: "int64",
       created_at_ms: "int64",
       seller_principal: "text",
@@ -135,8 +138,14 @@ export const expectedTypes = {
       database_id: "text",
       listing_id: "text",
       revision: "nat64",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
+    }
+  },
+  MarketListingView: {
+    kind: "record",
+    fields: {
+      listing: "MarketListing",
+      database_metadata: "DatabaseMetadata"
     }
   },
   MarketCategoryGraph: {
@@ -154,14 +163,14 @@ export const expectedTypes = {
   MarketListingDetail: {
     kind: "record",
     fields: {
-      listing: "MarketListing",
+      listing: "MarketListingView",
       preview: "MarketListingPreview",
       verified_stats: "MarketListingVerifiedStats"
     }
   },
   MarketListingPage: {
     kind: "record",
-    fields: { listings: "vec MarketListing", next_cursor: "opt text" }
+    fields: { listings: "vec MarketListingView", next_cursor: "opt text" }
   },
   MarketListingPreview: {
     kind: "record",
@@ -229,14 +238,10 @@ export const expectedTypes = {
   MarketUpdateListingRequest: {
     kind: "record",
     fields: {
-      llm_summary: "opt text",
-      title: "text",
-      description: "text",
       listing_id: "text",
       expected_revision: "nat64",
       payout_principal: "text",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
     }
   },
   Icrc21ConsentMessageMetadata: {
@@ -292,6 +297,16 @@ export const expectedTypes = {
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
+  UpdateDatabaseMetadataRequest: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text",
+      database_id: "text"
+    }
+  },
   DatabaseIdRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
@@ -550,6 +565,7 @@ export const expectedTypes = {
   ResultMarketOrder: { kind: "variant", cases: { Ok: "MarketOrder", Err: "text" } },
   ResultMarketOrderPage: { kind: "variant", cases: { Ok: "MarketOrderPage", Err: "text" } },
   ResultMarketPurchasePreview: { kind: "variant", cases: { Ok: "MarketPurchasePreview", Err: "text" } },
+  ResultDatabaseMetadata: { kind: "variant", cases: { Ok: "DatabaseMetadata", Err: "text" } },
   ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
@@ -692,9 +708,10 @@ export const didTypeAliases = {
   ResultSourceEvidence: "Result_37",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteSourceForGeneration: "Result_41",
-  ResultWikiMetrics: "Result_38",
-  ResultWikiMetricsSeries: "Result_39"
+  ResultDatabaseMetadata: "Result_38",
+  ResultWikiMetrics: "Result_39",
+  ResultWikiMetricsSeries: "Result_40",
+  ResultWriteSourceForGeneration: "Result_42"
 };
 
 export const expectedMethods = {
@@ -707,11 +724,12 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
+  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
-  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  update_database_metadata: { input: ["UpdateDatabaseMetadataRequest"], output: "ResultDatabaseMetadata", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
   icrc10_supported_standards: { input: [], output: "vec Icrc10SupportedStandard", mode: "query" },

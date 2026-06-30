@@ -14,7 +14,6 @@ scripts/local/deploy_wiki.sh
 ```
 
 The ledger setup stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
-Upgrade deploy mode runs an archive/restore preflight. It stops deploy if the canister still has `archiving`, `archived`, or `restoring` database rows.
 
 Run the local upgrade smoke after canister changes:
 

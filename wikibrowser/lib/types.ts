@@ -113,9 +113,17 @@ export type CanisterHealth = {
 export type DatabaseRole = "reader" | "writer" | "owner";
 export type DatabaseStatus = "pending" | "active" | "deleted";
 
+export type DatabaseMetadata = {
+  name: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+};
+
 export type DatabaseSummary = {
   databaseId: string;
   name: string;
+  metadata: DatabaseMetadata;
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
@@ -125,6 +133,10 @@ export type DatabaseSummary = {
 };
 
 export type DeleteDatabaseRequest = {
+  databaseId: string;
+};
+
+export type UpdateDatabaseMetadataRequest = DatabaseMetadata & {
   databaseId: string;
 };
 
@@ -208,10 +220,6 @@ export type MarketListing = {
   sellerPrincipal: string;
   payoutPrincipal: string;
   databaseId: string;
-  title: string;
-  description: string;
-  llmSummary: string | null;
-  tagsJson: string;
   priceE8s: string;
   status: MarketListingStatus;
   revision: string;
@@ -219,6 +227,11 @@ export type MarketListing = {
   reportCount: string;
   createdAtMs: string;
   updatedAtMs: string;
+};
+
+export type MarketListingView = {
+  listing: MarketListing;
+  databaseMetadata: DatabaseMetadata;
 };
 
 export type MarketListingVerifiedStats = {
@@ -265,23 +278,19 @@ export type MarketListingPreview = {
 };
 
 export type MarketListingDetail = {
-  listing: MarketListing;
+  listing: MarketListingView;
   verifiedStats: MarketListingVerifiedStats;
   preview: MarketListingPreview;
 };
 
 export type MarketListingPage = {
-  listings: MarketListing[];
+  listings: MarketListingView[];
   nextCursor: string | null;
 };
 
 export type MarketCreateListingRequest = {
   databaseId: string;
   payoutPrincipal: string;
-  title: string;
-  description: string;
-  llmSummary: string | null;
-  tagsJson: string;
   priceE8s: string;
 };
 

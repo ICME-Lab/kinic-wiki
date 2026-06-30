@@ -16,7 +16,7 @@ type ProvenanceState = {
 export function Inspector({
   canisterId,
   databaseId,
-  databaseName,
+  databaseTitle,
   path,
   node,
   childNodes,
@@ -28,7 +28,7 @@ export function Inspector({
 }: {
   canisterId: string;
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
   path: string;
   node: WikiNode | null;
   childNodes: ChildNode[];
@@ -76,7 +76,7 @@ export function Inspector({
   return (
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 text-sm">
       <InspectorCard title="Identity" icon={<Info size={15} />}>
-        <Meta label="database" value={databaseName} />
+        <Meta label="database" value={databaseTitle} />
         <Meta label="database_id" value={databaseId} />
         <Meta label="path" value={path} />
         <Meta label="kind" value={kind} />

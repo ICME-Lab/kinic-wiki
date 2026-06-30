@@ -20,10 +20,12 @@ use vfs_types::{
     KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketEntitlementPage,
     MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
     NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
+    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
+const DELETE_TREE_LIST_LIMIT: u32 = 100;
 
 pub async fn run_vfs_command(
     client: &impl VfsApi,
@@ -88,6 +90,7 @@ pub async fn run_vfs_command(
         VfsCommand::ListNodes {
             prefix,
             recursive,
+            limit,
             json,
         } => {
             let entries = client
@@ -95,6 +98,7 @@ pub async fn run_vfs_command(
                     database_id: database_id.to_string(),
                     prefix,
                     recursive,
+                    limit,
                 })
                 .await?;
             if json {
@@ -657,8 +661,16 @@ async fn run_database_command(
             let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
         }
-        DatabaseCommand::Rename { database_id, name } => {
-            client.rename_database(&database_id, &name).await?;
+        DatabaseCommand::Metadata {
+            database_id,
+            input,
+            json,
+        } => {
+            let request = read_database_metadata_input(&database_id, &input)?;
+            let metadata = client.update_database_metadata(request).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&metadata)?);
+            }
         }
         DatabaseCommand::List { json } => {
             let databases = client.list_databases().await?;
@@ -666,10 +678,16 @@ async fn run_database_command(
                 println!("{}", serde_json::to_string_pretty(&databases)?);
             } else {
                 for database in databases {
+                    let name = database
+                        .metadata
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("database metadata is required"))?
+                        .name
+                        .as_str();
                     println!(
                         "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
-                        database.name,
+                        name,
                         database.role,
                         database.status,
                         database.logical_size_bytes,
@@ -1092,8 +1110,14 @@ async fn delete_tree(client: &impl VfsApi, database_id: &str, path: &str) -> Res
             database_id: database_id.to_string(),
             prefix: path.to_string(),
             recursive: true,
+            limit: DELETE_TREE_LIST_LIMIT,
         })
         .await?;
+    if entries.len() >= DELETE_TREE_LIST_LIMIT as usize {
+        return Err(anyhow!(
+            "delete-tree target exceeds the list limit; narrow the prefix or add list_nodes paging before deleting"
+        ));
+    }
     entries.sort_by(|left, right| {
         right
             .path
@@ -1132,6 +1156,63 @@ fn read_write_nodes_file(path: &std::path::Path) -> Result<Vec<WriteNodeItem>> {
         .into_iter()
         .map(WriteNodeInputItem::into_item)
         .collect())
+}
+
+fn read_database_metadata_input(
+    database_id: &str,
+    path: &std::path::Path,
+) -> Result<UpdateDatabaseMetadataRequest> {
+    let content = fs::read_to_string(path)?;
+    let input: DatabaseMetadataInput = serde_json::from_str(&content)?;
+    input.into_request(database_id)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatabaseMetadataInput {
+    name: String,
+    description: String,
+    llm_summary: Option<String>,
+    tags_json: String,
+}
+
+impl DatabaseMetadataInput {
+    fn into_request(self, database_id: &str) -> Result<UpdateDatabaseMetadataRequest> {
+        let name = self.name.trim().to_string();
+        if name.is_empty() {
+            return Err(anyhow!("database metadata name must not be empty"));
+        }
+        let tags_json = self.tags_json.trim().to_string();
+        validate_tags_json(&tags_json)?;
+        Ok(UpdateDatabaseMetadataRequest {
+            database_id: database_id.to_string(),
+            name,
+            description: self.description.trim().to_string(),
+            llm_summary: self.llm_summary.and_then(non_empty_trimmed),
+            tags_json,
+        })
+    }
+}
+
+fn validate_tags_json(tags_json: &str) -> Result<()> {
+    let tags: Vec<String> = serde_json::from_str(tags_json).map_err(|error| {
+        anyhow!("database metadata tags_json must be a JSON string array: {error}")
+    })?;
+    if tags.iter().any(|tag| tag.trim().is_empty()) {
+        return Err(anyhow!(
+            "database metadata tags_json must not contain empty tags"
+        ));
+    }
+    Ok(())
+}
+
+fn non_empty_trimmed(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[derive(Deserialize)]
@@ -1184,6 +1265,7 @@ mod tests {
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -1211,6 +1293,7 @@ mod tests {
         database_cycles_pending: Mutex<Vec<String>>,
         market_entitlements: Mutex<Vec<(Option<String>, u32)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
+        metadata_updates: Mutex<Vec<UpdateDatabaseMetadataRequest>>,
         sql_queries: Mutex<Vec<(String, String, u32)>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1219,6 +1302,7 @@ mod tests {
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
+        node_lists: Mutex<Vec<ListNodesRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
         neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
@@ -1374,8 +1458,17 @@ mod tests {
             }
             Ok(())
         }
-        async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-            Ok(())
+        async fn update_database_metadata(
+            &self,
+            request: UpdateDatabaseMetadataRequest,
+        ) -> Result<vfs_types::DatabaseMetadata> {
+            self.metadata_updates.lock().unwrap().push(request.clone());
+            Ok(vfs_types::DatabaseMetadata {
+                name: request.name,
+                description: request.description,
+                llm_summary: request.llm_summary,
+                tags_json: request.tags_json,
+            })
         }
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
@@ -1387,6 +1480,12 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
+                metadata: Some(vfs_types::DatabaseMetadata {
+                    name: "Alpha".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: "[]".to_string(),
+                }),
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
@@ -1434,7 +1533,8 @@ mod tests {
                 outgoing_links: Vec::new(),
             }))
         }
-        async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+        async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+            self.node_lists.lock().unwrap().push(request);
             Ok(self.entries.clone())
         }
         async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
@@ -1958,6 +2058,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_tree_rejects_limit_sized_listing_before_deleting() {
+        let entries = (0..super::DELETE_TREE_LIST_LIMIT)
+            .map(|index| {
+                entry(
+                    &format!("/Knowledge/topic/{index:03}.md"),
+                    NodeEntryKind::File,
+                    &format!("etag-{index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let client = MockClient {
+            entries,
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::DeleteTree {
+                path: "/Knowledge/topic".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect_err("limit-sized tree listing should reject before delete");
+
+        assert!(error.to_string().contains("delete-tree target exceeds"));
+        assert!(client.deletes.lock().unwrap().is_empty());
+        let lists = client.node_lists.lock().unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].limit, super::DELETE_TREE_LIST_LIMIT);
+    }
+
+    #[tokio::test]
     async fn database_create_uses_name_and_prints_generated_id() {
         let client = MockClient::default();
         run_vfs_command(
@@ -2181,20 +2315,117 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_rename_parses_and_calls_client() {
+    async fn database_metadata_reads_input_and_calls_client() {
         let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": " Alpha metadata ",
+              "description": " Public wiki retrieval metadata. ",
+              "llm_summary": " Search terms and retrieval scope. ",
+              "tags_json": "[\"kinic-wiki\",\"clipper\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::Rename {
+                command: super::DatabaseCommand::Metadata {
                     database_id: "db_alpha".to_string(),
-                    name: "Alpha renamed".to_string(),
+                    input,
+                    json: false,
                 },
             },
         )
         .await
-        .expect("database rename should succeed");
+        .expect("database metadata update should succeed");
+        let updates = client.metadata_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].database_id, "db_alpha");
+        assert_eq!(updates[0].name, "Alpha metadata");
+        assert_eq!(updates[0].description, "Public wiki retrieval metadata.");
+        assert_eq!(
+            updates[0].llm_summary.as_deref(),
+            Some("Search terms and retrieval scope.")
+        );
+        assert_eq!(updates[0].tags_json, r#"["kinic-wiki","clipper"]"#);
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_invalid_tags_json() {
+        let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": "Alpha",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "{\"tag\":\"not-array\"}"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect_err("invalid tags_json should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database metadata tags_json must be a JSON string array")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_empty_name() {
+        let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": " ",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "[\"alpha\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect_err("empty name should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database metadata name must not be empty")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

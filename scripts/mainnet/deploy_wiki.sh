@@ -30,35 +30,6 @@ require_principal_env() {
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env BILLING_AUTHORITY_ID
 
-deploy_mode_is_upgrade() {
-  local previous=""
-  for arg in "$@"; do
-    if [[ "${arg}" == "--mode=upgrade" ]]; then
-      return 0
-    fi
-    if [[ "${previous}" == "--mode" && "${arg}" == "upgrade" ]]; then
-      return 0
-    fi
-    previous="${arg}"
-  done
-  return 1
-}
-
-check_no_archive_restore_databases() {
-  local sql
-  local output
-  sql="SELECT json_object('count', COUNT(*)) FROM databases WHERE status IN ('archiving','archived','restoring') LIMIT 1"
-  if ! output="$(icp canister call wiki query_index_sql_json "(\"${sql}\", 1 : nat32)" -e ic -o candid)"; then
-    echo "archive/restore preflight failed" >&2
-    return 1
-  fi
-  if [[ "${output}" != *'\\"count\\":0'* && "${output}" != *'"count":0'* ]]; then
-    echo "archive/restore preflight failed: archived, archiving, or restoring databases remain" >&2
-    echo "${output}" >&2
-    return 1
-  fi
-}
-
 ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX.did")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
 
@@ -84,7 +55,4 @@ fi
 
 cd "${REPO_ROOT}"
 unset KINIC_VFS_LOCAL_II_ORIGINS
-if deploy_mode_is_upgrade "$@"; then
-  check_no_archive_restore_databases
-fi
 icp deploy wiki -e ic --args-file "${ARGS_FILE}" "$@"

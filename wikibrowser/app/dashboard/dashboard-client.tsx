@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BusyAction } from "./access-control";
-import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
+import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, DatabaseMetadataDialog, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
 import { useAppSession } from "../app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { CycleBattery } from "@/components/cycle-battery";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
   getCyclesBillingConfig,
@@ -27,7 +27,7 @@ import {
   marketPauseListing,
   marketPublishListing,
   marketUpdateListing,
-  renameDatabaseAuthenticated,
+  updateDatabaseMetadataAuthenticated,
   revokeDatabaseAccessAuthenticated
 } from "@/lib/vfs-client";
 
@@ -53,8 +53,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [actionTone, setActionTone] = useState<"error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameDraft, setRenameDraft] = useState("");
+  const [metadataOpen, setMetadataOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>("access");
   const [cycleEntries, setCycleEntries] = useState<DatabaseCycleEntry[]>([]);
   const [cycleEntriesError, setCycleEntriesError] = useState<string | null>(null);
@@ -327,15 +326,18 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  async function renameDatabase(name: string): Promise<boolean> {
+  async function updateMetadata(metadata: DatabaseMetadata): Promise<boolean> {
     if (!authClient || !databaseId) return false;
     setBusy(true);
-    setBusyAction({ kind: "rename" });
+    setBusyAction({ kind: "metadata" });
     setActionMessage(null);
     try {
-      await renameDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId, name);
+      await updateDatabaseMetadataAuthenticated(canisterId, authClient.getIdentity(), {
+        databaseId,
+        ...metadata
+      });
       setActionTone("info");
-      setActionMessage("Database name updated.");
+      setActionMessage("Database metadata updated.");
       await refresh(authClient, databaseId);
       return true;
     } catch (cause) {
@@ -348,18 +350,15 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  function openRenameDialog() {
+  function openMetadataDialog() {
     if (!database || !canManage) return;
-    setRenameDraft(database.name);
-    setRenameOpen(true);
+    setMetadataOpen(true);
   }
 
-  async function submitRename(name: string) {
+  async function submitMetadata(metadata: DatabaseMetadata) {
     if (!database || busy) return;
-    const nextName = name.trim();
-    if (!nextName || nextName === database.name) return;
-    if (await renameDatabase(nextName)) {
-      setRenameOpen(false);
+    if (await updateMetadata(metadata)) {
+      setMetadataOpen(false);
     }
   }
 
@@ -465,22 +464,20 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   return (
     <AdminContent>
         <DatabaseDetailHeader
-          title={database?.name ?? "Database access"}
+          title={database?.metadata.name ?? "Database access"}
           actions={<CycleBattery cyclesBalance={database?.cyclesBalance ?? null} />}
         />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
-        {renameOpen && database ? (
-          <RenameDatabaseDialog
+        {metadataOpen && database ? (
+          <DatabaseMetadataDialog
             busy={busy}
             busyAction={busyAction}
-            databaseName={database.name}
-            draft={renameDraft}
-            onCancel={() => setRenameOpen(false)}
-            onChange={setRenameDraft}
-            onSubmit={(name) => void submitRename(name)}
+            metadata={database.metadata}
+            onCancel={() => setMetadataOpen(false)}
+            onSubmit={(metadata) => void submitMetadata(metadata)}
           />
         ) : null}
 
@@ -491,7 +488,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           <MarketListingsPanel
             busy={marketBusy}
             databaseId={databaseId}
-            databaseName={database.name}
+            databaseTitle={database.metadata.name}
             error={marketError}
             listings={marketListings}
             principal={principal}
@@ -526,12 +523,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             activeEntitlementCount={activeEntitlementCount}
             busy={busy}
             busyAction={busyAction}
-            canRename={canManage}
+            canEditMetadata={canManage}
             cyclesBalance={database.cyclesBalance}
             databaseId={databaseId}
-            databaseName={database.name}
+            metadata={database.metadata}
             onDelete={deleteDatabase}
-            onRename={openRenameDialog}
+            onEditMetadata={openMetadataDialog}
           />
         ) : database ? (
           canDeletePendingDatabase ? (
@@ -588,5 +585,5 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   for (const database of memberDatabases) {
     rows.set(database.databaseId, { ...database, publicReadable: publicIds.has(database.databaseId) });
   }
-  return [...rows.values()].sort((left, right) => left.name.localeCompare(right.name) || left.databaseId.localeCompare(right.databaseId));
+  return [...rows.values()].sort((left, right) => left.metadata.name.localeCompare(right.metadata.name) || left.databaseId.localeCompare(right.databaseId));
 }

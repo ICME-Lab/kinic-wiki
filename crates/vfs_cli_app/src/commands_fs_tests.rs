@@ -7,13 +7,13 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
-    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
-    WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseMetadata, DatabaseRole,
+    DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeEntry, NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -84,6 +84,12 @@ impl VfsApi for MockClient {
         Ok(vec![DatabaseSummary {
             database_id: "default".to_string(),
             name: "Default".to_string(),
+            metadata: Some(DatabaseMetadata {
+                name: "Default".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            }),
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,

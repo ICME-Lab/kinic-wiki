@@ -12,6 +12,7 @@ import type {
   DatabaseCycleEntry,
   DatabaseCycleEntryPage,
   DatabaseCyclesPendingPurchase,
+  DatabaseMetadata,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
   DeleteNodeResult,
@@ -31,6 +32,7 @@ import type {
   MarketOrderPage,
   MarketPurchasePreview,
   MarketUpdateListingRequest,
+  UpdateDatabaseMetadataRequest,
   MkdirNodeRequest,
   MkdirNodeResult,
   MoveNodeRequest,
@@ -98,9 +100,17 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
+  metadata: [] | [RawDatabaseMetadata];
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
+};
+
+type RawDatabaseMetadata = {
+  name: string;
+  description: string;
+  llm_summary: [] | [string];
+  tags_json: string;
 };
 
 type RawDatabaseCycleEntry = {
@@ -165,10 +175,6 @@ type RawMarketListing = {
   seller_principal: string;
   payout_principal: string;
   database_id: string;
-  title: string;
-  description: string;
-  llm_summary: [] | [string];
-  tags_json: string;
   price_e8s: bigint;
   status: RawMarketListingStatus;
   revision: bigint;
@@ -176,6 +182,11 @@ type RawMarketListing = {
   report_count: bigint;
   created_at_ms: bigint;
   updated_at_ms: bigint;
+};
+
+type RawMarketListingView = {
+  listing: RawMarketListing;
+  database_metadata: RawDatabaseMetadata;
 };
 
 type RawMarketListingVerifiedStats = {
@@ -222,23 +233,19 @@ type RawMarketListingPreview = {
 };
 
 type RawMarketListingDetail = {
-  listing: RawMarketListing;
+  listing: RawMarketListingView;
   verified_stats: RawMarketListingVerifiedStats;
   preview: RawMarketListingPreview;
 };
 
 type RawMarketListingPage = {
-  listings: RawMarketListing[];
+  listings: RawMarketListingView[];
   next_cursor: [] | [string];
 };
 
 type RawMarketCreateListingRequest = {
   database_id: string;
   payout_principal: string;
-  title: string;
-  description: string;
-  llm_summary: [] | [string];
-  tags_json: string;
   price_e8s: bigint;
 };
 
@@ -298,6 +305,10 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
+};
+
+type RawUpdateDatabaseMetadataRequest = RawDatabaseMetadata & {
+  database_id: string;
 };
 
 type RawDatabaseMember = {
@@ -495,7 +506,7 @@ type VfsActor = {
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
-  rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
+  update_database_metadata: (request: RawUpdateDatabaseMetadataRequest) => Promise<{ Ok: RawDatabaseMetadata } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
@@ -940,13 +951,18 @@ export async function deleteDatabaseAuthenticated(canisterId: string, identity: 
   });
 }
 
-export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, name: string): Promise<void> {
+export async function updateDatabaseMetadataAuthenticated(
+  canisterId: string,
+  identity: Identity,
+  request: UpdateDatabaseMetadataRequest
+): Promise<DatabaseMetadata> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.rename_database({ database_id: databaseId, name });
+    const result = await actor.update_database_metadata(rawUpdateDatabaseMetadataRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
+    return normalizeDatabaseMetadata(result.Ok);
   });
 }
 
@@ -1352,12 +1368,30 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
     name: raw.name,
+    metadata: normalizeDatabaseMetadata(requiredDatabaseMetadata(raw.metadata)),
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
     cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
+  };
+}
+
+function requiredDatabaseMetadata(raw: [] | [RawDatabaseMetadata]): RawDatabaseMetadata {
+  const metadata = raw[0];
+  if (!metadata) {
+    throw new ApiError("Database metadata is required", 502);
+  }
+  return metadata;
+}
+
+function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {
+  return {
+    name: raw.name,
+    description: raw.description,
+    llmSummary: raw.llm_summary[0] ?? null,
+    tagsJson: raw.tags_json
   };
 }
 
@@ -1430,7 +1464,7 @@ function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPendingPur
 
 function normalizeMarketListingPage(raw: RawMarketListingPage): MarketListingPage {
   return {
-    listings: raw.listings.map(normalizeMarketListing),
+    listings: raw.listings.map(normalizeMarketListingView),
     nextCursor: raw.next_cursor[0] ?? null
   };
 }
@@ -1441,10 +1475,6 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
     sellerPrincipal: raw.seller_principal,
     payoutPrincipal: raw.payout_principal,
     databaseId: raw.database_id,
-    title: raw.title,
-    description: raw.description,
-    llmSummary: raw.llm_summary[0] ?? null,
-    tagsJson: raw.tags_json,
     priceE8s: raw.price_e8s.toString(),
     status: normalizeMarketListingStatus(raw.status),
     revision: raw.revision.toString(),
@@ -1455,9 +1485,16 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
   };
 }
 
-function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListingDetail {
+function normalizeMarketListingView(raw: RawMarketListingView) {
   return {
     listing: normalizeMarketListing(raw.listing),
+    databaseMetadata: normalizeDatabaseMetadata(raw.database_metadata)
+  };
+}
+
+function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListingDetail {
+  return {
+    listing: normalizeMarketListingView(raw.listing),
     verifiedStats: {
       totalNodes: raw.verified_stats.total_nodes.toString(),
       wikiNodes: raw.verified_stats.wiki_nodes.toString(),
@@ -1551,24 +1588,26 @@ function rawMarketCreateListingRequest(request: MarketCreateListingRequest): Raw
   return {
     database_id: request.databaseId,
     payout_principal: request.payoutPrincipal,
-    title: request.title,
-    description: request.description,
-    llm_summary: rawOptionalText(request.llmSummary),
-    tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s)
   };
 }
 
 function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): RawMarketUpdateListingRequest {
   return {
-    title: request.title,
-    description: request.description,
-    llm_summary: rawOptionalText(request.llmSummary),
-    tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s),
     listing_id: request.listingId,
     expected_revision: BigInt(request.expectedRevision),
     payout_principal: request.payoutPrincipal
+  };
+}
+
+function rawUpdateDatabaseMetadataRequest(request: UpdateDatabaseMetadataRequest): RawUpdateDatabaseMetadataRequest {
+  return {
+    database_id: request.databaseId,
+    name: request.name,
+    description: request.description,
+    llm_summary: rawOptionalText(request.llmSummary),
+    tags_json: request.tagsJson
   };
 }
 

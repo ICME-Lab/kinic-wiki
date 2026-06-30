@@ -20,24 +20,24 @@ use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
     CyclesTopUpConfig, DatabaseCycleEntry, DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase,
-    DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DatabaseInfo, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary,
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
-    MarketListingStatus, MarketListingVerifiedStats, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, WikiMetrics, WikiMetricsPoint, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest, WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
-    kinic_base_units_per_token,
+    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketListingStatus, MarketListingView, MarketOrder,
+    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
@@ -85,6 +85,7 @@ const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycl
 const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
 const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:034_database_profile";
 const INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE: &str = "database_index:035_drop_database_profile";
+const INDEX_SCHEMA_VERSION_DATABASE_METADATA: &str = "database_index:034_database_metadata";
 const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
     "database_index:036_rename_url_ingest_trigger_sessions";
 const INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE: &str =
@@ -93,8 +94,8 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
 const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
-const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
-const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_ROW_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_RESPONSE_BYTES_MAX: usize = 1024 * 1024;
 const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
 const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
 const INDEX_SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "index SQL execution budget exceeded";
@@ -125,6 +126,8 @@ const TIMER_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
 const STORAGE_BILLING_BULK_MIN_BATCH_LEN: usize = 50;
 const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
+const MAX_DATABASE_DESCRIPTION_CHARS: usize = 4_000;
+const MAX_DATABASE_JSON_CHARS: usize = 20_000;
 pub const DEFAULT_LLM_WRITER_PRINCIPAL: &str =
     "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe";
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
@@ -148,14 +151,11 @@ const MARKET_ENTITLEMENT_STATUS_ACTIVE: &str = "active";
 const GENERATED_LISTING_ID_PREFIX: &str = "";
 const GENERATED_ORDER_ID_PREFIX: &str = "order_";
 const GENERATED_MARKET_ID_HASH_CHARS: usize = 16;
-const MAX_MARKET_TITLE_CHARS: usize = 160;
-const MAX_MARKET_DESCRIPTION_CHARS: usize = 4_000;
-const MAX_MARKET_JSON_CHARS: usize = 20_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseMeta {
     pub database_id: String,
-    pub name: String,
+    pub metadata: DatabaseMetadata,
     pub db_file_name: String,
     pub mount_id: u16,
     pub schema_version: String,
@@ -549,7 +549,12 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        let name = normalize_database_name(name)?;
+        let metadata = normalize_database_metadata(DatabaseMetadata {
+            name: name.to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })?;
         self.write_index(|tx| {
             purge_expired_unstarted_pending_databases(tx, caller, now)?;
             let pending_count = pending_database_count_for_caller(tx, caller)?;
@@ -567,7 +572,7 @@ impl VfsService {
             }
             let database_id = selected_database_id
                 .ok_or_else(|| "failed to generate unique database id".to_string())?;
-            self.insert_pending_database_reservation(tx, &database_id, &name, caller, now)
+            self.insert_pending_database_reservation(tx, &database_id, &metadata, caller, now)
         })
     }
 
@@ -577,7 +582,12 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        let name = normalize_database_name(name)?;
+        let metadata = normalize_database_metadata(DatabaseMetadata {
+            name: name.to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })?;
         self.write_index(|tx| {
             let mount_id = allocate_mount_id(tx)?;
             let mut selected_database_id = None;
@@ -590,7 +600,7 @@ impl VfsService {
             }
             let database_id = selected_database_id
                 .ok_or_else(|| "failed to generate unique database id".to_string())?;
-            self.insert_database_reservation(tx, &database_id, &name, caller, now, mount_id, 0)
+            self.insert_database_reservation(tx, &database_id, &metadata, caller, now, mount_id, 0)
         })
     }
 
@@ -602,13 +612,18 @@ impl VfsService {
         now: i64,
     ) -> Result<DatabaseMeta, String> {
         validate_database_id(database_id)?;
-        let name = normalize_database_name(name)?;
+        let metadata = normalize_database_metadata(DatabaseMetadata {
+            name: name.to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })?;
         self.write_index(|tx| {
             if database_exists(tx, database_id)? {
                 return Err(format!("database already exists: {database_id}"));
             }
             let mount_id = allocate_mount_id(tx)?;
-            self.insert_database_reservation(tx, database_id, &name, caller, now, mount_id, 0)
+            self.insert_database_reservation(tx, database_id, &metadata, caller, now, mount_id, 0)
         })
     }
 
@@ -617,26 +632,31 @@ impl VfsService {
         &self,
         tx: &Transaction<'_>,
         database_id: &str,
-        name: &str,
+        metadata: &DatabaseMetadata,
         caller: &str,
         now: i64,
         mount_id: u16,
         initial_cycles_balance: i64,
     ) -> Result<DatabaseMeta, String> {
         let db_file_name = self.database_file_name(database_id, mount_id)?;
-        tx.execute(
+        let values = vec![
+            crate::sqlite::text_value(database_id),
+            crate::sqlite::text_value(metadata.name.as_str()),
+            crate::sqlite::text_value(metadata.description.as_str()),
+            crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+            crate::sqlite::text_value(metadata.tags_json.as_str()),
+            crate::sqlite::text_value(db_file_name.as_str()),
+            crate::sqlite::integer_value(i64::from(mount_id)),
+            crate::sqlite::text_value(DATABASE_SCHEMA_VERSION),
+            crate::sqlite::integer_value(now),
+        ];
+        crate::sqlite::execute_values(
+            tx,
             "INSERT INTO databases
-             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
-              logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?4, 'active', ?5, 0, ?6, ?6)",
-            params![
-                database_id,
-                name,
-                db_file_name,
-                i64::from(mount_id),
-                DATABASE_SCHEMA_VERSION,
-                now
-            ],
+             (database_id, name, description, llm_summary, tags_json, db_file_name, mount_id,
+              active_mount_id, status, schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 'active', ?8, 0, ?9, ?9)",
+            &values,
         )
         .map_err(|error| error.to_string())?;
         record_mount_history(tx, database_id, mount_id, "create", now)?;
@@ -663,7 +683,7 @@ impl VfsService {
         .map_err(|error| error.to_string())?;
         Ok(DatabaseMeta {
             database_id: database_id.to_string(),
-            name: name.to_string(),
+            metadata: metadata.clone(),
             db_file_name,
             mount_id,
             schema_version: DATABASE_SCHEMA_VERSION.to_string(),
@@ -675,22 +695,27 @@ impl VfsService {
         &self,
         tx: &Transaction<'_>,
         database_id: &str,
-        name: &str,
+        metadata: &DatabaseMetadata,
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        tx.execute(
+        let values = vec![
+            crate::sqlite::text_value(database_id),
+            crate::sqlite::text_value(metadata.name.as_str()),
+            crate::sqlite::text_value(metadata.description.as_str()),
+            crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+            crate::sqlite::text_value(metadata.tags_json.as_str()),
+            crate::sqlite::integer_value(i64::from(PENDING_DATABASE_MOUNT_ID)),
+            crate::sqlite::text_value(DATABASE_SCHEMA_VERSION),
+            crate::sqlite::integer_value(now),
+        ];
+        crate::sqlite::execute_values(
+            tx,
             "INSERT INTO databases
-             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
-              logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, '', ?3, NULL, 'pending', ?4, 0, ?5, ?5)",
-            params![
-                database_id,
-                name,
-                i64::from(PENDING_DATABASE_MOUNT_ID),
-                DATABASE_SCHEMA_VERSION,
-                now
-            ],
+             (database_id, name, description, llm_summary, tags_json, db_file_name, mount_id,
+              active_mount_id, status, schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, NULL, 'pending', ?7, 0, ?8, ?8)",
+            &values,
         )
         .map_err(|error| error.to_string())?;
         insert_initial_database_members(tx, database_id, caller, now)?;
@@ -704,7 +729,7 @@ impl VfsService {
         .map_err(|error| error.to_string())?;
         Ok(DatabaseMeta {
             database_id: database_id.to_string(),
-            name: name.to_string(),
+            metadata: metadata.clone(),
             db_file_name: String::new(),
             mount_id: PENDING_DATABASE_MOUNT_ID,
             schema_version: DATABASE_SCHEMA_VERSION.to_string(),
@@ -1231,29 +1256,20 @@ impl VfsService {
                 &request.database_id,
                 now,
             )?;
-            let values = vec![
-                crate::sqlite::text_value(listing_id.clone()),
-                crate::sqlite::text_value(caller),
-                crate::sqlite::text_value(request.payout_principal),
-                crate::sqlite::text_value(request.database_id),
-                crate::sqlite::text_value(request.title),
-                crate::sqlite::text_value(request.description),
-                crate::sqlite::nullable_text_value(request.llm_summary),
-                crate::sqlite::text_value(request.tags_json),
-                crate::sqlite::integer_value(
-                    i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
-                ),
-                crate::sqlite::text_value(MARKET_LISTING_STATUS_ACTIVE),
-                crate::sqlite::integer_value(now),
-            ];
-            crate::sqlite::execute_values(
-                tx,
+            tx.execute(
                 "INSERT INTO market_listings
-                 (listing_id, seller_principal, payout_principal, database_id, title, description,
-                  llm_summary, tags_json, price_e8s, status,
+                 (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
                   revision, purchase_count, report_count, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
-                &values,
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 0, ?7, ?7)",
+                params![
+                    listing_id,
+                    caller,
+                    request.payout_principal,
+                    request.database_id,
+                    i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
+                    MARKET_LISTING_STATUS_ACTIVE,
+                    now
+                ],
             )
             .map_err(|error| error.to_string())?;
             load_market_listing_by_id(tx, &listing_id)?
@@ -1280,35 +1296,21 @@ impl VfsService {
                     &listing.database_id,
                 )?;
             }
-            let values = vec![
-                crate::sqlite::text_value(request.listing_id.clone()),
-                crate::sqlite::text_value(request.title),
-                crate::sqlite::text_value(request.description),
-                crate::sqlite::nullable_text_value(request.llm_summary),
-                crate::sqlite::text_value(request.tags_json),
-                crate::sqlite::integer_value(
-                    i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
-                ),
-                crate::sqlite::integer_value(
-                    i64::try_from(request.expected_revision).map_err(|error| error.to_string())?,
-                ),
-                crate::sqlite::integer_value(now),
-                crate::sqlite::text_value(request.payout_principal),
-            ];
-            crate::sqlite::execute_values(
-                tx,
+            tx.execute(
                 "UPDATE market_listings
-                 SET title = ?2,
-                     description = ?3,
-                     llm_summary = ?4,
-                     tags_json = ?5,
-                     price_e8s = ?6,
-                     payout_principal = ?9,
+                 SET price_e8s = ?2,
+                     payout_principal = ?5,
                      revision = revision + 1,
-                     updated_at_ms = ?8
+                     updated_at_ms = ?4
                  WHERE listing_id = ?1
-                   AND revision = ?7",
-                &values,
+                   AND revision = ?3",
+                params![
+                    request.listing_id,
+                    i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
+                    i64::try_from(request.expected_revision).map_err(|error| error.to_string())?,
+                    now,
+                    request.payout_principal
+                ],
             )
             .map_err(|error| error.to_string())?;
             let updated: i64 = tx
@@ -1384,9 +1386,10 @@ impl VfsService {
         self.read_index(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id, l.title, l.description,
-                            l.llm_summary, l.tags_json, l.price_e8s, l.status,
-                            l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
+                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id,
+                            l.price_e8s, l.status, l.revision, l.purchase_count, l.report_count,
+                            l.created_at_ms, l.updated_at_ms,
+                            d.name, d.description, d.llm_summary, d.tags_json
                      FROM market_listings l
                      JOIN databases d ON d.database_id = l.database_id
                      JOIN database_members m
@@ -1408,12 +1411,12 @@ impl VfsService {
                     after,
                     i64::from(limit) + 1
                 ],
-                map_market_listing,
+                map_market_listing_view,
             )
             .map_err(|error| error.to_string())?;
             let next_cursor = if listings.len() > limit as usize {
                 listings.pop();
-                listings.last().map(|listing| listing.listing_id.clone())
+                listings.last().map(|view| view.listing.listing_id.clone())
             } else {
                 None
             };
@@ -1436,9 +1439,10 @@ impl VfsService {
         self.read_index(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id, l.title, l.description,
-                            l.llm_summary, l.tags_json, l.price_e8s, l.status,
-                            l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
+                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id,
+                            l.price_e8s, l.status, l.revision, l.purchase_count, l.report_count,
+                            l.created_at_ms, l.updated_at_ms,
+                            d.name, d.description, d.llm_summary, d.tags_json
                      FROM market_listings l
                      JOIN databases d ON d.database_id = l.database_id
                      JOIN database_members m
@@ -1462,12 +1466,12 @@ impl VfsService {
                     after,
                     i64::from(limit) + 1
                 ],
-                map_market_listing,
+                map_market_listing_view,
             )
             .map_err(|error| error.to_string())?;
             let next_cursor = if listings.len() > limit as usize {
                 listings.pop();
-                listings.last().map(|listing| listing.listing_id.clone())
+                listings.last().map(|view| view.listing.listing_id.clone())
             } else {
                 None
             };
@@ -1495,9 +1499,9 @@ impl VfsService {
             }
             let mut stmt = conn
                 .prepare(
-                    "SELECT listing_id, seller_principal, payout_principal, database_id, title, description,
-                            llm_summary, tags_json, price_e8s, status,
-                            revision, purchase_count, report_count, created_at_ms, updated_at_ms
+                    "SELECT listing_id, seller_principal, payout_principal, database_id,
+                            price_e8s, status, revision, purchase_count, report_count,
+                            created_at_ms, updated_at_ms
                      FROM market_listings
                      WHERE database_id = ?1
                      ORDER BY updated_at_ms DESC, listing_id ASC",
@@ -1525,15 +1529,24 @@ impl VfsService {
         self.market_listing_detail(listing)
     }
 
+    pub fn market_listing_database_name_for_consent(
+        &self,
+        listing_id: &str,
+    ) -> Result<String, String> {
+        self.read_index(|conn| load_market_listing_database_name(conn, listing_id))
+    }
+
     fn market_listing_detail(&self, listing: MarketListing) -> Result<MarketListingDetail, String> {
-        let Ok(meta) = self.database_meta(&listing.database_id) else {
-            return Ok(empty_market_listing_detail(listing));
+        let meta = self.database_meta(&listing.database_id)?;
+        let view = MarketListingView {
+            listing: listing.clone(),
+            database_metadata: meta.metadata.clone(),
         };
         let store = self.database_store(&meta)?;
         let (verified_stats, mut preview) = store.marketplace_preview()?;
         preview.preview_stale = false;
         Ok(MarketListingDetail {
-            listing,
+            listing: view,
             verified_stats,
             preview,
         })
@@ -2226,23 +2239,65 @@ impl VfsService {
         })
     }
 
+    pub fn update_database_metadata(
+        &self,
+        caller: &str,
+        request: UpdateDatabaseMetadataRequest,
+        now: i64,
+    ) -> Result<DatabaseMetadata, String> {
+        validate_database_id(&request.database_id)?;
+        self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        self.database_meta(&request.database_id)?;
+        let metadata = normalize_database_metadata(DatabaseMetadata {
+            name: request.name,
+            description: request.description,
+            llm_summary: request.llm_summary,
+            tags_json: request.tags_json,
+        })?;
+        self.write_index(|conn| {
+            let values = vec![
+                crate::sqlite::text_value(request.database_id.as_str()),
+                crate::sqlite::text_value(metadata.name.as_str()),
+                crate::sqlite::text_value(metadata.description.as_str()),
+                crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+                crate::sqlite::text_value(metadata.tags_json.as_str()),
+                crate::sqlite::integer_value(now),
+            ];
+            crate::sqlite::execute_values(
+                conn,
+                "UPDATE databases
+                 SET name = ?2,
+                     description = ?3,
+                     llm_summary = ?4,
+                     tags_json = ?5,
+                     updated_at_ms = ?6
+                 WHERE database_id = ?1",
+                &values,
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })?;
+        Ok(metadata)
+    }
+
     pub fn rename_database(
         &self,
-        database_id: &str,
         caller: &str,
-        name: &str,
+        request: vfs_types::RenameDatabaseRequest,
         now: i64,
     ) -> Result<(), String> {
-        self.require_role(database_id, caller, RequiredRole::Owner)?;
-        self.database_meta(database_id)?;
-        let name = normalize_database_name(name)?;
+        validate_database_id(&request.database_id)?;
+        self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
+        let mut metadata = self.database_meta(&request.database_id)?.metadata;
+        metadata.name = request.name;
+        let metadata = normalize_database_metadata(metadata)?;
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
                  SET name = ?2,
                      updated_at_ms = ?3
                  WHERE database_id = ?1",
-                params![database_id, name, now],
+                params![request.database_id, metadata.name, now],
             )
             .map_err(|error| error.to_string())?;
             Ok(())
@@ -3150,13 +3205,12 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    LegacyProfileLatest,
     Mainnet011,
     Mainnet026,
     Mainnet031,
     Mainnet032,
     Mainnet033,
-    DatabaseProfile,
-    DatabaseProfileStoreRootsPending,
     RenameSourceCaptureTriggerSessions,
     RenameSourceCaptureTriggerSessionsStoreRootsPending,
     DropArchiveRestoreLifecycle,
@@ -3170,6 +3224,18 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<IndexPostMigrationAction, String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => {
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::LegacyProfileLatest => {
+            apply_database_metadata_index_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::Mainnet033 => {
+            apply_database_metadata_index_migration(conn)?;
+            apply_rename_source_capture_trigger_sessions_migration(conn)?;
+            apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
@@ -3189,38 +3255,14 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
-            insert_database_profile_history_marker(conn)?;
-            apply_drop_database_profile_migration(conn)?;
+            apply_database_metadata_index_migration(conn)?;
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet032 => {
-            insert_database_profile_history_marker(conn)?;
-            apply_drop_database_profile_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::Mainnet033 => {
-            insert_database_profile_history_marker(conn)?;
-            apply_drop_database_profile_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::DatabaseProfile => {
-            apply_drop_database_profile_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::DatabaseProfileStoreRootsPending => {
-            apply_drop_database_profile_migration(conn)?;
+            apply_database_metadata_index_migration(conn)?;
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
             validate_index_schema(conn)?;
@@ -3286,6 +3328,8 @@ fn classify_existing_index_schema_state(
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
     let drop_database_profile_applied =
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
+    let database_metadata_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
     let rename_source_capture_trigger_sessions_applied = migration_applied_tx(
         conn,
         INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
@@ -3293,38 +3337,40 @@ fn classify_existing_index_schema_state(
     let drop_archive_restore_lifecycle_applied =
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
     if store_roots_applied
-        && drop_database_profile_applied
+        && database_metadata_applied
         && rename_source_capture_trigger_sessions_applied
         && drop_archive_restore_lifecycle_applied
     {
         return Ok(IndexSchemaState::Latest);
     }
     if store_roots_applied
+        && database_profile_applied
         && drop_database_profile_applied
+        && rename_source_capture_trigger_sessions_applied
+        && drop_archive_restore_lifecycle_applied
+    {
+        return Ok(IndexSchemaState::LegacyProfileLatest);
+    }
+    if store_roots_applied
+        && database_metadata_applied
         && rename_source_capture_trigger_sessions_applied
     {
         return Ok(IndexSchemaState::DropArchiveRestoreLifecycle);
     }
-    if drop_database_profile_applied
+    if database_metadata_applied
         && rename_source_capture_trigger_sessions_applied
         && drop_archive_restore_lifecycle_applied
     {
         return Ok(IndexSchemaState::StoreRootsPending);
     }
-    if drop_database_profile_applied && rename_source_capture_trigger_sessions_applied {
+    if database_metadata_applied && rename_source_capture_trigger_sessions_applied {
         return Ok(IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending);
     }
-    if store_roots_applied && drop_database_profile_applied {
+    if store_roots_applied && database_metadata_applied {
         return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessions);
     }
-    if drop_database_profile_applied {
+    if database_metadata_applied {
         return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending);
-    }
-    if database_profile_applied && store_roots_applied {
-        return Ok(IndexSchemaState::DatabaseProfile);
-    }
-    if database_profile_applied {
-        return Ok(IndexSchemaState::DatabaseProfileStoreRootsPending);
     }
     if store_roots_applied {
         return Ok(IndexSchemaState::Mainnet033);
@@ -3384,8 +3430,6 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
-    insert_database_profile_history_marker(conn)?;
-    apply_drop_database_profile_migration(conn)?;
     apply_rename_source_capture_trigger_sessions_migration(conn)?;
     apply_drop_archive_restore_lifecycle_migration(conn)?;
     Ok(())
@@ -3401,8 +3445,6 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
         insert_schema_migration_now(conn, version)?;
     }
     apply_cycles_top_up_config_migration(conn, None)?;
-    insert_database_profile_history_marker(conn)?;
-    apply_drop_database_profile_migration(conn)?;
     apply_rename_source_capture_trigger_sessions_migration(conn)?;
     apply_drop_archive_restore_lifecycle_migration(conn)?;
     Ok(())
@@ -3420,19 +3462,107 @@ fn apply_cycles_top_up_config_migration(
     Ok(())
 }
 
-fn insert_database_profile_history_marker(conn: &Transaction<'_>) -> Result<(), String> {
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)? {
-        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+fn apply_database_metadata_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if index_column_exists(conn, "databases", "title")?
+        && !index_column_exists(conn, "databases", "name")?
+    {
+        conn.execute(
+            "ALTER TABLE databases RENAME COLUMN title TO name",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
     }
-    Ok(())
-}
-
-fn apply_drop_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if index_column_exists(conn, "databases", "profile")? {
-        conn.execute("ALTER TABLE databases DROP COLUMN profile", params![])
-            .map_err(|error| error.to_string())?;
+    if !index_column_exists(conn, "databases", "description")? {
+        conn.execute(
+            "ALTER TABLE databases ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
     }
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
+    if !index_column_exists(conn, "databases", "llm_summary")? {
+        conn.execute(
+            "ALTER TABLE databases ADD COLUMN llm_summary TEXT",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if !index_column_exists(conn, "databases", "tags_json")? {
+        conn.execute(
+            "ALTER TABLE databases ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if index_column_exists(conn, "market_listings", "title")? {
+        conn.execute_batch(
+            "
+            UPDATE databases
+               SET name = COALESCE((
+                     SELECT title
+                      FROM market_listings
+                     WHERE market_listings.database_id = databases.database_id
+                     ORDER BY updated_at_ms DESC, listing_id ASC
+                     LIMIT 1
+                   ), name),
+                   description = COALESCE((
+                     SELECT description
+                       FROM market_listings
+                      WHERE market_listings.database_id = databases.database_id
+                      ORDER BY updated_at_ms DESC, listing_id ASC
+                      LIMIT 1
+                   ), ''),
+                   llm_summary = (
+                     SELECT llm_summary
+                       FROM market_listings
+                      WHERE market_listings.database_id = databases.database_id
+                      ORDER BY updated_at_ms DESC, listing_id ASC
+                      LIMIT 1
+                   ),
+                   tags_json = COALESCE((
+                     SELECT tags_json
+                       FROM market_listings
+                      WHERE market_listings.database_id = databases.database_id
+                      ORDER BY updated_at_ms DESC, listing_id ASC
+                      LIMIT 1
+                   ), '[]')
+             WHERE EXISTS (
+                     SELECT 1
+                       FROM market_listings
+                      WHERE market_listings.database_id = databases.database_id
+                   );
+            DROP INDEX market_listings_status_idx;
+            DROP INDEX market_listings_database_idx;
+            ALTER TABLE market_listings RENAME TO market_listings_old;
+            CREATE TABLE market_listings (
+              listing_id TEXT PRIMARY KEY,
+              seller_principal TEXT NOT NULL,
+              payout_principal TEXT NOT NULL,
+              database_id TEXT NOT NULL,
+              price_e8s INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              revision INTEGER NOT NULL,
+              purchase_count INTEGER NOT NULL,
+              report_count INTEGER NOT NULL,
+              created_at_ms INTEGER NOT NULL,
+              updated_at_ms INTEGER NOT NULL,
+              FOREIGN KEY (database_id) REFERENCES databases(database_id)
+            );
+            INSERT INTO market_listings
+              (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
+               revision, purchase_count, report_count, created_at_ms, updated_at_ms)
+            SELECT listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
+                   revision, purchase_count, report_count, created_at_ms, updated_at_ms
+              FROM market_listings_old;
+            DROP TABLE market_listings_old;
+            CREATE INDEX market_listings_status_idx
+              ON market_listings(status, listing_id);
+            CREATE INDEX market_listings_database_idx
+              ON market_listings(database_id);
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
     Ok(())
 }
 
@@ -3473,13 +3603,6 @@ fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Res
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)? {
         return Ok(());
     }
-    let archived_database_ids = load_archive_restore_database_ids(conn)?;
-    if !archived_database_ids.is_empty() {
-        return Err(format!(
-            "archive/restore lifecycle is no longer supported; unsupported database statuses remain for database_id(s): {}",
-            archived_database_ids.join(", ")
-        ));
-    }
     if tx_sqlite_master_entry_exists(conn, "table", "database_restore_chunks")? {
         conn.execute("DROP TABLE database_restore_chunks", params![])
             .map_err(|error| error.to_string())?;
@@ -3488,7 +3611,7 @@ fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Res
         conn.execute("DROP TABLE database_restore_sessions", params![])
             .map_err(|error| error.to_string())?;
     }
-    for column in ["snapshot_hash", "archived_at_ms", "restore_size_bytes"] {
+    for column in ["snapshot_hash", "restore_size_bytes"] {
         if index_column_exists(conn, "databases", column)? {
             conn.execute(
                 &format!("ALTER TABLE databases DROP COLUMN {column}"),
@@ -3499,19 +3622,6 @@ fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Res
     }
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
     Ok(())
-}
-
-fn load_archive_restore_database_ids(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT database_id
-             FROM databases
-             WHERE status IN ('archiving', 'archived', 'restoring')
-             ORDER BY database_id",
-        )
-        .map_err(|error| error.to_string())?;
-    crate::sqlite::query_map(&mut stmt, params![], |row| crate::sqlite::row_get(row, 0))
-        .map_err(|error| error.to_string())
 }
 
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
@@ -3707,8 +3817,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
     INDEX_SCHEMA_VERSION_STORE_ROOTS,
-    INDEX_SCHEMA_VERSION_DATABASE_PROFILE,
-    INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE,
+    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
     INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
     INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE,
 ];
@@ -3756,6 +3865,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
+    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -3777,6 +3887,7 @@ const POST_026_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
+    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
 ];
 
 const POST_026_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -3946,6 +4057,9 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &[
                 "database_id",
                 "name",
+                "description",
+                "llm_summary",
+                "tags_json",
                 "db_file_name",
                 "mount_id",
                 "active_mount_id",
@@ -4025,10 +4139,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "seller_principal",
                 "payout_principal",
                 "database_id",
-                "title",
-                "description",
-                "llm_summary",
-                "tags_json",
                 "price_e8s",
                 "status",
                 "revision",
@@ -4095,7 +4205,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     if index_column_exists(conn, "databases", "profile")? {
         return Err("unsupported index schema: stale column databases.profile".to_string());
     }
-    for column in ["snapshot_hash", "archived_at_ms", "restore_size_bytes"] {
+    for column in ["snapshot_hash", "restore_size_bytes"] {
         if index_column_exists(conn, "databases", column)? {
             return Err(format!(
                 "unsupported index schema: stale column databases.{column}"
@@ -4126,6 +4236,16 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     ] {
         if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));
+        }
+    }
+    if index_column_exists(conn, "databases", "title")? {
+        return Err("unsupported index schema: stale column databases.title".to_string());
+    }
+    for column in ["name", "description", "llm_summary", "tags_json"] {
+        if index_column_exists(conn, "market_listings", column)? {
+            return Err(format!(
+                "unsupported index schema: stale column market_listings.{column}"
+            ));
         }
     }
     Ok(())
@@ -5634,8 +5754,7 @@ fn load_market_listing_by_id(
     listing_id: &str,
 ) -> Result<Option<MarketListing>, String> {
     conn.query_row(
-        "SELECT listing_id, seller_principal, payout_principal, database_id, title, description,
-                llm_summary, tags_json, price_e8s, status,
+        "SELECT listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
                 revision, purchase_count, report_count, created_at_ms, updated_at_ms
          FROM market_listings
          WHERE listing_id = ?1",
@@ -5646,31 +5765,56 @@ fn load_market_listing_by_id(
     .map_err(|error| error.to_string())
 }
 
+fn load_market_listing_database_name(
+    conn: &Connection,
+    listing_id: &str,
+) -> Result<String, String> {
+    conn.query_row(
+        "SELECT d.name
+         FROM market_listings l
+         JOIN databases d ON d.database_id = l.database_id
+         WHERE l.listing_id = ?1",
+        params![listing_id],
+        |row| crate::sqlite::row_get(row, 0),
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketListing> {
-    let price_e8s: i64 = crate::sqlite::row_get(row, 8)?;
-    let revision: i64 = crate::sqlite::row_get(row, 10)?;
-    let purchase_count: i64 = crate::sqlite::row_get(row, 11)?;
-    let report_count: i64 = crate::sqlite::row_get(row, 12)?;
+    let price_e8s: i64 = crate::sqlite::row_get(row, 4)?;
+    let revision: i64 = crate::sqlite::row_get(row, 6)?;
+    let purchase_count: i64 = crate::sqlite::row_get(row, 7)?;
+    let report_count: i64 = crate::sqlite::row_get(row, 8)?;
     Ok(MarketListing {
         listing_id: crate::sqlite::row_get(row, 0)?,
         seller_principal: crate::sqlite::row_get(row, 1)?,
         payout_principal: crate::sqlite::row_get(row, 2)?,
         database_id: crate::sqlite::row_get(row, 3)?,
-        title: crate::sqlite::row_get(row, 4)?,
-        description: crate::sqlite::row_get(row, 5)?,
-        llm_summary: crate::sqlite::row_get::<Option<String>>(row, 6)?,
-        tags_json: crate::sqlite::row_get(row, 7)?,
         price_e8s: u64::try_from(price_e8s)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(8, price_e8s))?,
-        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 9)?)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(4, price_e8s))?,
+        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 5)?)?,
         revision: u64::try_from(revision)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(10, revision))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(6, revision))?,
         purchase_count: u64::try_from(purchase_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, purchase_count))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(7, purchase_count))?,
         report_count: u64::try_from(report_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(12, report_count))?,
-        created_at_ms: crate::sqlite::row_get(row, 13)?,
-        updated_at_ms: crate::sqlite::row_get(row, 14)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(8, report_count))?,
+        created_at_ms: crate::sqlite::row_get(row, 9)?,
+        updated_at_ms: crate::sqlite::row_get(row, 10)?,
+    })
+}
+
+fn map_market_listing_view(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<MarketListingView> {
+    Ok(MarketListingView {
+        listing: map_market_listing(row)?,
+        database_metadata: DatabaseMetadata {
+            name: crate::sqlite::row_get(row, 11)?,
+            description: crate::sqlite::row_get(row, 12)?,
+            llm_summary: crate::sqlite::row_get(row, 13)?,
+            tags_json: crate::sqlite::row_get(row, 14)?,
+        },
     })
 }
 
@@ -5729,139 +5873,26 @@ fn market_listing_status_from_db(value: &str) -> crate::sqlite::Result<MarketLis
     }
 }
 
-fn empty_market_listing_detail(listing: MarketListing) -> MarketListingDetail {
-    MarketListingDetail {
-        listing,
-        verified_stats: MarketListingVerifiedStats {
-            total_nodes: 0,
-            wiki_nodes: 0,
-            source_nodes: 0,
-            folder_nodes: 0,
-            markdown_chars: 0,
-            source_chars: 0,
-            link_edges: 0,
-            logical_size_bytes: 0,
-            last_content_updated_at_ms: None,
-        },
-        preview: MarketListingPreview {
-            top_level_paths: Vec::new(),
-            excerpts: Vec::new(),
-            category_graph: MarketCategoryGraph {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-            },
-            graph_links: Vec::new(),
-            preview_stale: true,
-        },
-    }
-}
-
 fn validate_market_create_listing_request(
     request: &MarketCreateListingRequest,
 ) -> Result<(), String> {
     validate_database_id(&request.database_id)?;
     validate_principal_text(&request.payout_principal)?;
-    validate_market_listing_metadata(MarketListingMetadataValidation {
-        title: &request.title,
-        description: &request.description,
-        llm_summary: request.llm_summary.as_deref(),
-        tags_json: &request.tags_json,
-        price_e8s: request.price_e8s,
-    })
+    validate_market_listing_price(request.price_e8s)
 }
 
 fn validate_market_update_listing_request(
     request: &MarketUpdateListingRequest,
 ) -> Result<(), String> {
     validate_principal_text(&request.payout_principal)?;
-    validate_market_listing_metadata(MarketListingMetadataValidation {
-        title: &request.title,
-        description: &request.description,
-        llm_summary: request.llm_summary.as_deref(),
-        tags_json: &request.tags_json,
-        price_e8s: request.price_e8s,
-    })
+    validate_market_listing_price(request.price_e8s)
 }
 
-struct MarketListingMetadataValidation<'a> {
-    title: &'a str,
-    description: &'a str,
-    llm_summary: Option<&'a str>,
-    tags_json: &'a str,
-    price_e8s: u64,
-}
-
-fn validate_market_listing_metadata(
-    input: MarketListingMetadataValidation<'_>,
-) -> Result<(), String> {
-    if input.price_e8s == 0 {
+fn validate_market_listing_price(price_e8s: u64) -> Result<(), String> {
+    if price_e8s == 0 {
         return Err("market listing price must be positive".to_string());
     }
-    amount_to_i64(input.price_e8s)?;
-    validate_market_text(
-        "market listing title",
-        input.title,
-        1,
-        MAX_MARKET_TITLE_CHARS,
-    )?;
-    validate_market_multiline_text(
-        "market listing description",
-        input.description,
-        1,
-        MAX_MARKET_DESCRIPTION_CHARS,
-    )?;
-    if let Some(summary) = input.llm_summary {
-        validate_market_multiline_text(
-            "market listing summary",
-            summary,
-            0,
-            MAX_MARKET_DESCRIPTION_CHARS,
-        )?;
-    }
-    validate_market_text(
-        "market listing tags",
-        input.tags_json,
-        0,
-        MAX_MARKET_JSON_CHARS,
-    )
-}
-
-fn validate_market_text(
-    label: &str,
-    value: &str,
-    min_chars: usize,
-    max_chars: usize,
-) -> Result<(), String> {
-    let count = value.chars().count();
-    if count < min_chars || count > max_chars {
-        return Err(format!(
-            "{label} must be {min_chars}..{max_chars} characters"
-        ));
-    }
-    if value.chars().any(char::is_control) {
-        return Err(format!("{label} may not contain control characters"));
-    }
-    Ok(())
-}
-
-fn validate_market_multiline_text(
-    label: &str,
-    value: &str,
-    min_chars: usize,
-    max_chars: usize,
-) -> Result<(), String> {
-    let count = value.chars().count();
-    if count < min_chars || count > max_chars {
-        return Err(format!(
-            "{label} must be {min_chars}..{max_chars} characters"
-        ));
-    }
-    if value
-        .chars()
-        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
-    {
-        return Err(format!("{label} may not contain control characters"));
-    }
+    amount_to_i64(price_e8s)?;
     Ok(())
 }
 
@@ -6913,6 +6944,37 @@ fn validate_database_id(database_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_database_metadata(metadata: DatabaseMetadata) -> Result<DatabaseMetadata, String> {
+    let name = normalize_database_name(&metadata.name)?;
+    validate_database_multiline_text(
+        "database description",
+        &metadata.description,
+        0,
+        MAX_DATABASE_DESCRIPTION_CHARS,
+    )?;
+    if let Some(summary) = metadata.llm_summary.as_deref() {
+        validate_database_multiline_text(
+            "database summary",
+            summary,
+            0,
+            MAX_DATABASE_DESCRIPTION_CHARS,
+        )?;
+    }
+    validate_database_text(
+        "database tags",
+        &metadata.tags_json,
+        0,
+        MAX_DATABASE_JSON_CHARS,
+    )?;
+    validate_database_tags_json(&metadata.tags_json)?;
+    Ok(DatabaseMetadata {
+        name,
+        description: metadata.description,
+        llm_summary: metadata.llm_summary,
+        tags_json: metadata.tags_json,
+    })
+}
+
 fn normalize_database_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_DATABASE_NAME_CHARS {
@@ -6924,6 +6986,61 @@ fn normalize_database_name(name: &str) -> Result<String, String> {
         return Err("database name may not contain control characters".to_string());
     }
     Ok(name.to_string())
+}
+
+fn validate_database_text(
+    label: &str,
+    value: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<(), String> {
+    let count = value.chars().count();
+    if count < min_chars || count > max_chars {
+        return Err(format!(
+            "{label} must be {min_chars}..{max_chars} characters"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label} may not contain control characters"));
+    }
+    Ok(())
+}
+
+fn validate_database_multiline_text(
+    label: &str,
+    value: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<(), String> {
+    let count = value.chars().count();
+    if count < min_chars || count > max_chars {
+        return Err(format!(
+            "{label} must be {min_chars}..{max_chars} characters"
+        ));
+    }
+    if value
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(format!(
+            "{label} may only contain newline, carriage return, or tab control characters"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_database_tags_json(tags_json: &str) -> Result<(), String> {
+    let tags: Vec<String> = serde_json::from_str(tags_json)
+        .map_err(|error| format!("database tags_json must be a JSON string array: {error}"))?;
+    for tag in tags {
+        if tag.trim().is_empty() {
+            return Err("database tags_json must not contain empty tags".to_string());
+        }
+        if tag.chars().any(char::is_control) {
+            return Err("database tags_json must not contain control characters".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn generated_database_id(caller: &str, now: i64, mount_id: u16, attempt: u32) -> String {
@@ -7077,9 +7194,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
         )
         .optional()
     {
-        Ok(Some(status)) if status == "active" || status == "pending" || status == "deleted" => {
-            format!("database is {status}: {database_id}")
-        }
+        Ok(Some(status)) => format!("database is {status}: {database_id}"),
         _ => format!("database not found: {database_id}"),
     }
 }
@@ -7101,7 +7216,8 @@ fn load_database_with_statuses(
     statuses: &[DatabaseStatus],
 ) -> Result<Option<DatabaseMeta>, String> {
     conn.query_row(
-        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE database_id = ?1",
         params![database_id],
@@ -7116,7 +7232,8 @@ fn load_pending_database_activation_meta(
     database_id: &str,
 ) -> Result<Option<DatabaseMeta>, String> {
     conn.query_row(
-        "SELECT database_id, name, db_file_name, mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE database_id = ?1",
         params![database_id],
@@ -7127,13 +7244,15 @@ fn load_pending_database_activation_meta(
 }
 
 fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status IN ('pending', 'active') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
-    )
-    .map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
         .map_err(|error| error.to_string())
 }
@@ -7141,14 +7260,16 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
 fn load_active_databases_for_store_root_seed(
     conn: &Connection,
 ) -> Result<Vec<DatabaseMeta>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
-    )
-    .map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
         .map_err(|error| error.to_string())
 }
@@ -7159,16 +7280,18 @@ fn load_active_databases_for_storage_billing_batch(
     limit: u32,
 ) -> Result<StorageBillingDatabaseBatch, String> {
     let fetch_limit = i64::from(limit.saturating_add(1));
-    let mut stmt = conn.prepare(
-        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
            AND mount_id > ?1
          ORDER BY mount_id ASC
          LIMIT ?2",
-    )
-    .map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| error.to_string())?;
     let mut databases = crate::sqlite::query_map(
         &mut stmt,
         params![i64::from(cursor_mount_id), fetch_limit],
@@ -7191,14 +7314,16 @@ fn load_active_databases_for_storage_billing_batch(
 fn load_active_databases_for_storage_billing(
     conn: &Connection,
 ) -> Result<Vec<DatabaseMeta>, String> {
-    let mut stmt = conn.prepare(
-        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+    let mut stmt = conn
+        .prepare(
+            "SELECT database_id, name, description, llm_summary, tags_json,
+                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
-    )
-    .map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
         .map_err(|error| error.to_string())
 }
@@ -7277,20 +7402,26 @@ fn clear_storage_billing_timer_state(tx: &Transaction<'_>) -> Result<(), String>
 fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT database_id, name, status, active_mount_id, schema_version, logical_size_bytes
+            "SELECT database_id, name, description, llm_summary, tags_json, status,
+                    active_mount_id, schema_version, logical_size_bytes
          FROM databases
          ORDER BY database_id ASC",
         )
         .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], |row| {
-        let mount_id: Option<i64> = crate::sqlite::row_get(row, 3)?;
-        let logical_size_bytes: i64 = crate::sqlite::row_get(row, 5)?;
+        let mount_id: Option<i64> = crate::sqlite::row_get(row, 6)?;
+        let logical_size_bytes: i64 = crate::sqlite::row_get(row, 8)?;
         Ok(DatabaseInfo {
             database_id: crate::sqlite::row_get(row, 0)?,
-            name: crate::sqlite::row_get(row, 1)?,
-            status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+            metadata: DatabaseMetadata {
+                name: crate::sqlite::row_get(row, 1)?,
+                description: crate::sqlite::row_get(row, 2)?,
+                llm_summary: crate::sqlite::row_get(row, 3)?,
+                tags_json: crate::sqlite::row_get(row, 4)?,
+            },
+            status: status_from_db(&crate::sqlite::row_get::<String>(row, 5)?)?,
             mount_id: mount_id.map(mount_id_from_db).transpose()?,
-            schema_version: crate::sqlite::row_get(row, 4)?,
+            schema_version: crate::sqlite::row_get(row, 7)?,
             logical_size_bytes: logical_size_bytes.max(0) as u64,
         })
     })
@@ -7303,7 +7434,8 @@ fn load_database_summaries_for_caller(
 ) -> Result<Vec<DatabaseSummary>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT d.database_id, d.name, d.status, m.role, d.logical_size_bytes,
+            "SELECT d.database_id, d.name, d.description, d.llm_summary, d.tags_json,
+                    d.status, m.role, d.logical_size_bytes,
                     COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
                     d.deleted_at_ms,
                     0 AS access_source_rank,
@@ -7317,17 +7449,19 @@ fn load_database_summaries_for_caller(
              LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
              WHERE m.principal = ?1
              UNION ALL
-             SELECT d.database_id, d.name, d.status, 'reader' AS role, d.logical_size_bytes,
-                    COALESCE(b.balance_cycles, 0), b.suspended_at_ms, d.deleted_at_ms,
+             SELECT d.database_id, d.name, d.description, d.llm_summary, d.tags_json,
+                    d.status, 'reader' AS role, d.logical_size_bytes,
+                    COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
+                    d.deleted_at_ms,
                     1 AS access_source_rank,
                     2 AS role_rank
              FROM databases d
              INNER JOIN market_entitlements e ON e.database_id = d.database_id
              LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
-             WHERE e.buyer_principal = ?2
-               AND e.status = ?3
-               AND d.status = ?4
-             ORDER BY 1 ASC, 9 ASC, 10 ASC",
+            WHERE e.buyer_principal = ?2
+              AND e.status = ?3
+              AND d.status = ?4
+             ORDER BY 1 ASC, 12 ASC, 13 ASC",
         )
         .map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(
@@ -7339,17 +7473,23 @@ fn load_database_summaries_for_caller(
             status_to_db(DatabaseStatus::Active)
         ],
         |row| {
-            let logical_size_bytes: i64 = crate::sqlite::row_get(row, 4)?;
-            let cycles_balance: i64 = crate::sqlite::row_get(row, 5)?;
+            let logical_size_bytes: i64 = crate::sqlite::row_get(row, 7)?;
+            let cycles_balance: i64 = crate::sqlite::row_get(row, 8)?;
             Ok(DatabaseSummary {
                 database_id: crate::sqlite::row_get(row, 0)?,
                 name: crate::sqlite::row_get(row, 1)?,
-                status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
-                role: role_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
+                metadata: Some(DatabaseMetadata {
+                    name: crate::sqlite::row_get(row, 1)?,
+                    description: crate::sqlite::row_get(row, 2)?,
+                    llm_summary: crate::sqlite::row_get(row, 3)?,
+                    tags_json: crate::sqlite::row_get(row, 4)?,
+                }),
+                status: status_from_db(&crate::sqlite::row_get::<String>(row, 5)?)?,
+                role: role_from_db(&crate::sqlite::row_get::<String>(row, 6)?)?,
                 logical_size_bytes: logical_size_bytes.max(0) as u64,
                 cycles_balance: Some(cycles_balance.max(0) as u64),
-                cycles_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
-                deleted_at_ms: crate::sqlite::row_get(row, 7)?,
+                cycles_suspended_at_ms: crate::sqlite::row_get(row, 9)?,
+                deleted_at_ms: crate::sqlite::row_get(row, 10)?,
             })
         },
     )
@@ -7370,8 +7510,10 @@ fn map_database_meta_with_statuses(
     row: &crate::sqlite::Row<'_>,
     statuses: &[DatabaseStatus],
 ) -> crate::sqlite::Result<DatabaseMeta> {
-    let status: String = crate::sqlite::row_get(row, 6).unwrap_or_else(|_| "active".to_string());
-    let status = status_from_db(&status)?;
+    let status: String = crate::sqlite::row_get(row, 9).unwrap_or_else(|_| "active".to_string());
+    let Ok(status) = status_from_db(&status) else {
+        return Err(crate::sqlite::query_returned_no_rows());
+    };
     if !statuses.contains(&status) {
         return Err(crate::sqlite::query_returned_no_rows());
     }
@@ -7379,15 +7521,20 @@ fn map_database_meta_with_statuses(
 }
 
 fn map_database_meta(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<DatabaseMeta> {
-    let mount_id: Option<i64> = crate::sqlite::row_get(row, 3)?;
+    let mount_id: Option<i64> = crate::sqlite::row_get(row, 6)?;
     let mount_id = mount_id.ok_or_else(crate::sqlite::query_returned_no_rows)?;
-    let logical_size_bytes: i64 = crate::sqlite::row_get(row, 5)?;
+    let logical_size_bytes: i64 = crate::sqlite::row_get(row, 8)?;
     Ok(DatabaseMeta {
         database_id: crate::sqlite::row_get(row, 0)?,
-        name: crate::sqlite::row_get(row, 1)?,
-        db_file_name: crate::sqlite::row_get(row, 2)?,
+        metadata: DatabaseMetadata {
+            name: crate::sqlite::row_get(row, 1)?,
+            description: crate::sqlite::row_get(row, 2)?,
+            llm_summary: crate::sqlite::row_get(row, 3)?,
+            tags_json: crate::sqlite::row_get(row, 4)?,
+        },
+        db_file_name: crate::sqlite::row_get(row, 5)?,
         mount_id: mount_id_from_db(mount_id)?,
-        schema_version: crate::sqlite::row_get(row, 4)?,
+        schema_version: crate::sqlite::row_get(row, 7)?,
         logical_size_bytes: logical_size_bytes.max(0) as u64,
     })
 }
@@ -7776,7 +7923,9 @@ mod tests {
         tx.execute_batch(INDEX_026_TO_LATEST_SQL)
             .expect("mainnet 031 schema should write");
         for &version in POST_026_INDEX_SCHEMA_VERSIONS {
-            if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG {
+            if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG
+                || version == INDEX_SCHEMA_VERSION_DATABASE_METADATA
+            {
                 continue;
             }
             insert_schema_migration_now(&tx, version).expect("031 marker should insert");
@@ -7796,6 +7945,106 @@ mod tests {
         let tx = conn.transaction().expect("transaction should start");
         apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
         tx.commit().expect("mainnet 032 schema should commit");
+    }
+
+    fn write_legacy_profile_latest_schema(index_path: &Path, config: &CyclesBillingConfig) {
+        write_mainnet_026_schema(index_path, config);
+        let mut conn = Connection::open(index_path).expect("index DB should reopen");
+        let tx = conn.transaction().expect("transaction should start");
+        tx.execute_batch(
+            "CREATE TABLE market_listings (
+               listing_id TEXT PRIMARY KEY,
+               seller_principal TEXT NOT NULL,
+               payout_principal TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               title TEXT NOT NULL,
+               description TEXT NOT NULL,
+               llm_summary TEXT,
+               tags_json TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               status TEXT NOT NULL,
+               revision INTEGER NOT NULL,
+               purchase_count INTEGER NOT NULL,
+               report_count INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               updated_at_ms INTEGER NOT NULL,
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX market_listings_status_idx
+               ON market_listings(status, listing_id);
+             CREATE INDEX market_listings_database_idx
+               ON market_listings(database_id);
+             CREATE TABLE market_orders (
+               order_id TEXT PRIMARY KEY,
+               listing_id TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               seller_principal TEXT NOT NULL,
+               payout_principal TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               ledger_block_index INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX market_orders_buyer_idx
+               ON market_orders(buyer_principal, order_id);
+             CREATE TABLE market_purchase_pending_operations (
+               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               listing_id TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               seller_principal TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               from_owner TEXT NOT NULL,
+               from_subaccount BLOB,
+               to_owner TEXT NOT NULL,
+               to_subaccount BLOB,
+               ledger_fee_e8s INTEGER NOT NULL,
+               ledger_created_at_time_ns INTEGER NOT NULL,
+               operation_status TEXT NOT NULL,
+               ledger_block_index INTEGER,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX market_purchase_pending_buyer_idx
+               ON market_purchase_pending_operations(buyer_principal, listing_id);
+             CREATE TABLE market_entitlements (
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               listing_id TEXT NOT NULL,
+               order_id TEXT NOT NULL,
+               purchased_at_ms INTEGER NOT NULL,
+               status TEXT NOT NULL,
+               PRIMARY KEY (database_id, buyer_principal, listing_id),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
+               ON market_entitlements(database_id, buyer_principal)
+               WHERE status = 'active';
+             CREATE INDEX market_entitlements_buyer_idx
+               ON market_entitlements(buyer_principal, database_id);",
+        )
+        .expect("legacy profile marketplace schema should write");
+        for &version in &[
+            INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
+            INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
+            INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
+            INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
+            INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+        ] {
+            insert_schema_migration_now(&tx, version).expect("legacy market marker should insert");
+        }
+        apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
+            .expect("store roots marker should insert");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)
+            .expect("legacy profile marker should insert");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)
+            .expect("legacy profile drop marker should insert");
+        apply_rename_source_capture_trigger_sessions_migration(&tx)
+            .expect("source capture rename should migrate");
+        apply_drop_archive_restore_lifecycle_migration(&tx)
+            .expect("archive restore drop should migrate");
+        tx.commit()
+            .expect("legacy profile latest schema should commit");
     }
 
     fn create_active_database_fixture(
@@ -7823,9 +8072,10 @@ mod tests {
         let conn = Connection::open(index_path).expect("index DB should reopen");
         conn.execute(
             "INSERT INTO databases
-             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
-              logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?1, ?2, 11, 11, 'active', ?3, 0, 0, 0)",
+             (database_id, name, description, llm_summary, tags_json, db_file_name, mount_id,
+              active_mount_id, status, schema_version, logical_size_bytes, created_at_ms,
+              updated_at_ms)
+             VALUES (?1, ?1, '', NULL, '[]', ?2, 11, 11, 'active', ?3, 0, 0, 0)",
             params![database_id, db_file_name, DATABASE_SCHEMA_VERSION],
         )
         .expect("fixture database should insert");
@@ -7872,6 +8122,16 @@ mod tests {
             |row| row.get(0),
         )
         .expect("database profile column count should load")
+    }
+
+    fn table_column_count(index_path: &Path, table_name: &str, column_name: &str) -> i64 {
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{table_name}') WHERE name = ?1"),
+            params![column_name],
+            |row| row.get(0),
+        )
+        .expect("table column count should load")
     }
 
     #[test]
@@ -7988,11 +8248,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8038,11 +8294,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8056,7 +8308,7 @@ mod tests {
     }
 
     #[test]
-    fn store_roots_pending_index_drops_profile_and_seeds_roots() {
+    fn metadata_pending_index_seeds_roots() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8071,13 +8323,9 @@ mod tests {
         {
             let mut conn = Connection::open(&index_path).expect("index DB should reopen");
             let tx = conn.transaction().expect("transaction should start");
-            tx.execute(
-                "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
-                params![],
-            )
-            .expect("legacy profile column should add");
-            insert_database_profile_history_marker(&tx).expect("profile marker should insert");
-            tx.commit().expect("profile migration should commit");
+            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_METADATA)
+                .expect("metadata marker should insert");
+            tx.commit().expect("metadata marker should commit");
         }
         let service = VfsService::new(index_path.clone(), databases_dir);
 
@@ -8099,11 +8347,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8117,7 +8361,7 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_033_index_applies_profile_drop_noop() {
+    fn mainnet_033_index_applies_database_metadata_migration() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8137,11 +8381,7 @@ mod tests {
             .expect("mainnet 033 index should apply profile-drop noop");
 
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8152,6 +8392,53 @@ mod tests {
             1
         );
         assert_eq!(database_profile_column_count(&index_path), 0);
+    }
+
+    #[test]
+    fn legacy_profile_latest_index_applies_database_metadata_only() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        write_legacy_profile_latest_schema(&index_path, &test_cycles_billing_config());
+        let service = VfsService::new(index_path.clone(), root.join("databases"));
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("legacy profile latest index should apply metadata migration");
+
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE
+            ),
+            1
+        );
+        for column in ["name", "description", "llm_summary", "tags_json"] {
+            assert_eq!(table_column_count(&index_path, "databases", column), 1);
+            assert_eq!(
+                table_column_count(&index_path, "market_listings", column),
+                0
+            );
+        }
     }
 
     #[test]
@@ -8184,11 +8471,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8234,11 +8517,7 @@ mod tests {
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(
@@ -8289,11 +8568,7 @@ mod tests {
             0
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
             1
         );
         assert_eq!(database_profile_column_count(&index_path), 0);
@@ -8913,9 +9188,11 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
-                          schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'workspace', COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
+                         (database_id, name, description, llm_summary, tags_json, db_file_name,
+                          mount_id, active_mount_id, status, schema_version, logical_size_bytes,
+                          created_at_ms, updated_at_ms)
+                         VALUES (?1, ?1, '', NULL, '[]', 'workspace', COALESCE(?3, 0), ?3, ?2,
+                                 ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9010,9 +9287,10 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
-                          schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
+                         (database_id, name, description, llm_summary, tags_json, db_file_name,
+                          mount_id, active_mount_id, status, schema_version, logical_size_bytes,
+                          created_at_ms, updated_at_ms)
+                         VALUES (?1, ?1, '', NULL, '[]', 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9497,9 +9775,10 @@ mod tests {
             .write_index(|tx| {
                 tx.execute(
                     "INSERT INTO databases
-                     (database_id, name, db_file_name, mount_id, active_mount_id, status,
-                      schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                     VALUES (?1, ?1, 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                     (database_id, name, description, llm_summary, tags_json, db_file_name,
+                      mount_id, active_mount_id, status, schema_version, logical_size_bytes,
+                      created_at_ms, updated_at_ms)
+                     VALUES (?1, ?1, '', NULL, '[]', 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
                     params![
                         database_id,
                         i64::from(mount_id),

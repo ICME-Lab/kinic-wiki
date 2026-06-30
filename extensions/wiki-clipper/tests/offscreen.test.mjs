@@ -339,6 +339,9 @@ test("listWritableDatabases returns active writable database summaries", async (
       {
         databaseId: "team-db",
         name: "Team Wiki",
+        description: "",
+        llmSummary: null,
+        tagsJson: "[]",
         role: "Writer",
         status: "Active",
         logicalSizeBytes: "0",
@@ -379,6 +382,12 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
           {
             database_id: databaseId,
             name: "Team DB",
+            metadata: [{
+              name: "Team DB",
+              description: "",
+              llm_summary: [],
+              tags_json: "[]"
+            }],
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
@@ -406,6 +415,12 @@ function rawDatabase(databaseId, name, role, status) {
   return {
     database_id: databaseId,
     name,
+    metadata: [{
+      name,
+      description: "",
+      llm_summary: [],
+      tags_json: "[]"
+    }],
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,

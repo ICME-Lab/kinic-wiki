@@ -9,7 +9,7 @@ Turn evidence source material into review-ready wiki updates under the canister-
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
 3. Decide whether the source should also be persisted under `/Sources/...`.
-4. Read existing wiki context with `read-node-context` by starting from `/Knowledge/index.md` and the canonical role-matched notes before broad search.
+4. Read existing wiki context with `query_context` when Store API/tool access is available. Use `read-node-context` only when `/Knowledge/index.md` navigation, catalog staleness, or link-aware context is needed.
    - If `/Knowledge/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
    - For wiki-only inspection or edits, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless evidence source material is explicitly needed.
@@ -17,13 +17,47 @@ Turn evidence source material into review-ready wiki updates under the canister-
 7. Edit `/Knowledge/...` directly through `kinic-vfs-cli` remote VFS commands.
    - Authenticated CLI writes default to Internet Identity via `icp identity default`.
    - Use `--allow-non-ii-identity` only when the user explicitly chooses a PEM or other non-II operator identity.
-8. When a reorganization needs explicit removal of obsolete `/Knowledge/...` page groups, inspect the target first with `list-nodes --prefix <path> --recursive --json`, report the count, then use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
+8. When a reorganization needs explicit removal of obsolete `/Knowledge/...` page groups, inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`, report the count, then use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
 9. If a relevant `log.md` exists or the user asks for logging, update it for every page creation, deletion, or edit done in the workflow. Do not create `log.md` by default.
 10. When appending to `log.md`, read only the recent tail first, for example `tail -n 5`, unless a longer window is clearly needed.
 11. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
 12. Keep `/Knowledge/index.md` navigable for new page creation and deletion. Do not create folders or scope indexes by default. Run `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Use `rebuild-index` only for broad repair. Skip rebuilds for routine small edits.
 13. Stop at review-ready unless the user explicitly asks for push.
 14. If the user wants an OKF bundle after the wiki structure is ready, hand off to `kinic-context-pack`; do not export as an ingest side effect.
+
+## Read Strategy
+
+1. Prefer `query_context` for source/wiki context collection when Store API or tool access is available.
+2. Use `list-nodes --prefix <path> --recursive --limit 100 --json` when only path inventory, node kind, or overwrite etags are needed.
+3. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to narrow candidate wiki pages before reading full bodies.
+4. Use `query-sql` for known-path multi-node reads from `fs_nodes`, including bulk ingest overwrite checks. If 2 or more known paths need bodies, default to one `query-sql` read instead of looping `read-node`.
+5. Use `export_snapshot` only through Store API/tool access when setup needs a whole `/Knowledge/...` scope. It is not a normal CLI command.
+6. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+7. Use `read-node --json` or `read-node --fields path,kind,etag,content` for a single mutation-adjacent final check.
+8. Use `read-node-context` only for link-aware catalog/navigation context, not for ordinary body reads or structure inventory.
+
+## DB Metadata Refresh
+
+Use this workflow when the user asks to improve DB discovery, public retrieval, or public memory metadata. This workflow updates only database metadata; it does not edit folder, source, or node metadata.
+
+1. Read current metadata with `kinic-vfs-cli database list --json`.
+2. Read `/Knowledge/index.md` only when catalog/navigation context is needed, then major linked `/Knowledge/**/index.md` pages and a small set of representative source/wiki nodes. Prefer `query_context`, search preview, or `query-sql` before direct single-node reads.
+3. Generate one candidate JSON object:
+
+```json
+{
+  "name": "Existing name unless clearly weak",
+  "description": "Short human-facing DB purpose.",
+  "llm_summary": "Retrieval summary for LLM database selection and FTS search planning.",
+  "tags_json": "[\"specific-tag\",\"retrieval-term\"]"
+}
+```
+
+4. Keep `description` to one paragraph and 80-180 characters. Explain what the DB is for; do not list many search terms.
+5. Keep `llm_summary` longer than `description` and non-duplicative. Include answerable question types, representative paths or domains, useful search terms, and explicit out-of-scope content. Assume public retrieval uses canister FTS.
+6. Keep `tags_json` as a JSON string array of 5-15 short strings. Prefer lowercase kebab-case English terms. Add a few Japanese tags only when the DB is primarily Japanese or Japanese query terms matter.
+7. Show the candidate and the current metadata diff. Do not save it until the user explicitly approves.
+8. After approval, write the candidate to a local JSON file and run `kinic-vfs-cli database metadata <database-id> --input <metadata.json>`. Use `--json` when machine-readable confirmation is useful.
 
 ## LLM Wiki Scope Setup
 
@@ -65,7 +99,7 @@ Use this workflow when ingesting many local files, for example 10 or more eviden
 1. Normalize every evidence source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
 2. Build the full write set before mutating remote state: evidence sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
 3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
-4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
+4. Set `expected_etag` for overwrites by reading current nodes first. Use `list-nodes` for inventory and `query-sql` or `export_snapshot` for narrow or scoped body checks. If 2 or more existing nodes need body checks, default to `query-sql`. Use `None` only for new nodes.
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
 
@@ -73,14 +107,14 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 ## Working Rules
 
-- Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, trust model, and current role mapping.
-- Runtime `facts.md` extraction policy follows [docs/STORE_API.md](../../docs/STORE_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
+- Use the note-role rules in this file as the installed-skill trust model. When this skill runs inside the repo and `docs/STORE_API.md` is available, use that file for current repo-local note names and role refinements.
+- Runtime `facts.md` extraction follows the note-role rules in this file, with repo-local refinements from `docs/STORE_API.md` only when that file is available.
 - Treat local `/Knowledge/...` content as the human review surface.
 - Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Knowledge/...` is ready.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
 - Reuse existing pages when possible instead of minting near-duplicates.
-- Preserve note-role boundaries from `STORE_API.md` before adding new lines to any structured note.
+- Preserve note-role boundaries before adding new lines to any structured note.
 - Put settled stable attributes, exact resolved values, current values, selected options, and stable relationship-duration in `facts.md`.
 - Use `events.md` for chronology-only completed event entries, `plans.md` for future / pending / next action, and `summary.md` for recap only.
 - Treat `facts.md` as an exact stable fact note, not a conversation residue note.
@@ -100,9 +134,11 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Keep existing `log.md` pages in sync with every page mutation.
 - Keep `log.md` append-only so recent context can be read with `tail -n 5`.
 - Do not hide push behind kinic-wiki-ingest.
-- Preserve structured note roles from `STORE_API.md` while ingesting.
+- Preserve structured note roles while ingesting.
 - When source material is noisy, prefer omission over polluting structured notes with low-confidence pseudo-facts.
 - When a contradiction appears, preserve it in the canonical open-question area rather than silently normalizing it into a fact note.
+- For DB metadata, keep `description` as the short human/DB-picker surface and `llm_summary` as the longer retrieval-planning surface. Do not let them become near-duplicates.
+- Never update DB metadata as an implicit side effect of ordinary ingest. Metadata refresh needs a user-visible candidate and explicit approval.
 
 ## Routing Examples
 
@@ -125,16 +161,22 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Default conversation wiki path: `/Knowledge/<llm-generated-title>.md`
 - Wiki target root: `/Knowledge/...`
 - Preferred primitives:
+  - Store API/tool preferred entrypoint: `query_context`
+  - Store API/tool scope reads: `export_snapshot`, `fetch_updates`
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
+  - DB metadata updates: CLI `database metadata <database-id> --input <metadata.json> [--json]`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
-  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Search previews: pass `--preview-mode content-start` when candidate snippets can avoid full reads.
+  - Multi-node reads: use `query-sql` for prepared known-path reads from `fs_nodes`; 2 or more known paths should use `query-sql` by default. Use `export_snapshot` through Store API/tool access for whole-scope reads.
+  - Link-aware reads: use `read-node-context` only for catalog/navigation context, not for normal body reads or structure inventory.
   - Multi-node edits: use `write-nodes` only for prepared full-body replacements; otherwise build a path list, read etags, and run etag-aware per-node edits
 - Delete semantics:
   - `delete-node`: delete one node path
-  - `delete-tree`: delete real node paths under a prefix, deepest-first; inspect first with `list-nodes --prefix <path> --recursive --json`
+  - `delete-tree`: delete real node paths under a prefix, deepest-first; inspect first with `list-nodes --prefix <path> --recursive --limit 100 --json`
 - Listing semantics:
   - `list-children`: one-level tree or UI navigation
-  - `list-nodes --prefix <path> --recursive`: bulk repair, lint, inventory, and destructive operation review
+  - `list-nodes --prefix <path> --recursive --limit 100`: bulk repair, lint, inventory, and destructive operation review
 - `log.md` rule:
   - do not create it by default
   - if it exists or the user asks for logging, read only the recent tail before appending unless more history is needed

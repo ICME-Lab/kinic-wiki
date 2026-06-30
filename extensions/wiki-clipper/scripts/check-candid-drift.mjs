@@ -10,14 +10,24 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
   DatabaseStatus: { kind: "variant", fields: { Active: "null", Deleted: "null", Pending: "null" } },
+  DatabaseMetadata: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text"
+    }
+  },
   DatabaseSummary: {
     kind: "record",
     fields: {
       status: "DatabaseStatus",
-      name: "text",
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
+      name: "text",
+      metadata: "opt DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
@@ -183,7 +193,7 @@ function normalizeDidResult(value) {
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_28") return "ResultMkdirNode";
   if (normalized === "Result_33") return "ResultNode";
-  if (normalized === "Result_41") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_42") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

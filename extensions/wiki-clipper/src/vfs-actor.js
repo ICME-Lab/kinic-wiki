@@ -21,12 +21,19 @@ function idlFactory({ IDL: idl }) {
     Deleted: idl.Null,
     Pending: idl.Null
   });
+  const DatabaseMetadata = idl.Record({
+    name: idl.Text,
+    description: idl.Text,
+    llm_summary: idl.Opt(idl.Text),
+    tags_json: idl.Text
+  });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
-    name: idl.Text,
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
+    name: idl.Text,
+    metadata: idl.Opt(DatabaseMetadata),
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
@@ -142,14 +149,19 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || "")
+    name: String(raw.name)
   };
 }
 
 function normalizeDatabaseSummary(raw) {
+  const metadata = Array.isArray(raw.metadata) ? raw.metadata[0] : null;
+  if (!metadata) throw new Error("Database metadata is required");
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || ""),
+    name: String(metadata.name),
+    description: String(metadata.description),
+    llmSummary: metadata.llm_summary[0] ? String(metadata.llm_summary[0]) : null,
+    tagsJson: String(metadata.tags_json),
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),

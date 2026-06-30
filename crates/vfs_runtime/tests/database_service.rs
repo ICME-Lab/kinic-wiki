@@ -18,7 +18,8 @@ use vfs_types::{
     MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
     SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
-    SourceRunSessionCheckRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
+    WriteSourceForGenerationRequest,
 };
 
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
@@ -123,10 +124,6 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
         payout_principal: "aaaaa-aa".to_string(),
-        title: "Team database".to_string(),
-        description: "Reusable team knowledge base".to_string(),
-        llm_summary: None,
-        tags_json: "[]".to_string(),
         price_e8s,
     }
 }
@@ -276,11 +273,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:034_database_profile"),
-        1
-    );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:035_drop_database_profile"),
+        schema_migration_count(&root, "database_index:034_database_metadata"),
         1
     );
     assert_eq!(
@@ -311,25 +304,84 @@ fn mainnet_011_index_upgrades_to_latest() {
         "database_restore_chunks_database_id_idx"
     ));
     assert!(!column_exists(&root, "databases", "snapshot_hash"));
-    assert!(!column_exists(&root, "databases", "archived_at_ms"));
+    assert!(column_exists(&root, "databases", "archived_at_ms"));
     assert!(!column_exists(&root, "databases", "restore_size_bytes"));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 #[test]
-fn mainnet_011_index_with_archive_restore_status_rejects_latest_migration() {
-    let dir = tempdir().expect("tempdir should create");
-    let root = dir.keep();
-    let index_path = root.join("index.sqlite3");
-    write_mainnet_011_index_schema(&index_path, "archived");
+fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_name() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("listed-migration", "seller", 1)
+        .expect("listed database should create");
+    service
+        .create_database("unlisted-migration", "seller", 2)
+        .expect("unlisted database should create");
+    let fixture_conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    fixture_conn
+        .execute_batch(
+            "
+            DELETE FROM schema_migrations
+             WHERE version IN (
+               'database_index:034_database_metadata',
+               'database_index:036_rename_url_ingest_trigger_sessions',
+               'database_index:037_drop_archive_restore_lifecycle'
+             );
+            ALTER TABLE market_listings ADD COLUMN title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN description TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN llm_summary TEXT;
+            ALTER TABLE market_listings ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+            UPDATE databases
+               SET name = 'Old DB Name'
+             WHERE database_id = 'listed-migration';
+            UPDATE databases
+               SET name = 'Unlisted DB Name'
+             WHERE database_id = 'unlisted-migration';
+            INSERT INTO market_listings
+              (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
+               revision, purchase_count, report_count, created_at_ms, updated_at_ms,
+               title, description, llm_summary, tags_json)
+            VALUES
+              ('listing-old', 'seller', 'aaaaa-aa', 'listed-migration', 100, 'active',
+               0, 0, 0, 10, 20,
+               'Published Listing Title', 'Published Description', 'Published Summary',
+               '[\"published\"]');
+            ",
+        )
+        .expect("old listing metadata fixture should insert");
+    drop(fixture_conn);
 
-    let service = VfsService::new(index_path, root.join("databases"));
-    let error = service
+    service
         .run_index_migrations()
-        .expect_err("archive/restore lifecycle migration should reject legacy status");
+        .expect("metadata migration should rerun");
 
-    assert!(error.contains("archive/restore lifecycle is no longer supported"));
-    assert!(error.contains("db_existing"));
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let listed: (String, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT name, description, llm_summary, tags_json
+             FROM databases
+             WHERE database_id = 'listed-migration'",
+            params![],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("listed metadata should load");
+    let unlisted_name: String = conn
+        .query_row(
+            "SELECT name
+             FROM databases
+             WHERE database_id = 'unlisted-migration'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("unlisted name should load");
+
+    assert_eq!(listed.0, "Published Listing Title");
+    assert_eq!(listed.1, "Published Description");
+    assert_eq!(listed.2.as_deref(), Some("Published Summary"));
+    assert_eq!(listed.3, r#"["published"]"#);
+    assert_eq!(unlisted_name, "Unlisted DB Name");
+    assert!(!column_exists(&root, "market_listings", "title"));
 }
 
 fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
@@ -1845,7 +1897,7 @@ fn database_create_returns_generated_id_and_name() {
 
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
-    assert_eq!(result.name, "Team skills");
+    assert_eq!(result.metadata.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &result.database_id), 0);
     assert_eq!(
@@ -1869,7 +1921,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         .expect("pending database should create");
 
     assert!(pending.database_id.starts_with("db_"));
-    assert_eq!(pending.name, "Pending");
+    assert_eq!(pending.metadata.name, "Pending");
     assert_eq!(database_member_count(&root, &pending.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
     assert_eq!(
@@ -1966,7 +2018,7 @@ fn pending_database_creation_omits_removed_internal_profile() {
         )
         .expect("stale profile column count should load");
 
-    assert_eq!(pending.name, "Agent Memory");
+    assert_eq!(pending.metadata.name, "Agent Memory");
     assert_eq!(summaries[0].database_id, pending.database_id);
     assert_eq!(
         pending_database_activation_row(&root, &pending.database_id),
@@ -2551,7 +2603,7 @@ fn cycles_history_paginates_with_clamped_limits() {
 }
 
 #[test]
-fn database_rename_requires_owner() {
+fn database_metadata_update_requires_owner() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2561,17 +2613,44 @@ fn database_rename_requires_owner() {
         .expect("writer should grant");
 
     let error = service
-        .rename_database("alpha", "writer", "Writer rename", 3)
-        .expect_err("writer should not rename");
+        .update_database_metadata(
+            "writer",
+            UpdateDatabaseMetadataRequest {
+                database_id: "alpha".to_string(),
+                name: "Writer metadata".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            3,
+        )
+        .expect_err("writer should not update metadata");
     assert!(error.contains("required database role"));
 
     service
-        .rename_database("alpha", "owner", " Owner rename ", 4)
-        .expect("owner should rename");
+        .update_database_metadata(
+            "owner",
+            UpdateDatabaseMetadataRequest {
+                database_id: "alpha".to_string(),
+                name: " Owner metadata ".to_string(),
+                description: "Owner description".to_string(),
+                llm_summary: Some("Owner summary".to_string()),
+                tags_json: "[\"owner\"]".to_string(),
+            },
+            4,
+        )
+        .expect("owner should update metadata");
     let summaries = service
         .list_database_summaries_for_caller("owner")
         .expect("summaries should load");
-    assert_eq!(summaries[0].name, "Owner rename");
+    let metadata = summaries[0]
+        .metadata
+        .as_ref()
+        .expect("database summary should include metadata");
+    assert_eq!(metadata.name, "Owner metadata");
+    assert_eq!(metadata.description, "Owner description");
+    assert_eq!(metadata.llm_summary.as_deref(), Some("Owner summary"));
+    assert_eq!(metadata.tags_json, "[\"owner\"]");
     let row = database_index_row(&root, "alpha");
     assert_eq!(row.0, "active");
 }
@@ -3020,6 +3099,74 @@ fn isolates_nodes_between_databases() {
 
     assert_eq!(alpha.content, "alpha body");
     assert!(beta_hits.is_empty());
+}
+
+#[test]
+fn write_node_preserves_metadata_json() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("alpha should create");
+    ensure_parent_folders(&service, "owner", "alpha", "/Wiki/project/facts.md", 9);
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/facts.md".to_string(),
+                kind: NodeKind::File,
+                content: "Stable fact from /Sources/raw/web/source.md".to_string(),
+                metadata_json: r#"{"okf_type":"Question","source_refs":[{"path":"/Sources/raw/web/source.md"}]}"#.to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("write should succeed");
+    let node = service
+        .read_node("alpha", "owner", "/Wiki/project/facts.md")
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert!(node.metadata_json.contains(r#""okf_type":"Question""#));
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/manual.md".to_string(),
+                kind: NodeKind::File,
+                content: "Manual decision".to_string(),
+                metadata_json: r#"{"custom":"value"}"#.to_string(),
+                expected_etag: None,
+            },
+            11,
+        )
+        .expect("explicit metadata should be accepted");
+    let manual = service
+        .read_node("alpha", "owner", "/Wiki/project/manual.md")
+        .expect("manual read should succeed")
+        .expect("manual node should exist");
+    assert_eq!(manual.metadata_json, r#"{"custom":"value"}"#);
+    let moved = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Wiki/project/manual.md".to_string(),
+                to_path: "/Wiki/project/moved.md".to_string(),
+                expected_etag: Some(manual.etag),
+                overwrite: false,
+            },
+            12,
+        )
+        .expect("move should preserve metadata");
+    let moved_node = service
+        .read_node("alpha", "owner", "/Wiki/project/moved.md")
+        .expect("moved read should succeed")
+        .expect("moved node should exist");
+    assert_eq!(moved.node.etag, moved_node.etag);
+    assert_eq!(moved_node.metadata_json, r#"{"custom":"value"}"#);
 }
 
 #[test]
@@ -3517,10 +3664,6 @@ fn market_listing_payout_principal_is_saved_updated_and_validated() {
                 listing_id: listing.listing_id.clone(),
                 expected_revision: listing.revision,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: listing.title,
-                description: listing.description,
-                llm_summary: listing.llm_summary,
-                tags_json: listing.tags_json,
                 price_e8s: listing.price_e8s,
             },
             3,
@@ -3669,7 +3812,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let row_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1",
+            "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1",
             1,
         )
         .expect_err("oversized index SQL row should reject");
@@ -3677,7 +3820,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let response_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) LIMIT 5",
+            "SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) LIMIT 5",
             5,
         )
         .expect_err("oversized index SQL response should reject");
@@ -4183,7 +4326,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                 database_id: "size-sql-db".to_string(),
                 path: "/Knowledge/too-large.md".to_string(),
                 kind: NodeKind::File,
-                content: "x".repeat(66 * 1024),
+                content: "x".repeat(270 * 1024),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -4221,7 +4364,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                     database_id: "size-sql-db".to_string(),
                     path: format!("/Knowledge/large-{index}.md"),
                     kind: NodeKind::File,
-                    content: "x".repeat(60 * 1024),
+                    content: "x".repeat(220 * 1024),
                     metadata_json: "{}".to_string(),
                     expected_etag: None,
                 },
@@ -4239,6 +4382,41 @@ fn database_sql_json_rejects_oversized_row_and_response() {
         )
         .expect_err("oversized response should reject");
     assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn database_sql_json_accepts_mcp_sized_multibyte_content() {
+    let service = service();
+    service
+        .create_database("multibyte-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "multibyte-sql-db".to_string(),
+                path: "/Knowledge/japanese.md".to_string(),
+                kind: NodeKind::File,
+                content: "あ".repeat(40_000),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("multibyte node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "multibyte-sql-db",
+            "owner",
+            "SELECT json_object('content', substr(content, 1, 40000), 'content_truncated', length(content) > 40000) FROM fs_nodes WHERE path = '/Knowledge/japanese.md' LIMIT 1",
+            1,
+        )
+        .expect("MCP-sized multibyte row should fit SQL JSON row limit");
+
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.rows[0].contains("\"content_truncated\":0"));
 }
 
 #[test]
@@ -4676,76 +4854,128 @@ fn market_purchase_applies_from_snapshot_when_listing_row_disappears_during_ledg
 }
 
 #[test]
-fn market_listing_description_allows_newlines() {
+fn database_metadata_description_allows_newlines() {
     let service = service();
     service
-        .create_database("multiline-market", "seller", 1)
+        .create_database("multiline-metadata", "seller", 1)
         .expect("database should create");
 
-    let mut create = market_listing_request("multiline-market", 250);
-    create.description = "Line one\nLine two\r\n\tIndented".to_string();
-    create.llm_summary = Some("Summary one\nSummary two".to_string());
-    let listing = service
-        .market_create_listing("seller", create, 2)
-        .expect("multiline description should create");
-    assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
-    assert_eq!(
-        listing.llm_summary,
-        Some("Summary one\nSummary two".to_string())
-    );
-
-    let updated = service
-        .market_update_listing(
+    let metadata = service
+        .update_database_metadata(
             "seller",
-            MarketUpdateListingRequest {
-                listing_id: listing.listing_id,
-                expected_revision: listing.revision,
-                payout_principal: "aaaaa-aa".to_string(),
-                title: "Updated market DB".to_string(),
-                description: "Updated one\nUpdated two".to_string(),
-                llm_summary: Some("Updated summary\nSecond line".to_string()),
+            UpdateDatabaseMetadataRequest {
+                database_id: "multiline-metadata".to_string(),
+                name: "Multiline metadata".to_string(),
+                description: "Line one\nLine two\r\n\tIndented".to_string(),
+                llm_summary: Some("Summary one\nSummary two".to_string()),
                 tags_json: "[]".to_string(),
-                price_e8s: 300,
             },
-            3,
+            2,
         )
-        .expect("multiline description should update");
-    assert_eq!(updated.description, "Updated one\nUpdated two");
+        .expect("multiline metadata should update");
+    assert_eq!(metadata.description, "Line one\nLine two\r\n\tIndented");
     assert_eq!(
-        updated.llm_summary,
-        Some("Updated summary\nSecond line".to_string())
+        metadata.llm_summary,
+        Some("Summary one\nSummary two".to_string())
     );
 }
 
 #[test]
-fn market_listing_description_rejects_non_whitespace_control_characters() {
+fn database_metadata_rejects_non_whitespace_control_characters() {
     let service = service();
     service
-        .create_database("control-market", "seller", 1)
+        .create_database("control-metadata", "seller", 1)
         .expect("database should create");
 
-    let mut bad_description = market_listing_request("control-market", 250);
-    bad_description.description = "bad\0description".to_string();
     let description_error = service
-        .market_create_listing("seller", bad_description, 2)
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "Control metadata".to_string(),
+                description: "bad\0description".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            2,
+        )
         .expect_err("NUL in description should be rejected");
-    assert!(
-        description_error.contains("market listing description may not contain control characters")
-    );
+    assert!(description_error.contains("database description may only contain newline"));
 
-    let mut bad_title = market_listing_request("control-market", 250);
-    bad_title.title = "bad\ntitle".to_string();
-    let title_error = service
-        .market_create_listing("seller", bad_title, 3)
-        .expect_err("title newline should be rejected");
-    assert!(title_error.contains("market listing title may not contain control characters"));
+    let name_error = service
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "bad\nname".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            3,
+        )
+        .expect_err("name newline should be rejected");
+    assert!(name_error.contains("database name may not contain control characters"));
 
-    let mut bad_tags = market_listing_request("control-market", 250);
-    bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
     let tags_error = service
-        .market_create_listing("seller", bad_tags, 4)
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "Control metadata".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[\"bad\ntag\"]".to_string(),
+            },
+            4,
+        )
         .expect_err("tags newline should be rejected");
-    assert!(tags_error.contains("market listing tags may not contain control characters"));
+    assert!(tags_error.contains("database tags may not contain control characters"));
+}
+
+#[test]
+fn database_metadata_rejects_invalid_tags_json() {
+    let service = service();
+    service
+        .create_database("tags-metadata", "seller", 1)
+        .expect("database should create");
+
+    for (tags_json, expected) in [
+        (
+            "{\"tag\":\"not-array\"}",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", 1]",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", \" \"]",
+            "database tags_json must not contain empty tags",
+        ),
+        (
+            "[\"bad\\ntag\"]",
+            "database tags_json must not contain control characters",
+        ),
+    ] {
+        let error = service
+            .update_database_metadata(
+                "seller",
+                UpdateDatabaseMetadataRequest {
+                    database_id: "tags-metadata".to_string(),
+                    name: "Tags metadata".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: tags_json.to_string(),
+                },
+                2,
+            )
+            .expect_err("invalid tags_json should be rejected");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?} in {error:?}"
+        );
+    }
 }
 
 #[test]
@@ -4915,10 +5145,6 @@ fn market_listing_owner_policy_and_database_listing_query() {
                 listing_id: listing.listing_id.clone(),
                 expected_revision: listing.revision,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: "Updated team database".to_string(),
-                description: "Updated reusable team knowledge base".to_string(),
-                llm_summary: None,
-                tags_json: "[]".to_string(),
                 price_e8s: 150,
             },
             5,
@@ -4932,10 +5158,6 @@ fn market_listing_owner_policy_and_database_listing_query() {
                 listing_id: listing.listing_id,
                 expected_revision: 0,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: "Stale team database".to_string(),
-                description: "Stale reusable team knowledge base".to_string(),
-                llm_summary: None,
-                tags_json: "[]".to_string(),
                 price_e8s: 200,
             },
             6,
@@ -5030,38 +5252,38 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
         .market_list_seller_listings("seller-a", None, 1)
         .expect("seller listings should load");
     assert_eq!(first.listings.len(), 1);
-    assert_eq!(first.listings[0].seller_principal, "seller-a");
+    assert_eq!(first.listings[0].listing.seller_principal, "seller-a");
     assert!(first.next_cursor.is_some());
 
     let second = service
         .market_list_seller_listings("seller-a", first.next_cursor, 10)
         .expect("second seller page should load");
     assert_eq!(second.listings.len(), 1);
-    assert_eq!(second.listings[0].seller_principal, "seller-a");
-    assert_ne!(second.listings[0].listing_id, stale.listing_id);
+    assert_eq!(second.listings[0].listing.seller_principal, "seller-a");
+    assert_ne!(second.listings[0].listing.listing_id, stale.listing_id);
     assert!(second.next_cursor.is_none());
 
     let all = [first.listings, second.listings].concat();
     assert_eq!(all.len(), 2);
     assert!(
         all.iter()
-            .all(|listing| listing.seller_principal == "seller-a")
+            .all(|view| view.listing.seller_principal == "seller-a")
     );
     assert!(
         all.iter()
-            .all(|listing| listing.status == MarketListingStatus::Active)
+            .all(|view| view.listing.status == MarketListingStatus::Active)
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-b-one")
+            .any(|view| view.listing.database_id == "seller-b-one")
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-a-paused")
+            .any(|view| view.listing.database_id == "seller-a-paused")
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-a-stale-owner")
+            .any(|view| view.listing.database_id == "seller-a-stale-owner")
     );
 }
 
@@ -5142,7 +5364,8 @@ fn market_listing_detail_returns_verified_preview() {
         .market_get_listing("2vxsx-fae", &listing.listing_id)
         .expect("anonymous should read public listing preview");
 
-    assert_eq!(detail.listing.listing_id, listing.listing_id);
+    assert_eq!(detail.listing.listing.listing_id, listing.listing_id);
+    assert_eq!(detail.listing.database_metadata.name, "preview-market");
     assert!(detail.verified_stats.total_nodes >= 5);
     assert!(detail.verified_stats.wiki_nodes >= 4);
     assert_eq!(detail.verified_stats.source_nodes, 1);
@@ -5207,6 +5430,61 @@ fn market_listing_detail_returns_verified_preview() {
             .any(|edge| edge.source_path == "/Knowledge/alpha/a.md"
                 && edge.target_path == "/Knowledge/beta/b.md")
     );
+}
+
+#[test]
+fn market_listing_detail_rejects_unavailable_database_metadata() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("archived-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("archived-market", 100), 2)
+        .expect("listing should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET status = 'archived' WHERE database_id = 'archived-market'",
+        [],
+    )
+    .expect("database should archive");
+
+    let error = service
+        .market_get_listing("seller", &listing.listing_id)
+        .expect_err("archived database metadata should not be synthesized");
+
+    assert!(error.contains("database is archived"));
+}
+
+#[test]
+fn market_listing_database_name_for_consent_does_not_open_preview_store() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("consent-title-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("consent-title-market", 100),
+            2,
+        )
+        .expect("listing should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET db_file_name = ?2 WHERE database_id = ?1",
+        params!["consent-title-market", root.to_string_lossy().as_ref()],
+    )
+    .expect("db file path should update");
+    drop(conn);
+
+    let title = service
+        .market_listing_database_name_for_consent(&listing.listing_id)
+        .expect("consent title should load from index metadata only");
+    assert_eq!(title, "consent-title-market");
+
+    let detail_error = service
+        .market_get_listing("2vxsx-fae", &listing.listing_id)
+        .expect_err("listing detail should still require preview store access");
+    assert!(!detail_error.is_empty());
 }
 
 #[test]

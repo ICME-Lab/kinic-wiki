@@ -60,8 +60,8 @@ const MARKETPLACE_PREVIEW_NODE_LIMIT: i64 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
-const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
-const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_ROW_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_RESPONSE_BYTES_MAX: usize = 1024 * 1024;
 const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
 const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
 const SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "database SQL execution budget exceeded";
@@ -220,9 +220,14 @@ impl FsStore {
 
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
+        let limit = capped_list_nodes_limit(request.limit);
         self.read_conn(|conn| {
-            let rows = load_scoped_entry_rows(conn, &prefix)?;
-            Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
+            let rows = load_scoped_entry_rows(conn, &prefix, request.recursive.then_some(limit))?;
+            let mut entries = build_entries_from_rows(&rows, &prefix, request.recursive);
+            if !request.recursive {
+                entries.truncate(limit as usize);
+            }
+            Ok(entries)
         })
     }
 
@@ -556,7 +561,7 @@ impl FsStore {
             .unwrap_or_else(|| "/".to_string());
         let node_type = request.node_type.unwrap_or(GlobNodeType::Any);
         self.read_conn(|conn| {
-            let rows = load_scoped_entry_rows(conn, &prefix)?;
+            let rows = load_scoped_entry_rows(conn, &prefix, None)?;
             let entries = build_glob_entries_from_rows(&rows, &prefix);
             let mut hits = Vec::new();
             for entry in entries {
@@ -1313,6 +1318,10 @@ fn parse_target_snapshot_revision(
 
 fn capped_query_limit(requested: u32) -> i64 {
     i64::from(requested.clamp(1, QUERY_RESULT_LIMIT_MAX))
+}
+
+fn capped_list_nodes_limit(requested: u32) -> u32 {
+    requested.clamp(1, QUERY_RESULT_LIMIT_MAX)
 }
 
 fn sync_page_limit(requested: u32) -> Result<i64, String> {

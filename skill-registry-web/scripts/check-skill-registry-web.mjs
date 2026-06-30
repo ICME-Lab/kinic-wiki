@@ -40,8 +40,12 @@ assert.match(types, /DatabaseStatus = "pending" \| "active" \| "deleted"/);
 assert.doesNotMatch(vfsIdl, /Hot: idl\.Null/);
 assert.match(vfsIdl, /Pending: idl\.Null/);
 assert.match(vfsIdl, /Active: idl\.Null/);
+assert.doesNotMatch(vfsIdl, /Restoring: idl\.Null/);
+assert.doesNotMatch(vfsIdl, /Archiving: idl\.Null/);
+assert.doesNotMatch(vfsIdl, /Archived: idl\.Null/);
 assert.match(vfsIdl, /status: DatabaseStatus/);
 assert.match(vfsIdl, /Deleted: idl\.Null/);
+assert.doesNotMatch(vfsIdl, /archived_at_ms: idl\.Opt\(idl\.Int64\)/);
 assert.match(vfsIdl, /deleted_at_ms: idl\.Opt\(idl\.Int64\)/);
 assert.deepEqual(
   checkCandidSubset({
@@ -56,6 +60,9 @@ assert.deepEqual(
 assert.match(vfsClient, /function normalizeDatabaseStatus/);
 assert.match(vfsClient, /"Active" in status/);
 assert.match(vfsClient, /"Pending" in status/);
+assert.doesNotMatch(vfsClient, /"Restoring" in status/);
+assert.doesNotMatch(vfsClient, /"Archiving" in status/);
+assert.doesNotMatch(vfsClient, /"Archived" in status/);
 assert.match(vfsClient, /"Deleted" in status/);
 assert.doesNotMatch(vfsClient, /: "hot"/);
 assert.doesNotMatch(client, /from ["']..\/..\/..\/wikibrowser/);

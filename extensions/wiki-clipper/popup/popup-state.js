@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/popup/popup-state.js
-// What: Pure settings-state helpers for first-run database creation.
-// Why: Popup DOM code needs small testable rules for the no-database path.
+// What: Pure settings-state helpers for first-run database creation and selection.
+// Why: Popup DOM code needs small testable rules for writable database choices.
 export const DEFAULT_DATABASE_NAME = "My Kinic Wiki";
 
 export function databaseOptionLabel(database, sameNameCount = 1) {
@@ -15,9 +15,13 @@ export function databaseOptionLabel(database, sameNameCount = 1) {
 
 export function mergePreferredDatabase(databases, preferredDatabase) {
   const preferredDatabaseId = String(preferredDatabase?.databaseId || preferredDatabase?.database_id || "").trim();
+  const preferredDatabaseName = String(preferredDatabase?.name || "").trim();
   const role = databaseRoleLabel(preferredDatabase?.role);
   const status = databaseStatusLabel(preferredDatabase?.status);
   if (!preferredDatabaseId || databases.some((database) => database.databaseId === preferredDatabaseId)) {
+    return databases;
+  }
+  if (!preferredDatabaseName) {
     return databases;
   }
   if (status !== "Active" || (role !== "Owner" && role !== "Writer")) {
@@ -27,7 +31,7 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
     ...databases,
     {
       databaseId: preferredDatabaseId,
-      name: String(preferredDatabase.name || preferredDatabaseId),
+      name: preferredDatabaseName,
       role,
       status,
       logicalSizeBytes: String(preferredDatabase.logicalSizeBytes || preferredDatabase.logical_size_bytes || "0")

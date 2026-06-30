@@ -397,6 +397,7 @@ fn assert_prefix_scope_with_wildcards(
             database_id: "default".to_string(),
             prefix: prefix.to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("list should succeed")
         .into_iter()
@@ -2100,6 +2101,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("root list should succeed");
     assert_eq!(root_entries.len(), 4);
@@ -2131,6 +2133,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge/nested".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("nested list should succeed");
     assert_eq!(nested_entries.len(), 2);
@@ -2176,6 +2179,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("visible list should succeed");
     assert_eq!(visible_after_delete.len(), 6);
@@ -2200,6 +2204,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("root list after delete should succeed");
     assert!(root_after_delete.iter().any(|entry| {
@@ -2213,6 +2218,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("deleted list should succeed");
     assert_eq!(deleted_entries.len(), 6);
@@ -2222,6 +2228,7 @@ fn list_search_and_export_respect_deleted_and_prefix() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("deleted root list should succeed");
     assert!(deleted_root_entries.iter().any(|entry| {
@@ -2305,6 +2312,41 @@ fn list_search_and_export_respect_deleted_and_prefix() {
     );
     assert_v5_snapshot_revision_without_state_hash(&snapshot.snapshot_revision);
     assert!(beta.starts_with("v4h:"));
+}
+
+#[test]
+fn list_nodes_clamps_and_applies_limit() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Knowledge/a.md", None, 10);
+    write_file(&store, "/Knowledge/b.md", None, 11);
+    write_file(&store, "/Knowledge/c/leaf.md", None, 12);
+
+    let direct = store
+        .list_nodes(ListNodesRequest {
+            database_id: "default".to_string(),
+            prefix: "/Knowledge".to_string(),
+            recursive: false,
+            limit: 2,
+        })
+        .expect("direct list should succeed");
+    assert_eq!(
+        direct
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/Knowledge/a.md", "/Knowledge/b.md"]
+    );
+
+    let recursive = store
+        .list_nodes(ListNodesRequest {
+            database_id: "default".to_string(),
+            prefix: "/Knowledge".to_string(),
+            recursive: true,
+            limit: 0,
+        })
+        .expect("recursive list should succeed");
+    assert_eq!(recursive.len(), 1);
+    assert_eq!(recursive[0].path, "/Knowledge");
 }
 
 #[test]

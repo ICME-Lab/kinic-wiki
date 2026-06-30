@@ -103,6 +103,7 @@ pub(crate) fn load_stored_node(
 pub(crate) fn load_scoped_entry_rows(
     conn: &Connection,
     prefix: &str,
+    limit: Option<u32>,
 ) -> Result<Vec<ScopedEntryRow>, String> {
     let mut sql = String::from(
         "SELECT path, kind, updated_at, etag
@@ -115,6 +116,9 @@ pub(crate) fn load_scoped_entry_rows(
         values.extend(scope_values);
     }
     sql.push_str(" ORDER BY path ASC");
+    if let Some(limit) = limit {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     crate::sqlite::query_map(
         &mut stmt,

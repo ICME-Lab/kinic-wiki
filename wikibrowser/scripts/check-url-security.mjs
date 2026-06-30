@@ -382,7 +382,7 @@ await withEnv(
       bucket: linkPreviewBucket(writes),
       listDatabasesPublic: async (canisterId) => {
         assert.equal(canisterId, "aaaaa-aa");
-        return [{ databaseId: "db_1", name: "Demo DB" }];
+        return [{ databaseId: "db_1", metadata: { name: "Demo DB", description: "" } }];
       },
       renderImage: async (input) => {
         assert.deepEqual(input, {
@@ -401,7 +401,7 @@ await withEnv(
     assert.equal(generatedBody.ok, true);
     assert.equal(generatedBody.key, "db-link-preview/v1/db_1.png");
     assert.equal(generatedBody.databaseId, "db_1");
-    assert.equal(generatedBody.databaseName, "Demo DB");
+    assert.equal(generatedBody.databaseTitle, "Demo DB");
     assert.equal(generatedBody.bytes, 3);
     assert.equal(typeof generatedBody.renderDurationMs, "number");
     assert.equal(writes.length, 1);
@@ -412,7 +412,7 @@ await withEnv(
       cacheControl: "public, max-age=300, s-maxage=86400"
     });
     assert.equal(writes[0].options.customMetadata.databaseId, "db_1");
-    assert.equal(writes[0].options.customMetadata.databaseName, "Demo DB");
+    assert.equal(writes[0].options.customMetadata.databaseTitle, "Demo DB");
     assert.match(writes[0].options.customMetadata.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
     linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest();
   }

@@ -168,6 +168,7 @@ fn list_nodes_scales_to_thousand_entries() {
             database_id: "default".to_string(),
             prefix: "/Knowledge/scale".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("root list should succeed");
     assert_eq!(root_entries.len(), 10);
@@ -182,15 +183,15 @@ fn list_nodes_scales_to_thousand_entries() {
             database_id: "default".to_string(),
             prefix: "/Knowledge/scale".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("recursive list should succeed");
-    assert_eq!(recursive_entries.len(), 1_011);
-    assert_eq!(
+    assert_eq!(recursive_entries.len(), 100);
+    assert_eq!(recursive_entries[0].path, "/Knowledge/scale");
+    assert!(
         recursive_entries
             .iter()
-            .filter(|entry| entry.kind == NodeEntryKind::File)
-            .count(),
-        1_000
+            .any(|entry| entry.kind == NodeEntryKind::File)
     );
 }
 

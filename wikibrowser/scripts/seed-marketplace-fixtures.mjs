@@ -12,7 +12,6 @@ const DEFAULT_ALLOWANCE_E8S = "400_000_000";
 
 const FIXTURES = [
   {
-    name: "Market Seed: AI Research",
     title: "AI Research Notes",
     description: "Curated knowledge notes for model evaluation, retrieval, and prompt ops.",
     tags: ["ai", "research", "popular"],
@@ -31,7 +30,6 @@ const FIXTURES = [
     ]
   },
   {
-    name: "Market Seed: Product Playbook",
     title: "Product Launch Playbook",
     description: "Operational launch checklist with buyer onboarding and market examples.",
     tags: ["product", "recent", "playbook"],
@@ -50,7 +48,6 @@ const FIXTURES = [
     ]
   },
   {
-    name: "Market Seed: Knowledge Graph",
     title: "Knowledge Graph Template",
     description: "Graph-oriented wiki seed with category edges and sample excerpts.",
     tags: ["graph", "template", "excerpt"],
@@ -82,10 +79,20 @@ approveCyclesAllowance(ledgerCanister);
 for (const fixture of FIXTURES) {
   const created = callOk(
     "create_database",
-    candidRecord({ name: candidText(fixture.name) })
+    candidRecord({ name: candidText(fixture.title) })
   );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
+  callOk(
+    "update_database_metadata",
+    candidRecord({
+      database_id: candidText(databaseId),
+      name: candidText(fixture.title),
+      description: candidText(fixture.description),
+      llm_summary: `opt ${candidText(fixture.summary)}`,
+      tags_json: candidText(JSON.stringify(fixture.tags))
+    })
+  );
   callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Knowledge") }));
   writeNodes(databaseId, fixture);
   const listing = callOk(
@@ -93,15 +100,11 @@ for (const fixture of FIXTURES) {
     candidRecord({
       database_id: candidText(databaseId),
       payout_principal: candidText(payoutPrincipal),
-      title: candidText(fixture.title),
-      description: candidText(fixture.description),
-      llm_summary: `opt ${candidText(fixture.summary)}`,
-      tags_json: candidText(JSON.stringify(fixture.tags)),
       price_e8s: `${fixture.priceE8s} : nat64`
     })
   );
   const listingId = extractTextField(listing, "listing_id");
-  console.log(`${listingId}\t${databaseId}\t${extractTextField(listing, "title")}\t${extractNat64Field(listing, "price_e8s")}`);
+  console.log(`${listingId}\t${databaseId}\t${fixture.title}\t${extractNat64Field(listing, "price_e8s")}`);
 }
 
 function fundDatabase(databaseId) {

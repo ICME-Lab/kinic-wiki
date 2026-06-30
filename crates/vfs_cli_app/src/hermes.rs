@@ -203,6 +203,7 @@ async fn approved_skill_ids(
             database_id: database_id.to_string(),
             prefix: root.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?;
     let mut ids = Vec::new();

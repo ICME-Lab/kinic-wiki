@@ -73,6 +73,7 @@ impl VfsApi for SkillMockClient {
                 etag: node.etag.clone(),
                 has_children: false,
             })
+            .take(request.limit as usize)
             .collect())
     }
 
@@ -304,6 +305,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
                 database_id: "default".to_string(),
                 prefix: "/Skills/legal-review/versions".to_string(),
                 recursive: true,
+                limit: 100,
             })
             .await
             .expect("list versions after first upsert")
@@ -366,6 +368,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
             database_id: "default".to_string(),
             prefix: "/Skills/legal-review/versions".to_string(),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("list versions after second upsert");
@@ -419,6 +422,7 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
             database_id: "default".to_string(),
             prefix: "/Skills/legal-review/versions".to_string(),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("list versions after prune");
@@ -678,6 +682,37 @@ async fn skill_record_run_evidence_export_and_correction() {
                 .as_str()
                 .unwrap()
                 .contains(".correction."))
+    );
+}
+
+#[tokio::test]
+async fn export_skill_rejects_limit_sized_listing() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    for index in 0..99 {
+        write_skill_file(
+            &client,
+            "team-db",
+            &format!("/Skills/legal-review/overflow-{index:03}.md"),
+            "overflow",
+        )
+        .await;
+    }
+
+    let error = export_skill(
+        &client,
+        "team-db",
+        "legal-review",
+        &temp.path().join("export"),
+    )
+    .await
+    .expect_err("limit-sized listing should reject");
+
+    assert!(
+        error
+            .to_string()
+            .contains("export may be truncated; list_nodes pagination is required")
     );
 }
 
@@ -1814,6 +1849,7 @@ async fn pbt_remote_package_paths(client: &SkillMockClient, id: &str) -> BTreeSe
             database_id: "team-db".to_string(),
             prefix: format!("/Skills/{id}"),
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("package nodes should list")
@@ -1859,6 +1895,7 @@ async fn assert_single_run_plus_corrections(client: &SkillMockClient, id: &str, 
             database_id: "team-db".to_string(),
             prefix: run_prefix,
             recursive: true,
+            limit: 100,
         })
         .await
         .expect("run entries should list");
