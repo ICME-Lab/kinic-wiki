@@ -6,12 +6,22 @@ Apply small, auditable repairs to existing canister-backed knowledge nodes witho
 
 ## Command Selection
 
-1. Use `read-node --json` or `read-node --fields path,etag,content` to capture current content and etag.
-2. Use `edit-node` for one text replacement in one node.
-3. Use `multi-edit-node` for multiple text replacements in one node.
-4. Use a controlled per-node loop when multiple nodes need edits. `multi-edit-node` is not a multi-node batch command.
-5. Use `write-nodes --input <nodes.json>` when replacing full node bodies as a prepared write set.
-6. If command flags are not already known, run `<command> --help` before mutation.
+1. Use `list-nodes`, search preview, or `query-sql` to build and narrow candidate path sets before full reads.
+2. Use `read-node --json` or `read-node --fields path,etag,content` immediately before mutation to capture current content and etag.
+3. Use `edit-node` for one text replacement in one node.
+4. Use `multi-edit-node` for multiple text replacements in one node.
+5. Use a controlled per-node loop when multiple nodes need edits. `multi-edit-node` is not a multi-node batch command.
+6. Use `write-nodes --input <nodes.json>` when replacing full node bodies as a prepared write set.
+7. If command flags are not already known, run `<command> --help` before mutation.
+
+## Read Strategy
+
+1. Use `list-nodes --prefix <path> --recursive --json` for path inventory and etag-only triage.
+2. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to identify likely matches before full reads.
+3. Use `query-sql` for known-path multi-node reads from `fs_nodes` when checking false positives or preparing full-body replacements.
+4. Use `export_snapshot` only through Store API/tool access when a repair needs a whole scope. It is not a normal CLI command.
+5. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+6. Always re-read each accepted node with `read-node --json` or `read-node --fields path,kind,etag,content` immediately before mutation.
 
 ## `edit-node`
 
@@ -48,9 +58,9 @@ Semantics:
 ## Multi-Node Repair
 
 1. Build the candidate path list with `search-remote`, `search-path-remote`, `glob-nodes`, or `list-nodes`.
-2. Read each candidate and reject false positives before editing.
+2. Use search `--preview-mode content-start` and `query-sql` to reject false positives before editing.
 3. For each accepted node, record `path`, `etag`, match count, and planned command.
-4. Apply `edit-node` or `multi-edit-node` one node at a time with `--expected-etag`.
+4. Re-read each accepted node immediately before mutation, then apply `edit-node` or `multi-edit-node` one node at a time with `--expected-etag`.
 5. Stop on etag mismatch or unexpected replacement count. Re-read the node before retrying.
 6. Verify with a narrow `search-remote` over the affected prefix and representative `read-node`.
 7. Append one compact `log.md` line covering the repair batch and affected path count.

@@ -658,25 +658,16 @@ async fn run_database_command(
             let result = client.create_database(&title).await?;
             println!("{}", result.database_id);
         }
-        DatabaseCommand::Metadata { database_id, title } => {
-            let metadata = client
-                .list_databases()
-                .await?
-                .into_iter()
-                .find(|database| database.database_id == database_id)
-                .map(|database| database.metadata)
-                .ok_or_else(|| {
-                    anyhow!("database not found in current identity list: {database_id}")
-                })?;
-            client
-                .update_database_metadata(UpdateDatabaseMetadataRequest {
-                    database_id,
-                    title,
-                    description: metadata.description,
-                    llm_summary: metadata.llm_summary,
-                    tags_json: metadata.tags_json,
-                })
-                .await?;
+        DatabaseCommand::Metadata {
+            database_id,
+            input,
+            json,
+        } => {
+            let request = read_database_metadata_input(&database_id, &input)?;
+            let metadata = client.update_database_metadata(request).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&metadata)?);
+            }
         }
         DatabaseCommand::List { json } => {
             let databases = client.list_databases().await?;
@@ -1152,6 +1143,65 @@ fn read_write_nodes_file(path: &std::path::Path) -> Result<Vec<WriteNodeItem>> {
         .collect())
 }
 
+fn read_database_metadata_input(
+    database_id: &str,
+    path: &std::path::Path,
+) -> Result<UpdateDatabaseMetadataRequest> {
+    let content = fs::read_to_string(path)?;
+    let input: DatabaseMetadataInput = serde_json::from_str(&content)?;
+    input.into_request(database_id)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatabaseMetadataInput {
+    title: String,
+    description: String,
+    llm_summary: Option<String>,
+    tags_json: String,
+}
+
+impl DatabaseMetadataInput {
+    fn into_request(self, database_id: &str) -> Result<UpdateDatabaseMetadataRequest> {
+        let title = self.title.trim().to_string();
+        if title.is_empty() {
+            return Err(anyhow!("database metadata title must not be empty"));
+        }
+        let tags_json = self.tags_json.trim().to_string();
+        validate_tags_json(&tags_json)?;
+        Ok(UpdateDatabaseMetadataRequest {
+            database_id: database_id.to_string(),
+            title,
+            description: self.description.trim().to_string(),
+            llm_summary: self
+                .llm_summary
+                .and_then(|summary| non_empty_trimmed(summary)),
+            tags_json,
+        })
+    }
+}
+
+fn validate_tags_json(tags_json: &str) -> Result<()> {
+    let tags: Vec<String> = serde_json::from_str(tags_json).map_err(|error| {
+        anyhow!("database metadata tags_json must be a JSON string array: {error}")
+    })?;
+    if tags.iter().any(|tag| tag.trim().is_empty()) {
+        return Err(anyhow!(
+            "database metadata tags_json must not contain empty tags"
+        ));
+    }
+    Ok(())
+}
+
+fn non_empty_trimmed(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WriteNodeInputItem {
@@ -1202,6 +1252,7 @@ mod tests {
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -2214,69 +2265,115 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_metadata_parses_and_calls_client() {
+    async fn database_metadata_reads_input_and_calls_client() {
         let client = MockClient::default();
-        client
-            .database_summaries
-            .lock()
-            .unwrap()
-            .push(DatabaseSummary {
-                database_id: "db_alpha".to_string(),
-                metadata: vfs_types::DatabaseMetadata {
-                    title: "Alpha".to_string(),
-                    description: "Existing description".to_string(),
-                    llm_summary: Some("Existing summary".to_string()),
-                    tags_json: r#"["existing"]"#.to_string(),
-                },
-                status: DatabaseStatus::Active,
-                role: DatabaseRole::Owner,
-                logical_size_bytes: 42,
-                cycles_balance: Some(1_000_000),
-                cycles_suspended_at_ms: None,
-                deleted_at_ms: None,
-            });
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "title": " Alpha metadata ",
+              "description": " Public wiki retrieval metadata. ",
+              "llm_summary": " Search terms and retrieval scope. ",
+              "tags_json": "[\"kinic-wiki\",\"clipper\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Metadata {
                     database_id: "db_alpha".to_string(),
-                    title: "Alpha metadata".to_string(),
+                    input,
+                    json: false,
                 },
             },
         )
         .await
         .expect("database metadata update should succeed");
-        assert_eq!(*client.database_lists.lock().unwrap(), 1);
         let updates = client.metadata_updates.lock().unwrap();
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].database_id, "db_alpha");
         assert_eq!(updates[0].title, "Alpha metadata");
-        assert_eq!(updates[0].description, "Existing description");
-        assert_eq!(updates[0].llm_summary.as_deref(), Some("Existing summary"));
-        assert_eq!(updates[0].tags_json, r#"["existing"]"#);
+        assert_eq!(updates[0].description, "Public wiki retrieval metadata.");
+        assert_eq!(
+            updates[0].llm_summary.as_deref(),
+            Some("Search terms and retrieval scope.")
+        );
+        assert_eq!(updates[0].tags_json, r#"["kinic-wiki","clipper"]"#);
     }
 
     #[tokio::test]
-    async fn database_metadata_rejects_missing_database_summary() {
+    async fn database_metadata_rejects_invalid_tags_json() {
         let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "title": "Alpha",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "{\"tag\":\"not-array\"}"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
         let error = run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Metadata {
-                    database_id: "db_missing".to_string(),
-                    title: "Missing metadata".to_string(),
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
                 },
             },
         )
         .await
-        .expect_err("missing database should reject");
+        .expect_err("invalid tags_json should reject");
 
         assert!(
             error
                 .to_string()
-                .contains("database not found in current identity list: db_missing")
+                .contains("database metadata tags_json must be a JSON string array")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_empty_title() {
+        let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "title": " ",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "[\"alpha\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect_err("empty title should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database metadata title must not be empty")
         );
         assert!(client.metadata_updates.lock().unwrap().is_empty());
     }

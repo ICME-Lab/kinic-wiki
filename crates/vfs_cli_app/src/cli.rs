@@ -74,11 +74,6 @@ pub enum Command {
         #[command(subcommand)]
         command: ContextPackCommand,
     },
-    #[command(about = "Serve read-only Store/Recall tools over local MCP stdio")]
-    Mcp {
-        #[command(subcommand)]
-        command: McpCommand,
-    },
     #[command(about = "Rebuild the full wiki search index")]
     RebuildIndex,
     #[command(about = "Rebuild the search index for one path scope")]
@@ -481,15 +476,6 @@ pub enum ContextPackCommand {
     Inspect(ContextPackLocalArgs),
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum McpCommand {
-    #[command(about = "Start the local read-only MCP stdio server")]
-    Serve {
-        #[arg(long, help = "Target Kinic database for MCP startup access checks")]
-        database_id: Option<String>,
-    },
-}
-
 #[derive(Args, Debug, Clone)]
 pub struct ContextPackExportArgs {
     #[arg(long)]
@@ -670,7 +656,7 @@ impl Command {
                     | HermesCommand::Pull { .. }
                     | HermesCommand::FlushPending { .. }
             ),
-            Self::Codex { .. } | Self::Claude { .. } | Self::Mcp { .. } => false,
+            Self::Codex { .. } | Self::Claude { .. } => false,
             Self::Identity { .. } => true,
             Self::Github { .. }
             | Self::RebuildIndex
@@ -729,8 +715,7 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
-            | Self::Status { .. }
-            | Self::Mcp { .. } => true,
+            | Self::Status { .. } => true,
             Self::Database { .. }
             | Self::Market { .. }
             | Self::Cycles { .. }
@@ -768,15 +753,6 @@ impl Command {
                     command: HermesCommand::Status { .. },
                 }
         )
-    }
-
-    pub fn database_id_override(&self) -> Option<String> {
-        match self {
-            Self::Mcp {
-                command: McpCommand::Serve { database_id },
-            } => database_id.clone(),
-            _ => None,
-        }
     }
 
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
@@ -999,10 +975,11 @@ impl Command {
 mod tests {
     use super::{
         ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
-        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, McpCommand, NodeKindArg,
-        SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
+        SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
+    use std::path::PathBuf;
     use vfs_cli::cli::VfsCommand;
 
     #[test]
@@ -1167,15 +1144,29 @@ mod tests {
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "metadata", "db_alpha", "Alpha"]);
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "metadata",
+            "db_alpha",
+            "--input",
+            "metadata.json",
+            "--json",
+        ]);
         let Command::Database {
-            command: DatabaseCommand::Metadata { database_id, title },
+            command:
+                DatabaseCommand::Metadata {
+                    database_id,
+                    input,
+                    json,
+                },
         } = cli.command
         else {
             panic!("expected database metadata command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(title, "Alpha");
+        assert_eq!(input, PathBuf::from("metadata.json"));
+        assert!(json);
 
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "link", "team-db"]);
         let Command::Database {
@@ -1385,18 +1376,6 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_parses_mcp_serve() {
-        let cli = Cli::parse_from(["kinic-vfs-cli", "mcp", "serve", "--database-id", "db_alpha"]);
-        let Command::Mcp {
-            command: McpCommand::Serve { database_id },
-        } = cli.command
-        else {
-            panic!("expected mcp serve command");
-        };
-        assert_eq!(database_id, Some("db_alpha".to_string()));
-    }
-
-    #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
         let read = Cli::parse_from([
             "kinic-vfs-cli",
@@ -1437,10 +1416,6 @@ mod tests {
             Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack"]);
         assert!(!context_pack_verify.command.requires_identity());
         assert!(!context_pack_verify.command.probes_anonymous_database_read());
-
-        let mcp = Cli::parse_from(["kinic-vfs-cli", "mcp", "serve"]);
-        assert!(!mcp.command.requires_identity());
-        assert!(mcp.command.probes_anonymous_database_read());
 
         let private_install = Cli::parse_from([
             "kinic-vfs-cli",

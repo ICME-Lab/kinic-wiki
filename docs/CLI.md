@@ -8,7 +8,6 @@ The canister also exposes read-only Store API methods such as `memory_manifest`,
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
-For local MCP integration, use [`mcp.md`](mcp.md).
 For portable generated AI context artifacts, use Context Pack commands described in [`Context Pack.md`](Context%20Pack.md).
 
 ## Build
@@ -110,7 +109,23 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills"
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
+`database metadata <database-id> --input <metadata.json> [--json]` replaces the database discovery metadata. The input JSON must include `title`, `description`, `tags_json`, and may set `llm_summary` to a string or `null`. `tags_json` is itself a JSON string containing an array of strings.
 Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. source capture and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
+
+Database metadata input example:
+
+```json
+{
+  "title": "KINIC-WIKI",
+  "description": "Public Kinic Wiki knowledge for operations, structure, clipper usage, and agent workflows.",
+  "llm_summary": "Covers Kinic Wiki operations, VFS structure, wiki browser behavior, clipper usage, agent query/ingest/lint workflows, compatibility decisions, and repo documentation. Useful FTS queries include \"clipper usage\", \"wiki structure\", \"operation skills\", \"agent docs\", and \"database lifecycle\". Does not cover private user memory or non-public DB content.",
+  "tags_json": "[\"kinic-wiki\",\"wiki\",\"vfs\",\"clipper\",\"agent\",\"operations\",\"ingest\",\"query\",\"lint\",\"architecture\"]"
+}
+```
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database metadata "$DB_ID" --input metadata.json --json
+```
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 

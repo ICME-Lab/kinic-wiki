@@ -1,64 +1,110 @@
-# Store/Recall MCP
+# Kinic Wiki Remote MCP
 
-`kinic-vfs-cli mcp serve` starts a local stdio MCP server for read-only Store/Recall tools.
-It is a protocol adapter over the existing Kinic Wiki Store API and Rust client.
-See [`STORE_RECALL_MCP.md`](STORE_RECALL_MCP.md) for the interface contract.
+`workers/wiki-mcp` is a public, anonymous, read-only remote MCP server for Kinic Wiki databases.
 
-## Start
+## Boundary
 
-Use the selected database as the MCP server scope:
+- v1 reads public databases only.
+- It does not expose writes, OAuth, private database reads, billing, marketplace purchase, or archive operations.
+- It queries the configured Kinic Wiki canister anonymously.
+- Existing memory app endpoint `https://mcp.kinic.xyz/mcp` is a separate service and must not be changed for Kinic Wiki.
+- `https://wiki.kinic.xyz` remains the wiki browser and public node URL origin.
 
-```bash
-kinic-vfs-cli mcp serve --database-id <database-id>
-```
+## Endpoint
 
-During development:
+- Production MCP: `https://wiki-mcp.kinic.xyz/mcp`
+- Staging MCP: `https://wiki-mcp-staging.kinic.xyz/mcp`
+- Production health: `https://wiki-mcp.kinic.xyz/health`
+- Staging health: `https://wiki-mcp-staging.kinic.xyz/health`
+- Root info: `GET /`
 
-```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- mcp serve --database-id <database-id>
-```
+Route behavior:
 
-Root-level database selection also works:
-
-```bash
-kinic-vfs-cli --database-id <database-id> mcp serve
-```
-
-The server uses the same connection and identity resolution as other read-only DB commands.
-Public databases can use anonymous reads when granted to `2vxsx-fae`.
-Private databases require the selected `icp-cli` identity to be a database member.
-
-## Client Config
-
-MCP client configuration shape:
-
-```json
-{
-  "mcpServers": {
-    "kinic": {
-      "command": "kinic-vfs-cli",
-      "args": ["mcp", "serve", "--database-id", "<database-id>"]
-    }
-  }
-}
-```
-
-The MCP process writes JSON-RPC messages to stdout.
-Diagnostics must go to stderr.
+- `POST /mcp`: canonical MCP endpoint.
+- `GET /mcp`: Streamable HTTP transport endpoint.
+- `GET /health`: health JSON.
+- `GET /`: human-readable info JSON with endpoint and tool names.
+- `POST /`: not an MCP alias.
 
 ## Tools
 
-v0 exposes only read-only Store/Recall tools:
+- `find_databases`
+  - Input: `{ "query": "agent memory", "limit": 10 }`
+  - Reads anonymous `list_databases()`
+  - Ranks public database metadata using title, tags, summary, and description
+- `search`
+  - Input: `{ "database_id": "db_...", "query": "...", "prefix": "/", "limit": 10 }`
+  - Calls canister `search_nodes` with `preview_mode: Light`
+  - Returns fetchable opaque ids
+- `fetch`
+  - Input: `{ "id": "<id-from-search>" }`
+  - Decodes the opaque id and calls canister `read_node`
 
-- `kinic.memory_manifest`
-- `kinic.query_context`
-- `kinic.source_evidence`
-- `kinic.skill_find`
+All tools keep read-only annotations:
 
-Each tool call must pass the same `database_id` used to start the server.
-Calls with a different `database_id` are rejected as tool errors.
+- `readOnlyHint: true`
+- `destructiveHint: false`
+- `openWorldHint: false`
 
-## Limits
+## Local
 
-v0 does not expose writes, Context Pack tools, billing, marketplace, grants, archive, or restore operations.
-Remote Streamable HTTP, resources, prompts, and patch approval workflows are future work.
+```bash
+pnpm --dir workers/wiki-mcp install
+pnpm --dir workers/wiki-mcp test
+pnpm --dir workers/wiki-mcp typecheck
+pnpm --dir workers/wiki-mcp dev
+```
+
+Local MCP URL:
+
+```text
+http://127.0.0.1:8787/mcp
+```
+
+Local smoke:
+
+```bash
+curl -sS http://127.0.0.1:8787/health
+curl -sS http://127.0.0.1:8787/
+curl -sS http://127.0.0.1:8787/mcp \
+  -H 'accept: application/json, text/event-stream' \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+## Configuration
+
+`wrangler.jsonc` defaults:
+
+- `KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`
+- `KINIC_WIKI_IC_HOST=https://icp0.io`
+- `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
+
+Cloudflare custom domains:
+
+- `wiki-mcp.kinic.xyz`
+- `wiki-mcp-staging.kinic.xyz`
+
+## ChatGPT Developer Mode
+
+Use a separate wiki app or staging app. Do not replace the existing memory app endpoint.
+
+1. Configure MCP URL as `https://wiki-mcp-staging.kinic.xyz/mcp`.
+2. Refresh tools.
+3. Confirm tools list contains exactly `find_databases`, `search`, and `fetch`.
+4. Run review test cases:
+   - `find_databases` can select `KINIC-WIKI`.
+   - `search` for `clipper usage` returns an evidence node.
+   - `fetch` returns node text for a search result id.
+   - private, unknown, or stale ids return errors.
+5. Promote the same configuration to `https://wiki-mcp.kinic.xyz/mcp` after staging passes.
+
+## Review Checklist
+
+- No credentials required.
+- No write tools.
+- No private database access.
+- Responses contain only public database metadata, public node URLs, and public node text.
+- Responses do not include user ids, internal request/session ids, or secrets.
+- `https://mcp.kinic.xyz/mcp` remains unchanged.
+- `https://wiki.kinic.xyz` browser routes remain unchanged.

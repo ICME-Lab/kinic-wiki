@@ -21,6 +21,9 @@ const triggerRouteModule = await importTs("../app/api/source-capture/trigger/rou
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
+const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
+const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
+const nativeAuthBridge = readFileSync(new URL("../components/native-auth-bridge.tsx", import.meta.url), "utf8");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
@@ -30,6 +33,31 @@ assert.doesNotMatch(documentPane, /Write access/);
 assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
 assert.match(sourceCapture, /function isSafeRequestSegment/);
 assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
+assert.match(nativeAuthBridge, /#\/native-auth/);
+assert.match(nativeAuthBridge, /authorize-client/);
+assert.match(nativeAuthBridge, /idpWindow\.location\.href = callback\.toString\(\)/);
+
+await withEnv({}, async () => {
+  const response = appleAppSiteAssociationRouteModule.GET();
+  assert.equal(response.status, 503);
+});
+
+await withEnv({ KINIC_IOS_APP_ID: "ABCDE12345.xyz.kinic.ios.KinicWiki" }, async () => {
+  const response = appleAppSiteAssociationRouteModule.GET();
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.applinks.details[0], {
+    appID: "ABCDE12345.xyz.kinic.ios.KinicWiki",
+    paths: ["/*"]
+  });
+  assert.deepEqual(body.webcredentials.apps, ["ABCDE12345.xyz.kinic.ios.KinicWiki"]);
+});
+
+{
+  const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Return to KinicWikiApp/);
+}
 
 await withEnv({}, async () => {
   const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
@@ -450,6 +478,7 @@ async function withEnv(values, run) {
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
     "KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN",
+    "KINIC_IOS_APP_ID",
     "DEEPSEEK_API_KEY",
     "KINIC_WIKI_WORKER_MODEL"
   ];

@@ -9,12 +9,18 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
+  const DatabaseMetadata = idl.Record({
+    title: idl.Text,
+    description: idl.Text,
+    llm_summary: idl.Opt(idl.Text),
+    tags_json: idl.Text
+  });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    name: idl.Text,
+    metadata: DatabaseMetadata,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
@@ -76,13 +82,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     min_expected_cycles: idl.Nat64
   });
   const MarketCreateListingRequest = idl.Record({
-    llm_summary: idl.Opt(idl.Text),
-    title: idl.Text,
-    description: idl.Text,
     database_id: idl.Text,
     payout_principal: idl.Text,
-    price_e8s: idl.Nat64,
-    tags_json: idl.Text
+    price_e8s: idl.Nat64
   });
   const MarketEntitlement = idl.Record({
     status: idl.Text,
@@ -99,10 +101,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const MarketListingStatus = idl.Variant({ Paused: idl.Null, Active: idl.Null });
   const MarketListing = idl.Record({
     status: MarketListingStatus,
-    llm_summary: idl.Opt(idl.Text),
-    title: idl.Text,
     report_count: idl.Nat64,
-    description: idl.Text,
     updated_at_ms: idl.Int64,
     created_at_ms: idl.Int64,
     seller_principal: idl.Text,
@@ -111,9 +110,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text,
     listing_id: idl.Text,
     revision: idl.Nat64,
-    price_e8s: idl.Nat64,
-    tags_json: idl.Text
+    price_e8s: idl.Nat64
   });
+  const MarketListingView = idl.Record({ listing: MarketListing, database_metadata: DatabaseMetadata });
   const MarketCategoryGraphEdge = idl.Record({
     source_category: idl.Text,
     target_category: idl.Text,
@@ -132,7 +131,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     raw_href: idl.Text,
     target_path: idl.Text
   });
-  const MarketListingPage = idl.Record({ listings: idl.Vec(MarketListing), next_cursor: idl.Opt(idl.Text) });
+  const MarketListingPage = idl.Record({ listings: idl.Vec(MarketListingView), next_cursor: idl.Opt(idl.Text) });
   const MarketOrder = idl.Record({
     created_at_ms: idl.Int64,
     seller_principal: idl.Text,
@@ -170,7 +169,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     folder_nodes: idl.Nat64
   });
   const MarketListingDetail = idl.Record({
-    listing: MarketListing,
+    listing: MarketListingView,
     preview: MarketListingPreview,
     verified_stats: MarketListingVerifiedStats
   });
@@ -182,14 +181,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const MarketPurchaseRequest = idl.Record({ listing_id: idl.Text, price_e8s: idl.Nat64, access_principal: idl.Text });
   const MarketUpdateListingRequest = idl.Record({
-    llm_summary: idl.Opt(idl.Text),
-    title: idl.Text,
-    description: idl.Text,
     listing_id: idl.Text,
     expected_revision: idl.Nat64,
     payout_principal: idl.Text,
-    price_e8s: idl.Nat64,
-    tags_json: idl.Text
+    price_e8s: idl.Nat64
   });
   const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
   const Icrc21DeviceSpec = idl.Variant({ GenericDisplay: idl.Null, FieldsDisplay: idl.Null });
@@ -217,9 +212,15 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
-  const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ title: idl.Text });
+  const CreateDatabaseResult = idl.Record({ title: idl.Text, database_id: idl.Text });
+  const UpdateDatabaseMetadataRequest = idl.Record({
+    title: idl.Text,
+    description: idl.Text,
+    llm_summary: idl.Opt(idl.Text),
+    tags_json: idl.Text,
+    database_id: idl.Text
+  });
   const DatabaseIdRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
@@ -445,6 +446,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultMarketOrder = idl.Variant({ Ok: MarketOrder, Err: idl.Text });
   const ResultMarketOrderPage = idl.Variant({ Ok: MarketOrderPage, Err: idl.Text });
   const ResultMarketPurchasePreview = idl.Variant({ Ok: MarketPurchasePreview, Err: idl.Text });
+  const ResultDatabaseMetadata = idl.Variant({ Ok: DatabaseMetadata, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
@@ -510,7 +512,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
-    rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
+    update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),

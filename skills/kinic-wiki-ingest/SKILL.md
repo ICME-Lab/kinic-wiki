@@ -13,6 +13,7 @@ Use this skill when the user wants to:
 - update existing wiki pages from new evidence
 - repair existing wiki pages only when the edit is part of source intake; otherwise use `kinic-wiki-edit`
 - initialize or repair an explicit LLM Wiki scope when the user asks for scoped structure
+- refresh database discovery metadata for public retrieval
 - generate conversation wiki pages from evidence sources, preferring one review-ready page unless the source clearly needs a split
 - create review-ready wiki pages without pushing immediately
 

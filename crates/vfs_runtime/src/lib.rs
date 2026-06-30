@@ -83,6 +83,8 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
 const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
+const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:034_database_profile";
+const INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE: &str = "database_index:035_drop_database_profile";
 const INDEX_SCHEMA_VERSION_DATABASE_METADATA: &str = "database_index:034_database_metadata";
 const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
     "database_index:036_rename_url_ingest_trigger_sessions";
@@ -637,22 +639,24 @@ impl VfsService {
         initial_cycles_balance: i64,
     ) -> Result<DatabaseMeta, String> {
         let db_file_name = self.database_file_name(database_id, mount_id)?;
-        tx.execute(
+        let values = vec![
+            crate::sqlite::text_value(database_id),
+            crate::sqlite::text_value(metadata.title.as_str()),
+            crate::sqlite::text_value(metadata.description.as_str()),
+            crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+            crate::sqlite::text_value(metadata.tags_json.as_str()),
+            crate::sqlite::text_value(db_file_name.as_str()),
+            crate::sqlite::integer_value(i64::from(mount_id)),
+            crate::sqlite::text_value(DATABASE_SCHEMA_VERSION),
+            crate::sqlite::integer_value(now),
+        ];
+        crate::sqlite::execute_values(
+            tx,
             "INSERT INTO databases
              (database_id, title, description, llm_summary, tags_json, db_file_name, mount_id,
               active_mount_id, status, schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 'active', ?8, 0, ?9, ?9)",
-            params![
-                database_id,
-                &metadata.title,
-                &metadata.description,
-                crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
-                &metadata.tags_json,
-                db_file_name,
-                i64::from(mount_id),
-                DATABASE_SCHEMA_VERSION,
-                now
-            ],
+            &values,
         )
         .map_err(|error| error.to_string())?;
         record_mount_history(tx, database_id, mount_id, "create", now)?;
@@ -695,21 +699,23 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        tx.execute(
+        let values = vec![
+            crate::sqlite::text_value(database_id),
+            crate::sqlite::text_value(metadata.title.as_str()),
+            crate::sqlite::text_value(metadata.description.as_str()),
+            crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+            crate::sqlite::text_value(metadata.tags_json.as_str()),
+            crate::sqlite::integer_value(i64::from(PENDING_DATABASE_MOUNT_ID)),
+            crate::sqlite::text_value(DATABASE_SCHEMA_VERSION),
+            crate::sqlite::integer_value(now),
+        ];
+        crate::sqlite::execute_values(
+            tx,
             "INSERT INTO databases
              (database_id, title, description, llm_summary, tags_json, db_file_name, mount_id,
               active_mount_id, status, schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, NULL, 'pending', ?7, 0, ?8, ?8)",
-            params![
-                database_id,
-                &metadata.title,
-                &metadata.description,
-                crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
-                &metadata.tags_json,
-                i64::from(PENDING_DATABASE_MOUNT_ID),
-                DATABASE_SCHEMA_VERSION,
-                now
-            ],
+            &values,
         )
         .map_err(|error| error.to_string())?;
         insert_initial_database_members(tx, database_id, caller, now)?;
@@ -2242,7 +2248,16 @@ impl VfsService {
             tags_json: request.tags_json,
         })?;
         self.write_index(|conn| {
-            conn.execute(
+            let values = vec![
+                crate::sqlite::text_value(request.database_id.as_str()),
+                crate::sqlite::text_value(metadata.title.as_str()),
+                crate::sqlite::text_value(metadata.description.as_str()),
+                crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
+                crate::sqlite::text_value(metadata.tags_json.as_str()),
+                crate::sqlite::integer_value(now),
+            ];
+            crate::sqlite::execute_values(
+                conn,
                 "UPDATE databases
                  SET title = ?2,
                      description = ?3,
@@ -2250,14 +2265,7 @@ impl VfsService {
                      tags_json = ?5,
                      updated_at_ms = ?6
                  WHERE database_id = ?1",
-                params![
-                    request.database_id,
-                    &metadata.title,
-                    &metadata.description,
-                    crate::sqlite::nullable_text_value(metadata.llm_summary.clone()),
-                    &metadata.tags_json,
-                    now
-                ],
+                &values,
             )
             .map_err(|error| error.to_string())?;
             Ok(())
@@ -3166,6 +3174,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    LegacyProfileLatest,
     Mainnet011,
     Mainnet026,
     Mainnet031,
@@ -3184,6 +3193,11 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<IndexPostMigrationAction, String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => {
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::LegacyProfileLatest => {
+            apply_database_metadata_index_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
@@ -3279,6 +3293,10 @@ fn classify_existing_index_schema_state(
         ));
     }
     let store_roots_applied = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)?;
+    let database_profile_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+    let drop_database_profile_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
     let database_metadata_applied =
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
     let rename_source_capture_trigger_sessions_applied = migration_applied_tx(
@@ -3293,6 +3311,14 @@ fn classify_existing_index_schema_state(
         && drop_archive_restore_lifecycle_applied
     {
         return Ok(IndexSchemaState::Latest);
+    }
+    if store_roots_applied
+        && database_profile_applied
+        && drop_database_profile_applied
+        && rename_source_capture_trigger_sessions_applied
+        && drop_archive_restore_lifecycle_applied
+    {
+        return Ok(IndexSchemaState::LegacyProfileLatest);
     }
     if store_roots_applied
         && database_metadata_applied
@@ -7879,6 +7905,106 @@ mod tests {
         tx.commit().expect("mainnet 032 schema should commit");
     }
 
+    fn write_legacy_profile_latest_schema(index_path: &Path, config: &CyclesBillingConfig) {
+        write_mainnet_026_schema(index_path, config);
+        let mut conn = Connection::open(index_path).expect("index DB should reopen");
+        let tx = conn.transaction().expect("transaction should start");
+        tx.execute_batch(
+            "CREATE TABLE market_listings (
+               listing_id TEXT PRIMARY KEY,
+               seller_principal TEXT NOT NULL,
+               payout_principal TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               title TEXT NOT NULL,
+               description TEXT NOT NULL,
+               llm_summary TEXT,
+               tags_json TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               status TEXT NOT NULL,
+               revision INTEGER NOT NULL,
+               purchase_count INTEGER NOT NULL,
+               report_count INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               updated_at_ms INTEGER NOT NULL,
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX market_listings_status_idx
+               ON market_listings(status, listing_id);
+             CREATE INDEX market_listings_database_idx
+               ON market_listings(database_id);
+             CREATE TABLE market_orders (
+               order_id TEXT PRIMARY KEY,
+               listing_id TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               seller_principal TEXT NOT NULL,
+               payout_principal TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               ledger_block_index INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX market_orders_buyer_idx
+               ON market_orders(buyer_principal, order_id);
+             CREATE TABLE market_purchase_pending_operations (
+               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               listing_id TEXT NOT NULL,
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               seller_principal TEXT NOT NULL,
+               price_e8s INTEGER NOT NULL,
+               from_owner TEXT NOT NULL,
+               from_subaccount BLOB,
+               to_owner TEXT NOT NULL,
+               to_subaccount BLOB,
+               ledger_fee_e8s INTEGER NOT NULL,
+               ledger_created_at_time_ns INTEGER NOT NULL,
+               operation_status TEXT NOT NULL,
+               ledger_block_index INTEGER,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX market_purchase_pending_buyer_idx
+               ON market_purchase_pending_operations(buyer_principal, listing_id);
+             CREATE TABLE market_entitlements (
+               database_id TEXT NOT NULL,
+               buyer_principal TEXT NOT NULL,
+               listing_id TEXT NOT NULL,
+               order_id TEXT NOT NULL,
+               purchased_at_ms INTEGER NOT NULL,
+               status TEXT NOT NULL,
+               PRIMARY KEY (database_id, buyer_principal, listing_id),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
+               ON market_entitlements(database_id, buyer_principal)
+               WHERE status = 'active';
+             CREATE INDEX market_entitlements_buyer_idx
+               ON market_entitlements(buyer_principal, database_id);",
+        )
+        .expect("legacy profile marketplace schema should write");
+        for &version in &[
+            INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
+            INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
+            INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
+            INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
+            INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+        ] {
+            insert_schema_migration_now(&tx, version).expect("legacy market marker should insert");
+        }
+        apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
+            .expect("store roots marker should insert");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)
+            .expect("legacy profile marker should insert");
+        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)
+            .expect("legacy profile drop marker should insert");
+        apply_rename_source_capture_trigger_sessions_migration(&tx)
+            .expect("source capture rename should migrate");
+        apply_drop_archive_restore_lifecycle_migration(&tx)
+            .expect("archive restore drop should migrate");
+        tx.commit()
+            .expect("legacy profile latest schema should commit");
+    }
+
     fn create_active_database_fixture(
         index_path: &Path,
         databases_dir: &Path,
@@ -7954,6 +8080,16 @@ mod tests {
             |row| row.get(0),
         )
         .expect("database profile column count should load")
+    }
+
+    fn table_column_count(index_path: &Path, table_name: &str, column_name: &str) -> i64 {
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{table_name}') WHERE name = ?1"),
+            params![column_name],
+            |row| row.get(0),
+        )
+        .expect("table column count should load")
     }
 
     #[test]
@@ -8214,6 +8350,53 @@ mod tests {
             1
         );
         assert_eq!(database_profile_column_count(&index_path), 0);
+    }
+
+    #[test]
+    fn legacy_profile_latest_index_applies_database_metadata_only() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        write_legacy_profile_latest_schema(&index_path, &test_cycles_billing_config());
+        let service = VfsService::new(index_path.clone(), root.join("databases"));
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("legacy profile latest index should apply metadata migration");
+
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
+            ),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE
+            ),
+            1
+        );
+        for column in ["title", "description", "llm_summary", "tags_json"] {
+            assert_eq!(table_column_count(&index_path, "databases", column), 1);
+            assert_eq!(
+                table_column_count(&index_path, "market_listings", column),
+                0
+            );
+        }
     }
 
     #[test]

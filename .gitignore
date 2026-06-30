@@ -5,6 +5,13 @@
 .idea/
 .vscode/
 
+# Xcode / iOS local state
+**/DerivedData/
+**/build/
+**/xcuserdata/
+**/*.xcuserstate
+**/*.xcscmblueprint
+
 # Rust build artifacts
 /target/
 **/target/

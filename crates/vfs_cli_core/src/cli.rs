@@ -289,8 +289,14 @@ pub enum MarketCommand {
 pub enum DatabaseCommand {
     #[command(about = "Create a database and print its generated database id")]
     Create { title: String },
-    #[command(about = "Update one database metadata title")]
-    Metadata { database_id: String, title: String },
+    #[command(about = "Update one database metadata record from JSON")]
+    Metadata {
+        database_id: String,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "List databases attached to the current identity")]
     List {
         #[arg(long)]

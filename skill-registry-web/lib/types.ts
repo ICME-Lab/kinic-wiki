@@ -99,8 +99,16 @@ export type CanisterHealth = {
 export type DatabaseRole = "reader" | "writer" | "owner";
 export type DatabaseStatus = "pending" | "active" | "deleted";
 
+export type DatabaseMetadata = {
+  title: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+};
+
 export type DatabaseSummary = {
   databaseId: string;
+  metadata: DatabaseMetadata;
   name: string;
   role: DatabaseRole;
   status: DatabaseStatus;

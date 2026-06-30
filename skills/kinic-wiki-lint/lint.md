@@ -18,11 +18,22 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
    - unrequested hierarchy or folder sprawl
    - missing cross-links
    - ambiguous page boundaries
+   - weak database discovery metadata
    - canonicality leaks between structured notes
    - unresolved contradiction state
 6. Report findings first.
 7. Only edit pages if the user asks for fixes or the workflow explicitly includes a repair step.
 8. For OKF bundle validation, use `kinic-context-pack` and `context-pack verify` instead of wiki lint rules.
+
+## Read Strategy
+
+1. Prefer `query_context` for task-scoped remote context when Store API or tool access is available.
+2. Use `list-nodes --prefix <path> --recursive --json` and link commands for structure checks that do not need content.
+3. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to expand findings before full reads.
+4. Use `query-sql` for known-path multi-node content reads when checking canonicality across several notes.
+5. Use `export_snapshot` only through Store API/tool access when a whole scope must be inspected. It is not a normal CLI command.
+6. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+7. Use `read-node --json` or `read-node-context` for final offending-line confirmation and link-aware inspection.
 
 ## Working Rules
 
@@ -46,6 +57,13 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Flag implementation snippets inside `facts.md`; code notes should point to repo source paths and record decisions, not copy code bodies.
 - Flag `summary.md` pages that are mostly README or generated-doc copies instead of recap.
 - Flag code notes that list file paths but omit the decision, rationale, verification, or follow-up that makes the note useful.
+- For DB metadata health, inspect `database list --json` before content findings when the user asks about public retrieval or public memory discovery.
+- Flag empty `description`, empty `llm_summary`, invalid `tags_json`, and empty tag arrays.
+- Flag `description` and `llm_summary` when they are identical, nearly identical, or both just repeat the title.
+- Flag title-only public DBs because `find_databases` cannot reliably select them for purpose queries.
+- Treat `description` as the short human/DB-picker surface and `llm_summary` as the longer retrieval-planning surface. A good `llm_summary` names answerable question types, representative paths or domains, useful FTS search terms, and out-of-scope content.
+- Do not auto-fix DB metadata during lint. Recommend `kinic-wiki-ingest` DB Metadata Refresh for candidate generation.
+- For canonicality checks, avoid reading every candidate body one by one. Use inventory and previews first, then `query-sql` for the narrow path set.
 - Prefer reporting the exact offending lines and the target canonical note, not generic prose.
 - When possible, phrase findings as `offending line -> target note` rather than broad page-level commentary.
 
@@ -54,9 +72,14 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Local lint: inspect Markdown files directly; no local mirror lint command exists.
 - OKF bundle validation: use `kinic-vfs-cli context-pack verify <bundle-dir>` through `kinic-context-pack`.
 - Remote inspection primitives:
-  - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Store API/tool preferred entrypoint: `query_context`
+  - Store API/tool scope reads: `export_snapshot`, `fetch_updates`
+  - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - DB metadata inspection: `database list --json`
   - Use `list-children` for one-level tree navigation.
   - Use `list-nodes --prefix <path> --recursive --json` for inventory, bulk repair review, and destructive operation review.
+  - Use search `--preview-mode content-start` before full content reads.
+  - Use `query-sql` for narrow known-path multi-node reads from `fs_nodes`.
 
 ## Output
 

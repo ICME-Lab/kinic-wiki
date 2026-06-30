@@ -25,6 +25,39 @@ Turn evidence source material into review-ready wiki updates under the canister-
 13. Stop at review-ready unless the user explicitly asks for push.
 14. If the user wants an OKF bundle after the wiki structure is ready, hand off to `kinic-context-pack`; do not export as an ingest side effect.
 
+## Read Strategy
+
+1. Prefer `query_context` for source/wiki context collection when Store API or tool access is available.
+2. Use `list-nodes --prefix <path> --recursive --json` when only path inventory, node kind, or overwrite etags are needed.
+3. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to narrow candidate wiki pages before reading full bodies.
+4. Use `query-sql` for known-path multi-node reads from `fs_nodes`, including bulk ingest overwrite checks.
+5. Use `export_snapshot` only through Store API/tool access when setup needs a whole `/Knowledge/...` scope. It is not a normal CLI command.
+6. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+7. Use `read-node --json` or `read-node --fields path,kind,etag,content` for mutation-adjacent final checks.
+
+## DB Metadata Refresh
+
+Use this workflow when the user asks to improve DB discovery, public retrieval, or public memory metadata. This workflow updates only database metadata; it does not edit folder, source, or node metadata.
+
+1. Read current metadata with `kinic-vfs-cli database list --json`.
+2. Read `/Knowledge/index.md` first, then major linked `/Knowledge/**/index.md` pages and a small set of representative source/wiki nodes. Prefer `query_context`, search preview, or `query-sql` before direct single-node reads.
+3. Generate one candidate JSON object:
+
+```json
+{
+  "title": "Existing title unless clearly weak",
+  "description": "Short human-facing DB purpose.",
+  "llm_summary": "Retrieval summary for LLM database selection and FTS search planning.",
+  "tags_json": "[\"specific-tag\",\"retrieval-term\"]"
+}
+```
+
+4. Keep `description` to one paragraph and 80-180 characters. Explain what the DB is for; do not list many search terms.
+5. Keep `llm_summary` longer than `description` and non-duplicative. Include answerable question types, representative paths or domains, useful search terms, and explicit out-of-scope content. Assume public retrieval uses canister FTS.
+6. Keep `tags_json` as a JSON string array of 5-15 short strings. Prefer lowercase kebab-case English terms. Add a few Japanese tags only when the DB is primarily Japanese or Japanese query terms matter.
+7. Show the candidate and the current metadata diff. Do not save it until the user explicitly approves.
+8. After approval, write the candidate to a local JSON file and run `kinic-vfs-cli database metadata <database-id> --input <metadata.json>`. Use `--json` when machine-readable confirmation is useful.
+
 ## LLM Wiki Scope Setup
 
 Use this workflow only when the user explicitly asks for scoped structure, repairing a thin benchmark import, or converting raw notes into a compounding LLM Wiki.
@@ -65,7 +98,7 @@ Use this workflow when ingesting many local files, for example 10 or more eviden
 1. Normalize every evidence source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
 2. Build the full write set before mutating remote state: evidence sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
 3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
-4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
+4. Set `expected_etag` for overwrites by reading current nodes first. Use `list-nodes` for inventory and `query-sql` or `export_snapshot` for narrow or scoped body checks. Use `None` only for new nodes.
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
 
@@ -103,6 +136,8 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Preserve structured note roles from `STORE_API.md` while ingesting.
 - When source material is noisy, prefer omission over polluting structured notes with low-confidence pseudo-facts.
 - When a contradiction appears, preserve it in the canonical open-question area rather than silently normalizing it into a fact note.
+- For DB metadata, keep `description` as the short human/DB-picker surface and `llm_summary` as the longer retrieval-planning surface. Do not let them become near-duplicates.
+- Never update DB metadata as an implicit side effect of ordinary ingest. Metadata refresh needs a user-visible candidate and explicit approval.
 
 ## Routing Examples
 
@@ -125,9 +160,14 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Default conversation wiki path: `/Knowledge/<llm-generated-title>.md`
 - Wiki target root: `/Knowledge/...`
 - Preferred primitives:
+  - Store API/tool preferred entrypoint: `query_context`
+  - Store API/tool scope reads: `export_snapshot`, `fetch_updates`
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
+  - DB metadata updates: CLI `database metadata <database-id> --input <metadata.json> [--json]`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
-  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Search previews: pass `--preview-mode content-start` when candidate snippets can avoid full reads.
+  - Multi-node reads: use `query-sql` for prepared known-path reads from `fs_nodes`; use `export_snapshot` through Store API/tool access for whole-scope reads.
   - Multi-node edits: use `write-nodes` only for prepared full-body replacements; otherwise build a path list, read etags, and run etag-aware per-node edits
 - Delete semantics:
   - `delete-node`: delete one node path

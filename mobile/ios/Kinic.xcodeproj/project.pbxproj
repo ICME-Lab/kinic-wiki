@@ -1,0 +1,803 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		05278B7CAF4383AEF8B8FA09 /* KinicICClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A3314D1E60AAC9F871AE75D /* KinicICClient.swift */; };
+		05BCB5F9141E51A415EE679A /* KinicHeaderTitle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF21B828CA746F876644C3E9 /* KinicHeaderTitle.swift */; };
+		0694351738520DEB38E63106 /* VFSCandidCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34134F79D45BEDE08D614F0D /* VFSCandidCodecTests.swift */; };
+		0712121111DDF61A850E7E17 /* ShareQueueWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2184887F4BB3B5E7359544E5 /* ShareQueueWriter.swift */; };
+		0823D1634CC19272A6F31E32 /* KinicAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1E028016DBC5A37E831CD90 /* KinicAuthService.swift */; };
+		0CD07C15AD9B62713A555252 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A609EB570371AA13B5A100C0 /* Assets.xcassets */; };
+		13FA8F3D069A83D37CF8384B /* PendingURLRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A53D0D3B8C04B7F31195425 /* PendingURLRow.swift */; };
+		1AAECCE37953EAD751EB47D1 /* VFSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C208AE1E19C7460E2C725E00 /* VFSClient.swift */; };
+		1B226695C7605349B4201DD8 /* KinicPinkLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A3218FA1E8B100C3E466556 /* KinicPinkLines.swift */; };
+		1C539B45C420BA04B244FBCA /* VFSCandidLEB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857E4ABA4FCCFD3B562CD43A /* VFSCandidLEB.swift */; };
+		1D5D74C43370279C66D054A7 /* DatabasePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20691482A79A3FD7767CDE07 /* DatabasePanel.swift */; };
+		313E85F821BA10AEC9F69F65 /* SessionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EB7DC8E4ACE29A8D580F582 /* SessionPanel.swift */; };
+		352715329DFA68A86FC34FD5 /* ShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F25CCB56C1C2B67A29FABB /* ShareInbox.swift */; };
+		377AC92B8F06A9AC8D7B1F22 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B6E2CD1A81E8BD1470702A8 /* HomeView.swift */; };
+		45B60FAA14222834E23B5547 /* KinicPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E16D6C8B973AC4F6276D6741 /* KinicPanel.swift */; };
+		51546F0D6544DE82821B56FF /* CapturePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45D5BBE929EC74DA3FFEEEE1 /* CapturePanel.swift */; };
+		57667BBBA343AB16CA547D76 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2A28ACA39535E5C09E09775 /* AppConfiguration.swift */; };
+		5F9DCF65F0DBB6581FE3EAFD /* URLNormalizerError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 648C3E1CE31C8A91B93FF1E7 /* URLNormalizerError.swift */; };
+		633ECF9FFAD2D81B897D36E8 /* SourceCaptureRequestBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BC15D53ACCC84CA0106D23 /* SourceCaptureRequestBuilderTests.swift */; };
+		63B153AFD715245BDFDB24D9 /* VFSCandidDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB13AE5CF71CBF1D32F128E6 /* VFSCandidDecoder.swift */; };
+		6C5D2A3FA3B015A733141AD5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1114270F1E7C96C71174AADE /* SettingsView.swift */; };
+		6CBB0A8D7EA5E9F34C3AB68E /* SourceCaptureRequestError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB1A4D3401A35A3FE229C60 /* SourceCaptureRequestError.swift */; };
+		730CF54947DB9D6DB66DCAA2 /* KinicIsometricMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F618CD808F2BF701E32A4876 /* KinicIsometricMark.swift */; };
+		77BFB37544E1921CFBCFD3E0 /* KinicHeroView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 414997FD31BB0EFF13850376 /* KinicHeroView.swift */; };
+		811FE65A3F0A6BA99CF7A96E /* DatabaseRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE54455628C68CEBE00F8190 /* DatabaseRole.swift */; };
+		8286B91F2792877866E558B7 /* DatabaseStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11B3D73023C45AB1A4358C4 /* DatabaseStatus.swift */; };
+		8336D6DE7B3FB0D51CF3F649 /* URLNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F01765F50C927745318967B /* URLNormalizer.swift */; };
+		8690E3DD57AEB93350AAF75E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */; };
+		9A8DE6EA17AFD18D922A791C /* StatusPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 421183FD491FD687CB7D405D /* StatusPanel.swift */; };
+		9C7BF5607737BD751CF261AB /* KinicSecondaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19D4E59B319FE527BC11055 /* KinicSecondaryButtonStyle.swift */; };
+		9EA065B0DE34F8462BE3A640 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52A1C9CE8CAD3747ABF4C3C /* AppModel.swift */; };
+		AA405C9E21C8D5D68FB643C6 /* ICNativeClient in Frameworks */ = {isa = PBXBuildFile; productRef = AE29406CD3A10A8959790ECD /* ICNativeClient */; };
+		B26623A5DAD5F1D7D63E856C /* SourceCaptureRequestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF94A354719C4CBFA57DF158 /* SourceCaptureRequestBuilder.swift */; };
+		B2DC51DB77A1A7CB94E4785B /* KinicDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = 316D896E52627E9056547B75 /* KinicDesign.swift */; };
+		B62A160DC1A5CD23048BB170 /* KinicShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 52BD4F9CD0F85DB1283E1046 /* KinicShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B62A603B05B35FE785759B7B /* KinicApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78866C930A7D557C5768983 /* KinicApp.swift */; };
+		C70F9028D50C57FD55871809 /* VFSCandidEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C430F751F35989E70D00B02F /* VFSCandidEncoder.swift */; };
+		CB14C24C5FBD0FBDF2662BA5 /* CaptureSubmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD51AE4207A51520778BFF7 /* CaptureSubmission.swift */; };
+		D0874C93D40DAB7F2EC13677 /* PendingSharedURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = E258A850FB2EBC31BA45AF72 /* PendingSharedURL.swift */; };
+		D63DF0EADB50B1D2440EB003 /* DatabaseSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E4F5559049E719C8093CD7 /* DatabaseSummary.swift */; };
+		DAEB64833719A4A1F4FD2942 /* KinicPrimaryButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DBB103CB921787D4A6E08CD /* KinicPrimaryButtonStyle.swift */; };
+		DB25D89E3D70EB9D82F982EC /* SourceCaptureRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6B4DAB1B974F3F54D4A61ED /* SourceCaptureRequest.swift */; };
+		E2FDF6CB0E63B1BEB2F8B892 /* Bundle+Configuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AA02560C8F8FF61F3CED19B /* Bundle+Configuration.swift */; };
+		E69973A0B91B181583E0743C /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960F2558BFAAB1C4CD81DC9B /* ShareViewController.swift */; };
+		E6A8A2BF6F5DF8294224B664 /* SharedURLRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456AC092F758554F6777B108 /* SharedURLRecord.swift */; };
+		EF2C17337B1B9B8AFB245C0E /* VFSCandidError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126811BA1367BFAE955B0B49 /* VFSCandidError.swift */; };
+		F4C5E1899F4D64BC42DB5275 /* SharedDefaultsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FF09EC4CF3457959D5E8C45 /* SharedDefaultsStore.swift */; };
+		FD162429EC8DC42AE4963372 /* ShareQueueRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E4E62FB72129C17B6A0AE48 /* ShareQueueRecord.swift */; };
+		FD59A22C9CDC212F90F2368B /* VFSCandidLabels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6838508E680CC1AC34215C1A /* VFSCandidLabels.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		7BD8D7CCE2D5AEFDA936FBA7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1487DDA31916009D79DC5E43 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 00925452DE2CD667D4C190B5;
+			remoteInfo = KinicShareExtension;
+		};
+		FD5D7AA0DBE465C2367D0E2F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1487DDA31916009D79DC5E43 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AF90B9C377DA2CF866E21B62;
+			remoteInfo = Kinic;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		97019BD828E7CB646AB9CA7E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B62A160DC1A5CD23048BB170 /* KinicShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		10697D7EA25AE6C72C2A8BB4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1114270F1E7C96C71174AADE /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		126811BA1367BFAE955B0B49 /* VFSCandidError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidError.swift; sourceTree = "<group>"; };
+		1A53D0D3B8C04B7F31195425 /* PendingURLRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingURLRow.swift; sourceTree = "<group>"; };
+		20691482A79A3FD7767CDE07 /* DatabasePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabasePanel.swift; sourceTree = "<group>"; };
+		2184887F4BB3B5E7359544E5 /* ShareQueueWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareQueueWriter.swift; sourceTree = "<group>"; };
+		2F01765F50C927745318967B /* URLNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLNormalizer.swift; sourceTree = "<group>"; };
+		316D896E52627E9056547B75 /* KinicDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicDesign.swift; sourceTree = "<group>"; };
+		34134F79D45BEDE08D614F0D /* VFSCandidCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidCodecTests.swift; sourceTree = "<group>"; };
+		3D5891A40FED9BB900D043EE /* KinicShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KinicShareExtension.entitlements; sourceTree = "<group>"; };
+		414997FD31BB0EFF13850376 /* KinicHeroView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicHeroView.swift; sourceTree = "<group>"; };
+		421183FD491FD687CB7D405D /* StatusPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPanel.swift; sourceTree = "<group>"; };
+		456AC092F758554F6777B108 /* SharedURLRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedURLRecord.swift; sourceTree = "<group>"; };
+		45D5BBE929EC74DA3FFEEEE1 /* CapturePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePanel.swift; sourceTree = "<group>"; };
+		4611067027CA4CF116EB9B65 /* Kinic.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kinic.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4A3314D1E60AAC9F871AE75D /* KinicICClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicICClient.swift; sourceTree = "<group>"; };
+		52BD4F9CD0F85DB1283E1046 /* KinicShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KinicShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5B6E2CD1A81E8BD1470702A8 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		63BC15D53ACCC84CA0106D23 /* SourceCaptureRequestBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceCaptureRequestBuilderTests.swift; sourceTree = "<group>"; };
+		648C3E1CE31C8A91B93FF1E7 /* URLNormalizerError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLNormalizerError.swift; sourceTree = "<group>"; };
+		6838508E680CC1AC34215C1A /* VFSCandidLabels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidLabels.swift; sourceTree = "<group>"; };
+		6AA02560C8F8FF61F3CED19B /* Bundle+Configuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bundle+Configuration.swift"; sourceTree = "<group>"; };
+		70E4F5559049E719C8093CD7 /* DatabaseSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseSummary.swift; sourceTree = "<group>"; };
+		7554096ACD65249CB1748F88 /* Kinic.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Kinic.xcconfig; sourceTree = "<group>"; };
+		7A3218FA1E8B100C3E466556 /* KinicPinkLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPinkLines.swift; sourceTree = "<group>"; };
+		7DBB103CB921787D4A6E08CD /* KinicPrimaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPrimaryButtonStyle.swift; sourceTree = "<group>"; };
+		7E4E62FB72129C17B6A0AE48 /* ShareQueueRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareQueueRecord.swift; sourceTree = "<group>"; };
+		7EB7DC8E4ACE29A8D580F582 /* SessionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPanel.swift; sourceTree = "<group>"; };
+		857E4ABA4FCCFD3B562CD43A /* VFSCandidLEB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidLEB.swift; sourceTree = "<group>"; };
+		960F2558BFAAB1C4CD81DC9B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		9AB1A4D3401A35A3FE229C60 /* SourceCaptureRequestError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceCaptureRequestError.swift; sourceTree = "<group>"; };
+		9D4AD28373A414403DF48C23 /* KinicTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KinicTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9FF09EC4CF3457959D5E8C45 /* SharedDefaultsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedDefaultsStore.swift; sourceTree = "<group>"; };
+		A11B3D73023C45AB1A4358C4 /* DatabaseStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseStatus.swift; sourceTree = "<group>"; };
+		A19D4E59B319FE527BC11055 /* KinicSecondaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicSecondaryButtonStyle.swift; sourceTree = "<group>"; };
+		A609EB570371AA13B5A100C0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AF94A354719C4CBFA57DF158 /* SourceCaptureRequestBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceCaptureRequestBuilder.swift; sourceTree = "<group>"; };
+		B2A28ACA39535E5C09E09775 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfiguration.swift; sourceTree = "<group>"; };
+		C208AE1E19C7460E2C725E00 /* VFSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSClient.swift; sourceTree = "<group>"; };
+		C430F751F35989E70D00B02F /* VFSCandidEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidEncoder.swift; sourceTree = "<group>"; };
+		C4EDF189E4AE98C8F9BF39F6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		C52A1C9CE8CAD3747ABF4C3C /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		CB13AE5CF71CBF1D32F128E6 /* VFSCandidDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VFSCandidDecoder.swift; sourceTree = "<group>"; };
+		CBD51AE4207A51520778BFF7 /* CaptureSubmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSubmission.swift; sourceTree = "<group>"; };
+		CF21B828CA746F876644C3E9 /* KinicHeaderTitle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicHeaderTitle.swift; sourceTree = "<group>"; };
+		D1F25CCB56C1C2B67A29FABB /* ShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareInbox.swift; sourceTree = "<group>"; };
+		D554BCB5A21DF6DBCB59F187 /* Kinic.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Kinic.entitlements; sourceTree = "<group>"; };
+		E16D6C8B973AC4F6276D6741 /* KinicPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPanel.swift; sourceTree = "<group>"; };
+		E1E028016DBC5A37E831CD90 /* KinicAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicAuthService.swift; sourceTree = "<group>"; };
+		E258A850FB2EBC31BA45AF72 /* PendingSharedURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingSharedURL.swift; sourceTree = "<group>"; };
+		EE54455628C68CEBE00F8190 /* DatabaseRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseRole.swift; sourceTree = "<group>"; };
+		F618CD808F2BF701E32A4876 /* KinicIsometricMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicIsometricMark.swift; sourceTree = "<group>"; };
+		F6B4DAB1B974F3F54D4A61ED /* SourceCaptureRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceCaptureRequest.swift; sourceTree = "<group>"; };
+		F78866C930A7D557C5768983 /* KinicApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		45694F36FDC1027296359125 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA405C9E21C8D5D68FB643C6 /* ICNativeClient in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1B4EB855982FB653E2542B70 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				6AA02560C8F8FF61F3CED19B /* Bundle+Configuration.swift */,
+				2F01765F50C927745318967B /* URLNormalizer.swift */,
+				648C3E1CE31C8A91B93FF1E7 /* URLNormalizerError.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		25625A33525E423AA2205342 = {
+			isa = PBXGroup;
+			children = (
+				7E1F191739C6A003D7D2A5DE /* Config */,
+				6C48FFA7D1E8C72B65E686E6 /* KinicApp */,
+				A7AB0D111E796035EBF3735B /* KinicShareExtension */,
+				7B5534ADCB20C2D90989E995 /* KinicTests */,
+				604BC09E0D74EF763A3A11B9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		351D8B216F184C1F0730B696 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				E1E028016DBC5A37E831CD90 /* KinicAuthService.swift */,
+				4A3314D1E60AAC9F871AE75D /* KinicICClient.swift */,
+				9FF09EC4CF3457959D5E8C45 /* SharedDefaultsStore.swift */,
+				D1F25CCB56C1C2B67A29FABB /* ShareInbox.swift */,
+				AF94A354719C4CBFA57DF158 /* SourceCaptureRequestBuilder.swift */,
+				9AB1A4D3401A35A3FE229C60 /* SourceCaptureRequestError.swift */,
+				CB13AE5CF71CBF1D32F128E6 /* VFSCandidDecoder.swift */,
+				C430F751F35989E70D00B02F /* VFSCandidEncoder.swift */,
+				126811BA1367BFAE955B0B49 /* VFSCandidError.swift */,
+				6838508E680CC1AC34215C1A /* VFSCandidLabels.swift */,
+				857E4ABA4FCCFD3B562CD43A /* VFSCandidLEB.swift */,
+				C208AE1E19C7460E2C725E00 /* VFSClient.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		39E95A615C6F4B2ED4B37A8F /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B2A28ACA39535E5C09E09775 /* AppConfiguration.swift */,
+				CBD51AE4207A51520778BFF7 /* CaptureSubmission.swift */,
+				EE54455628C68CEBE00F8190 /* DatabaseRole.swift */,
+				A11B3D73023C45AB1A4358C4 /* DatabaseStatus.swift */,
+				70E4F5559049E719C8093CD7 /* DatabaseSummary.swift */,
+				E258A850FB2EBC31BA45AF72 /* PendingSharedURL.swift */,
+				456AC092F758554F6777B108 /* SharedURLRecord.swift */,
+				F6B4DAB1B974F3F54D4A61ED /* SourceCaptureRequest.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		604BC09E0D74EF763A3A11B9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4611067027CA4CF116EB9B65 /* Kinic.app */,
+				52BD4F9CD0F85DB1283E1046 /* KinicShareExtension.appex */,
+				9D4AD28373A414403DF48C23 /* KinicTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6C48FFA7D1E8C72B65E686E6 /* KinicApp */ = {
+			isa = PBXGroup;
+			children = (
+				A609EB570371AA13B5A100C0 /* Assets.xcassets */,
+				C4EDF189E4AE98C8F9BF39F6 /* Info.plist */,
+				D554BCB5A21DF6DBCB59F187 /* Kinic.entitlements */,
+				F78866C930A7D557C5768983 /* KinicApp.swift */,
+				0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */,
+				39E95A615C6F4B2ED4B37A8F /* Models */,
+				351D8B216F184C1F0730B696 /* Services */,
+				1B4EB855982FB653E2542B70 /* Utilities */,
+				9A4F527E5C761DE47C418952 /* ViewModels */,
+				7783E7B76D8880DACC7FDD27 /* Views */,
+			);
+			path = KinicApp;
+			sourceTree = "<group>";
+		};
+		7783E7B76D8880DACC7FDD27 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				45D5BBE929EC74DA3FFEEEE1 /* CapturePanel.swift */,
+				20691482A79A3FD7767CDE07 /* DatabasePanel.swift */,
+				5B6E2CD1A81E8BD1470702A8 /* HomeView.swift */,
+				316D896E52627E9056547B75 /* KinicDesign.swift */,
+				CF21B828CA746F876644C3E9 /* KinicHeaderTitle.swift */,
+				414997FD31BB0EFF13850376 /* KinicHeroView.swift */,
+				F618CD808F2BF701E32A4876 /* KinicIsometricMark.swift */,
+				E16D6C8B973AC4F6276D6741 /* KinicPanel.swift */,
+				7A3218FA1E8B100C3E466556 /* KinicPinkLines.swift */,
+				7DBB103CB921787D4A6E08CD /* KinicPrimaryButtonStyle.swift */,
+				A19D4E59B319FE527BC11055 /* KinicSecondaryButtonStyle.swift */,
+				1A53D0D3B8C04B7F31195425 /* PendingURLRow.swift */,
+				7EB7DC8E4ACE29A8D580F582 /* SessionPanel.swift */,
+				1114270F1E7C96C71174AADE /* SettingsView.swift */,
+				421183FD491FD687CB7D405D /* StatusPanel.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		7B5534ADCB20C2D90989E995 /* KinicTests */ = {
+			isa = PBXGroup;
+			children = (
+				63BC15D53ACCC84CA0106D23 /* SourceCaptureRequestBuilderTests.swift */,
+				34134F79D45BEDE08D614F0D /* VFSCandidCodecTests.swift */,
+			);
+			path = KinicTests;
+			sourceTree = "<group>";
+		};
+		7E1F191739C6A003D7D2A5DE /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				7554096ACD65249CB1748F88 /* Kinic.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		9A4F527E5C761DE47C418952 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				C52A1C9CE8CAD3747ABF4C3C /* AppModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		A7AB0D111E796035EBF3735B /* KinicShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				10697D7EA25AE6C72C2A8BB4 /* Info.plist */,
+				3D5891A40FED9BB900D043EE /* KinicShareExtension.entitlements */,
+				7E4E62FB72129C17B6A0AE48 /* ShareQueueRecord.swift */,
+				2184887F4BB3B5E7359544E5 /* ShareQueueWriter.swift */,
+				960F2558BFAAB1C4CD81DC9B /* ShareViewController.swift */,
+			);
+			path = KinicShareExtension;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		00925452DE2CD667D4C190B5 /* KinicShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 202928F8004E02FBEF1D077B /* Build configuration list for PBXNativeTarget "KinicShareExtension" */;
+			buildPhases = (
+				D96F9E47C32277EA8A2D5F8D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KinicShareExtension;
+			packageProductDependencies = (
+			);
+			productName = KinicShareExtension;
+			productReference = 52BD4F9CD0F85DB1283E1046 /* KinicShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		996CA2C522B6F32BC24D6247 /* KinicTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9DB6072B2AF52BA5032D94DA /* Build configuration list for PBXNativeTarget "KinicTests" */;
+			buildPhases = (
+				90441FE84C0F99748D1F197D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5D3946D6F248991CCA88FB4B /* PBXTargetDependency */,
+			);
+			name = KinicTests;
+			packageProductDependencies = (
+			);
+			productName = KinicTests;
+			productReference = 9D4AD28373A414403DF48C23 /* KinicTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AF90B9C377DA2CF866E21B62 /* Kinic */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 08BBD844EC10DB6AE0106540 /* Build configuration list for PBXNativeTarget "Kinic" */;
+			buildPhases = (
+				5F9A308D1E9217A8D10D8600 /* Sources */,
+				C5A848EB6383F44E0BD01B90 /* Resources */,
+				45694F36FDC1027296359125 /* Frameworks */,
+				97019BD828E7CB646AB9CA7E /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AE382C9CBF50B3B0EB07B49A /* PBXTargetDependency */,
+			);
+			name = Kinic;
+			packageProductDependencies = (
+				AE29406CD3A10A8959790ECD /* ICNativeClient */,
+			);
+			productName = Kinic;
+			productReference = 4611067027CA4CF116EB9B65 /* Kinic.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1487DDA31916009D79DC5E43 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					00925452DE2CD667D4C190B5 = {
+						DevelopmentTeam = AKN976G7AK;
+						ProvisioningStyle = Automatic;
+					};
+					996CA2C522B6F32BC24D6247 = {
+						DevelopmentTeam = AKN976G7AK;
+						ProvisioningStyle = Automatic;
+					};
+					AF90B9C377DA2CF866E21B62 = {
+						DevelopmentTeam = AKN976G7AK;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = AE504A8B4135FF1352AE8ECA /* Build configuration list for PBXProject "Kinic" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 25625A33525E423AA2205342;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B02759DED070D8115695FD69 /* XCRemoteSwiftPackageReference "ICNativeClient" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 604BC09E0D74EF763A3A11B9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AF90B9C377DA2CF866E21B62 /* Kinic */,
+				00925452DE2CD667D4C190B5 /* KinicShareExtension */,
+				996CA2C522B6F32BC24D6247 /* KinicTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C5A848EB6383F44E0BD01B90 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0CD07C15AD9B62713A555252 /* Assets.xcassets in Resources */,
+				8690E3DD57AEB93350AAF75E /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5F9A308D1E9217A8D10D8600 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				57667BBBA343AB16CA547D76 /* AppConfiguration.swift in Sources */,
+				9EA065B0DE34F8462BE3A640 /* AppModel.swift in Sources */,
+				E2FDF6CB0E63B1BEB2F8B892 /* Bundle+Configuration.swift in Sources */,
+				51546F0D6544DE82821B56FF /* CapturePanel.swift in Sources */,
+				CB14C24C5FBD0FBDF2662BA5 /* CaptureSubmission.swift in Sources */,
+				1D5D74C43370279C66D054A7 /* DatabasePanel.swift in Sources */,
+				811FE65A3F0A6BA99CF7A96E /* DatabaseRole.swift in Sources */,
+				8286B91F2792877866E558B7 /* DatabaseStatus.swift in Sources */,
+				D63DF0EADB50B1D2440EB003 /* DatabaseSummary.swift in Sources */,
+				377AC92B8F06A9AC8D7B1F22 /* HomeView.swift in Sources */,
+				B62A603B05B35FE785759B7B /* KinicApp.swift in Sources */,
+				0823D1634CC19272A6F31E32 /* KinicAuthService.swift in Sources */,
+				B2DC51DB77A1A7CB94E4785B /* KinicDesign.swift in Sources */,
+				05BCB5F9141E51A415EE679A /* KinicHeaderTitle.swift in Sources */,
+				77BFB37544E1921CFBCFD3E0 /* KinicHeroView.swift in Sources */,
+				05278B7CAF4383AEF8B8FA09 /* KinicICClient.swift in Sources */,
+				730CF54947DB9D6DB66DCAA2 /* KinicIsometricMark.swift in Sources */,
+				45B60FAA14222834E23B5547 /* KinicPanel.swift in Sources */,
+				1B226695C7605349B4201DD8 /* KinicPinkLines.swift in Sources */,
+				DAEB64833719A4A1F4FD2942 /* KinicPrimaryButtonStyle.swift in Sources */,
+				9C7BF5607737BD751CF261AB /* KinicSecondaryButtonStyle.swift in Sources */,
+				D0874C93D40DAB7F2EC13677 /* PendingSharedURL.swift in Sources */,
+				13FA8F3D069A83D37CF8384B /* PendingURLRow.swift in Sources */,
+				313E85F821BA10AEC9F69F65 /* SessionPanel.swift in Sources */,
+				6C5D2A3FA3B015A733141AD5 /* SettingsView.swift in Sources */,
+				352715329DFA68A86FC34FD5 /* ShareInbox.swift in Sources */,
+				F4C5E1899F4D64BC42DB5275 /* SharedDefaultsStore.swift in Sources */,
+				E6A8A2BF6F5DF8294224B664 /* SharedURLRecord.swift in Sources */,
+				DB25D89E3D70EB9D82F982EC /* SourceCaptureRequest.swift in Sources */,
+				B26623A5DAD5F1D7D63E856C /* SourceCaptureRequestBuilder.swift in Sources */,
+				6CBB0A8D7EA5E9F34C3AB68E /* SourceCaptureRequestError.swift in Sources */,
+				9A8DE6EA17AFD18D922A791C /* StatusPanel.swift in Sources */,
+				8336D6DE7B3FB0D51CF3F649 /* URLNormalizer.swift in Sources */,
+				5F9DCF65F0DBB6581FE3EAFD /* URLNormalizerError.swift in Sources */,
+				63B153AFD715245BDFDB24D9 /* VFSCandidDecoder.swift in Sources */,
+				C70F9028D50C57FD55871809 /* VFSCandidEncoder.swift in Sources */,
+				EF2C17337B1B9B8AFB245C0E /* VFSCandidError.swift in Sources */,
+				1C539B45C420BA04B244FBCA /* VFSCandidLEB.swift in Sources */,
+				FD59A22C9CDC212F90F2368B /* VFSCandidLabels.swift in Sources */,
+				1AAECCE37953EAD751EB47D1 /* VFSClient.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		90441FE84C0F99748D1F197D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				633ECF9FFAD2D81B897D36E8 /* SourceCaptureRequestBuilderTests.swift in Sources */,
+				0694351738520DEB38E63106 /* VFSCandidCodecTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D96F9E47C32277EA8A2D5F8D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FD162429EC8DC42AE4963372 /* ShareQueueRecord.swift in Sources */,
+				0712121111DDF61A850E7E17 /* ShareQueueWriter.swift in Sources */,
+				E69973A0B91B181583E0743C /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5D3946D6F248991CCA88FB4B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AF90B9C377DA2CF866E21B62 /* Kinic */;
+			targetProxy = FD5D7AA0DBE465C2367D0E2F /* PBXContainerItemProxy */;
+		};
+		AE382C9CBF50B3B0EB07B49A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 00925452DE2CD667D4C190B5 /* KinicShareExtension */;
+			targetProxy = 7BD8D7CCE2D5AEFDA936FBA7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2CF0199362964C58596AD01F /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.kinic.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kinic.app/Kinic";
+			};
+			name = Release;
+		};
+		682735528D9B7E38DAAEEE5A /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KinicApp/Kinic.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = KinicApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KINIC_APP_BUNDLE_ID)";
+				PRODUCT_NAME = KinicWikiApp;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		79EF159D4764DB54EEA76C5D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KinicApp/Kinic.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = KinicApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KINIC_APP_BUNDLE_ID)";
+				PRODUCT_NAME = KinicWikiApp;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7DBD256A18A35A8FEBAD85E1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = AKN976G7AK;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		8DD68F1A27040D159BEFB0D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = xyz.kinic.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kinic.app/Kinic";
+			};
+			name = Debug;
+		};
+		B815E4577C7F4916D4BE90A9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = AKN976G7AK;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C4B74C0405358E41DBCF181D /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = KinicShareExtension/KinicShareExtension.entitlements;
+				INFOPLIST_FILE = KinicShareExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		D10E0D3F98BB104B1FB9AFE8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = KinicShareExtension/KinicShareExtension.entitlements;
+				INFOPLIST_FILE = KinicShareExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		08BBD844EC10DB6AE0106540 /* Build configuration list for PBXNativeTarget "Kinic" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79EF159D4764DB54EEA76C5D /* Debug */,
+				682735528D9B7E38DAAEEE5A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		202928F8004E02FBEF1D077B /* Build configuration list for PBXNativeTarget "KinicShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D10E0D3F98BB104B1FB9AFE8 /* Debug */,
+				C4B74C0405358E41DBCF181D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9DB6072B2AF52BA5032D94DA /* Build configuration list for PBXNativeTarget "KinicTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8DD68F1A27040D159BEFB0D5 /* Debug */,
+				2CF0199362964C58596AD01F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AE504A8B4135FF1352AE8ECA /* Build configuration list for PBXProject "Kinic" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B815E4577C7F4916D4BE90A9 /* Debug */,
+				7DBD256A18A35A8FEBAD85E1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B02759DED070D8115695FD69 /* XCRemoteSwiftPackageReference "ICNativeClient" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/humandebri/ICNativeClient";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AE29406CD3A10A8959790ECD /* ICNativeClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B02759DED070D8115695FD69 /* XCRemoteSwiftPackageReference "ICNativeClient" */;
+			productName = ICNativeClient;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1487DDA31916009D79DC5E43 /* Project object */;
+}

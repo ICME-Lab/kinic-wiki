@@ -11,6 +11,7 @@ Use this skill when the user wants to:
 - look for isolated or duplicated pages
 - check whether `/Knowledge/index.md` is stale
 - review missing links, weak structure, or outdated organization
+- inspect database discovery metadata for public retrieval
 - decide what to fix next without auto-applying changes
 
 Do not use this skill for:
