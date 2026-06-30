@@ -24,11 +24,12 @@ settings:
 packages:
   ICNativeClient:
     url: https://github.com/humandebri/ICNativeClient
-    branch: main
+    exactVersion: 0.1.0
 targets:
   Kinic:
     type: application
     platform: iOS
+    productName: KinicWikiApp
     configFiles:
       Debug: Config/Kinic.xcconfig
       Release: Config/Kinic.xcconfig
@@ -45,6 +46,12 @@ targets:
         CODE_SIGN_ENTITLEMENTS: KinicApp/Kinic.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: KinicWikiApp
+        PRODUCT_MODULE_NAME: Kinic
+    scheme:
+      testTargets:
+        - KinicTests
+      management:
+        shared: true
   KinicShareExtension:
     type: app-extension
     platform: iOS
@@ -53,6 +60,35 @@ targets:
       Release: Config/Kinic.xcconfig
     sources:
       - KinicShareExtension
+      - KinicApp/Models/AppConfiguration.swift
+      - KinicApp/Models/CaptureSubmission.swift
+      - KinicApp/Models/DatabaseRole.swift
+      - KinicApp/Models/DatabaseStatus.swift
+      - KinicApp/Models/DatabaseSummary.swift
+      - KinicApp/Models/PendingSharedURL.swift
+      - KinicApp/Models/ShareCaptureResult.swift
+      - KinicApp/Models/SharedURLRecord.swift
+      - KinicApp/Models/SourceCaptureRequest.swift
+      - KinicApp/Services/KinicAuthSessionStore.swift
+      - KinicApp/Services/KinicICClient.swift
+      - KinicApp/Services/ShareCaptureSubmitter.swift
+      - KinicApp/Services/ShareInbox.swift
+      - KinicApp/Services/SharedDefaultsStore.swift
+      - KinicApp/Services/SourceCaptureRequestBuilder.swift
+      - KinicApp/Services/SourceCaptureRequestError.swift
+      - KinicApp/Services/VFSCandidDecoder.swift
+      - KinicApp/Services/VFSCandidEncoder.swift
+      - KinicApp/Services/VFSCandidError.swift
+      - KinicApp/Services/VFSCandidLabels.swift
+      - KinicApp/Services/VFSCandidLEB.swift
+      - KinicApp/Services/VFSClient.swift
+      - KinicApp/Utilities/Bundle+Configuration.swift
+      - KinicApp/Utilities/URLNormalizer.swift
+      - KinicApp/Utilities/URLNormalizerError.swift
+      - KinicApp/Views/KinicDesign.swift
+      - KinicApp/Assets.xcassets
+    dependencies:
+      - package: ICNativeClient
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)"

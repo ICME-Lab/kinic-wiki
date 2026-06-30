@@ -87,6 +87,31 @@ final class AppModel {
         pendingURLs = shareInbox.loadPendingURLs()
     }
 
+    func handleOpenURL(_ url: URL) {
+        refreshInbox()
+        statusMessage = "Opened from \(url.scheme ?? "URL")."
+        autoSubmitPendingURL()
+    }
+
+    func enqueueManualURL(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rawURL = URL(string: trimmed) else {
+            statusMessage = "Enter a valid URL."
+            return false
+        }
+        do {
+            let normalizedURL = try URLNormalizer.normalizedHTTPURL(rawURL)
+            try shareInbox.enqueue(normalizedURL)
+            refreshInbox()
+            statusMessage = "URL queued."
+            autoSubmitPendingURL()
+            return true
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func selectDatabase(_ databaseId: String) {
         selectedDatabaseId = databaseId
         settingsStore.databaseId = databaseId

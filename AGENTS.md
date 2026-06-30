@@ -19,6 +19,7 @@
 - 判断に迷う場合は、互換維持より構成の単純さを優先する。
 - IC 関連の build、deploy、local network、canister 管理は `icp-cli` skill を正とする。
 - `dfx` は legacy 扱いとし、このリポジトリでは原則使わない。local network は project-local に `icp network start -d` / `icp network stop` で管理する。
+- iOSの場合は、可能な限りシミュレーター確認より実機確認を優先する。実機未接続、署名不可、再現補助が必要な場合だけシミュレーターを使う。
 
 ## コミュニケーション
 

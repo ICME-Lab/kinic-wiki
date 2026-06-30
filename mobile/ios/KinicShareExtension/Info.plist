@@ -4,6 +4,18 @@
 <dict>
 	<key>APP_GROUP_ID</key>
 	<string>$(APP_GROUP_ID)</string>
+	<key>KINIC_API_BASE_URL</key>
+	<string>$(KINIC_API_BASE_URL)</string>
+	<key>KINIC_AUTH_ORIGIN</key>
+	<string>$(KINIC_AUTH_ORIGIN)</string>
+	<key>KINIC_CALLBACK_DOMAIN</key>
+	<string>$(KINIC_CALLBACK_DOMAIN)</string>
+	<key>KINIC_CANISTER_ID</key>
+	<string>$(KINIC_CANISTER_ID)</string>
+	<key>KINIC_DERIVATION_ORIGIN</key>
+	<string>$(KINIC_DERIVATION_ORIGIN)</string>
+	<key>KINIC_KEYCHAIN_ACCESS_GROUP</key>
+	<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
 	<key>KINIC_OPEN_URL</key>
 	<string>$(KINIC_OPEN_URL)</string>
 	<key>CFBundleDevelopmentRegion</key>

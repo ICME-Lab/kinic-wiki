@@ -22,7 +22,11 @@ const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
+const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
+const staticAppleAppSiteAssociation = JSON.parse(
+  readFileSync(new URL("../public/.well-known/apple-app-site-association", import.meta.url), "utf8")
+);
 const nativeAuthBridge = readFileSync(new URL("../components/native-auth-bridge.tsx", import.meta.url), "utf8");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
@@ -53,10 +57,24 @@ await withEnv({ KINIC_IOS_APP_ID: "ABCDE12345.xyz.kinic.ios.KinicWiki" }, async 
   assert.deepEqual(body.webcredentials.apps, ["ABCDE12345.xyz.kinic.ios.KinicWiki"]);
 });
 
+assert.deepEqual(staticAppleAppSiteAssociation.applinks.details[0], {
+  appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+  paths: ["/*"]
+});
+assert.deepEqual(staticAppleAppSiteAssociation.webcredentials.apps, ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]);
+
 {
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
   assert.equal(response.status, 200);
   assert.match(await response.text(), /Return to KinicWikiApp/);
+}
+
+{
+  const response = iosShareRouteModule.GET();
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /Open KinicWikiApp/);
+  assert.match(body, /kinicwiki:\/\/share/);
 }
 
 await withEnv({}, async () => {

@@ -1,20 +1,20 @@
 // Where: mobile/ios/KinicApp/Views/HomeView.swift
-// What: Main capture inbox and session surface.
-// Why: Shared URLs need a native place to review and submit.
+// What: Main native capture session surface.
+// Why: Shared URLs are submitted automatically once sign-in and database selection are ready.
 
 import SwiftUI
 
 struct HomeView: View {
     @Bindable var model: AppModel
+    @FocusState private var isManualURLFocused: Bool
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    KinicHeroView(pendingCount: model.pendingURLs.count, isSignedIn: model.isSignedIn)
                     SessionPanel(model: model)
                     DatabasePanel(model: model)
-                    CapturePanel(model: model)
+                    ManualURLPanel(model: model, isURLFocused: $isManualURLFocused)
 
                     if let message = model.statusMessage {
                         StatusPanel(message: message)
@@ -22,15 +22,33 @@ struct HomeView: View {
                 }
                 .padding(KinicDesign.screenPadding)
             }
-            .background(.white)
-            .navigationTitle("KinicWiki")
+            .scrollDismissesKeyboard(.interactively)
+            .background {
+                Color.white
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isManualURLFocused = false
+                    }
+            }
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.white, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     KinicHeaderTitle()
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink("Settings", destination: SettingsView(model: model))
+                    NavigationLink {
+                        SettingsView(model: model)
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(KinicDesign.bodyGray)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Settings")
                 }
             }
             .task {

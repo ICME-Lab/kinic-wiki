@@ -6,19 +6,19 @@ import SwiftUI
 
 struct KinicHeaderTitle: View {
     var body: some View {
-        Label {
-            Text("KinicWiki")
-                .font(.headline)
-                .bold()
-                .foregroundStyle(.black)
-        } icon: {
+        HStack(spacing: 8) {
             Image("KinicMark")
                 .resizable()
                 .scaledToFit()
                 .frame(width: 24, height: 24)
                 .accessibilityHidden(true)
+
+            Text("KinicWiki")
+                .font(.headline)
+                .bold()
+                .foregroundStyle(.black)
         }
-        .labelStyle(.titleAndIcon)
+        .fixedSize()
         .accessibilityLabel("KinicWiki")
     }
 }

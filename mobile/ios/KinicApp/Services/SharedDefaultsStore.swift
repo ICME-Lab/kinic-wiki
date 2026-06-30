@@ -4,7 +4,7 @@
 
 import Foundation
 
-struct SharedDefaultsStore {
+struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private let defaults: UserDefaults
 
@@ -30,4 +30,3 @@ struct SharedDefaultsStore {
         return shared
     }
 }
-

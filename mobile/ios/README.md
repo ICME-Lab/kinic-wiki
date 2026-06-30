@@ -9,7 +9,8 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Includes `PrivacyInfo.xcprivacy` for app group `UserDefaults` usage.
 - Opens Internet Identity through the `/native-auth` bridge model.
 - Receives Safari/browser Share Sheet URLs through `KinicShareExtension`.
-- Stores shared URLs in the App Group inbox, opens the main app, and auto-submits when signed in.
+- Submits shared URLs directly from `KinicShareExtension` when a shared Keychain session and selected database are available.
+- Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
@@ -37,9 +38,13 @@ Enable these capabilities:
 
 - App Groups for both targets:
   - `group.xyz.kinic.ios.KinicWiki`
+- Keychain Sharing for both targets:
+  - `$(AppIdentifierPrefix)xyz.kinic.ios.KinicWiki`
 - Associated Domains on the app target:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
+
+Share Extension capture is best-effort: it writes directly through VFS when possible, otherwise queues the URL and lets the main app auto-submit later. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` including `applinks` / `webcredentials` for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
 
 ## Verification
 

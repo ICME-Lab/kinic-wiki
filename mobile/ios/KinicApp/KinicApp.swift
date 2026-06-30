@@ -12,9 +12,8 @@ struct KinicApp: App {
         WindowGroup {
             HomeView(model: model)
                 .tint(KinicDesign.hotPink)
-                .onOpenURL { _ in
-                    model.refreshInbox()
-                    model.autoSubmitPendingURL()
+                .onOpenURL { url in
+                    model.handleOpenURL(url)
                 }
         }
     }

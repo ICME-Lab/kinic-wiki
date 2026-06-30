@@ -6,6 +6,10 @@
 	<array>
 		<string>$(APP_GROUP_ID)</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
+	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:$(KINIC_CALLBACK_DOMAIN)</string>
@@ -13,4 +17,3 @@
 	</array>
 </dict>
 </plist>
-

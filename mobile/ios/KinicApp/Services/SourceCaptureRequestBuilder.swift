@@ -78,11 +78,10 @@ enum SourceCaptureRequestBuilder {
     }
 
     private static func jsonString(_ value: String) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value),
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
               let text = String(data: data, encoding: .utf8) else {
             return "\"\""
         }
         return text
     }
 }
-

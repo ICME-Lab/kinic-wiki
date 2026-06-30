@@ -8,7 +8,7 @@ import ICNativeClient
 @MainActor
 final class KinicAuthService {
     private let authenticator: ICInternetIdentityAuthenticator
-    private let store: ICIdentityStore
+    private let store: KinicAuthSessionStore
 
     init(configuration: AppConfiguration) {
         authenticator = ICInternetIdentityAuthenticator(
@@ -16,14 +16,11 @@ final class KinicAuthService {
             authOrigin: configuration.authOrigin,
             callbackDomain: configuration.callbackDomain
         )
-        store = ICIdentityStore(
-            configuration: configuration.icClientConfiguration,
-            service: "\(configuration.canisterId).kinic-ios"
-        )
+        store = KinicAuthSessionStore(configuration: configuration)
     }
 
     func restore() -> ICAuthSession? {
-        store.load()
+        store.restore()
     }
 
     func signIn() async throws -> ICAuthSession {
@@ -36,4 +33,3 @@ final class KinicAuthService {
         store.clear()
     }
 }
-

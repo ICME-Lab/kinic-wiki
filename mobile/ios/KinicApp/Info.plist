@@ -14,6 +14,8 @@
 	<string>$(KINIC_CANISTER_ID)</string>
 	<key>KINIC_DERIVATION_ORIGIN</key>
 	<string>$(KINIC_DERIVATION_ORIGIN)</string>
+	<key>KINIC_KEYCHAIN_ACCESS_GROUP</key>
+	<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
 	<key>KINIC_OPEN_URL</key>
 	<string>$(KINIC_OPEN_URL)</string>
 	<key>CFBundleDevelopmentRegion</key>
@@ -30,6 +32,17 @@
 	<string>KinicWikiApp</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(KINIC_APP_BUNDLE_ID)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>kinicwiki</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>

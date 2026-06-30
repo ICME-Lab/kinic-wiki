@@ -6,6 +6,9 @@
 	<array>
 		<string>$(APP_GROUP_ID)</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
+	</array>
 </dict>
 </plist>
-

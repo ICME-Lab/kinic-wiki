@@ -3,6 +3,9 @@
 // Why: The iOS UI should follow the public Kinic design language consistently.
 
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 enum KinicDesign {
     static let hotPink = Color(red: 1.0, green: 0.149, blue: 0.525)
@@ -17,4 +20,10 @@ enum KinicDesign {
     static let largeRadius: CGFloat = 20
     static let panelPadding: CGFloat = 20
     static let screenPadding: CGFloat = 16
+
+    #if canImport(UIKit)
+    static let uiHotPink = UIColor(red: 1.0, green: 0.149, blue: 0.525, alpha: 1.0)
+    static let uiBodyGray = UIColor(red: 0.388, green: 0.38, blue: 0.38, alpha: 1.0)
+    static let uiHairlineGray = UIColor(red: 0.902, green: 0.902, blue: 0.902, alpha: 1.0)
+    #endif
 }
