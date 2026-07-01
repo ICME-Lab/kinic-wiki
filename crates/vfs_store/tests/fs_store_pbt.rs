@@ -273,6 +273,7 @@ fn assert_store_matches_model(store: &FsStore, model: &BTreeMap<String, ModelNod
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("list should succeed")
         .into_iter()
@@ -372,6 +373,7 @@ fn path_set(store: &FsStore) -> BTreeSet<String> {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("nodes should list")
         .into_iter()

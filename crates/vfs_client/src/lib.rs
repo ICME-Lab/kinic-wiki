@@ -41,7 +41,7 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(&self, _title: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
     async fn update_database_metadata(
@@ -484,12 +484,12 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn create_database(&self, title: &str) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
-                    title: title.to_string(),
+                    name: name.to_string(),
                 },
             )
             .await?;

@@ -42,6 +42,6 @@ Core rules:
 - When a relevant `log.md` already exists or the user asks for logging, update it append-only.
 - Do not create `log.md` by default.
 - PDF handling stays inside kinic-wiki-ingest as source normalization.
-- Treat [../../docs/STORE_API.md](../../docs/STORE_API.md) as the trust model and note-role contract.
+- Use the embedded note-role rules in `ingest.md` as the trust model. When this skill runs inside the repo and `docs/STORE_API.md` is available, use that file only as the current repo-local refinement.
 
 Read [ingest.md](ingest.md) before doing substantive Kinic Wiki ingest work.

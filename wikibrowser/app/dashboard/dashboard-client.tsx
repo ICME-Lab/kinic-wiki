@@ -464,7 +464,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   return (
     <AdminContent>
         <DatabaseDetailHeader
-          title={database?.metadata.title ?? "Database access"}
+          title={database?.metadata.name ?? "Database access"}
           actions={<CycleBattery cyclesBalance={database?.cyclesBalance ?? null} />}
         />
 
@@ -488,7 +488,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           <MarketListingsPanel
             busy={marketBusy}
             databaseId={databaseId}
-            databaseTitle={database.metadata.title}
+            databaseTitle={database.metadata.name}
             error={marketError}
             listings={marketListings}
             principal={principal}
@@ -585,5 +585,5 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   for (const database of memberDatabases) {
     rows.set(database.databaseId, { ...database, publicReadable: publicIds.has(database.databaseId) });
   }
-  return [...rows.values()].sort((left, right) => left.metadata.title.localeCompare(right.metadata.title) || left.databaseId.localeCompare(right.databaseId));
+  return [...rows.values()].sort((left, right) => left.metadata.name.localeCompare(right.metadata.name) || left.databaseId.localeCompare(right.databaseId));
 }

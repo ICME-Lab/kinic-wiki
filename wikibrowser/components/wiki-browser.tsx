@@ -634,7 +634,7 @@ export function WikiBrowser() {
         graphCenter={graphCenter}
         databaseOptions={databaseOptions}
         currentDatabase={currentDatabase}
-        currentDatabaseName={currentDatabase?.metadata.title ?? databaseId}
+        currentDatabaseName={currentDatabase?.metadata.name ?? ""}
         cyclesConfig={cyclesConfig}
         publicReadable={publicDatabaseIds.has(databaseId)}
         databaseListError={databaseListError}
@@ -799,7 +799,7 @@ export function WikiBrowser() {
             <Inspector
               canisterId={canisterId}
               databaseId={databaseId}
-              databaseTitle={currentDatabase?.metadata.title ?? databaseId}
+              databaseTitle={currentDatabase?.metadata.name ?? ""}
               path={selectedPath}
               node={currentNode.data}
               childNodes={currentChildren.data ?? []}
@@ -817,7 +817,7 @@ export function WikiBrowser() {
             <Inspector
               canisterId={canisterId}
               databaseId={databaseId}
-              databaseTitle={currentDatabase?.metadata.title ?? databaseId}
+              databaseTitle={currentDatabase?.metadata.name ?? ""}
               path={selectedPath}
               node={currentNode.data}
               childNodes={currentChildren.data ?? []}
@@ -1390,7 +1390,7 @@ function TopBar({
           >
             {databaseOptions.map((database) => (
               <option key={database.databaseId} value={database.databaseId}>
-                {database.metadata.title}
+                {database.metadata.name}
               </option>
             ))}
           </select>
@@ -1458,7 +1458,7 @@ function TopBar({
 
 function DatabaseCyclesBadge({ cycles, database }: { cycles: ReturnType<typeof databaseCyclesView>; database: DatabaseSummary | null }) {
   const title = database
-    ? `${database.metadata.title}: ${cycles.label}; ${formatCycles(cycles.balanceCycles)}`
+    ? `${database.metadata.name}: ${cycles.label}; ${formatCycles(cycles.balanceCycles)}`
     : "Database cycles unavailable";
   const content = (
     <>
@@ -1507,8 +1507,9 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
   return [
     {
       databaseId,
+      name: databaseId,
       metadata: {
-        title: databaseId,
+        name: databaseId,
         description: "",
         llmSummary: null,
         tagsJson: "[]"

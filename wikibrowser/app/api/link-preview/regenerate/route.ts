@@ -5,7 +5,7 @@
 type DatabaseSummaryForPreview = {
   databaseId: string;
   metadata: {
-    title: string;
+    name: string;
     description: string;
   };
 };
@@ -99,7 +99,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!database) return jsonError("database not found in public list", 404);
     const renderImage = testDeps?.renderImage ?? defaultRenderImage;
     const renderStartMs = performance.now();
-    const title = database.metadata.title;
+    const title = database.metadata.name;
     const description = database.metadata.description || `Browse, search, and query the ${title} wiki database.`;
     const image = await renderImage({
       eyebrow: "Kinic Wiki database",

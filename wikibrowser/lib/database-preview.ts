@@ -18,7 +18,7 @@ export async function loadDatabasePreview(canisterId: string, databaseId: string
       if (database) {
         return {
           databaseId: normalizedId,
-          databaseTitle: database.metadata.title,
+          databaseTitle: database.metadata.name,
           description: database.metadata.description,
           publicReadable: true
         };

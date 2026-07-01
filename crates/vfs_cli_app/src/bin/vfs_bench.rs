@@ -4,6 +4,7 @@
 mod vfs_bench {
     pub mod common;
     pub mod latency;
+    pub mod store_latency;
     pub mod workload;
 }
 
@@ -18,6 +19,9 @@ use vfs_bench::common::{
 };
 use vfs_bench::latency::{
     LatencyBenchArgs, measure_latency_bench, run_latency_bench, setup_latency_bench,
+};
+use vfs_bench::store_latency::{
+    StoreLatencyBenchArgs, StoreLatencyOperation, run_store_latency_bench,
 };
 use vfs_bench::workload::{
     WorkloadBenchArgs, measure_workload_bench, run_workload_bench, setup_workload_bench,
@@ -205,6 +209,40 @@ enum Command {
         iterations: usize,
         #[arg(long, value_enum)]
         operation: LatencyOperation,
+    },
+    StoreLatency {
+        #[arg(long)]
+        output_json: String,
+        #[arg(long)]
+        benchmark_name: String,
+        #[arg(long)]
+        local: bool,
+        #[arg(long)]
+        replica_host: Option<String>,
+        #[arg(long)]
+        canister_id: Option<String>,
+        #[arg(long)]
+        database_id: String,
+        #[arg(long, default_value = "/Sources")]
+        namespace: String,
+        #[arg(long, default_value = "/Sources")]
+        prefix: String,
+        #[arg(long, default_value = "vfs cli")]
+        task: String,
+        #[arg(long, default_value_t = 1000)]
+        budget_tokens: u32,
+        #[arg(long, default_value_t = true)]
+        include_evidence: bool,
+        #[arg(long, default_value_t = 1)]
+        depth: u32,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        #[arg(long, default_value_t = 5)]
+        iterations: usize,
+        #[arg(long, default_value_t = 1)]
+        warmup_iterations: usize,
+        #[arg(long, value_enum)]
+        operation: StoreLatencyOperation,
     },
 }
 
@@ -410,6 +448,45 @@ async fn main() -> Result<()> {
                 warmup_iterations: 0,
                 operation,
                 measurement_mode: MeasurementMode::IsolatedSingleOp,
+            })
+            .await?;
+            fs::write(output_json, serde_json::to_string_pretty(&result)? + "\n")?;
+        }
+        Command::StoreLatency {
+            output_json,
+            benchmark_name,
+            local,
+            replica_host,
+            canister_id,
+            database_id,
+            namespace,
+            prefix,
+            task,
+            budget_tokens,
+            include_evidence,
+            depth,
+            limit,
+            iterations,
+            warmup_iterations,
+            operation,
+        } => {
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
+            let result = run_store_latency_bench(StoreLatencyBenchArgs {
+                benchmark_name,
+                replica_host: connection.replica_host,
+                canister_id: connection.canister_id,
+                database_id,
+                namespace,
+                prefix,
+                task,
+                budget_tokens,
+                include_evidence,
+                depth,
+                limit,
+                iterations,
+                warmup_iterations,
+                operation,
             })
             .await?;
             fs::write(output_json, serde_json::to_string_pretty(&result)? + "\n")?;

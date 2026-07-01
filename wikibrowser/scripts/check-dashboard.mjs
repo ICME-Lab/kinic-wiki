@@ -15,14 +15,21 @@ assert.match(dashboardUi, /canViewCyclesHistory/);
 assert.match(dashboardClient, /setActiveTab\("access"\)/);
 
 assert.match(dashboardHome, /Create with wallet/);
+assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
+assert.match(dashboardHome, /無料枠あり/);
+assert.match(dashboardHome, /wallet 支払い必要/);
+assert.match(dashboardHome, /wallet approval is not required/);
+assert.match(dashboardHome, /wallet approval pays directly from ledger balance/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);
+assert.match(dashboardHome, /result\.initial_free_grant_applied \|\| result\.status === "active"/);
+assert.match(dashboardHome, /Database created pending\. Fund it from Cycles before opening \/Knowledge\./);
+assert.doesNotMatch(dashboardHome, /if \(freeGrantAvailable\) \{/);
 assert.match(dashboardHome, /KinicAfterApproveError/);
 assert.match(dashboardHome, /purchase_database_cycles failed/);
 assert.match(dashboardHome, /Retry cycles purchase for the same database from Cycles/);
 assert.doesNotMatch(dashboardHome, /setLoadState\("idle"\)/);
 assertNoAppBalanceSurface(dashboardHome);
 assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
-assert.match(createDialog, /Wallet approval pays directly from ledger balance/);
 assertNoAppBalanceSurface(createDialog);
 assert.doesNotMatch(createDialog, /app-balance|Payment source|CreateDatabasePaymentSource|PaymentSourceOption|paymentSource|paymentSources|onPaymentSourceChange/);
 

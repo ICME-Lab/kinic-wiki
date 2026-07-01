@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use vfs_types::{DatabaseRole, GlobNodeType, NodeKind, SearchPreviewMode};
 
 pub const DEFAULT_VFS_ROOT_PATH: &str = "/";
+pub const DEFAULT_LIST_NODES_LIMIT: u32 = 100;
 
 #[derive(Parser, Debug)]
 #[command(name = "kinic-vfs-cli")]
@@ -30,7 +31,10 @@ pub struct ConnectionArgs {
     #[arg(long, help = "Override replica host from config")]
     pub replica_host: Option<String>,
 
-    #[arg(long, help = "Override VFS_CANISTER_ID or user config")]
+    #[arg(
+        long,
+        help = "Override the mainnet default, VFS_CANISTER_ID, or user config"
+    )]
     pub canister_id: Option<String>,
 
     #[arg(
@@ -83,6 +87,8 @@ pub enum VfsCommand {
         prefix: String,
         #[arg(long)]
         recursive: bool,
+        #[arg(long, default_value_t = DEFAULT_LIST_NODES_LIMIT)]
+        limit: u32,
         #[arg(long)]
         json: bool,
     },
@@ -270,6 +276,63 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Discover Store API roots, capabilities, and limits")]
+    MemoryManifest {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read task-scoped Store API context; agents should prefer --json")]
+    QueryContext {
+        #[arg(long)]
+        task: String,
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long, default_value_t = 8_000)]
+        budget_tokens: u32,
+        #[arg(long, default_value_t = 1)]
+        depth: u32,
+        #[arg(long)]
+        no_evidence: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read source evidence references for one knowledge node")]
+    SourceEvidence {
+        #[arg(long)]
+        node_path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one Store API snapshot page for a path scope")]
+    ExportSnapshot {
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Fetch Store API changes since a known snapshot revision")]
+    FetchUpdates {
+        #[arg(long)]
+        known_snapshot_revision: String,
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        target_snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -288,7 +351,7 @@ pub enum MarketCommand {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
     #[command(about = "Create a database and print its generated database id")]
-    Create { title: String },
+    Create { name: String },
     #[command(about = "Update one database metadata record from JSON")]
     Metadata {
         database_id: String,

@@ -17,7 +17,7 @@ Export a selected `/Knowledge/...` scope into an OKF v0.1 markdown bundle that a
 - `context-pack export` is the preferred read path for handoff bundles; it uses `query_context` internally to collect scoped wiki nodes and evidence.
 - Do not pre-read the scope with ad hoc `read-node` loops before export.
 - Use `context-pack inspect` for local bundle summaries after export.
-- Use `export_snapshot` or `fetch_updates` only through Store API/tool access outside this workflow when raw scope or delta reads are explicitly needed.
+- Use `export_snapshot` or `fetch_updates` only through Store API/tool access outside this workflow when raw scope or delta reads are explicitly needed. Measure those raw reads with the Store API latency benchmark, not by adding ad hoc reads before `context-pack export`.
 
 ## Commands
 

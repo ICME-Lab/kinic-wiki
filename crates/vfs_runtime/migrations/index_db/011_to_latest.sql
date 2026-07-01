@@ -1,4 +1,3 @@
-ALTER TABLE databases RENAME COLUMN name TO title;
 ALTER TABLE databases ADD COLUMN description TEXT NOT NULL DEFAULT '';
 ALTER TABLE databases ADD COLUMN llm_summary TEXT;
 ALTER TABLE databases ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';

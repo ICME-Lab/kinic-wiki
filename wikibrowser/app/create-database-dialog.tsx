@@ -1,6 +1,6 @@
 "use client";
 
-// Home dashboard database creation dialog: collect the display title before creating a DB.
+// Home dashboard database creation dialog: collect the display name before creating a DB.
 
 import { Plus, X } from "lucide-react";
 import type { FormEvent } from "react";
@@ -8,8 +8,9 @@ export function CreateDatabaseDialog({
   createDisabled,
   createLabel,
   creating,
-  databaseTitle,
+  databaseName,
   open,
+  paymentNote,
   requiredBalanceLabel,
   validationError,
   onCancel,
@@ -19,8 +20,9 @@ export function CreateDatabaseDialog({
   createDisabled: boolean;
   createLabel: string;
   creating: boolean;
-  databaseTitle: string;
+  databaseName: string;
   open: boolean;
+  paymentNote: string;
   requiredBalanceLabel: string;
   validationError: string | null;
   onCancel: () => void;
@@ -47,7 +49,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Create requires {requiredBalanceLabel}. Wallet approval pays directly from ledger balance.
+              Create requires {requiredBalanceLabel}. {paymentNote}
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
@@ -55,20 +57,20 @@ export function CreateDatabaseDialog({
           </button>
         </div>
         <div className="mt-5 grid gap-2">
-          <label className="text-xs uppercase tracking-[0.12em] text-muted" htmlFor="database-title-input">
-            Database title
+          <label className="text-xs uppercase tracking-[0.12em] text-muted" htmlFor="database-name-input">
+            Database name
           </label>
           <input
-            id="database-title-input"
+            id="database-name-input"
             className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             maxLength={80}
             placeholder="Team skills"
             type="text"
-            value={databaseTitle}
+            value={databaseName}
             onChange={(event) => onChange(event.target.value)}
           />
-          <p className="text-xs leading-5 text-muted">Use 1..80 characters. The title can be changed later.</p>
-          {databaseTitle.trim().length > 0 && validationError ? <p className="text-xs text-red-700">{validationError}</p> : null}
+          <p className="text-xs leading-5 text-muted">Use 1..80 characters. The name can be changed later.</p>
+          {databaseName.trim().length > 0 && validationError ? <p className="text-xs text-red-700">{validationError}</p> : null}
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>

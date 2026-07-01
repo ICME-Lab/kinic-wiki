@@ -8,7 +8,48 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ANONYMOUS_PRINCIPAL="2vxsx-fae"
+KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
+CURRENT_CYCLES_BILLING_CONFIG=""
+
+load_current_cycles_billing_config() {
+  if [[ -n "${CURRENT_CYCLES_BILLING_CONFIG}" ]]; then
+    return 0
+  fi
+
+  if ! CURRENT_CYCLES_BILLING_CONFIG="$(cd "${REPO_ROOT}" && icp canister call wiki get_cycles_billing_config '()' -e ic -o candid 2>/dev/null)"; then
+    echo "failed to read current mainnet cycles billing config; set KINIC_LEDGER_CANISTER_ID and BILLING_AUTHORITY_ID explicitly" >&2
+    return 1
+  fi
+
+  if [[ "${CURRENT_CYCLES_BILLING_CONFIG}" != *"Ok = record"* ]]; then
+    echo "current mainnet cycles billing config did not return Ok; set KINIC_LEDGER_CANISTER_ID and BILLING_AUTHORITY_ID explicitly" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+extract_current_config_text() {
+  local field="$1"
+  load_current_cycles_billing_config || return 1
+  awk -v field="${field}" -F'"' '$0 ~ field { print $2; found = 1; exit } END { if (!found) exit 1 }' <<<"${CURRENT_CYCLES_BILLING_CONFIG}"
+}
+
+resolve_principal_env() {
+  local name="$1"
+  local field="$2"
+  local value
+  if [[ -n "${!name:-}" ]]; then
+    return 0
+  fi
+  if ! value="$(extract_current_config_text "${field}")" || [[ -z "${value}" ]]; then
+    echo "${name} is required and could not be resolved from the current mainnet cycles billing config" >&2
+    return 1
+  fi
+  printf -v "${name}" '%s' "${value}"
+  export "${name}"
+}
 
 require_principal_env() {
   local name="$1"
@@ -27,37 +68,10 @@ require_principal_env() {
   fi
 }
 
+resolve_principal_env KINIC_LEDGER_CANISTER_ID kinic_ledger_canister_id
+resolve_principal_env BILLING_AUTHORITY_ID billing_authority_id
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env BILLING_AUTHORITY_ID
-
-deploy_mode_is_upgrade() {
-  local previous=""
-  for arg in "$@"; do
-    if [[ "${arg}" == "--mode=upgrade" ]]; then
-      return 0
-    fi
-    if [[ "${previous}" == "--mode" && "${arg}" == "upgrade" ]]; then
-      return 0
-    fi
-    previous="${arg}"
-  done
-  return 1
-}
-
-check_no_archive_restore_databases() {
-  local sql
-  local output
-  sql="SELECT json_object('count', COUNT(*)) FROM databases WHERE status IN ('archiving','archived','restoring') LIMIT 1"
-  if ! output="$(icp canister call wiki query_index_sql_json "(\"${sql}\", 1 : nat32)" -e ic -o candid)"; then
-    echo "archive/restore preflight failed" >&2
-    return 1
-  fi
-  if [[ "${output}" != *'\\"count\\":0'* && "${output}" != *'"count":0'* ]]; then
-    echo "archive/restore preflight failed: archived, archiving, or restoring databases remain" >&2
-    echo "${output}" >&2
-    return 1
-  fi
-}
 
 ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX.did")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
@@ -78,13 +92,11 @@ EOF
 
 if [[ "${1:-}" == "--dry-run" ]]; then
   echo "mainnet wiki cycles init args validated" >&2
+  echo "KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID}" >&2
   echo "BILLING_AUTHORITY_ID=${BILLING_AUTHORITY_ID}" >&2
   exit 0
 fi
 
 cd "${REPO_ROOT}"
 unset KINIC_VFS_LOCAL_II_ORIGINS
-if deploy_mode_is_upgrade "$@"; then
-  check_no_archive_restore_databases
-fi
 icp deploy wiki -e ic --args-file "${ARGS_FILE}" "$@"

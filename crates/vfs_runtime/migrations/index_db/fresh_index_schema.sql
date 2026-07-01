@@ -1,6 +1,6 @@
 CREATE TABLE databases (
   database_id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
+  name TEXT NOT NULL,
   description TEXT NOT NULL,
   llm_summary TEXT,
   tags_json TEXT NOT NULL,
@@ -107,6 +107,13 @@ CREATE TABLE database_cycle_ledger (
 
 CREATE INDEX database_cycle_ledger_database_idx
   ON database_cycle_ledger(database_id, entry_id);
+
+CREATE TABLE database_free_cycle_grants (
+  principal TEXT PRIMARY KEY,
+  database_id TEXT NOT NULL,
+  grant_cycles INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
 
 CREATE TABLE database_cycle_pending_operations (
   operation_id INTEGER PRIMARY KEY AUTOINCREMENT,

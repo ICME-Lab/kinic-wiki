@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Bot, CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { Bot, CheckCircle2, Database, Layers3, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
@@ -33,6 +33,14 @@ const readCommands = [
   "kinic-vfs-cli read-node-context --path /Knowledge/page.md --json"
 ];
 
+const storeApiCommands = [
+  "kinic-vfs-cli memory-manifest --json",
+  'kinic-vfs-cli query-context --task "answer auth question" --namespace /Knowledge --entity auth --budget-tokens 8000 --depth 1 --json',
+  "kinic-vfs-cli source-evidence --node-path /Knowledge/page.md --json",
+  "kinic-vfs-cli export-snapshot --prefix /Knowledge --limit 100 --json",
+  "kinic-vfs-cli fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json"
+];
+
 const writeCommands = [
   "kinic-vfs-cli read-node --path /Knowledge/page.md --json",
   "kinic-vfs-cli edit-node --path /Knowledge/page.md --old-text before --new-text after --expected-etag <etag> --json",
@@ -49,7 +57,8 @@ const safetyNotes = [
   "Public reads can run with --identity-mode anonymous when the database grants anonymous reader access.",
   "Writes, database grants, archive operations, and private Skill Registry writes require identity mode.",
   "Non-Internet Identity credentials require the explicit --allow-non-ii-identity opt-in.",
-  "Agents should request JSON output and use etag guards before mutating existing nodes."
+  "Agents should request JSON output and use etag guards before mutating existing nodes.",
+  "The CLI intentionally omits delete_database, canister_health, wiki_metrics, and wiki_metrics_series."
 ];
 
 const workflowSteps = [
@@ -110,6 +119,9 @@ export default function CliPage() {
           </CliGuideBlock>
           <CliGuideBlock icon={<Search aria-hidden size={18} />} title="Read Workflow" commands={readCommands}>
             Search first, read exact paths next, then request context when link relationships matter. Use <code>--json</code> so agents can parse results safely.
+          </CliGuideBlock>
+          <CliGuideBlock icon={<Layers3 aria-hidden size={18} />} title="Store API Reads" commands={storeApiCommands}>
+            Use Store API commands for task-scoped recall, source evidence references, full-scope snapshots, and trusted snapshot deltas.
           </CliGuideBlock>
           <CliGuideBlock icon={<Wrench aria-hidden size={18} />} title="Safe Write Workflow" commands={writeCommands}>
             Read the node first, keep its <code>etag</code>, edit with <code>--expected-etag</code>, then read again to verify the stored content.

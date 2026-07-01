@@ -295,6 +295,87 @@ test("triggerSourceGeneration calls source run route with issued source-run sess
   }
 });
 
+test("run-source-capture-task accepts immediately and later sends success notification", async () => {
+  const runtimeMessages = [];
+  const restore = installChromeRuntimeMessages(runtimeMessages);
+  const write = createDeferred();
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => sourceWriteActor({ write }),
+    fetch: async () => Response.json({ accepted: true }, { status: 202 })
+  });
+  try {
+    const accepted = await handleOffscreenMessage(sourceCaptureTaskMessage());
+    assert.deepEqual(accepted, { accepted: true, taskId: "task-1" });
+    assert.equal(runtimeMessages.length, 0);
+
+    write.resolve({
+      Ok: {
+        write: { created: true, node: { etag: "etag-source" } },
+        session_nonce: "session-source"
+      }
+    });
+    await waitUntil(() => runtimeMessages.length === 1);
+
+    assert.equal(runtimeMessages[0].type, "source-capture-task-result");
+    assert.equal(runtimeMessages[0].ok, true);
+    assert.equal(runtimeMessages[0].result.sourcePath, "/Sources/chatgpt/abc.md");
+    assert.equal(runtimeMessages[0].result.generationQueued, true);
+    assert.equal(runtimeMessages[0].inFlightKey, "team-db:https://example.com/");
+  } finally {
+    setOffscreenDepsForTest();
+    restore();
+  }
+});
+
+test("run-source-capture-task sends error notification when source save fails", async () => {
+  const runtimeMessages = [];
+  const restore = installChromeRuntimeMessages(runtimeMessages);
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return { Err: "source lookup failed" };
+      }
+    })
+  });
+  try {
+    const accepted = await handleOffscreenMessage(sourceCaptureTaskMessage());
+    assert.deepEqual(accepted, { accepted: true, taskId: "task-1" });
+    await waitUntil(() => runtimeMessages.length === 1);
+
+    assert.equal(runtimeMessages[0].ok, false);
+    assert.equal(runtimeMessages[0].url, "https://example.com/");
+    assert.equal(runtimeMessages[0].error, "source lookup failed");
+  } finally {
+    setOffscreenDepsForTest();
+    restore();
+  }
+});
+
+test("run-source-capture-task reports generation trigger failure after saving source", async () => {
+  const runtimeMessages = [];
+  const restore = installChromeRuntimeMessages(runtimeMessages);
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => sourceWriteActor(),
+    fetch: async () => Response.json({ error: "bad gateway" }, { status: 502 })
+  });
+  try {
+    const accepted = await handleOffscreenMessage(sourceCaptureTaskMessage());
+    assert.deepEqual(accepted, { accepted: true, taskId: "task-1" });
+    await waitUntil(() => runtimeMessages.length === 1);
+
+    assert.equal(runtimeMessages[0].ok, true);
+    assert.equal(runtimeMessages[0].result.generationQueued, false);
+    assert.equal(runtimeMessages[0].result.generationError, "worker trigger failed: HTTP 502");
+  } finally {
+    setOffscreenDepsForTest();
+    restore();
+  }
+});
+
 test("authStatus returns principal without identity", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { secret: "identity" }, principal: "principal-1" })
@@ -338,7 +419,7 @@ test("listWritableDatabases returns active writable database summaries", async (
     assert.deepEqual(await listWritableDatabases(config()), [
       {
         databaseId: "team-db",
-        title: "Team Wiki",
+        name: "Team Wiki",
         description: "",
         llmSummary: null,
         tagsJson: "[]",
@@ -352,6 +433,79 @@ test("listWritableDatabases returns active writable database summaries", async (
         cyclesReason: null
       }
     ]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("listWritableDatabases uses summary name when metadata is missing", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async list_databases() {
+        return { Ok: [rawDatabaseWithoutMetadata("team-db", "Summary name", "Writer", "Active")] };
+      },
+      async get_cycles_billing_config() {
+        return {
+          Ok: {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            cycles_per_kinic: 1n,
+            min_update_cycles: 10_000n
+          }
+        };
+      }
+    })
+  });
+  try {
+    const [database] = await listWritableDatabases(config());
+
+    assert.equal(database.name, "Summary name");
+    assert.equal(database.description, "");
+    assert.equal(database.llmSummary, null);
+    assert.equal(database.tagsJson, "[]");
+    assert.equal(database.writeCyclesAvailable, true);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("listWritableDatabases preserves database metadata when present", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async list_databases() {
+        return {
+          Ok: [
+            rawDatabase("team-db", "Summary name", "Writer", "Active", {
+              name: "Metadata name",
+              description: "Public team wiki",
+              llm_summary: ["Useful for agent workflows"],
+              tags_json: "[\"team\",\"wiki\"]"
+            })
+          ]
+        };
+      },
+      async get_cycles_billing_config() {
+        return {
+          Ok: {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            cycles_per_kinic: 1n,
+            min_update_cycles: 10_000n
+          }
+        };
+      }
+    })
+  });
+  try {
+    const [database] = await listWritableDatabases(config());
+
+    assert.equal(database.name, "Metadata name");
+    assert.equal(database.description, "Public team wiki");
+    assert.equal(database.llmSummary, "Useful for agent workflows");
+    assert.equal(database.tagsJson, "[\"team\",\"wiki\"]");
+    assert.equal(database.writeCyclesAvailable, true);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -381,12 +535,13 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
         Ok: [
           {
             database_id: databaseId,
-            metadata: {
-              title: "Team DB",
+            name: "Team DB",
+            metadata: [{
+              name: "Team DB",
               description: "",
               llm_summary: [],
               tags_json: "[]"
-            },
+            }],
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
@@ -410,20 +565,102 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
   };
 }
 
-function rawDatabase(databaseId, title, role, status) {
+function sourceWriteActor({ write = null } = {}) {
+  return {
+    ...writeCyclesActorMethods(),
+    async read_node() {
+      return { Ok: [] };
+    },
+    async mkdir_node() {
+      return { Ok: { created: true, path: "/Sources" } };
+    },
+    async write_source_for_generation(request) {
+      if (write) return write.promise;
+      return {
+        Ok: {
+          write: { created: true, node: { etag: "etag-source" } },
+          session_nonce: request.session_nonce
+        }
+      };
+    }
+  };
+}
+
+function sourceCaptureTaskMessage() {
+  return {
+    target: "offscreen",
+    type: "run-source-capture-task",
+    taskId: "task-1",
+    inFlightKey: "team-db:https://example.com/",
+    tabId: 1,
+    url: "https://example.com/",
+    title: "Example",
+    evidenceSource: evidenceSource(),
+    config: config(),
+    queueGeneration: true,
+    sourceAlreadyExists: false
+  };
+}
+
+function installChromeRuntimeMessages(messages) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+  Object.defineProperty(globalThis, "chrome", {
+    configurable: true,
+    value: {
+      runtime: {
+        async sendMessage(message) {
+          messages.push(message);
+          return { ok: true };
+        }
+      }
+    }
+  });
+  return () => {
+    if (descriptor) Object.defineProperty(globalThis, "chrome", descriptor);
+    else delete globalThis.chrome;
+  };
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitUntil(predicate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail("condition was not met");
+}
+
+function rawDatabase(databaseId, name, role, status, metadata = null) {
   return {
     database_id: databaseId,
-    metadata: {
-      title,
+    name,
+    metadata: [metadata ?? {
+      name,
       description: "",
       llm_summary: [],
       tags_json: "[]"
-    },
+    }],
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
     cycles_balance: [20_000n],
     cycles_suspended_at_ms: [],
     deleted_at_ms: []
+  };
+}
+
+function rawDatabaseWithoutMetadata(databaseId, name, role, status) {
+  return {
+    ...rawDatabase(databaseId, name, role, status),
+    metadata: []
   };
 }

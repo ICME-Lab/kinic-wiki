@@ -1,23 +1,27 @@
 // Where: extensions/wiki-clipper/popup/popup-state.js
-// What: Pure settings-state helpers for first-run database creation.
-// Why: Popup DOM code needs small testable rules for the no-database path.
-export const DEFAULT_DATABASE_TITLE = "My Kinic Wiki";
+// What: Pure settings-state helpers for first-run database creation and selection.
+// Why: Popup DOM code needs small testable rules for writable database choices.
+export const DEFAULT_DATABASE_NAME = "My Kinic Wiki";
 
-export function databaseOptionLabel(database, sameTitleCount = 1) {
+export function databaseOptionLabel(database, sameNameCount = 1) {
   const databaseId = String(database?.databaseId || database?.database_id || "").trim();
-  const title = String(database?.title || "").trim();
+  const name = String(database?.name || "").trim();
   const role = databaseRoleLabel(database?.role);
   const suffixes = [];
   if (role) suffixes.push(role);
-  if (!title || sameTitleCount > 1) suffixes.push(shortDatabaseId(databaseId));
-  return suffixes.length > 0 ? `${title || databaseId} (${suffixes.join(", ")})` : title;
+  if (!name || sameNameCount > 1) suffixes.push(shortDatabaseId(databaseId));
+  return suffixes.length > 0 ? `${name || databaseId} (${suffixes.join(", ")})` : name;
 }
 
 export function mergePreferredDatabase(databases, preferredDatabase) {
   const preferredDatabaseId = String(preferredDatabase?.databaseId || preferredDatabase?.database_id || "").trim();
+  const preferredDatabaseName = String(preferredDatabase?.name || "").trim();
   const role = databaseRoleLabel(preferredDatabase?.role);
   const status = databaseStatusLabel(preferredDatabase?.status);
   if (!preferredDatabaseId || databases.some((database) => database.databaseId === preferredDatabaseId)) {
+    return databases;
+  }
+  if (!preferredDatabaseName) {
     return databases;
   }
   if (status !== "Active" || (role !== "Owner" && role !== "Writer")) {
@@ -27,7 +31,7 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
     ...databases,
     {
       databaseId: preferredDatabaseId,
-      title: String(preferredDatabase.title || preferredDatabaseId),
+      name: preferredDatabaseName,
       role,
       status,
       logicalSizeBytes: String(preferredDatabase.logicalSizeBytes || preferredDatabase.logical_size_bytes || "0")
@@ -45,12 +49,12 @@ export function shouldShowCreateDatabaseForm({ isAuthenticated, writableDatabase
   return Boolean(isAuthenticated) && writableDatabaseCount === 0;
 }
 
-export function validateCreateDatabaseTitle(value) {
-  const title = String(value || "").trim();
-  if (!title) {
-    throw new Error("Database title is required.");
+export function validateCreateDatabaseName(value) {
+  const name = String(value || "").trim();
+  if (!name) {
+    throw new Error("Database name is required.");
   }
-  return title;
+  return name;
 }
 
 function shortDatabaseId(databaseId) {

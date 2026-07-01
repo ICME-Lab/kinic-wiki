@@ -46,7 +46,7 @@ pub struct DatabaseInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseMetadata {
-    pub title: String,
+    pub name: String,
     pub description: String,
     pub llm_summary: Option<String>,
     pub tags_json: String,
@@ -55,7 +55,8 @@ pub struct DatabaseMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseSummary {
     pub database_id: String,
-    pub metadata: DatabaseMetadata,
+    pub name: String,
+    pub metadata: Option<DatabaseMetadata>,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
@@ -99,6 +100,14 @@ pub struct CyclesPurchaseResult {
     pub block_index: u64,
     pub amount_cycles: u64,
     pub balance_cycles: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct InitialFreeDatabaseGrantStatus {
+    pub available: bool,
+    pub grant_cycles: u64,
+    pub database_id: Option<String>,
+    pub created_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -336,19 +345,27 @@ pub struct WikiMetricsPoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
-    pub title: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseResult {
     pub database_id: String,
-    pub title: String,
+    pub name: String,
+    pub status: DatabaseStatus,
+    pub initial_free_grant_applied: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct RenameDatabaseRequest {
+    pub database_id: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct UpdateDatabaseMetadataRequest {
     pub database_id: String,
-    pub title: String,
+    pub name: String,
     pub description: String,
     pub llm_summary: Option<String>,
     pub tags_json: String,
@@ -401,6 +418,7 @@ pub struct ListNodesRequest {
     pub database_id: String,
     pub prefix: String,
     pub recursive: bool,
+    pub limit: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

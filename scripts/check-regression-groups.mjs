@@ -53,10 +53,11 @@ const groups = {
   ],
   canister_cycles_billing: [
     ["scripts/smoke/local_canister_post_upgrade.sh", "scripts/local/deploy_wiki.sh --mode upgrade"],
-    ["docs/payment.md", "billing_authority_review"],
-    ["docs/payment.md", "v1 では repair / cancel API は提供しない"],
-    ["docs/payment.md", "v1 では retry API は提供しない"],
-    ["docs/payment.md", "残高を全徴収"]
+    ["scripts/check-mainnet-deploy-wiki.mjs", "get_cycles_billing_config"],
+    ["docs/DB_LIFECYCLE.md", "billing-authority review"],
+    ["docs/DB_LIFECYCLE.md", "repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented"],
+    ["docs/DB_LIFECYCLE.md", "If ledger transfer succeeds but local DB activation or cycle application fails"],
+    ["docs/DB_LIFECYCLE.md", "Remaining DB cycles are discarded"]
   ]
 };
 
@@ -68,9 +69,9 @@ for (const [group, checks] of Object.entries(groups)) {
 }
 
 assert.doesNotMatch(
-  readFileSync(join(root, "docs/payment.md"), "utf8"),
+  readFileSync(join(root, "docs/DB_LIFECYCLE.md"), "utf8"),
   /自動 repair API と cancel repair API は提供しない/,
-  "canister_cycles_billing: obsolete repair wording remains in docs/payment.md"
+  "canister_cycles_billing: obsolete repair wording remains in docs/DB_LIFECYCLE.md"
 );
 
 console.log(`Regression groups OK: ${Object.keys(groups).join(", ")}`);

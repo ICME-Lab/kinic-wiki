@@ -428,7 +428,7 @@ await withEnv(
       bucket: linkPreviewBucket(writes),
       listDatabasesPublic: async (canisterId) => {
         assert.equal(canisterId, "aaaaa-aa");
-        return [{ databaseId: "db_1", metadata: { title: "Demo DB", description: "" } }];
+        return [{ databaseId: "db_1", metadata: { name: "Demo DB", description: "" } }];
       },
       renderImage: async (input) => {
         assert.deepEqual(input, {

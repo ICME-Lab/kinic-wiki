@@ -77,7 +77,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
             <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
               <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
                 <div className="grid gap-1">
-                  <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.title}</h2>
+                  <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.name}</h2>
                   <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
                   <p className="break-all font-mono text-xs text-muted">Payout {view.listing.payoutPrincipal}</p>
                 </div>

@@ -8,7 +8,9 @@ use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL,
     DEFAULT_CYCLES_TOP_UP_THRESHOLD, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, VfsService, cycles_for_payment_amount_e8s,
+    DatabaseCyclesPurchaseWithLedgerDetails, INITIAL_FREE_DATABASE_GRANT_CYCLES, VfsService,
+    cycles_for_payment_amount_e8s, fail_next_database_migration_for_test,
+    fail_next_discard_database_reservation_for_test, generated_database_id_for_test,
 };
 use vfs_store::FsStore;
 use vfs_types::{
@@ -287,8 +289,13 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
     assert!(table_exists(&root, "source_capture_trigger_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
     assert!(!index_exists(
         &root,
         "url_ingest_trigger_sessions_expiry_idx"
@@ -304,13 +311,13 @@ fn mainnet_011_index_upgrades_to_latest() {
         "database_restore_chunks_database_id_idx"
     ));
     assert!(!column_exists(&root, "databases", "snapshot_hash"));
-    assert!(!column_exists(&root, "databases", "archived_at_ms"));
+    assert!(column_exists(&root, "databases", "archived_at_ms"));
     assert!(!column_exists(&root, "databases", "restore_size_bytes"));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 #[test]
-fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_title() {
+fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_name() {
     let (service, root) = service_with_root();
     service
         .create_database("listed-migration", "seller", 1)
@@ -326,17 +333,19 @@ fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_ti
              WHERE version IN (
                'database_index:034_database_metadata',
                'database_index:036_rename_url_ingest_trigger_sessions',
-               'database_index:037_drop_archive_restore_lifecycle'
+               'database_index:037_drop_archive_restore_lifecycle',
+               'database_index:038_initial_free_database_grants'
              );
+            DROP TABLE database_free_cycle_grants;
             ALTER TABLE market_listings ADD COLUMN title TEXT NOT NULL DEFAULT '';
             ALTER TABLE market_listings ADD COLUMN description TEXT NOT NULL DEFAULT '';
             ALTER TABLE market_listings ADD COLUMN llm_summary TEXT;
             ALTER TABLE market_listings ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
             UPDATE databases
-               SET title = 'Old DB Name'
+               SET name = 'Old DB Name'
              WHERE database_id = 'listed-migration';
             UPDATE databases
-               SET title = 'Unlisted DB Name'
+               SET name = 'Unlisted DB Name'
              WHERE database_id = 'unlisted-migration';
             INSERT INTO market_listings
               (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
@@ -359,45 +368,29 @@ fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_ti
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let listed: (String, String, Option<String>, String) = conn
         .query_row(
-            "SELECT title, description, llm_summary, tags_json
+            "SELECT name, description, llm_summary, tags_json
              FROM databases
              WHERE database_id = 'listed-migration'",
             params![],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("listed metadata should load");
-    let unlisted_title: String = conn
+    let unlisted_name: String = conn
         .query_row(
-            "SELECT title
+            "SELECT name
              FROM databases
              WHERE database_id = 'unlisted-migration'",
             params![],
             |row| row.get(0),
         )
-        .expect("unlisted title should load");
+        .expect("unlisted name should load");
 
     assert_eq!(listed.0, "Published Listing Title");
     assert_eq!(listed.1, "Published Description");
     assert_eq!(listed.2.as_deref(), Some("Published Summary"));
     assert_eq!(listed.3, r#"["published"]"#);
-    assert_eq!(unlisted_title, "Unlisted DB Name");
+    assert_eq!(unlisted_name, "Unlisted DB Name");
     assert!(!column_exists(&root, "market_listings", "title"));
-}
-
-#[test]
-fn mainnet_011_index_with_archive_restore_status_rejects_latest_migration() {
-    let dir = tempdir().expect("tempdir should create");
-    let root = dir.keep();
-    let index_path = root.join("index.sqlite3");
-    write_mainnet_011_index_schema(&index_path, "archived");
-
-    let service = VfsService::new(index_path, root.join("databases"));
-    let error = service
-        .run_index_migrations()
-        .expect_err("archive/restore lifecycle migration should reject legacy status");
-
-    assert!(error.contains("archive/restore lifecycle is no longer supported"));
-    assert!(error.contains("db_existing"));
 }
 
 fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
@@ -910,6 +903,17 @@ fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<Strin
         .expect("database ledger rows should load")
 }
 
+fn free_cycle_grant_database_id(root: &std::path::Path, principal: &str) -> Option<String> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT database_id FROM database_free_cycle_grants WHERE principal = ?1",
+        params![principal],
+        |row| row.get(0),
+    )
+    .optional()
+    .expect("free cycle grant should load")
+}
+
 fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -968,6 +972,10 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(table_exists(&root, "market_listings"));
     assert!(table_exists(&root, "market_purchase_pending_operations"));
     assert!(table_exists(&root, "market_entitlements"));
@@ -976,6 +984,7 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     assert!(!table_exists(&root, "kinic_pending_operations"));
     assert!(!table_exists(&root, "database_restore_chunks"));
     assert!(!table_exists(&root, "database_restore_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
     assert!(!index_exists(
         &root,
         "database_restore_chunks_database_id_idx"
@@ -1212,6 +1221,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:011_source_run_sessions"),
         1
     );
@@ -1252,6 +1265,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
         1
     );
     assert_eq!(
@@ -1899,7 +1916,7 @@ fn ops_answer_session_rejects_invalid_and_expired_nonce() {
 }
 
 #[test]
-fn database_create_returns_generated_id_and_title() {
+fn database_create_returns_generated_id_and_name() {
     let (service, root) = service_with_root();
 
     assert_eq!(
@@ -1913,7 +1930,7 @@ fn database_create_returns_generated_id_and_title() {
 
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
-    assert_eq!(result.metadata.title, "Team skills");
+    assert_eq!(result.metadata.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &result.database_id), 0);
     assert_eq!(
@@ -1929,6 +1946,140 @@ fn database_create_returns_generated_id_and_title() {
 }
 
 #[test]
+fn initial_free_database_grant_creates_active_database_once_per_principal() {
+    let (service, root) = service_with_root();
+
+    let first = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("first database should use free grant");
+    assert_eq!(first.status, DatabaseStatus::Active);
+    assert!(first.initial_free_grant_applied);
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(first.meta.database_id.as_str())
+    );
+    assert_eq!(status.grant_cycles, INITIAL_FREE_DATABASE_GRANT_CYCLES);
+    assert_eq!(status.created_at_ms, Some(1));
+    assert_eq!(
+        database_cycles_balance(&root, &first.meta.database_id),
+        i64::try_from(INITIAL_FREE_DATABASE_GRANT_CYCLES).expect("grant should fit i64")
+    );
+    assert_eq!(
+        database_cycles_suspended_at(&root, &first.meta.database_id),
+        None
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, &first.meta.database_id),
+        vec!["free_grant"]
+    );
+    assert_eq!(
+        database_index_row(&root, &first.meta.database_id).0,
+        "active".to_string()
+    );
+
+    let second = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner paid", "owner", 2)
+        .expect("second database should reserve pending");
+    assert_eq!(second.status, DatabaseStatus::Pending);
+    assert!(!second.initial_free_grant_applied);
+    assert_eq!(
+        database_index_row(&root, &second.meta.database_id),
+        ("pending".to_string(), None, 0)
+    );
+    assert_eq!(database_cycles_balance(&root, &second.meta.database_id), 0);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(first.meta.database_id.as_str())
+    );
+}
+
+#[test]
+fn initial_free_database_grant_migration_failure_restores_grant() {
+    let (service, root) = service_with_root();
+    let caller = "owner-migration-failure";
+    let database_id = generated_database_id_for_test(caller, 1, 11, 0);
+    fail_next_database_migration_for_test(&database_id);
+
+    let error = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", caller, 1)
+        .expect_err("forced migration failure should reject free grant creation");
+    let status = service
+        .initial_free_database_grant_status(caller)
+        .expect("free grant status should load after failed create");
+
+    assert!(error.contains("test database migration failure"));
+    assert!(status.available);
+    assert_eq!(status.database_id, None);
+    assert_eq!(free_cycle_grant_database_id(&root, caller), None);
+}
+
+#[test]
+fn initial_free_database_grant_cleanup_deletes_grant_when_reservation_cleanup_fails() {
+    let (service, root) = service_with_root();
+    let caller = "owner-discard-failure";
+    let database_id = generated_database_id_for_test(caller, 1, 11, 0);
+    fail_next_database_migration_for_test(&database_id);
+    fail_next_discard_database_reservation_for_test(&database_id);
+
+    let error = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", caller, 1)
+        .expect_err("forced cleanup failure should reject free grant creation");
+    let status = service
+        .initial_free_database_grant_status(caller)
+        .expect("free grant status should load after partial cleanup");
+
+    assert!(error.contains("test database migration failure"));
+    assert!(error.contains("discard_database_reservation failed"));
+    assert!(status.available);
+    assert_eq!(status.database_id, None);
+    assert_eq!(free_cycle_grant_database_id(&root, caller), None);
+}
+
+#[test]
+fn initial_free_database_grant_is_per_principal_and_survives_delete() {
+    let (service, root) = service_with_root();
+
+    let owner = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("owner free database should create");
+    let other = service
+        .create_generated_database_with_initial_free_grant_or_pending("Other free", "other", 2)
+        .expect("other free database should create");
+
+    assert_ne!(owner.meta.database_id, other.meta.database_id);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "other").as_deref(),
+        Some(other.meta.database_id.as_str())
+    );
+
+    service
+        .delete_database(delete_request(&owner.meta.database_id), "owner", 3)
+        .expect("owner free database should delete");
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load after delete");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
+}
+
+#[test]
 fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation() {
     let (service, root) = service_with_root();
 
@@ -1937,7 +2088,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         .expect("pending database should create");
 
     assert!(pending.database_id.starts_with("db_"));
-    assert_eq!(pending.metadata.title, "Pending");
+    assert_eq!(pending.metadata.name, "Pending");
     assert_eq!(database_member_count(&root, &pending.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
     assert_eq!(
@@ -2034,7 +2185,7 @@ fn pending_database_creation_omits_removed_internal_profile() {
         )
         .expect("stale profile column count should load");
 
-    assert_eq!(pending.metadata.title, "Agent Memory");
+    assert_eq!(pending.metadata.name, "Agent Memory");
     assert_eq!(summaries[0].database_id, pending.database_id);
     assert_eq!(
         pending_database_activation_row(&root, &pending.database_id),
@@ -2633,7 +2784,7 @@ fn database_metadata_update_requires_owner() {
             "writer",
             UpdateDatabaseMetadataRequest {
                 database_id: "alpha".to_string(),
-                title: "Writer metadata".to_string(),
+                name: "Writer metadata".to_string(),
                 description: String::new(),
                 llm_summary: None,
                 tags_json: "[]".to_string(),
@@ -2648,7 +2799,7 @@ fn database_metadata_update_requires_owner() {
             "owner",
             UpdateDatabaseMetadataRequest {
                 database_id: "alpha".to_string(),
-                title: " Owner metadata ".to_string(),
+                name: " Owner metadata ".to_string(),
                 description: "Owner description".to_string(),
                 llm_summary: Some("Owner summary".to_string()),
                 tags_json: "[\"owner\"]".to_string(),
@@ -2659,13 +2810,14 @@ fn database_metadata_update_requires_owner() {
     let summaries = service
         .list_database_summaries_for_caller("owner")
         .expect("summaries should load");
-    assert_eq!(summaries[0].metadata.title, "Owner metadata");
-    assert_eq!(summaries[0].metadata.description, "Owner description");
-    assert_eq!(
-        summaries[0].metadata.llm_summary.as_deref(),
-        Some("Owner summary")
-    );
-    assert_eq!(summaries[0].metadata.tags_json, "[\"owner\"]");
+    let metadata = summaries[0]
+        .metadata
+        .as_ref()
+        .expect("database summary should include metadata");
+    assert_eq!(metadata.name, "Owner metadata");
+    assert_eq!(metadata.description, "Owner description");
+    assert_eq!(metadata.llm_summary.as_deref(), Some("Owner summary"));
+    assert_eq!(metadata.tags_json, "[\"owner\"]");
     let row = database_index_row(&root, "alpha");
     assert_eq!(row.0, "active");
 }
@@ -3827,7 +3979,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let row_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1",
+            "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1",
             1,
         )
         .expect_err("oversized index SQL row should reject");
@@ -3835,7 +3987,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let response_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) LIMIT 5",
+            "SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) LIMIT 5",
             5,
         )
         .expect_err("oversized index SQL response should reject");
@@ -4341,7 +4493,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                 database_id: "size-sql-db".to_string(),
                 path: "/Knowledge/too-large.md".to_string(),
                 kind: NodeKind::File,
-                content: "x".repeat(66 * 1024),
+                content: "x".repeat(270 * 1024),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -4379,7 +4531,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                     database_id: "size-sql-db".to_string(),
                     path: format!("/Knowledge/large-{index}.md"),
                     kind: NodeKind::File,
-                    content: "x".repeat(60 * 1024),
+                    content: "x".repeat(220 * 1024),
                     metadata_json: "{}".to_string(),
                     expected_etag: None,
                 },
@@ -4397,6 +4549,41 @@ fn database_sql_json_rejects_oversized_row_and_response() {
         )
         .expect_err("oversized response should reject");
     assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn database_sql_json_accepts_mcp_sized_multibyte_content() {
+    let service = service();
+    service
+        .create_database("multibyte-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "multibyte-sql-db".to_string(),
+                path: "/Knowledge/japanese.md".to_string(),
+                kind: NodeKind::File,
+                content: "あ".repeat(40_000),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("multibyte node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "multibyte-sql-db",
+            "owner",
+            "SELECT json_object('content', substr(content, 1, 40000), 'content_truncated', length(content) > 40000) FROM fs_nodes WHERE path = '/Knowledge/japanese.md' LIMIT 1",
+            1,
+        )
+        .expect("MCP-sized multibyte row should fit SQL JSON row limit");
+
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.rows[0].contains("\"content_truncated\":0"));
 }
 
 #[test]
@@ -4845,7 +5032,7 @@ fn database_metadata_description_allows_newlines() {
             "seller",
             UpdateDatabaseMetadataRequest {
                 database_id: "multiline-metadata".to_string(),
-                title: "Multiline metadata".to_string(),
+                name: "Multiline metadata".to_string(),
                 description: "Line one\nLine two\r\n\tIndented".to_string(),
                 llm_summary: Some("Summary one\nSummary two".to_string()),
                 tags_json: "[]".to_string(),
@@ -4872,7 +5059,7 @@ fn database_metadata_rejects_non_whitespace_control_characters() {
             "seller",
             UpdateDatabaseMetadataRequest {
                 database_id: "control-metadata".to_string(),
-                title: "Control metadata".to_string(),
+                name: "Control metadata".to_string(),
                 description: "bad\0description".to_string(),
                 llm_summary: None,
                 tags_json: "[]".to_string(),
@@ -4882,27 +5069,27 @@ fn database_metadata_rejects_non_whitespace_control_characters() {
         .expect_err("NUL in description should be rejected");
     assert!(description_error.contains("database description may only contain newline"));
 
-    let title_error = service
+    let name_error = service
         .update_database_metadata(
             "seller",
             UpdateDatabaseMetadataRequest {
                 database_id: "control-metadata".to_string(),
-                title: "bad\ntitle".to_string(),
+                name: "bad\nname".to_string(),
                 description: String::new(),
                 llm_summary: None,
                 tags_json: "[]".to_string(),
             },
             3,
         )
-        .expect_err("title newline should be rejected");
-    assert!(title_error.contains("database title may not contain control characters"));
+        .expect_err("name newline should be rejected");
+    assert!(name_error.contains("database name may not contain control characters"));
 
     let tags_error = service
         .update_database_metadata(
             "seller",
             UpdateDatabaseMetadataRequest {
                 database_id: "control-metadata".to_string(),
-                title: "Control metadata".to_string(),
+                name: "Control metadata".to_string(),
                 description: String::new(),
                 llm_summary: None,
                 tags_json: "[\"bad\ntag\"]".to_string(),
@@ -4911,6 +5098,51 @@ fn database_metadata_rejects_non_whitespace_control_characters() {
         )
         .expect_err("tags newline should be rejected");
     assert!(tags_error.contains("database tags may not contain control characters"));
+}
+
+#[test]
+fn database_metadata_rejects_invalid_tags_json() {
+    let service = service();
+    service
+        .create_database("tags-metadata", "seller", 1)
+        .expect("database should create");
+
+    for (tags_json, expected) in [
+        (
+            "{\"tag\":\"not-array\"}",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", 1]",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", \" \"]",
+            "database tags_json must not contain empty tags",
+        ),
+        (
+            "[\"bad\\ntag\"]",
+            "database tags_json must not contain control characters",
+        ),
+    ] {
+        let error = service
+            .update_database_metadata(
+                "seller",
+                UpdateDatabaseMetadataRequest {
+                    database_id: "tags-metadata".to_string(),
+                    name: "Tags metadata".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: tags_json.to_string(),
+                },
+                2,
+            )
+            .expect_err("invalid tags_json should be rejected");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?} in {error:?}"
+        );
+    }
 }
 
 #[test]
@@ -5300,7 +5532,7 @@ fn market_listing_detail_returns_verified_preview() {
         .expect("anonymous should read public listing preview");
 
     assert_eq!(detail.listing.listing.listing_id, listing.listing_id);
-    assert_eq!(detail.listing.database_metadata.title, "preview-market");
+    assert_eq!(detail.listing.database_metadata.name, "preview-market");
     assert!(detail.verified_stats.total_nodes >= 5);
     assert!(detail.verified_stats.wiki_nodes >= 4);
     assert_eq!(detail.verified_stats.source_nodes, 1);
@@ -5388,6 +5620,38 @@ fn market_listing_detail_rejects_unavailable_database_metadata() {
         .expect_err("archived database metadata should not be synthesized");
 
     assert!(error.contains("database is archived"));
+}
+
+#[test]
+fn market_listing_database_name_for_consent_does_not_open_preview_store() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("consent-title-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("consent-title-market", 100),
+            2,
+        )
+        .expect("listing should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET db_file_name = ?2 WHERE database_id = ?1",
+        params!["consent-title-market", root.to_string_lossy().as_ref()],
+    )
+    .expect("db file path should update");
+    drop(conn);
+
+    let title = service
+        .market_listing_database_name_for_consent(&listing.listing_id)
+        .expect("consent title should load from index metadata only");
+    assert_eq!(title, "consent-title-market");
+
+    let detail_error = service
+        .market_get_listing("2vxsx-fae", &listing.listing_id)
+        .expect_err("listing detail should still require preview store access");
+    assert!(!detail_error.is_empty());
 }
 
 #[test]

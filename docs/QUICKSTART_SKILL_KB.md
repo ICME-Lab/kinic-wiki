@@ -6,17 +6,9 @@ For layout, manifest fields, status values, access rules, and Browser support, s
 
 ## Prerequisites
 
-- A deployed VFS canister.
+- Mainnet uses the default Kinic VFS canister.
 - A principal with permission to create or write the target database.
-- Local replica users should start and deploy the canister before running these commands.
-
-Set the target canister:
-
-```bash
-export CANISTER_ID=<canister-id>
-```
-
-Use `--local` in each database setup command when targeting a local replica.
+- Local or staging users should start and deploy the canister, then pass `--local --canister-id <canister-id>` or `--replica-host <host> --canister-id <canister-id>` in each database setup command.
 
 ## 5 Minute Flow
 
@@ -25,8 +17,8 @@ Create and link a database.
 If the database already exists and you have access, start from `database link <database-id>`.
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create "Team skills")"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database link "$DB_ID"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills")"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
 ```
 
@@ -109,14 +101,15 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes pull
 The scripted version uses the same sample:
 
 ```bash
-CANISTER_ID=<canister-id> scripts/demo_skill_kb.sh
+scripts/demo_skill_kb.sh
 ```
 
 The script can be rerun with the same `DATABASE_ID`.
 If the database already exists, it links the workspace and continues.
 
-For local replica:
+For local replica or staging:
 
 ```bash
 CANISTER_ID=<canister-id> LOCAL=1 scripts/demo_skill_kb.sh
+CANISTER_ID=<canister-id> scripts/demo_skill_kb.sh
 ```

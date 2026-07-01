@@ -1089,6 +1089,7 @@ fn mkdir_node_creates_folder_node() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("list should succeed");
     assert_eq!(list.len(), 1);
@@ -1610,6 +1611,7 @@ fn list_and_glob_do_not_depend_on_large_content_loading() {
             database_id: "default".to_string(),
             prefix: "/Knowledge".to_string(),
             recursive: false,
+            limit: 100,
         })
         .expect("list should succeed");
     assert!(list.iter().any(|entry| entry.path == "/Knowledge/large.md"));

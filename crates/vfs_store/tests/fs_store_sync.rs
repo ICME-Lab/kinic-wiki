@@ -523,6 +523,7 @@ fn folder_move_updates_sync_export_search_and_links() {
             database_id: "default".to_string(),
             prefix: "/Knowledge/project".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("old subtree list should succeed");
     assert!(old_entries.is_empty());
@@ -531,6 +532,7 @@ fn folder_move_updates_sync_export_search_and_links() {
             database_id: "default".to_string(),
             prefix: "/Knowledge/archive/project".to_string(),
             recursive: true,
+            limit: 100,
         })
         .expect("new subtree list should succeed");
     assert!(

@@ -263,7 +263,7 @@ function DatabaseSection({
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
             <tr>
-              <th className="px-4 py-3 font-medium">Title</th>
+              <th className="px-4 py-3 font-medium">Name</th>
               <th className="px-4 py-3 font-medium">ID</th>
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
@@ -301,7 +301,7 @@ function DatabaseSectionHeader({ action, description, publicError = null, title 
 function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   const cycles = databaseCyclesView(database, cyclesConfig);
-  const title = database.metadata.title;
+  const title = database.metadata.name;
   return (
     <tr className="border-t border-line">
       <td className="px-4 py-3">
@@ -337,7 +337,7 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
 function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   const cycles = databaseCyclesView(database, cyclesConfig);
-  const title = database.metadata.title;
+  const title = database.metadata.name;
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -371,7 +371,7 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
 }
 
 function ShareDatabaseLink({ database }: { database: DatabaseRow }) {
-  const title = database.metadata.title;
+  const title = database.metadata.name;
   return (
     <DatabaseActionLink
       external
@@ -447,10 +447,10 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <AdminNotice tone={tone} message={message} />;
 }
 
-export function CreatedDatabasePanel({ databaseId, title }: { databaseId: string; title: string }) {
+export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string; name: string }) {
   return (
     <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-ink">
-      Created <span className="font-semibold">{title}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
+      Created <span className="font-semibold">{name}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
       <Link className="text-accent no-underline hover:underline" href={`/dashboard/project/${encodeURIComponent(databaseId)}`}>
         Manage reservation
       </Link>

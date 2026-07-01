@@ -48,19 +48,19 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
-    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
-    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
+    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
+    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
+    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -411,12 +411,35 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database(&request.title, caller, now)?;
+        let outcome = service.create_generated_database_with_initial_free_grant_or_pending(
+            &request.name,
+            caller,
+            now,
+        )?;
         Ok(CreateDatabaseResult {
-            database_id: meta.database_id,
-            title: meta.metadata.title,
+            database_id: outcome.meta.database_id,
+            name: outcome.meta.metadata.name,
+            status: outcome.status,
+            initial_free_grant_applied: outcome.initial_free_grant_applied,
         })
     })
+}
+
+#[query]
+fn get_initial_free_database_grant_status() -> Result<InitialFreeDatabaseGrantStatus, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.initial_free_database_grant_status(&caller_text()))
+}
+
+#[update]
+fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
+        "rename_database",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, now| service.rename_database(caller, request, now),
+    )
 }
 
 #[update]
@@ -550,9 +573,7 @@ fn icrc21_canister_call_consent_message(
             };
             let listing = validation.listing;
             let listing_title = match with_service(|service| {
-                service
-                    .market_get_listing(&payer, &listing.listing_id)
-                    .map(|detail| detail.listing.database_metadata.title)
+                service.market_listing_database_name_for_consent(&listing.listing_id)
             }) {
                 Ok(title) => title,
                 Err(error) => return icrc21_unsupported(error),
@@ -1585,6 +1606,18 @@ fn set_test_caller_principal_for_test(principal: Principal) {
 }
 
 #[cfg(test)]
+fn mark_initial_free_database_grant_used_for_test() {
+    with_service(|service| {
+        service.mark_initial_free_database_grant_used_for_test(
+            &caller_text(),
+            "test_free_grant_consumed",
+            0,
+        )
+    })
+    .expect("test free grant marker should insert");
+}
+
+#[cfg(test)]
 fn record_test_ledger_memo(memo: &[u8]) {
     TEST_LAST_LEDGER_MEMO.with(|slot| {
         slot.replace(Some(memo.to_vec()));
@@ -2398,8 +2431,14 @@ fn normalize_candid_interface(interface: String) -> String {
         "OpsAnswerSessionRequest",
         "SourceCaptureTriggerSessionRequest",
     );
-    ensure_source_capture_trigger_session_request(ensure_update_database_metadata_request(
-        ensure_outgoing_links_request(normalized),
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "rename_database",
+        "CreateDatabaseResult",
+        "RenameDatabaseRequest",
+    );
+    ensure_source_capture_trigger_session_request(ensure_rename_database_request(
+        ensure_update_database_metadata_request(ensure_outgoing_links_request(normalized)),
     ))
 }
 
@@ -2447,7 +2486,17 @@ fn ensure_update_database_metadata_request(interface: String) -> String {
     }
     interface.replace(
         "type DatabaseMember = record {",
-        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; title : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; name : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+    )
+}
+
+fn ensure_rename_database_request(interface: String) -> String {
+    if interface.contains("type RenameDatabaseRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type DeleteNodeRequest = record {",
+        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DeleteNodeRequest = record {",
     )
 }
 

@@ -22,7 +22,7 @@ function idlFactory({ IDL: idl }) {
     Pending: idl.Null
   });
   const DatabaseMetadata = idl.Record({
-    title: idl.Text,
+    name: idl.Text,
     description: idl.Text,
     llm_summary: idl.Opt(idl.Text),
     tags_json: idl.Text
@@ -32,7 +32,8 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    metadata: DatabaseMetadata,
+    name: idl.Text,
+    metadata: idl.Opt(DatabaseMetadata),
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
@@ -49,8 +50,13 @@ function idlFactory({ IDL: idl }) {
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig
   });
-  const CreateDatabaseRequest = idl.Record({ title: idl.Text });
-  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, title: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({
+    database_id: idl.Text,
+    name: idl.Text,
+    status: DatabaseStatus,
+    initial_free_grant_applied: idl.Bool
+  });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -92,13 +98,13 @@ function idlFactory({ IDL: idl }) {
   });
 }
 
-export async function createDatabase(config, title) {
+export async function createDatabase(config, name) {
   const actor = await createVfsActor(config);
-  return createDatabaseWithActor(actor, title);
+  return createDatabaseWithActor(actor, name);
 }
 
-export async function createDatabaseWithActor(actor, title) {
-  const result = await actor.create_database({ title });
+export async function createDatabaseWithActor(actor, name) {
+  const result = await actor.create_database({ name });
   if ("Err" in result) {
     throw new Error(result.Err);
   }
@@ -148,17 +154,25 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    title: String(raw.title || "")
+    name: String(raw.name),
+    status: normalizeDatabaseStatus(raw.status),
+    initialFreeGrantApplied: Boolean(raw.initial_free_grant_applied)
   };
 }
 
 function normalizeDatabaseSummary(raw) {
+  const metadata = raw.metadata?.[0] ?? {
+    name: raw.name,
+    description: "",
+    llm_summary: [],
+    tags_json: "[]"
+  };
   return {
     databaseId: raw.database_id,
-    title: String(raw.metadata?.title || ""),
-    description: String(raw.metadata?.description || ""),
-    llmSummary: raw.metadata?.llm_summary?.[0] ? String(raw.metadata.llm_summary[0]) : null,
-    tagsJson: String(raw.metadata?.tags_json || "[]"),
+    name: String(metadata.name || raw.name || ""),
+    description: String(metadata.description || ""),
+    llmSummary: metadata.llm_summary?.[0] ? String(metadata.llm_summary[0]) : null,
+    tagsJson: String(metadata.tags_json || "[]"),
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),

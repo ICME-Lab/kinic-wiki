@@ -121,6 +121,7 @@ async fn find_matching_requests(
             database_id: database_id.to_string(),
             prefix: REQUEST_PREFIX.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?;
     let mut matched = Vec::new();
@@ -174,6 +175,7 @@ async fn request_for_source(
             database_id: database_id.to_string(),
             prefix: REQUEST_PREFIX.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?;
     let mut matched = Vec::new();
@@ -256,6 +258,7 @@ async fn list_tree_paths(
             database_id: database_id.to_string(),
             prefix: path.to_string(),
             recursive: true,
+            limit: 100,
         })
         .await?;
     let mut paths = Vec::new();

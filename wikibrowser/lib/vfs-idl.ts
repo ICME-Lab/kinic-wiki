@@ -10,7 +10,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
   const DatabaseMetadata = idl.Record({
-    title: idl.Text,
+    name: idl.Text,
     description: idl.Text,
     llm_summary: idl.Opt(idl.Text),
     tags_json: idl.Text
@@ -20,7 +20,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    metadata: DatabaseMetadata,
+    name: idl.Text,
+    metadata: idl.Opt(DatabaseMetadata),
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
@@ -212,10 +213,22 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
-  const CreateDatabaseRequest = idl.Record({ title: idl.Text });
-  const CreateDatabaseResult = idl.Record({ title: idl.Text, database_id: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({
+    name: idl.Text,
+    database_id: idl.Text,
+    status: DatabaseStatus,
+    initial_free_grant_applied: idl.Bool
+  });
+  const InitialFreeDatabaseGrantStatus = idl.Record({
+    database_id: idl.Opt(idl.Text),
+    created_at_ms: idl.Opt(idl.Int64),
+    grant_cycles: idl.Nat64,
+    available: idl.Bool
+  });
+  const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const UpdateDatabaseMetadataRequest = idl.Record({
-    title: idl.Text,
+    name: idl.Text,
     description: idl.Text,
     llm_summary: idl.Opt(idl.Text),
     tags_json: idl.Text,
@@ -435,6 +448,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
+  const ResultInitialFreeDatabaseGrantStatus = idl.Variant({ Ok: InitialFreeDatabaseGrantStatus, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
   const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
@@ -477,6 +491,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     delete_database: idl.Func([DatabaseIdRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
+    get_initial_free_database_grant_status: idl.Func([], [ResultInitialFreeDatabaseGrantStatus], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
@@ -511,6 +526,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
+    rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),

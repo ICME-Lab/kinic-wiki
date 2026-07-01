@@ -4,21 +4,22 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, and links.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The canister also exposes read-only Store API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`STORE_API.md`](STORE_API.md).
-Those are direct canister/client methods, not CLI commands in this document.
+The CLI exposes the read-only Store API methods `memory_manifest`, `query_context`, `source_evidence`, `export_snapshot`, and `fetch_updates` as shell commands; see [`STORE_API.md`](STORE_API.md).
 Use the CLI commands below for shell workflows against the remote VFS.
+Run `kinic-vfs-cli --help` for the command list and `kinic-vfs-cli <command> --help` for command-specific examples, notes, and safety guidance.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
 For portable generated AI context artifacts, use Context Pack commands described in [`Context Pack.md`](Context%20Pack.md).
 
 ## Build
 
-During development, examples use `cargo run` so they always execute the current checkout.
+Examples in this document use the installed `kinic-vfs-cli` binary.
+During development, run the current checkout by replacing `kinic-vfs-cli` with `cargo run -p kinic-vfs-cli --bin kinic-vfs-cli --`.
 For operator use, build the binary once:
 
 ```bash
 cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release
 target/release/kinic-vfs-cli --help
-target/release/kinic-vfs-cli --canister-id <canister-id> database current
+target/release/kinic-vfs-cli database current
 ```
 
 GitHub Actions also produces unsigned `kinic-vfs-cli` artifacts with SHA-256 checksums. See [`RELEASE.md`](RELEASE.md).
@@ -32,14 +33,14 @@ Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to 
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
+kinic-vfs-cli --database-id <database-id> status
 ```
 
 Use `--local` for the default local replica host, or `--replica-host` for a project-local network on a custom port.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local --database-id <database-id> status
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8011 --database-id <database-id> status
+kinic-vfs-cli --local --canister-id <local-canister-id> --database-id <database-id> status
+kinic-vfs-cli --replica-host http://127.0.0.1:8011 --canister-id <local-canister-id> --database-id <database-id> status
 ```
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
@@ -58,20 +59,35 @@ Without `--canister-id`, the CLI reads configuration from:
 Link a workspace once to avoid repeating `--database-id`:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link <database-id>
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
+kinic-vfs-cli database link <database-id>
+kinic-vfs-cli database current
+kinic-vfs-cli status
 ```
 
 Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then host default. Use `database unlink` to remove the workspace DB link.
+
+## Store API
+
+Store API commands are read-only and use the same database access policy as `read-node`.
+Agents should prefer `--json`.
+The CLI intentionally does not expose `delete_database`, `canister_health`, `wiki_metrics`, or `wiki_metrics_series`.
+`export-snapshot` and `fetch-updates` are CLI sync/export commands and are intentionally not exposed by the wiki MCP tools.
+
+```bash
+kinic-vfs-cli --database-id <database-id> memory-manifest --json
+kinic-vfs-cli --database-id <database-id> query-context --task "answer auth question" --namespace /Knowledge --entity auth --budget-tokens 8000 --depth 1 --json
+kinic-vfs-cli --database-id <database-id> source-evidence --node-path /Knowledge/auth.md --json
+kinic-vfs-cli --database-id <database-id> export-snapshot --prefix /Knowledge --limit 100 --json
+kinic-vfs-cli --database-id <database-id> fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json
+```
 
 ## Database Setup
 
 `--identity-mode auto` is the default. Mutating and owner commands always use the selected `icp identity`. Read-only DB commands first check anonymous access; if the selected identity is a DB member, the command still uses identity. Public DB reads use anonymous only when the selected identity is not a member.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode identity --database-id <database-id> read-node --path /Knowledge/index.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <public-database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --identity-mode identity --database-id <database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --identity-mode anonymous --database-id <public-database-id> read-node --path /Knowledge/index.md
 ```
 
 `--identity-mode anonymous` rejects write and owner commands.
@@ -79,44 +95,45 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --da
 Create a database before reading or writing:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> cycles config
+kinic-vfs-cli cycles config
 # Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-cycles "$DB_ID" 1.25
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-history "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-pending "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Knowledge/file.md --input file.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Knowledge --top-k 10 --json
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" --limit 20 --json
+DB_ID="$(kinic-vfs-cli database create "<database-name>")"
+kinic-vfs-cli database list
+kinic-vfs-cli database cycles "$DB_ID"
+# First eligible databases are active immediately with the initial free grant. Run cycle purchase only when the database is pending.
+kinic-vfs-cli database purchase-cycles "$DB_ID" 1.25
+kinic-vfs-cli database cycles-history "$DB_ID"
+kinic-vfs-cli database cycles-pending "$DB_ID"
+kinic-vfs-cli database grant "$DB_ID" <principal> reader
+kinic-vfs-cli database link "$DB_ID"
+kinic-vfs-cli write-node --path /Knowledge/file.md --input file.md
+kinic-vfs-cli search-remote "budget" --prefix /Knowledge --top-k 10 --json
+kinic-vfs-cli query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" --limit 20 --json
 ```
 
 `cycles config` prints the KINIC ledger canister, billing authority principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `100_000 e8s`.
-`database create <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase.
+`database create <database-name>` creates a generated database ID and prints it on success. The caller's first database consumes the initial free grant, starts active, and receives `10_000_000_000` cycles. Later databases start pending with zero DB cycles balance and do not allocate a DB mount until the first successful cycle purchase.
 Every database uses the same four-store roots and the same VFS schema.
 
 Common examples:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "My agent memory"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills"
+kinic-vfs-cli database create "My agent memory"
+kinic-vfs-cli database create "Team skills"
 ```
 `database purchase-cycles <database-id> <kinic>` pulls the KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the fixed ledger transfer fee.
 `database cycles <database-id>` prints and opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. The database ID must match `[a-zA-Z0-9_-]+`, matching the browser `/cycles` route. This command does not use the CLI identity or contact the canister, so it can still print the payment URL when the local replica is stopped. Pass `--browser-origin` or set `KINIC_WIKI_BROWSER_ORIGIN` for local or staging browser hosts. The purchase amount is entered in the browser flow. The browser flow is limited to the configured canonical wiki canister, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
-`database metadata <database-id> --input <metadata.json> [--json]` replaces the database discovery metadata. The input JSON must include `title`, `description`, `tags_json`, and may set `llm_summary` to a string or `null`. `tags_json` is itself a JSON string containing an array of strings.
+`database metadata <database-id> --input <metadata.json> [--json]` replaces the database discovery metadata. The input JSON must include `name`, `description`, `tags_json`, and may set `llm_summary` to a string or `null`. `tags_json` is itself a JSON string containing an array of strings.
 Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. source capture and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
 
 Database metadata input example:
 
 ```json
 {
-  "title": "KINIC-WIKI",
+  "name": "KINIC-WIKI",
   "description": "Public Kinic Wiki knowledge for operations, structure, clipper usage, and agent workflows.",
   "llm_summary": "Covers Kinic Wiki operations, VFS structure, wiki browser behavior, clipper usage, agent query/ingest/lint workflows, compatibility decisions, and repo documentation. Useful FTS queries include \"clipper usage\", \"wiki structure\", \"operation skills\", \"agent docs\", and \"database lifecycle\". Does not cover private user memory or non-public DB content.",
   "tags_json": "[\"kinic-wiki\",\"wiki\",\"vfs\",\"clipper\",\"agent\",\"operations\",\"ingest\",\"query\",\"lint\",\"architecture\"]"
@@ -124,7 +141,7 @@ Database metadata input example:
 ```
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database metadata "$DB_ID" --input metadata.json --json
+kinic-vfs-cli database metadata "$DB_ID" --input metadata.json --json
 ```
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
@@ -134,8 +151,8 @@ Database names are a breaking index-schema change. Existing local or canister in
 Use `market entitlements` to list databases purchased through the marketplace by the current identity. The command is authenticated and does not require `--database-id` because it discovers database IDs.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements --limit 50 --json
+kinic-vfs-cli market entitlements
+kinic-vfs-cli market entitlements --limit 50 --json
 ```
 
 Text output is tab-separated: `database_id`, `listing_id`, `order_id`, `status`, and `purchased_at_ms`. If more results are available, the final line prints `next_cursor	<cursor>`; pass it back with `--cursor`.
@@ -143,10 +160,10 @@ Text output is tab-separated: `database_id`, `listing_id`, `order_id`, `status`,
 Purchased databases also appear in `database list` as `reader`. After selecting a purchased database ID, use `database link <database-id>` or pass `--database-id` to the existing database-scoped read commands:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link <database-id>
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> list-nodes --prefix /Knowledge
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Knowledge/index.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
+kinic-vfs-cli database link <database-id>
+kinic-vfs-cli --database-id <database-id> list-nodes --prefix /Knowledge
+kinic-vfs-cli --database-id <database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
 ```
 
 The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase, listing creation, listing publication, and deposit flows are not CLI commands.
@@ -154,8 +171,8 @@ The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase,
 For public browser reads, grant anonymous reader access explicitly:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
+kinic-vfs-cli database grant <database-id> 2vxsx-fae reader
+kinic-vfs-cli --identity-mode anonymous --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
 ```
 
 ## Identity Mode
@@ -176,7 +193,7 @@ By default, the selected identity must be an Internet Identity identity. Pass `-
 ```bash
 icp identity link ii kinic-ii --host https://<wiki-canister-id>.icp0.io
 icp identity default kinic-ii
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --database-id <database-id> read-node --path /Knowledge/index.md
 ```
 
 `--host` must point at the wiki canister origin, not the Cloudflare browser host. The canister serves `/.well-known/ic-cli-login` and `/login`, so Internet Identity derives the same principal used by browser flows that pin the wiki canister as `derivationOrigin`.
@@ -192,9 +209,9 @@ icp identity login kinic-ii
 Use explicit modes when automation must avoid auto selection:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode identity --database-id <database-id> read-node --path /Knowledge/index.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <public-database-id> read-node --path /Knowledge/index.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --identity-mode identity --database-id <database-id> status
+kinic-vfs-cli --identity-mode identity --database-id <database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --identity-mode anonymous --database-id <public-database-id> read-node --path /Knowledge/index.md
+kinic-vfs-cli --allow-non-ii-identity --identity-mode identity --database-id <database-id> status
 ```
 
 `--identity-mode anonymous` is valid only for read-only public operations.
@@ -206,7 +223,7 @@ Writes, database grants, private Skill Registry writes, and owner commands requi
 It is read-only against the selected database.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+kinic-vfs-cli --database-id <database-id> \
   context-pack export \
   --task "review auth token refresh design" \
   --namespace /Knowledge/projects/acme \
@@ -215,8 +232,8 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
   --trust-level team-approved \
   --approved-by principal:aaaaa-aa
 
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack verify ./okf --fail-on-truncated
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack inspect ./okf --json
+kinic-vfs-cli context-pack verify ./okf --fail-on-truncated
+kinic-vfs-cli context-pack inspect ./okf --json
 ```
 
 `verify` and `inspect` read only the local OKF bundle and do not require `--database-id` or a canister connection.
@@ -228,16 +245,16 @@ Pass `--overwrite` to `export` when replacing existing markdown files.
 `query-sql` runs one read-only `SELECT` query against the selected wiki DB through `query_database_sql_json`. It uses the same read access as `read-node`, so direct readers, marketplace-entitled buyers, and anonymous callers for public-readable DBs can query only the DB they can already read.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+kinic-vfs-cli --database-id <database-id> \
   query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" \
   --limit 20
 
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+kinic-vfs-cli --database-id <database-id> \
   query-sql "SELECT json_object('path', path, 'kind', kind) FROM fs_nodes LIMIT 20" \
   --limit 20 --json
 ```
 
-Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 64 KiB and the total rows payload is capped at 256 KiB. This command cannot query the canister index DB, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables. `query_index_sql_json` is controller-only operational SQL and is not exposed to database readers. Browser Query panel `sql:` uses the same database-scoped API.
+Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 256 KiB and the total rows payload is capped at 1 MiB. This command cannot query the canister index DB, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables. `query_index_sql_json` is controller-only operational SQL and is not exposed to database readers. Browser Query panel `sql:` uses the same database-scoped API.
 
 `query-sql` uses the same `--identity-mode auto` behavior as read-only DB commands: private DBs use the selected `icp identity`; public-readable DBs use anonymous when the selected identity is not a DB member, and identity when it is a member. Pass `--identity-mode identity` or `--identity-mode anonymous` to force one mode.
 
@@ -246,13 +263,13 @@ Text output prints each returned JSON row on its own line. `--json` prints the r
 Full-text search uses `search-remote`.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Knowledge --top-k 10 --json
+kinic-vfs-cli search-remote "budget" --prefix /Knowledge --top-k 10 --json
 ```
 
 Path search uses `search-path-remote`.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-path-remote "meeting" --prefix /Knowledge --top-k 10 --json
+kinic-vfs-cli search-path-remote "meeting" --prefix /Knowledge --top-k 10 --json
 ```
 
 `--preview-mode` is optional. If omitted, canister defaults are preserved:
@@ -269,8 +286,8 @@ Available preview modes:
 Use `content-start` when the caller needs the first 200 normalized body characters without an extra `read-node` call.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-path-remote "meeting" --prefix /Knowledge --preview-mode content-start --json
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Knowledge --preview-mode content-start --json
+kinic-vfs-cli search-path-remote "meeting" --prefix /Knowledge --preview-mode content-start --json
+kinic-vfs-cli search-remote "budget" --prefix /Knowledge --preview-mode content-start --json
 ```
 
 ## Node Operations
@@ -280,7 +297,7 @@ Common read and write commands:
 - `read-node --path /Knowledge/file.md`
 - `read-node-context --path /Knowledge/file.md --link-limit 20 --json`
 - `list-children --path /Knowledge --json`
-- `list-nodes --prefix /Knowledge --recursive --json`
+- `list-nodes --prefix /Knowledge --recursive --limit 100 --json`
 - `write-node --path /Knowledge/file.md --input file.md`
 - `write-nodes --input nodes.json --json`
 - `append-node --path /Knowledge/file.md --input append.md`
@@ -291,7 +308,7 @@ Common read and write commands:
 - `glob-nodes "**/*.md" --path /Knowledge --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
-Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
+Use `list-nodes --prefix <path> --recursive --limit 100 --json` for bulk repair, lint, inventory, and destructive operation review.
 Use `write-nodes` for one atomic batch write when the full node bodies are already prepared:
 
 ```json
@@ -307,7 +324,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ```
 
 `kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required.
-`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
+`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:
 
@@ -323,14 +340,14 @@ Maintenance and database lifecycle operations live in their own command groups:
 Use `read-node-context` when the caller needs a node plus incoming and outgoing links in one response.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- read-node-context --path /Knowledge/file.md --link-limit 20 --json
+kinic-vfs-cli read-node-context --path /Knowledge/file.md --link-limit 20 --json
 ```
 
 Use graph commands for explicit link inspection.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- graph-neighborhood --center-path /Knowledge/file.md --depth 1 --limit 100 --json
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- graph-links --prefix /Knowledge --limit 100 --json
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- incoming-links --path /Knowledge/file.md --limit 20 --json
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- outgoing-links --path /Knowledge/file.md --limit 20 --json
+kinic-vfs-cli graph-neighborhood --center-path /Knowledge/file.md --depth 1 --limit 100 --json
+kinic-vfs-cli graph-links --prefix /Knowledge --limit 100 --json
+kinic-vfs-cli incoming-links --path /Knowledge/file.md --limit 20 --json
+kinic-vfs-cli outgoing-links --path /Knowledge/file.md --limit 20 --json
 ```

@@ -15,8 +15,8 @@ type Variant = Record<string, null>;
 type RawNode = { path: string; kind: Variant; content: string; created_at: bigint; updated_at: bigint; etag: string; metadata_json: string };
 type RawNodeMutationAck = { path: string; kind: Variant; updated_at: bigint; etag: string };
 type RawChild = { path: string; name: string; kind: Variant; updated_at: [] | [bigint]; etag: [] | [string]; size_bytes: [] | [bigint]; is_virtual: boolean; has_children: boolean };
-type RawDatabaseMetadata = { title: string; description: string; llm_summary: [] | [string]; tags_json: string };
-type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; metadata: RawDatabaseMetadata; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
+type RawDatabaseMetadata = { name: string; description: string; llm_summary: [] | [string]; tags_json: string };
+type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; metadata: [] | [RawDatabaseMetadata]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
 type RawDatabaseMember = { database_id: string; principal: string; role: Variant; created_at_ms: bigint };
 type RawWriteNodeRequest = { database_id: string; path: string; kind: Variant; content: string; metadata_json: string; expected_etag: [] | [string] };
 type RawWriteNodeResult = { created: boolean; node: RawNodeMutationAck };
@@ -174,11 +174,11 @@ function normalizeNode(raw: RawNode): WikiNode {
 }
 
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
-  const metadata = normalizeDatabaseMetadata(raw.metadata);
+  const metadata = normalizeDatabaseMetadata(requiredDatabaseMetadata(raw.metadata));
   return {
     databaseId: raw.database_id,
     metadata,
-    name: metadata.title,
+    name: raw.name,
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
@@ -188,9 +188,15 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   };
 }
 
+function requiredDatabaseMetadata(raw: [] | [RawDatabaseMetadata]): RawDatabaseMetadata {
+  const metadata = raw[0];
+  if (!metadata) throw new ApiError("Database metadata is required", 502);
+  return metadata;
+}
+
 function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {
   return {
-    title: raw.title,
+    name: raw.name,
     description: raw.description,
     llmSummary: raw.llm_summary[0] ?? null,
     tagsJson: raw.tags_json

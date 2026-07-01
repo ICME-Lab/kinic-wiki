@@ -7,13 +7,12 @@ DATABASE_ID="${DATABASE_ID:-}"
 DATABASE_NAME="${DATABASE_NAME:-Team skills}"
 LOCAL="${LOCAL:-0}"
 
-if [[ -z "$CANISTER_ID" ]]; then
-  echo "CANISTER_ID is required" >&2
-  exit 1
-fi
-
 LOCAL_FLAG=()
 if [[ "$LOCAL" == "1" || "$LOCAL" == "true" ]]; then
+  if [[ -z "$CANISTER_ID" ]]; then
+    echo "CANISTER_ID is required for local replica runs" >&2
+    exit 1
+  fi
   LOCAL_FLAG=(--local)
 fi
 
@@ -22,7 +21,9 @@ SETUP=("${VFS[@]}")
 if ((${#LOCAL_FLAG[@]})); then
   SETUP+=("${LOCAL_FLAG[@]}")
 fi
-SETUP+=(--canister-id "$CANISTER_ID")
+if [[ -n "$CANISTER_ID" ]]; then
+  SETUP+=(--canister-id "$CANISTER_ID")
+fi
 
 cd "$ROOT_DIR"
 
