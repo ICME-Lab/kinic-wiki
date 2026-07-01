@@ -16,8 +16,8 @@ assert.match(dashboardClient, /setActiveTab\("access"\)/);
 
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
-assert.match(dashboardHome, /無料枠あり/);
-assert.match(dashboardHome, /wallet 支払い必要/);
+assert.match(dashboardHome, /Free grant available/);
+assert.match(dashboardHome, /Wallet payment required/);
 assert.match(dashboardHome, /wallet approval is not required/);
 assert.match(dashboardHome, /wallet approval pays directly from ledger balance/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);

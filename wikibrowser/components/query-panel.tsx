@@ -264,7 +264,7 @@ function QueryResultView({ canisterId, databaseId, result }: { canisterId: strin
     return (
       <div className={`m-3 space-y-3 rounded-lg border bg-white p-3 text-sm ${result.abstained ? "border-yellow-200" : "border-line"}`}>
         <p className="whitespace-pre-wrap leading-6 text-ink">{result.answer}</p>
-        {result.abstained ? <p className="text-yellow-800">根拠不足を含む回答。</p> : null}
+        {result.abstained ? <p className="text-yellow-800">This answer has insufficient evidence.</p> : null}
         {result.citations.length > 0 ? (
           <div className="space-y-1">
             <p className="text-xs font-semibold text-muted">Citations</p>
