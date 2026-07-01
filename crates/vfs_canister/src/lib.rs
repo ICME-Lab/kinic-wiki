@@ -29,11 +29,7 @@ use ic_http_certification::{
     HttpResponse as CertifiedHttpResponse, utils::add_v2_certificate_header,
 };
 #[cfg(target_arch = "wasm32")]
-use ic_sqlite_vfs::{Db, DbHandle};
-#[cfg(target_arch = "wasm32")]
-use ic_stable_structures::DefaultMemoryImpl;
-#[cfg(target_arch = "wasm32")]
-use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+use ic_sqlite_vfs::{Db, DbHandle, DefaultMemoryImpl, MemoryId, MemoryManager};
 #[cfg(target_arch = "wasm32")]
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
@@ -105,7 +101,10 @@ struct HttpResponse {
 thread_local! {
     #[cfg(target_arch = "wasm32")]
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
-        RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
+        RefCell::new(
+            MemoryManager::init_strict(DefaultMemoryImpl::default())
+                .expect("stable memory must be empty or contain an ic-sqlite-vfs image"),
+        );
     static SERVICE: RefCell<Option<VfsService>> = const { RefCell::new(None) };
     static CYCLES_TOP_UP_RUNTIME_STATE: RefCell<CyclesTopUpRuntimeState> =
         const { RefCell::new(CyclesTopUpRuntimeState::new()) };

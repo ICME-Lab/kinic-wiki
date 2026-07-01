@@ -126,7 +126,7 @@ test("generateDraft reports non-JSON DeepSeek failures before parsing", async ()
 
 function config(): WorkerConfig {
   return {
-    canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+    canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
     targetRoot: "/Knowledge/conversations",

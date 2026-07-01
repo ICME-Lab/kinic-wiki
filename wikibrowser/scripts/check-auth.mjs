@@ -15,7 +15,7 @@ assert.equal(DELEGATION_TTL_NS, 29n * 24n * 3_600_000_000_000n);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.idleTimeout, 29 * 24 * 60 * 60 * 1000);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.disableDefaultIdleCallback, true);
 assert.equal(identityProviderUrl(), MAINNET_II_PROVIDER_URL);
-assert.equal(DERIVATION_ORIGIN, "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io");
+assert.equal(DERIVATION_ORIGIN, "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io");
 assert.equal(derivationOriginUrl({ hostname: "wiki.kinic.xyz", origin: "https://wiki.kinic.xyz" }), DERIVATION_ORIGIN);
 
 const originalWikiHost = process.env.NEXT_PUBLIC_WIKI_IC_HOST;

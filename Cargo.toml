@@ -12,6 +12,6 @@ members = [
 ]
 resolver = "2"
 
-[patch.crates-io]
+[workspace.dependencies]
 # See docs/internal/DEPENDENCY_FORKS.md for fork scope and update policy.
-ic-stable-structures = { git = "https://github.com/humandebri/stable-structures", rev = "a24a7d7572e36eda104abd8280946aeb7ac4e060" }
+ic-sqlite-vfs = { git = "https://github.com/humandebri/ic-sqlite-vfs", rev = "a3a454ff749c5be59b00725ced7ede5ac200496f", default-features = false }

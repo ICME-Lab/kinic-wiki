@@ -40,58 +40,7 @@ use vfs_types::{
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
-const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
-const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
-const INDEX_SCHEMA_VERSION_RESTORE_SIZE: &str = "database_index:002_restore_size";
-const INDEX_SCHEMA_VERSION_RESTORE_CHUNKS: &str = "database_index:003_restore_chunks";
-const INDEX_SCHEMA_VERSION_MOUNT_HISTORY: &str = "database_index:005_mount_history";
-const INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS: &str =
-    "database_index:006_url_ingest_trigger_sessions";
-const INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS: &str = "database_index:007_ops_answer_sessions";
-const INDEX_SCHEMA_VERSION_RESTORE_SESSIONS: &str = "database_index:008_restore_sessions";
-const INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES: &str = "database_index:009_restore_chunk_bytes";
-const INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING: &str =
-    "database_index:010_database_name_breaking";
-const INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS: &str = "database_index:011_source_run_sessions";
-const INDEX_SCHEMA_VERSION_BILLING_INITIAL: &str = "database_index:012_cycles_initial";
-const INDEX_SCHEMA_VERSION_BILLING_PENDING: &str = "database_index:013_cycles_pending";
-const INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX: &str =
-    "database_index:014_cycles_ledger_block_index";
-const INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS: &str =
-    "database_index:015_cycles_pending_ledger_details";
-const INDEX_SCHEMA_VERSION_ACTIVE_STATUS: &str = "database_index:016_active_status";
-const INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES: &str = "database_index:017_hard_delete_databases";
-const INDEX_SCHEMA_VERSION_CYCLES_LEDGER_ONLY: &str = "database_index:018_cycles_ledger_only";
-const INDEX_SCHEMA_VERSION_FIXED_CYCLES_ACCOUNTING: &str =
-    "database_index:019_fixed_cycles_accounting";
-const INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION: &str =
-    "database_index:020_cycles_billing_config_version";
-const INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS: &str =
-    "database_index:021_cycles_pending_operation_status";
-const INDEX_SCHEMA_VERSION_CYCLES: &str = "database_index:022_cycles";
-const INDEX_SCHEMA_VERSION_STORAGE_BILLING: &str = "database_index:023_storage_billing";
-const INDEX_SCHEMA_VERSION_DIRECT_CYCLES: &str = concat!("database_index:024_", "direct_cycles");
-const INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX: &str =
-    "database_index:025_cycles_pending_ledger_block_index";
-const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str = "database_index:026_storage_billing_batch";
-const INDEX_SCHEMA_VERSION_MARKETPLACE_CORE: &str = "database_index:027_marketplace_core";
-const INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES: &str =
-    "database_index:028_kinic_external_block_indexes";
-const INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW: &str = "database_index:029_marketplace_preview";
-const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
-    "database_index:030_direct_market_purchase";
-const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
-const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
-const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
-const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:034_database_profile";
-const INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE: &str = "database_index:035_drop_database_profile";
-const INDEX_SCHEMA_VERSION_DATABASE_METADATA: &str = "database_index:034_database_metadata";
-const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
-    "database_index:036_rename_url_ingest_trigger_sessions";
-const INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE: &str =
-    "database_index:037_drop_archive_restore_lifecycle";
-const INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS: &str =
-    "database_index:038_initial_free_database_grants";
+const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:001_initial";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -114,8 +63,6 @@ const MAX_DATABASE_MEMBERS_PER_DATABASE: i64 = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
-const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_to_latest.sql");
-const INDEX_026_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/026_to_latest.sql");
 pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
@@ -229,7 +176,6 @@ pub struct VfsService {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndexPostMigrationAction {
     None,
-    SeedStoreRoots,
 }
 
 impl VfsService {
@@ -302,16 +248,7 @@ impl VfsService {
     ) -> Result<(), String> {
         match action {
             IndexPostMigrationAction::None => Ok(()),
-            IndexPostMigrationAction::SeedStoreRoots => self.seed_active_database_store_roots(),
         }
-    }
-
-    fn seed_active_database_store_roots(&self) -> Result<(), String> {
-        let metas = self.read_index(load_active_databases_for_store_root_seed)?;
-        for meta in metas {
-            self.seed_database_store_roots(&meta, 0)?;
-        }
-        self.write_index(|tx| insert_schema_migration_now(tx, INDEX_SCHEMA_VERSION_STORE_ROOTS))
     }
 
     pub fn query_index_sql_json(
@@ -674,7 +611,13 @@ impl VfsService {
                     "delete_initial_free_database_grant failed: {cleanup_error}"
                 ));
             }
-            return Err(format_create_cleanup_error(error, cleanup_errors));
+            if cleanup_errors.is_empty() {
+                return Err(error);
+            }
+            return Err(format!(
+                "{error}; cleanup failed: {}",
+                cleanup_errors.join("; ")
+            ));
         }
         Ok(DatabaseCreateOutcome {
             meta,
@@ -3282,30 +3225,17 @@ fn run_index_migrations(
 ) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let action = ensure_existing_index_schema_is_latest(&tx, Some(config))?;
+        validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(action);
+        return Ok(IndexPostMigrationAction::None);
     }
-    for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
-        if sqlite_master_entry_exists(conn, "table", table)? {
-            return Err(format!(
-                "unsupported index schema: {table} exists without supported schema_migrations; recreate the index database"
-            ));
-        }
-    }
-    if let Some(table) = legacy_credit_index_table_name(conn)? {
-        return Err(format!(
-            "unsupported index schema: {table} exists without supported schema_migrations; recreate the index database"
-        ));
-    }
+    reject_existing_index_tables_without_migrations(conn)?;
     validate_cycles_billing_config(config)?;
     let tx = conn.transaction().map_err(|error| error.to_string())?;
     create_schema_migrations(&tx)?;
     create_fresh_index_schema(&tx)?;
     insert_cycles_billing_config(&tx, config)?;
-    for &version in INDEX_SCHEMA_VERSIONS {
-        insert_schema_migration_now(&tx, version)?;
-    }
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(IndexPostMigrationAction::None)
 }
@@ -3317,9 +3247,9 @@ fn run_index_migrations_for_upgrade(
 ) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let action = ensure_existing_index_schema_is_latest(&tx, config)?;
+        validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(action);
+        return Ok(IndexPostMigrationAction::None);
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
@@ -3332,27 +3262,15 @@ fn run_index_migrations_in_tx(
     config: &CyclesBillingConfig,
 ) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        return ensure_existing_index_schema_is_latest(conn, Some(config));
+        validate_current_index_schema(conn)?;
+        return Ok(IndexPostMigrationAction::None);
     }
-    for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
-        if wasm_index_table_exists(conn, table)? {
-            return Err(format!(
-                "unsupported index schema: {table} exists without schema_migrations"
-            ));
-        }
-    }
-    if let Some(table) = legacy_credit_index_table_name_tx(conn)? {
-        return Err(format!(
-            "unsupported index schema: {table} exists without schema_migrations"
-        ));
-    }
+    reject_existing_index_tables_without_migrations_tx(conn)?;
     validate_cycles_billing_config(config)?;
     create_schema_migrations(conn)?;
     create_fresh_index_schema(conn)?;
     insert_cycles_billing_config(conn, config)?;
-    for &version in INDEX_SCHEMA_VERSIONS {
-        insert_schema_migration_zero(conn, version)?;
-    }
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
     validate_index_schema(conn)?;
     Ok(IndexPostMigrationAction::None)
 }
@@ -3363,486 +3281,59 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&CyclesBillingConfig>,
 ) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        return ensure_existing_index_schema_is_latest(conn, config);
+        validate_current_index_schema(conn)?;
+        return Ok(IndexPostMigrationAction::None);
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
     run_index_migrations_in_tx(conn, config)
 }
 
-enum IndexSchemaState {
-    Latest,
-    LegacyProfileLatest,
-    InitialFreeDatabaseGrantsPending,
-    Mainnet011,
-    Mainnet026,
-    Mainnet031,
-    Mainnet032,
-    Mainnet033,
-    RenameSourceCaptureTriggerSessions,
-    RenameSourceCaptureTriggerSessionsStoreRootsPending,
-    DropArchiveRestoreLifecycle,
-    DropArchiveRestoreLifecycleStoreRootsPending,
-    StoreRootsPending,
-}
-
-fn ensure_existing_index_schema_is_latest(
-    conn: &Transaction<'_>,
-    config: Option<&CyclesBillingConfig>,
-) -> Result<IndexPostMigrationAction, String> {
-    match classify_existing_index_schema_state(conn)? {
-        IndexSchemaState::Latest => {
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::LegacyProfileLatest => {
-            apply_database_metadata_index_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::InitialFreeDatabaseGrantsPending => {
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::Mainnet033 => {
-            apply_database_metadata_index_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::Mainnet011 => {
-            let config = config
-                .ok_or_else(|| "cycles config required for first cycles upgrade".to_string())?;
-            validate_cycles_billing_config(config)?;
-            validate_pre_billing_index_schema(conn)?;
-            apply_mainnet_011_to_latest_index_migration(conn, config)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::Mainnet026 => {
-            apply_mainnet_026_to_latest_index_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::Mainnet031 => {
-            apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
-            apply_database_metadata_index_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::Mainnet032 => {
-            apply_database_metadata_index_migration(conn)?;
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::RenameSourceCaptureTriggerSessions => {
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending => {
-            apply_rename_source_capture_trigger_sessions_migration(conn)?;
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::DropArchiveRestoreLifecycle => {
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::None)
-        }
-        IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending => {
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-        IndexSchemaState::StoreRootsPending => {
-            apply_drop_archive_restore_lifecycle_migration(conn)?;
-            apply_initial_free_database_grants_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedStoreRoots)
-        }
-    }
-}
-
-fn classify_existing_index_schema_state(
-    conn: &Transaction<'_>,
-) -> Result<IndexSchemaState, String> {
-    let legacy_billing_marker: Option<String> = conn
-        .query_row(
-            "SELECT version
-             FROM schema_migrations
-             WHERE version LIKE '%credit%'
-             ORDER BY version
-             LIMIT 1",
-            params![],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    if let Some(version) = legacy_billing_marker {
-        return Err(format!(
-            "unsupported partial index schema: migration {version} is already applied"
-        ));
-    }
-    if let Some(table) = legacy_credit_index_table_name_tx(conn)? {
-        return Err(format!(
-            "unsupported partial index schema: table {table} already exists"
-        ));
-    }
-    let store_roots_applied = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)?;
-    let database_profile_applied =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
-    let drop_database_profile_applied =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)?;
-    let database_metadata_applied =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
-    let rename_source_capture_trigger_sessions_applied = migration_applied_tx(
-        conn,
-        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
-    )?;
-    let drop_archive_restore_lifecycle_applied =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
-    let initial_free_database_grants_applied =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
-    if store_roots_applied
-        && database_metadata_applied
-        && rename_source_capture_trigger_sessions_applied
-        && drop_archive_restore_lifecycle_applied
-        && initial_free_database_grants_applied
-    {
-        return Ok(IndexSchemaState::Latest);
-    }
-    if initial_free_database_grants_applied {
-        return Err(format!(
-            "unsupported partial index schema: migration {INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS} is already applied"
-        ));
-    }
-    if store_roots_applied
-        && database_metadata_applied
-        && rename_source_capture_trigger_sessions_applied
-        && drop_archive_restore_lifecycle_applied
-    {
-        return Ok(IndexSchemaState::InitialFreeDatabaseGrantsPending);
-    }
-    if store_roots_applied
-        && database_profile_applied
-        && drop_database_profile_applied
-        && rename_source_capture_trigger_sessions_applied
-        && drop_archive_restore_lifecycle_applied
-    {
-        return Ok(IndexSchemaState::LegacyProfileLatest);
-    }
-    if store_roots_applied
-        && database_metadata_applied
-        && rename_source_capture_trigger_sessions_applied
-    {
-        return Ok(IndexSchemaState::DropArchiveRestoreLifecycle);
-    }
-    if database_metadata_applied
-        && rename_source_capture_trigger_sessions_applied
-        && drop_archive_restore_lifecycle_applied
-    {
-        return Ok(IndexSchemaState::StoreRootsPending);
-    }
-    if database_metadata_applied && rename_source_capture_trigger_sessions_applied {
-        return Ok(IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending);
-    }
-    if store_roots_applied && database_metadata_applied {
-        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessions);
-    }
-    if database_metadata_applied {
-        return Ok(IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending);
-    }
-    if store_roots_applied {
-        return Ok(IndexSchemaState::Mainnet033);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
-        return Ok(IndexSchemaState::Mainnet032);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
-        return Ok(IndexSchemaState::Mainnet031);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
-        for &version in POST_026_INDEX_SCHEMA_VERSIONS {
-            if migration_applied_tx(conn, version)? {
-                return Err(format!(
-                    "unsupported partial index schema: migration {version} is already applied"
-                ));
-            }
-        }
-        for table in POST_026_INDEX_SCHEMA_TABLES {
-            if tx_sqlite_master_entry_exists(conn, "table", table)? {
-                return Err(format!(
-                    "unsupported partial index schema: table {table} already exists"
-                ));
-            }
-        }
-        return Ok(IndexSchemaState::Mainnet026);
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
-        return Err(format!(
-            "unsupported index schema: missing migration {INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS}"
-        ));
-    }
-    for &version in POST_011_INDEX_SCHEMA_VERSIONS {
-        if migration_applied_tx(conn, version)? {
+#[cfg(not(target_arch = "wasm32"))]
+fn reject_existing_index_tables_without_migrations(conn: &Connection) -> Result<(), String> {
+    for table in INDEX_SCHEMA_TABLES {
+        if sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!(
-                "unsupported partial index schema: migration {version} is already applied"
+                "unsupported index schema: {table} exists without supported schema_migrations; recreate the index database"
             ));
         }
     }
-    for table in POST_011_INDEX_SCHEMA_TABLES {
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reject_existing_index_tables_without_migrations_tx(
+    conn: &Transaction<'_>,
+) -> Result<(), String> {
+    for table in INDEX_SCHEMA_TABLES {
         if tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!(
-                "unsupported partial index schema: table {table} already exists"
+                "unsupported index schema: {table} exists without schema_migrations"
             ));
         }
     }
-    Ok(IndexSchemaState::Mainnet011)
-}
-
-fn apply_mainnet_011_to_latest_index_migration(
-    conn: &Transaction<'_>,
-    config: &CyclesBillingConfig,
-) -> Result<(), String> {
-    conn.execute_batch(INDEX_011_TO_LATEST_SQL)
-        .map_err(|error| error.to_string())?;
-    insert_cycles_billing_config(conn, config)?;
-    for &version in POST_011_INDEX_SCHEMA_VERSIONS {
-        insert_schema_migration_now(conn, version)?;
-    }
-    apply_rename_source_capture_trigger_sessions_migration(conn)?;
-    apply_drop_archive_restore_lifecycle_migration(conn)?;
     Ok(())
 }
 
-fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(INDEX_026_TO_LATEST_SQL)
-        .map_err(|error| error.to_string())?;
-    for &version in POST_026_INDEX_SCHEMA_VERSIONS {
-        if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG {
-            continue;
-        }
-        insert_schema_migration_now(conn, version)?;
+fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
+    let versions = applied_index_versions(conn)?;
+    if versions.len() != 1 || versions[0] != INDEX_SCHEMA_VERSION_CURRENT {
+        return Err(format!(
+            "unsupported index schema version; recreate the index database: {}",
+            versions.join(", ")
+        ));
     }
-    apply_cycles_top_up_config_migration(conn, None)?;
-    apply_rename_source_capture_trigger_sessions_migration(conn)?;
-    apply_drop_archive_restore_lifecycle_migration(conn)?;
-    Ok(())
+    validate_index_schema(conn)
 }
 
-fn apply_cycles_top_up_config_migration(
-    conn: &Transaction<'_>,
-    top_up: Option<&CyclesTopUpConfig>,
-) -> Result<(), String> {
-    match top_up {
-        Some(config) => set_cycles_top_up_config(conn, config)?,
-        None => insert_default_cycles_top_up_config(conn)?,
-    }
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)?;
-    Ok(())
-}
-
-fn apply_database_metadata_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if index_column_exists(conn, "databases", "title")?
-        && !index_column_exists(conn, "databases", "name")?
-    {
-        conn.execute(
-            "ALTER TABLE databases RENAME COLUMN title TO name",
-            params![],
-        )
+fn applied_index_versions(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
         .map_err(|error| error.to_string())?;
-    }
-    if !index_column_exists(conn, "databases", "description")? {
-        conn.execute(
-            "ALTER TABLE databases ADD COLUMN description TEXT NOT NULL DEFAULT ''",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    if !index_column_exists(conn, "databases", "llm_summary")? {
-        conn.execute(
-            "ALTER TABLE databases ADD COLUMN llm_summary TEXT",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    if !index_column_exists(conn, "databases", "tags_json")? {
-        conn.execute(
-            "ALTER TABLE databases ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    if index_column_exists(conn, "market_listings", "title")? {
-        conn.execute_batch(
-            "
-            UPDATE databases
-               SET name = COALESCE((
-                     SELECT title
-                      FROM market_listings
-                     WHERE market_listings.database_id = databases.database_id
-                     ORDER BY updated_at_ms DESC, listing_id ASC
-                     LIMIT 1
-                   ), name),
-                   description = COALESCE((
-                     SELECT description
-                       FROM market_listings
-                      WHERE market_listings.database_id = databases.database_id
-                      ORDER BY updated_at_ms DESC, listing_id ASC
-                      LIMIT 1
-                   ), ''),
-                   llm_summary = (
-                     SELECT llm_summary
-                       FROM market_listings
-                      WHERE market_listings.database_id = databases.database_id
-                      ORDER BY updated_at_ms DESC, listing_id ASC
-                      LIMIT 1
-                   ),
-                   tags_json = COALESCE((
-                     SELECT tags_json
-                       FROM market_listings
-                      WHERE market_listings.database_id = databases.database_id
-                      ORDER BY updated_at_ms DESC, listing_id ASC
-                      LIMIT 1
-                   ), '[]')
-             WHERE EXISTS (
-                     SELECT 1
-                       FROM market_listings
-                      WHERE market_listings.database_id = databases.database_id
-                   );
-            DROP INDEX market_listings_status_idx;
-            DROP INDEX market_listings_database_idx;
-            ALTER TABLE market_listings RENAME TO market_listings_old;
-            CREATE TABLE market_listings (
-              listing_id TEXT PRIMARY KEY,
-              seller_principal TEXT NOT NULL,
-              payout_principal TEXT NOT NULL,
-              database_id TEXT NOT NULL,
-              price_e8s INTEGER NOT NULL,
-              status TEXT NOT NULL,
-              revision INTEGER NOT NULL,
-              purchase_count INTEGER NOT NULL,
-              report_count INTEGER NOT NULL,
-              created_at_ms INTEGER NOT NULL,
-              updated_at_ms INTEGER NOT NULL,
-              FOREIGN KEY (database_id) REFERENCES databases(database_id)
-            );
-            INSERT INTO market_listings
-              (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
-               revision, purchase_count, report_count, created_at_ms, updated_at_ms)
-            SELECT listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
-                   revision, purchase_count, report_count, created_at_ms, updated_at_ms
-              FROM market_listings_old;
-            DROP TABLE market_listings_old;
-            CREATE INDEX market_listings_status_idx
-              ON market_listings(status, listing_id);
-            CREATE INDEX market_listings_database_idx
-              ON market_listings(database_id);
-            ",
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_METADATA)?;
-    Ok(())
-}
-
-fn apply_rename_source_capture_trigger_sessions_migration(
-    conn: &Transaction<'_>,
-) -> Result<(), String> {
-    if tx_sqlite_master_entry_exists(conn, "table", "url_ingest_trigger_sessions")? {
-        if tx_sqlite_master_entry_exists(conn, "index", "url_ingest_trigger_sessions_expiry_idx")? {
-            conn.execute(
-                "DROP INDEX url_ingest_trigger_sessions_expiry_idx",
-                params![],
-            )
-            .map_err(|error| error.to_string())?;
-        }
-        conn.execute(
-            "ALTER TABLE url_ingest_trigger_sessions RENAME TO source_capture_trigger_sessions",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    if !tx_sqlite_master_entry_exists(conn, "index", "source_capture_trigger_sessions_expiry_idx")?
-    {
-        conn.execute(
-            "CREATE INDEX source_capture_trigger_sessions_expiry_idx
-             ON source_capture_trigger_sessions(expires_at_ms)",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    insert_schema_migration_now(
-        conn,
-        INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
-    )?;
-    Ok(())
-}
-
-fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)? {
-        return Ok(());
-    }
-    if tx_sqlite_master_entry_exists(conn, "table", "database_restore_chunks")? {
-        conn.execute("DROP TABLE database_restore_chunks", params![])
-            .map_err(|error| error.to_string())?;
-    }
-    if tx_sqlite_master_entry_exists(conn, "table", "database_restore_sessions")? {
-        conn.execute("DROP TABLE database_restore_sessions", params![])
-            .map_err(|error| error.to_string())?;
-    }
-    for column in ["snapshot_hash", "restore_size_bytes"] {
-        if index_column_exists(conn, "databases", column)? {
-            conn.execute(
-                &format!("ALTER TABLE databases DROP COLUMN {column}"),
-                params![],
-            )
-            .map_err(|error| error.to_string())?;
-        }
-    }
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
-    Ok(())
-}
-
-fn apply_initial_free_database_grants_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE database_free_cycle_grants (
-           principal TEXT PRIMARY KEY,
-           database_id TEXT NOT NULL,
-           grant_cycles INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL
-         );",
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
-    Ok(())
-}
-
-fn format_create_cleanup_error(error: String, cleanup_errors: Vec<String>) -> String {
-    if cleanup_errors.is_empty() {
-        error
-    } else {
-        format!("{error}; cleanup failed: {}", cleanup_errors.join("; "))
-    }
+    crate::sqlite::query_map(&mut stmt, params![], |row| {
+        crate::sqlite::row_get::<String>(row, 0)
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
@@ -3854,6 +3345,7 @@ fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn insert_schema_migration_now(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
@@ -3948,10 +3440,6 @@ fn insert_cycles_billing_config(
     Ok(())
 }
 
-fn insert_default_cycles_top_up_config(conn: &Transaction<'_>) -> Result<(), String> {
-    set_cycles_top_up_config(conn, &default_cycles_top_up_config())
-}
-
 fn set_cycles_top_up_config(
     conn: &Transaction<'_>,
     config: &CyclesTopUpConfig,
@@ -4004,56 +3492,13 @@ fn set_cycles_billing_config_value(
     set_cycles_billing_config_text(conn, key, &value.to_string())
 }
 
-const INDEX_SCHEMA_VERSIONS: &[&str] = &[
-    INDEX_SCHEMA_VERSION_INITIAL,
-    INDEX_SCHEMA_VERSION_LIFECYCLE,
-    INDEX_SCHEMA_VERSION_RESTORE_SIZE,
-    INDEX_SCHEMA_VERSION_RESTORE_CHUNKS,
-    INDEX_SCHEMA_VERSION_MOUNT_HISTORY,
-    INDEX_SCHEMA_VERSION_SOURCE_CAPTURE_TRIGGER_SESSIONS,
-    INDEX_SCHEMA_VERSION_OPS_ANSWER_SESSIONS,
-    INDEX_SCHEMA_VERSION_RESTORE_SESSIONS,
-    INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES,
-    INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING,
-    INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS,
-    INDEX_SCHEMA_VERSION_BILLING_INITIAL,
-    INDEX_SCHEMA_VERSION_BILLING_PENDING,
-    INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
-    INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
-    INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
-    INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
-    INDEX_SCHEMA_VERSION_CYCLES_LEDGER_ONLY,
-    INDEX_SCHEMA_VERSION_FIXED_CYCLES_ACCOUNTING,
-    INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION,
-    INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS,
-    INDEX_SCHEMA_VERSION_CYCLES,
-    INDEX_SCHEMA_VERSION_STORAGE_BILLING,
-    INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
-    INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
-    INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
-    INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
-    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
-    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
-    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
-    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
-    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
-    INDEX_SCHEMA_VERSION_STORE_ROOTS,
-    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
-    INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
-    INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE,
-    INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS,
-];
-
-const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
+const INDEX_SCHEMA_TABLES: &[&str] = &[
     "databases",
     "database_members",
-    "database_restore_chunks",
     "database_mount_history",
-    "url_ingest_trigger_sessions",
     "source_capture_trigger_sessions",
     "ops_answer_sessions",
     "source_run_sessions",
-    "database_restore_sessions",
     "database_cycle_accounts",
     "database_cycle_ledger",
     "database_free_cycle_grants",
@@ -4065,201 +3510,16 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "market_purchase_pending_operations",
     "market_entitlements",
 ];
-
-const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
-    INDEX_SCHEMA_VERSION_BILLING_INITIAL,
-    INDEX_SCHEMA_VERSION_BILLING_PENDING,
-    INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
-    INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
-    INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
-    INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
-    INDEX_SCHEMA_VERSION_CYCLES_LEDGER_ONLY,
-    INDEX_SCHEMA_VERSION_FIXED_CYCLES_ACCOUNTING,
-    INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION,
-    INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS,
-    INDEX_SCHEMA_VERSION_CYCLES,
-    INDEX_SCHEMA_VERSION_STORAGE_BILLING,
-    INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
-    INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
-    INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
-    INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
-    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
-    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
-    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
-    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
-    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
-    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
-];
-
-const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
-    "database_cycle_accounts",
-    "database_cycle_ledger",
-    "database_free_cycle_grants",
-    "database_cycle_pending_operations",
-    "cycles_billing_config",
-    "storage_billing_state",
-    "market_listings",
-    "market_orders",
-    "market_purchase_pending_operations",
-    "market_entitlements",
-];
-
-const POST_026_INDEX_SCHEMA_VERSIONS: &[&str] = &[
-    INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
-    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
-    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
-    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
-    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
-    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
-    INDEX_SCHEMA_VERSION_DATABASE_METADATA,
-];
-
-const POST_026_INDEX_SCHEMA_TABLES: &[&str] = &[
-    "market_listings",
-    "market_orders",
-    "market_purchase_pending_operations",
-    "market_entitlements",
-];
-
-fn validate_pre_billing_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
-    for table in [
-        "schema_migrations",
-        "databases",
-        "database_members",
-        "database_restore_chunks",
-        "database_mount_history",
-        "url_ingest_trigger_sessions",
-        "ops_answer_sessions",
-        "source_run_sessions",
-        "database_restore_sessions",
-    ] {
-        if !tx_sqlite_master_entry_exists(conn, "table", table)? {
-            return Err(format!("unsupported index schema: missing table {table}"));
-        }
-    }
-    for (table, columns) in [
-        ("schema_migrations", &["version", "applied_at"][..]),
-        (
-            "databases",
-            &[
-                "database_id",
-                "name",
-                "db_file_name",
-                "mount_id",
-                "active_mount_id",
-                "status",
-                "schema_version",
-                "logical_size_bytes",
-                "snapshot_hash",
-                "archived_at_ms",
-                "deleted_at_ms",
-                "restore_size_bytes",
-                "created_at_ms",
-                "updated_at_ms",
-            ][..],
-        ),
-        (
-            "database_members",
-            &["database_id", "principal", "role", "created_at_ms"][..],
-        ),
-        (
-            "database_restore_chunks",
-            &["database_id", "offset_bytes", "end_bytes", "bytes"][..],
-        ),
-        (
-            "database_mount_history",
-            &["database_id", "mount_id", "reason", "created_at_ms"][..],
-        ),
-        (
-            "url_ingest_trigger_sessions",
-            &[
-                "database_id",
-                "session_nonce",
-                "principal",
-                "expires_at_ms",
-                "created_at_ms",
-                "refreshed_at_ms",
-            ][..],
-        ),
-        (
-            "ops_answer_sessions",
-            &[
-                "database_id",
-                "session_nonce",
-                "principal",
-                "expires_at_ms",
-                "created_at_ms",
-                "refreshed_at_ms",
-            ][..],
-        ),
-        (
-            "source_run_sessions",
-            &[
-                "database_id",
-                "source_path",
-                "source_etag",
-                "session_nonce",
-                "principal",
-                "expires_at_ms",
-                "created_at_ms",
-                "refreshed_at_ms",
-            ][..],
-        ),
-        (
-            "database_restore_sessions",
-            &[
-                "database_id",
-                "status",
-                "active_mount_id",
-                "snapshot_hash",
-                "archived_at_ms",
-                "deleted_at_ms",
-                "restore_size_bytes",
-                "created_at_ms",
-            ][..],
-        ),
-    ] {
-        for column in columns {
-            if !index_column_exists(conn, table, column)? {
-                return Err(format!(
-                    "unsupported index schema: missing column {table}.{column}"
-                ));
-            }
-        }
-    }
-    for index in [
-        "databases_active_mount_id_idx",
-        "database_restore_chunks_database_id_idx",
-        "url_ingest_trigger_sessions_expiry_idx",
-        "ops_answer_sessions_expiry_idx",
-        "source_run_sessions_expiry_idx",
-    ] {
-        if !tx_sqlite_master_entry_exists(conn, "index", index)? {
-            return Err(format!("unsupported index schema: missing index {index}"));
-        }
-    }
-    if tx_sqlite_master_entry_exists(conn, "table", "market_seller_allowlist")? {
-        return Err("unsupported index schema: stale table market_seller_allowlist".to_string());
-    }
-    if index_column_exists(conn, "market_entitlements", "expires_at_ms")? {
-        return Err(
-            "unsupported index schema: stale column market_entitlements.expires_at_ms".to_string(),
-        );
-    }
-    if index_column_exists(conn, "market_listings", "sample_questions_json")? {
-        return Err(
-            "unsupported index schema: stale column market_listings.sample_questions_json"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
 
 fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
         "schema_migrations",
         "databases",
+        "database_members",
+        "database_mount_history",
         "source_capture_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
         "database_cycle_accounts",
         "database_cycle_ledger",
         "database_free_cycle_grants",
@@ -4308,12 +3568,46 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             ][..],
         ),
         (
+            "ops_answer_sessions",
+            &[
+                "database_id",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
+        (
+            "source_run_sessions",
+            &[
+                "database_id",
+                "source_path",
+                "source_etag",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
+        (
+            "database_members",
+            &["database_id", "principal", "role", "created_at_ms"][..],
+        ),
+        (
+            "database_mount_history",
+            &["database_id", "mount_id", "reason", "created_at_ms"][..],
+        ),
+        (
             "database_cycle_accounts",
             &[
                 "database_id",
                 "balance_cycles",
                 "suspended_at_ms",
                 "storage_charged_at_ms",
+                "created_at_ms",
+                "updated_at_ms",
             ][..],
         ),
         (
@@ -4361,6 +3655,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             "storage_billing_state",
             &["key", "cursor_mount_id", "billing_now_ms", "updated_at_ms"][..],
         ),
+        ("cycles_billing_config", &["key", "value"][..]),
         (
             "market_listings",
             &[
@@ -4454,6 +3749,8 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for index in [
         "databases_active_mount_id_idx",
         "source_capture_trigger_sessions_expiry_idx",
+        "ops_answer_sessions_expiry_idx",
+        "source_run_sessions_expiry_idx",
         "database_cycle_ledger_database_idx",
         "database_cycle_pending_operations_database_idx",
         "market_listings_status_idx",
@@ -4508,50 +3805,6 @@ fn index_column_exists(conn: &Transaction<'_>, table: &str, column: &str) -> Res
     })
     .map_err(|error| error.to_string())?;
     Ok(columns.iter().any(|name| name == column))
-}
-
-fn migration_applied_tx(conn: &Transaction<'_>, version: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM schema_migrations WHERE version = ?1",
-        params![version],
-        |row| crate::sqlite::row_get::<i64>(row, 0),
-    )
-    .optional()
-    .map(|row| row.is_some())
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn legacy_credit_index_table_name(conn: &Connection) -> Result<Option<String>, String> {
-    conn.query_row(
-        "SELECT name
-         FROM sqlite_master
-         WHERE type = 'table'
-           AND (name LIKE 'database_' || 'credit_%'
-                OR name = 'credits_' || 'config')
-         ORDER BY name
-         LIMIT 1",
-        params![],
-        |row| crate::sqlite::row_get::<String>(row, 0),
-    )
-    .optional()
-    .map_err(|error| error.to_string())
-}
-
-fn legacy_credit_index_table_name_tx(conn: &Transaction<'_>) -> Result<Option<String>, String> {
-    conn.query_row(
-        "SELECT name
-         FROM sqlite_master
-         WHERE type = 'table'
-           AND (name LIKE 'database_' || 'credit_%'
-                OR name = 'credits_' || 'config')
-         ORDER BY name
-         LIMIT 1",
-        params![],
-        |row| crate::sqlite::row_get::<String>(row, 0),
-    )
-    .optional()
-    .map_err(|error| error.to_string())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -7555,23 +6808,6 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn load_active_databases_for_store_root_seed(
-    conn: &Connection,
-) -> Result<Vec<DatabaseMeta>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT database_id, name, description, llm_summary, tags_json,
-                db_file_name, active_mount_id, schema_version, logical_size_bytes, status
-         FROM databases
-         WHERE status = 'active'
-           AND active_mount_id IS NOT NULL
-         ORDER BY mount_id ASC",
-        )
-        .map_err(|error| error.to_string())?;
-    crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
-        .map_err(|error| error.to_string())
-}
-
 fn load_active_databases_for_storage_billing_batch(
     conn: &Connection,
     cursor_mount_id: u16,
@@ -7951,10 +7187,7 @@ fn role_allows(role: DatabaseRole, required_role: RequiredRole) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use tempfile::tempdir;
-    use vfs_store::FsStore;
 
     use super::*;
 
@@ -8012,479 +7245,42 @@ mod tests {
         }
     }
 
-    fn write_pre_cycles_schema(index_path: &Path) {
-        let conn = Connection::open(index_path).expect("index DB should open");
-        conn.execute_batch(
-            "CREATE TABLE schema_migrations (
-               version TEXT PRIMARY KEY,
-               applied_at INTEGER NOT NULL
-             );
-             INSERT INTO schema_migrations (version, applied_at) VALUES
-	               ('database_index:000_initial', 0),
-	               ('database_index:001_lifecycle', 0),
-	               ('database_index:002_restore_size', 0),
-	               ('database_index:003_restore_chunks', 0),
-	               ('database_index:005_mount_history', 0),
-	               ('database_index:006_url_ingest_trigger_sessions', 0),
-	               ('database_index:007_ops_answer_sessions', 0),
-               ('database_index:008_restore_sessions', 0),
-               ('database_index:009_restore_chunk_bytes', 0),
-               ('database_index:010_database_name_breaking', 0),
-               ('database_index:011_source_run_sessions', 0);
-             CREATE TABLE databases (
-               database_id TEXT PRIMARY KEY,
-               name TEXT NOT NULL,
-               db_file_name TEXT NOT NULL,
-               mount_id INTEGER NOT NULL,
-               active_mount_id INTEGER,
-               status TEXT NOT NULL DEFAULT 'active',
-               schema_version TEXT NOT NULL,
-               logical_size_bytes INTEGER NOT NULL DEFAULT 0,
-               snapshot_hash BLOB,
-               archived_at_ms INTEGER,
-               deleted_at_ms INTEGER,
-               restore_size_bytes INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL
-             );
-             CREATE UNIQUE INDEX databases_active_mount_id_idx
-               ON databases(active_mount_id)
-               WHERE active_mount_id IS NOT NULL;
-             CREATE TABLE database_members (
-               database_id TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               role TEXT NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, principal),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE TABLE database_restore_chunks (
-               database_id TEXT NOT NULL,
-               offset_bytes INTEGER NOT NULL,
-               end_bytes INTEGER NOT NULL,
-               bytes BLOB,
-               PRIMARY KEY (database_id, offset_bytes, end_bytes),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX database_restore_chunks_database_id_idx
-               ON database_restore_chunks(database_id, offset_bytes);
-	             CREATE TABLE database_mount_history (
-               database_id TEXT NOT NULL,
-               mount_id INTEGER NOT NULL,
-               reason TEXT NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (mount_id)
-             );
-             CREATE TABLE url_ingest_trigger_sessions (
-               database_id TEXT NOT NULL,
-               session_nonce TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               expires_at_ms INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               refreshed_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, session_nonce),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX url_ingest_trigger_sessions_expiry_idx
-               ON url_ingest_trigger_sessions(expires_at_ms);
-             CREATE TABLE ops_answer_sessions (
-               database_id TEXT NOT NULL,
-               session_nonce TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               expires_at_ms INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               refreshed_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, session_nonce),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX ops_answer_sessions_expiry_idx
-               ON ops_answer_sessions(expires_at_ms);
-             CREATE TABLE source_run_sessions (
-               database_id TEXT NOT NULL,
-               source_path TEXT NOT NULL,
-               source_etag TEXT NOT NULL,
-               session_nonce TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               expires_at_ms INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               refreshed_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, session_nonce),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX source_run_sessions_expiry_idx
-               ON source_run_sessions(expires_at_ms);
-             CREATE TABLE database_restore_sessions (
-               database_id TEXT PRIMARY KEY,
-               status TEXT NOT NULL,
-               active_mount_id INTEGER,
-               snapshot_hash BLOB,
-               archived_at_ms INTEGER,
-               deleted_at_ms INTEGER,
-               restore_size_bytes INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );",
-        )
-        .expect("pre-cycles schema should write");
-    }
-
-    fn write_mainnet_026_schema(index_path: &Path, config: &CyclesBillingConfig) {
-        write_pre_cycles_schema(index_path);
-        let mut conn = Connection::open(index_path).expect("index DB should reopen");
-        conn.execute_batch(
-            "CREATE TABLE database_cycle_accounts (
-               database_id TEXT PRIMARY KEY,
-               balance_cycles INTEGER NOT NULL,
-               suspended_at_ms INTEGER,
-               storage_charged_at_ms INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL,
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE TABLE database_cycle_ledger (
-               entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               database_id TEXT NOT NULL,
-               kind TEXT NOT NULL,
-               amount_cycles INTEGER NOT NULL,
-               balance_after_cycles INTEGER NOT NULL,
-               payment_amount_e8s INTEGER,
-               caller TEXT NOT NULL,
-               method TEXT,
-               cycles_delta INTEGER,
-               cycles_per_kinic INTEGER,
-               ledger_block_index INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE INDEX database_cycle_ledger_database_idx
-               ON database_cycle_ledger(database_id, entry_id);
-             CREATE TABLE database_cycle_pending_operations (
-               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               database_id TEXT NOT NULL,
-               kind TEXT NOT NULL,
-               caller TEXT NOT NULL,
-               cycles INTEGER NOT NULL,
-               payment_amount_e8s INTEGER NOT NULL,
-               from_owner TEXT,
-               from_subaccount BLOB,
-               to_owner TEXT,
-               to_subaccount BLOB,
-               ledger_fee_e8s INTEGER,
-               ledger_created_at_time_ns INTEGER,
-               operation_status TEXT NOT NULL,
-               ledger_block_index INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX database_cycle_pending_operations_database_idx
-               ON database_cycle_pending_operations(database_id);
-             CREATE TABLE cycles_billing_config (
-               key TEXT PRIMARY KEY,
-               value TEXT NOT NULL
-             );
-             CREATE TABLE storage_billing_state (
-               key TEXT PRIMARY KEY,
-               cursor_mount_id INTEGER,
-               billing_now_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL,
-               CHECK (key = 'timer')
-             );",
-        )
-        .expect("mainnet 026 tables should write");
-        let tx = conn.transaction().expect("transaction should start");
-        insert_cycles_billing_config(&tx, config).expect("config should insert");
-        for &version in &[
-            INDEX_SCHEMA_VERSION_BILLING_INITIAL,
-            INDEX_SCHEMA_VERSION_BILLING_PENDING,
-            INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
-            INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
-            INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
-            INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
-            INDEX_SCHEMA_VERSION_CYCLES_LEDGER_ONLY,
-            INDEX_SCHEMA_VERSION_FIXED_CYCLES_ACCOUNTING,
-            INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION,
-            INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS,
-            INDEX_SCHEMA_VERSION_CYCLES,
-            INDEX_SCHEMA_VERSION_STORAGE_BILLING,
-            INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
-            INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
-            INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
-        ] {
-            insert_schema_migration_now(&tx, version).expect("026 marker should insert");
-        }
-        tx.commit().expect("mainnet 026 schema should commit");
-    }
-
-    fn write_mainnet_031_schema(index_path: &Path, config: &CyclesBillingConfig) {
-        write_mainnet_026_schema(index_path, config);
-        let mut conn = Connection::open(index_path).expect("index DB should reopen");
-        let tx = conn.transaction().expect("transaction should start");
-        tx.execute_batch(INDEX_026_TO_LATEST_SQL)
-            .expect("mainnet 031 schema should write");
-        for &version in POST_026_INDEX_SCHEMA_VERSIONS {
-            if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG
-                || version == INDEX_SCHEMA_VERSION_DATABASE_METADATA
-            {
-                continue;
-            }
-            insert_schema_migration_now(&tx, version).expect("031 marker should insert");
-        }
-        tx.execute(
-            "DELETE FROM cycles_billing_config
-             WHERE key IN ('top_up_enabled', 'top_up_launcher_principal', 'top_up_threshold_cycles')",
-            params![],
-        )
-        .expect("031 config should not contain top-up rows");
-        tx.commit().expect("mainnet 031 schema should commit");
-    }
-
-    fn write_mainnet_032_schema(index_path: &Path, config: &CyclesBillingConfig) {
-        write_mainnet_031_schema(index_path, config);
-        let mut conn = Connection::open(index_path).expect("index DB should reopen");
-        let tx = conn.transaction().expect("transaction should start");
-        apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
-        tx.commit().expect("mainnet 032 schema should commit");
-    }
-
-    fn write_legacy_profile_latest_schema(index_path: &Path, config: &CyclesBillingConfig) {
-        write_mainnet_026_schema(index_path, config);
-        let mut conn = Connection::open(index_path).expect("index DB should reopen");
-        let tx = conn.transaction().expect("transaction should start");
-        tx.execute_batch(
-            "CREATE TABLE market_listings (
-               listing_id TEXT PRIMARY KEY,
-               seller_principal TEXT NOT NULL,
-               payout_principal TEXT NOT NULL,
-               database_id TEXT NOT NULL,
-               title TEXT NOT NULL,
-               description TEXT NOT NULL,
-               llm_summary TEXT,
-               tags_json TEXT NOT NULL,
-               price_e8s INTEGER NOT NULL,
-               status TEXT NOT NULL,
-               revision INTEGER NOT NULL,
-               purchase_count INTEGER NOT NULL,
-               report_count INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL,
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX market_listings_status_idx
-               ON market_listings(status, listing_id);
-             CREATE INDEX market_listings_database_idx
-               ON market_listings(database_id);
-             CREATE TABLE market_orders (
-               order_id TEXT PRIMARY KEY,
-               listing_id TEXT NOT NULL,
-               database_id TEXT NOT NULL,
-               buyer_principal TEXT NOT NULL,
-               seller_principal TEXT NOT NULL,
-               payout_principal TEXT NOT NULL,
-               price_e8s INTEGER NOT NULL,
-               ledger_block_index INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE INDEX market_orders_buyer_idx
-               ON market_orders(buyer_principal, order_id);
-             CREATE TABLE market_purchase_pending_operations (
-               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               listing_id TEXT NOT NULL,
-               database_id TEXT NOT NULL,
-               buyer_principal TEXT NOT NULL,
-               seller_principal TEXT NOT NULL,
-               price_e8s INTEGER NOT NULL,
-               from_owner TEXT NOT NULL,
-               from_subaccount BLOB,
-               to_owner TEXT NOT NULL,
-               to_subaccount BLOB,
-               ledger_fee_e8s INTEGER NOT NULL,
-               ledger_created_at_time_ns INTEGER NOT NULL,
-               operation_status TEXT NOT NULL,
-               ledger_block_index INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE INDEX market_purchase_pending_buyer_idx
-               ON market_purchase_pending_operations(buyer_principal, listing_id);
-             CREATE TABLE market_entitlements (
-               database_id TEXT NOT NULL,
-               buyer_principal TEXT NOT NULL,
-               listing_id TEXT NOT NULL,
-               order_id TEXT NOT NULL,
-               purchased_at_ms INTEGER NOT NULL,
-               status TEXT NOT NULL,
-               PRIMARY KEY (database_id, buyer_principal, listing_id),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
-               ON market_entitlements(database_id, buyer_principal)
-               WHERE status = 'active';
-             CREATE INDEX market_entitlements_buyer_idx
-               ON market_entitlements(buyer_principal, database_id);",
-        )
-        .expect("legacy profile marketplace schema should write");
-        for &version in &[
-            INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
-            INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
-            INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
-            INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
-            INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
-        ] {
-            insert_schema_migration_now(&tx, version).expect("legacy market marker should insert");
-        }
-        apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
-        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
-            .expect("store roots marker should insert");
-        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)
-            .expect("legacy profile marker should insert");
-        insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE)
-            .expect("legacy profile drop marker should insert");
-        apply_rename_source_capture_trigger_sessions_migration(&tx)
-            .expect("source capture rename should migrate");
-        apply_drop_archive_restore_lifecycle_migration(&tx)
-            .expect("archive restore drop should migrate");
-        tx.commit()
-            .expect("legacy profile latest schema should commit");
-    }
-
-    fn create_active_database_fixture(
-        index_path: &Path,
-        databases_dir: &Path,
-        database_id: &str,
-        missing_paths: &[&str],
-    ) -> String {
-        let db_file_name = database_file_name(databases_dir, database_id)
-            .expect("database file name should build");
-        if let Some(parent) = Path::new(&db_file_name).parent() {
-            std::fs::create_dir_all(parent).expect("database dir should create");
-        }
-        let store = FsStore::new(PathBuf::from(&db_file_name));
-        store
-            .run_fs_migrations()
-            .expect("fixture FS migrations should run");
-        let fs_conn = Connection::open(&db_file_name).expect("fixture DB should open");
-        for path in missing_paths {
-            fs_conn
-                .execute("DELETE FROM fs_nodes WHERE path = ?1", params![path])
-                .expect("fixture path should delete");
-        }
-
+    fn index_versions(index_path: &std::path::Path) -> Vec<String> {
         let conn = Connection::open(index_path).expect("index DB should reopen");
-        conn.execute(
-            "INSERT INTO databases
-             (database_id, name, description, llm_summary, tags_json, db_file_name, mount_id,
-              active_mount_id, status, schema_version, logical_size_bytes, created_at_ms,
-              updated_at_ms)
-             VALUES (?1, ?1, '', NULL, '[]', ?2, 11, 11, 'active', ?3, 0, 0, 0)",
-            params![database_id, db_file_name, DATABASE_SCHEMA_VERSION],
-        )
-        .expect("fixture database should insert");
-        conn.execute(
-            "INSERT INTO database_members
-             (database_id, principal, role, created_at_ms)
-             VALUES (?1, 'owner', 'owner', 0)",
-            params![database_id],
-        )
-        .expect("fixture owner should insert");
-        conn.execute(
-            "INSERT INTO database_mount_history
-             (database_id, mount_id, reason, created_at_ms)
-             VALUES (?1, 11, 'fixture', 0)",
-            params![database_id],
-        )
-        .expect("fixture mount history should insert");
-        conn.execute(
-            "INSERT INTO database_cycle_accounts
-             (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
-              created_at_ms, updated_at_ms)
-             VALUES (?1, 0, 0, NULL, 0, 0)",
-            params![database_id],
-        )
-        .expect("fixture cycle account should insert");
-        db_file_name
-    }
-
-    fn schema_marker_count(index_path: &Path, version: &str) -> i64 {
-        let conn = Connection::open(index_path).expect("index DB should reopen");
-        conn.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
-            params![version],
-            |row| row.get(0),
-        )
-        .expect("schema marker count should load")
-    }
-
-    fn database_profile_column_count(index_path: &Path) -> i64 {
-        let conn = Connection::open(index_path).expect("index DB should reopen");
-        conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("database profile column count should load")
-    }
-
-    fn table_column_count(index_path: &Path, table_name: &str, column_name: &str) -> i64 {
-        let conn = Connection::open(index_path).expect("index DB should reopen");
-        conn.query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('{table_name}') WHERE name = ?1"),
-            params![column_name],
-            |row| row.get(0),
-        )
-        .expect("table column count should load")
+        conn.prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+            .expect("version query should prepare")
+            .query_map(params![], |row| row.get(0))
+            .expect("version query should run")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("versions should collect")
     }
 
     #[test]
-    fn old_upgrade_migrations_require_config() {
+    fn index_migrations_create_current_schema_once() {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
-        write_pre_cycles_schema(&index_path);
-        let service = VfsService::new(index_path, dir.path().join("databases"));
-
-        let error = service
-            .run_index_migrations_for_upgrade(None)
-            .expect_err("old index should require config");
-
-        assert!(error.contains("cycles config required for first cycles upgrade"));
-    }
-
-    #[test]
-    fn old_upgrade_migrations_apply_with_config() {
-        let dir = tempdir().expect("tempdir should create");
-        let index_path = dir.path().join("index.sqlite3");
-        write_pre_cycles_schema(&index_path);
         let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
         let config = test_cycles_billing_config();
 
         service
-            .run_index_migrations_for_upgrade(Some(config.clone()))
-            .expect("old index should upgrade");
+            .run_index_migrations_with_config(config.clone())
+            .expect("fresh index schema should create");
+        service
+            .run_index_migrations()
+            .expect("current index schema should validate");
 
+        assert_eq!(
+            index_versions(&index_path),
+            vec![INDEX_SCHEMA_VERSION_CURRENT]
+        );
         assert_eq!(
             service.cycles_billing_config().expect("config should load"),
             config
         );
-        let conn = Connection::open(&index_path).expect("index DB should reopen");
-        let marker: String = conn
-            .query_row(
-                "SELECT version FROM schema_migrations
-	                 WHERE version = 'database_index:018_cycles_ledger_only'",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("cycle ledger only marker should exist");
-        let usage_table_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-	                 WHERE type = 'table' AND name = 'usage_events'",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("usage table count should load");
-        assert_eq!(marker, "database_index:018_cycles_ledger_only");
-        assert_eq!(usage_table_count, 0);
     }
 
     #[test]
-    fn upgrade_migrations_accept_no_config_after_cycles_initial() {
+    fn current_upgrade_migrations_accept_no_config() {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
@@ -8497,7 +7293,7 @@ mod tests {
 
         service
             .run_index_migrations_for_upgrade(None)
-            .expect("post-cycles upgrade should not need config");
+            .expect("current schema upgrade should not need config");
 
         assert_eq!(
             service.cycles_billing_config().expect("config should load"),
@@ -8506,454 +7302,48 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_migrations_apply_mainnet_026_to_latest_without_config() {
+    fn old_index_schema_marker_is_rejected_for_upgrade() {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
-        let config = test_cycles_billing_config();
-        write_mainnet_026_schema(&index_path, &config);
-        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("mainnet 026 index should upgrade");
-
-        assert_eq!(
-            service.cycles_billing_config().expect("config should load"),
-            config
-        );
-        let conn = Connection::open(&index_path).expect("index DB should reopen");
-        let marker: String = conn
-            .query_row(
-                "SELECT version FROM schema_migrations
-                 WHERE version = 'database_index:033_store_roots'",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("latest marker should exist");
-        let market_tables: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master
-                 WHERE type = 'table'
-                   AND name IN ('market_listings', 'market_orders', 'market_purchase_pending_operations', 'market_entitlements')",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("market table count should load");
-        let free_grant_tables: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master
-                 WHERE type = 'table'
-                   AND name = 'database_free_cycle_grants'",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("free grant table count should load");
-        assert_eq!(marker, "database_index:033_store_roots");
-        assert_eq!(market_tables, 4);
-        assert_eq!(free_grant_tables, 1);
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS
-            ),
-            1
-        );
-        assert!(
-            service
-                .initial_free_database_grant_status("owner")
-                .expect("free grant status should load after 026 upgrade")
-                .available
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn database_store_roots_seed_mainnet_032_active_databases() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        create_active_database_fixture(
-            &index_path,
-            &databases_dir,
-            "legacy_active",
-            &["/Memory", "/Sessions", "/Skills"],
-        );
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("mainnet 032 index should seed store roots");
-
-        for path in ["/Memory", "/Sessions", "/Skills"] {
-            assert!(
-                service
-                    .read_node("legacy_active", "owner", path)
-                    .expect("seeded root should read")
-                    .is_some(),
-                "{path} should exist"
-            );
-        }
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn metadata_pending_index_seeds_roots() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        create_active_database_fixture(
-            &index_path,
-            &databases_dir,
-            "profile_without_roots",
-            &["/Memory", "/Sessions", "/Skills"],
-        );
-        {
-            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
-            let tx = conn.transaction().expect("transaction should start");
-            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_DATABASE_METADATA)
-                .expect("metadata marker should insert");
-            tx.commit().expect("metadata marker should commit");
-        }
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("store-roots-pending index should seed roots");
-
-        for path in ["/Memory", "/Sessions", "/Skills"] {
-            assert!(
-                service
-                    .read_node("profile_without_roots", "owner", path)
-                    .expect("seeded root should read")
-                    .is_some(),
-                "{path} should exist"
-            );
-        }
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn mainnet_033_index_applies_database_metadata_migration() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        {
-            let mut conn = Connection::open(&index_path).expect("index DB should reopen");
-            let tx = conn.transaction().expect("transaction should start");
-            insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_STORE_ROOTS)
-                .expect("store roots marker should insert");
-            tx.commit().expect("store roots marker should commit");
-        }
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("mainnet 033 index should apply profile-drop noop");
-
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn legacy_profile_latest_index_applies_database_metadata_only() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        write_legacy_profile_latest_schema(&index_path, &test_cycles_billing_config());
-        let service = VfsService::new(index_path.clone(), root.join("databases"));
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("legacy profile latest index should apply metadata migration");
-
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DROP_DATABASE_PROFILE),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE
-            ),
-            1
-        );
-        for column in ["name", "description", "llm_summary", "tags_json"] {
-            assert_eq!(table_column_count(&index_path, "databases", column), 1);
-            assert_eq!(
-                table_column_count(&index_path, "market_listings", column),
-                0
-            );
-        }
-    }
-
-    #[test]
-    fn database_store_roots_seed_retries_after_missing_marker() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        create_active_database_fixture(
-            &index_path,
-            &databases_dir,
-            "store_without_roots",
-            &["/Memory", "/Sessions", "/Skills"],
-        );
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("missing store root marker should seed roots");
-
-        assert!(
-            service
-                .read_node("store_without_roots", "owner", "/Memory")
-                .expect("memory root should read")
-                .is_some()
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn database_store_roots_seed_keeps_existing_folder_roots() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        create_active_database_fixture(
-            &index_path,
-            &databases_dir,
-            "partial_roots",
-            &["/Sessions", "/Skills"],
-        );
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("existing folder roots should be kept");
-
-        for path in ["/Memory", "/Sessions", "/Skills"] {
-            assert!(
-                service
-                    .read_node("partial_roots", "owner", path)
-                    .expect("root should read")
-                    .is_some(),
-                "{path} should exist"
-            );
-        }
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(
-            schema_marker_count(
-                &index_path,
-                INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS
-            ),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn database_store_roots_seed_rejects_non_folder_collision() {
-        let dir = tempdir().expect("tempdir should create");
-        let root = dir.path();
-        let index_path = root.join("index.sqlite3");
-        let databases_dir = root.join("databases");
-        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        let db_file_name = create_active_database_fixture(
-            &index_path,
-            &databases_dir,
-            "colliding_roots",
-            &["/Memory", "/Sessions", "/Skills"],
-        );
-        FsStore::new(PathBuf::from(&db_file_name))
-            .write_node(
-                WriteNodeRequest {
-                    database_id: "colliding_roots".to_string(),
-                    path: "/Memory".to_string(),
-                    kind: NodeKind::File,
-                    content: "not a folder".to_string(),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                },
-                0,
-            )
-            .expect("collision fixture should write");
-        let service = VfsService::new(index_path.clone(), databases_dir);
-
-        let error = service
-            .run_index_migrations_for_upgrade(None)
-            .expect_err("non-folder root collision should reject");
-
-        assert!(error.contains("/Memory"));
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
-            0
-        );
-        assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),
-            1
-        );
-        assert_eq!(database_profile_column_count(&index_path), 0);
-    }
-
-    #[test]
-    fn upgrade_migrations_apply_mainnet_031_top_up_config_from_arg() {
-        let dir = tempdir().expect("tempdir should create");
-        let index_path = dir.path().join("index.sqlite3");
-        let old_config = test_cycles_billing_config();
-        write_mainnet_031_schema(&index_path, &old_config);
-        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
-        let mut next_config = old_config.clone();
-        next_config.top_up = CyclesTopUpConfig {
-            enabled: false,
-            launcher_principal: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-            threshold_cycles: 123_456_789,
-        };
-
-        service
-            .run_index_migrations_for_upgrade(Some(next_config.clone()))
-            .expect("mainnet 031 index should use top-up config arg");
-
-        assert_eq!(
-            service
-                .cycles_billing_config()
-                .expect("config should load")
-                .top_up,
-            next_config.top_up
-        );
-        let conn = Connection::open(&index_path).expect("index DB should reopen");
-        let marker: String = conn
-            .query_row(
-                "SELECT version FROM schema_migrations
-                 WHERE version = 'database_index:032_cycles_top_up_config'",
-                params![],
-                |row| row.get(0),
-            )
-            .expect("top-up marker should exist");
-        assert_eq!(marker, "database_index:032_cycles_top_up_config");
-    }
-
-    #[test]
-    fn partial_billing_schema_is_rejected_for_upgrade() {
-        let dir = tempdir().expect("tempdir should create");
-        let index_path = dir.path().join("index.sqlite3");
-        write_pre_cycles_schema(&index_path);
-        let conn = Connection::open(&index_path).expect("index DB should reopen");
-        let legacy_marker = format!("database_index:020_{}config_version", "credits_");
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at)
-             VALUES (?1, 0)",
-            params![legacy_marker],
+        let conn = Connection::open(&index_path).expect("index DB should open");
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+               version TEXT PRIMARY KEY,
+               applied_at INTEGER NOT NULL
+             );
+             INSERT INTO schema_migrations (version, applied_at)
+             VALUES ('database_index:000_initial', 0);",
         )
-        .expect("legacy billing marker should insert");
+        .expect("old marker should insert");
         drop(conn);
         let service = VfsService::new(index_path, dir.path().join("databases"));
 
         let error = service
             .run_index_migrations_for_upgrade(Some(test_cycles_billing_config()))
-            .expect_err("partial billing schema should be unsupported");
+            .expect_err("old schema marker should reject");
 
-        assert!(error.contains("unsupported partial index schema"));
-        assert!(error.contains("database_index:020_"));
+        assert!(error.contains("unsupported index schema version"));
+        assert!(error.contains("database_index:000_initial"));
+    }
+
+    #[test]
+    fn current_index_schema_missing_required_table_is_rejected() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        service
+            .run_index_migrations()
+            .expect("fresh index schema should create");
+        let conn = Connection::open(&index_path).expect("index DB should reopen");
+        conn.execute("DROP TABLE market_orders", params![])
+            .expect("required table should drop");
+        drop(conn);
+
+        let error = service
+            .run_index_migrations()
+            .expect_err("missing current table should reject");
+
+        assert!(error.contains("missing table market_orders"));
     }
 
     #[test]

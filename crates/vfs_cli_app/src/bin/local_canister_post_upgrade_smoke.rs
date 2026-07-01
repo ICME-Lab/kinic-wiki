@@ -1,5 +1,5 @@
 // Where: crates/vfs_cli_app/src/bin/local_canister_post_upgrade_smoke.rs
-// What: Verify local wiki canister cycles config and pending DB persistence across upgrade.
+// What: Verify local wiki canister cycles config and DB persistence across upgrade.
 // Why: Fresh install requires cycles billing config, and upgrade operators need a small state smoke.
 use std::{env, fs};
 
@@ -70,21 +70,23 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let database_id = client
-        .create_database("Post-upgrade smoke")
-        .await?
-        .database_id;
-    assert_pending_database(&client, &database_id).await?;
-    let active_database_id = client
-        .create_database("Post-upgrade active smoke")
-        .await?
-        .database_id;
-    activate_smoke_database(&client, &active_database_id, smoke_cycle_purchase_e8s()?).await?;
-    let isolation_database_id = client
+    let warmup_database = client.create_database("Post-upgrade warmup smoke").await?;
+    assert_created_database_present(&client, &warmup_database.database_id).await?;
+    let active_database = client.create_database("Post-upgrade active smoke").await?;
+    let active_database_id = active_database.database_id.clone();
+    activate_created_database_if_pending(&client, &active_database, smoke_cycle_purchase_e8s()?)
+        .await?;
+    let isolation_database = client
         .create_database("Post-upgrade isolation smoke")
+        .await?;
+    let isolation_database_id = isolation_database.database_id.clone();
+    activate_created_database_if_pending(&client, &isolation_database, smoke_cycle_purchase_e8s()?)
+        .await?;
+    let pending_database_id = client
+        .create_database("Post-upgrade pending smoke")
         .await?
         .database_id;
-    activate_smoke_database(&client, &isolation_database_id, smoke_cycle_purchase_e8s()?).await?;
+    assert_pending_database(&client, &pending_database_id).await?;
     seed_vfs_database_behavior(&client, &active_database_id, &isolation_database_id).await?;
     let active_balance_cycles = active_database_balance(&client, &active_database_id).await?;
     let active_ledger_entry_count = client
@@ -94,7 +96,7 @@ async fn main() -> Result<()> {
         .len();
     let state = SmokeState {
         canister_id,
-        database_id: database_id.clone(),
+        database_id: pending_database_id.clone(),
         active_database_id: active_database_id.clone(),
         isolation_database_id: isolation_database_id.clone(),
         active_balance_cycles,
@@ -107,7 +109,7 @@ async fn main() -> Result<()> {
         write_state(&path, &state)?;
     }
     println!("local_canister_post_upgrade_smoke ok");
-    println!("database_id={database_id}");
+    println!("database_id={pending_database_id}");
     println!("active_database_id={active_database_id}");
     println!("isolation_database_id={isolation_database_id}");
     Ok(())
@@ -242,6 +244,36 @@ async fn assert_pending_database(client: &CanisterVfsClient, database_id: &str) 
         ));
     }
     Ok(())
+}
+
+async fn assert_created_database_present(
+    client: &CanisterVfsClient,
+    database_id: &str,
+) -> Result<()> {
+    client
+        .list_databases()
+        .await?
+        .into_iter()
+        .find(|database| database.database_id == database_id)
+        .map(|_| ())
+        .ok_or_else(|| anyhow!("smoke database missing after create: {database_id}"))
+}
+
+async fn activate_created_database_if_pending(
+    client: &CanisterVfsClient,
+    database: &vfs_types::CreateDatabaseResult,
+    payment_amount_e8s: u64,
+) -> Result<u64> {
+    match database.status {
+        DatabaseStatus::Active => active_database_balance(client, &database.database_id).await,
+        DatabaseStatus::Pending => {
+            activate_smoke_database(client, &database.database_id, payment_amount_e8s).await
+        }
+        DatabaseStatus::Deleted => Err(anyhow!(
+            "created smoke database should not be deleted: {}",
+            database.database_id
+        )),
+    }
 }
 
 async fn activate_smoke_database(

@@ -2,7 +2,7 @@
 // What: Normalize extension input URLs and expose fixed runtime defaults.
 // Why: Active-tab capture and settings need stable canister defaults and URL validation.
 
-export const DEFAULT_CANISTER_ID = "xis3j-paaaa-aaaai-axumq-cai";
+export const DEFAULT_CANISTER_ID = "6emaw-iyaaa-aaaay-aacka-cai";
 export const DEFAULT_IC_HOST = "https://icp0.io";
 export const SOURCE_CAPTURE_STATUS_KEY = "kinic-source-capture-status-v1";
 

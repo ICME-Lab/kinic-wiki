@@ -16,7 +16,7 @@ Raw web sources keep URL provenance only. Request/source correspondence is track
 Trusted servers trigger a single request with bearer-authenticated `POST /source-capture`:
 
 ```json
-{ "canisterId": "xis3j-paaaa-aaaai-axumq-cai", "databaseId": "db_...", "requestPath": "/Sources/source-capture-requests/<request-id>.md", "sessionNonce": "<authorized-session-nonce>" }
+{ "canisterId": "6emaw-iyaaa-aaaay-aacka-cai", "databaseId": "db_...", "requestPath": "/Sources/source-capture-requests/<request-id>.md", "sessionNonce": "<authorized-session-nonce>" }
 ```
 
 For each queued request it:

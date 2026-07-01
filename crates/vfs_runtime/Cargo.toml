@@ -15,7 +15,7 @@ wiki_domain = { package = "kinic-wiki-domain", version = "0.1.0", path = "../wik
 rusqlite = { version = "0.37.0", features = ["bundled", "hooks"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-precompiled"] }
+ic-sqlite-vfs = { workspace = true, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]
 proptest = "1.11.0"

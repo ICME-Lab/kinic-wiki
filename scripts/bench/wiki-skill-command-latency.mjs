@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const DEFAULT_CANISTER_ID = "xis3j-paaaa-aaaai-axumq-cai";
+const DEFAULT_CANISTER_ID = "6emaw-iyaaa-aaaay-aacka-cai";
 const DEFAULT_DB_TITLE = "KINIC-WIKI";
 const DEFAULT_QUERY = "vfs cli";
 const DEFAULT_PATH_QUERY = "repo-docs-cli";

@@ -205,14 +205,31 @@ pub(crate) use ic_sqlite_vfs::db::transaction::UpdateConnection as Transaction;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::db::{FromColumn, Row, ToSql};
 #[cfg(target_arch = "wasm32")]
-use ic_sqlite_vfs::sqlite_vfs::ffi;
-#[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::{DbError as Error, params};
 #[cfg(target_arch = "wasm32")]
 use std::ffi::{c_int, c_void};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(target_arch = "wasm32")]
+const SQLITE_INTERRUPT: i32 = 9;
+
+#[cfg(target_arch = "wasm32")]
+#[repr(C)]
+struct Sqlite3 {
+    _private: [u8; 0],
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    fn sqlite3_progress_handler(
+        db: *mut Sqlite3,
+        op_interval: c_int,
+        callback: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+        state: *mut c_void,
+    );
+}
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait OptionalExtension<T> {
@@ -468,7 +485,7 @@ struct ProgressHandlerState {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) struct ProgressHandlerGuard<'connection> {
-    raw: *mut ffi::sqlite3,
+    raw: *mut Sqlite3,
     _conn: &'connection Connection,
     _state: Box<ProgressHandlerState>,
 }
@@ -488,7 +505,7 @@ impl<'connection> ProgressHandlerGuard<'connection> {
             c_int::from(state.callbacks > state.callback_budget)
         }
 
-        let raw = conn.raw();
+        let raw = conn.raw().cast::<Sqlite3>();
         let mut state = Box::new(ProgressHandlerState {
             callbacks: 0,
             callback_budget,
@@ -496,7 +513,7 @@ impl<'connection> ProgressHandlerGuard<'connection> {
         // SAFETY: raw belongs to conn, and the boxed state is retained by the guard
         // until Drop unregisters the callback before the box is freed.
         unsafe {
-            ffi::sqlite3_progress_handler(
+            sqlite3_progress_handler(
                 raw,
                 op_interval,
                 Some(progress_callback),
@@ -517,7 +534,7 @@ impl Drop for ProgressHandlerGuard<'_> {
         // SAFETY: raw is the same live sqlite handle used during registration;
         // passing a null callback clears SQLite's progress handler.
         unsafe {
-            ffi::sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
+            sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
         }
     }
 }
@@ -533,7 +550,7 @@ pub(crate) fn install_progress_handler(
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn is_interrupted(error: &Error) -> bool {
-    matches!(error, Error::Sqlite(code, _) if *code == ffi::SQLITE_INTERRUPT)
+    matches!(error, Error::Sqlite(code, _) if *code == SQLITE_INTERRUPT)
 }
 
 #[cfg(target_arch = "wasm32")]

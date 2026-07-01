@@ -161,7 +161,7 @@ fn http_request_serves_icp_cli_login_page() {
     assert!(body.contains("Delegation TTL"));
     assert!(body.contains("https://id.ai"));
     assert!(!body.contains("http://id.ai.localhost:"));
-    assert!(body.contains("https://xis3j-paaaa-aaaai-axumq-cai.icp0.io"));
+    assert!(body.contains("https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io"));
     assert!(compact_body.contains("endsWith(\".localhost\")"));
     assert!(compact_body.contains("derivationOrigin:"));
     assert!(compact_body.contains(r#"method:"POST""#));
