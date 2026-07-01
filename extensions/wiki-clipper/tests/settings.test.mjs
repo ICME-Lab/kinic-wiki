@@ -103,6 +103,7 @@ test("settings popup clears database on logout and fails closed on auth reset er
   assert.match(refreshLatestStatus, /type: "latest-source-capture-status"/);
   assert.doesNotMatch(refreshLatestStatus, new RegExp("latest-" + "url-" + "ingest-status"));
   assert.match(popupJs, /function latestStatusLabel\(value\)/);
+  assert.match(popupJs, /value\.status === "error"[\s\S]*value\.url/);
   assert.match(popupJs, /value\.sourcePath/);
 });
 

@@ -7,21 +7,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listNodes: vi.fn(),
   listDatabases: vi.fn(),
+  memoryManifest: vi.fn(),
   queryContext: vi.fn(),
   queryDatabaseSqlJson: vi.fn(),
   readNode: vi.fn(),
   resolveCanisterId: vi.fn(),
-  searchNodes: vi.fn()
+  searchNodes: vi.fn(),
+  sourceEvidence: vi.fn()
 }));
 
 vi.mock("../src/vfs.js", () => ({
   listDatabases: mocks.listDatabases,
   listNodes: mocks.listNodes,
+  memoryManifest: mocks.memoryManifest,
   queryContext: mocks.queryContext,
   queryDatabaseSqlJson: mocks.queryDatabaseSqlJson,
   readNode: mocks.readNode,
   resolveCanisterId: mocks.resolveCanisterId,
-  searchNodes: mocks.searchNodes
+  searchNodes: mocks.searchNodes,
+  sourceEvidence: mocks.sourceEvidence
 }));
 
 import worker, {
@@ -32,8 +36,10 @@ import worker, {
   findDatabases,
   listDatabaseNodes,
   queryTaskContext,
+  readMemoryManifest,
   readPath,
   readPaths,
+  readSourceEvidenceRefs,
   searchDatabase
 } from "../src/index.js";
 
@@ -108,6 +114,20 @@ describe("wiki mcp worker", () => {
       etag: "etag-1",
       metadataJson: "{}"
     });
+    mocks.memoryManifest.mockResolvedValue({
+      apiVersion: "kinic-stores-v1",
+      purpose: "Canister-backed memory",
+      enabledStores: ["knowledge"],
+      roots: [{ path: "/Knowledge", kind: "knowledge" }],
+      entryRoots: [{ path: "/Knowledge", kind: "knowledge" }],
+      capabilities: [{ name: "query_context", description: "Task-scoped recall" }],
+      canonicalRoles: [{ name: "index", pathPattern: "index.md", purpose: "Catalog" }],
+      writePolicy: "stores_read_only",
+      recommendedEntrypoint: "query_context",
+      maxDepth: 2,
+      maxQueryLimit: 100,
+      budgetUnit: "approx_chars_from_tokens"
+    });
     mocks.queryContext.mockResolvedValue({
       task: "agent",
       namespace: "/Knowledge",
@@ -155,6 +175,20 @@ describe("wiki mcp worker", () => {
         }
       ]
     });
+    mocks.sourceEvidence.mockResolvedValue({
+      nodePath: "/Knowledge/index.md",
+      refs: [
+        {
+          linkText: "Source",
+          viaPath: "/Knowledge/index.md",
+          sourceContentHash: "sha256:abc",
+          sourcePath: "/Sources/raw/source.md",
+          sourceUpdatedAt: "3",
+          sourceEtag: "source-etag",
+          rawHref: "/Sources/raw/source.md"
+        }
+      ]
+    });
     mocks.queryDatabaseSqlJson.mockResolvedValue({
       rows: [
         JSON.stringify({
@@ -195,7 +229,18 @@ describe("wiki mcp worker", () => {
       description: "Public, anonymous, read-only Kinic Wiki MCP server.",
       mcp_endpoint: "https://wiki-mcp.kinic.test/mcp",
       health_endpoint: "https://wiki-mcp.kinic.test/health",
-      tools: ["find_databases", "search", "fetch", "fetch_many", "read_path", "read_paths", "list", "context"]
+      tools: [
+        "find_databases",
+        "search",
+        "fetch",
+        "fetch_many",
+        "read_path",
+        "read_paths",
+        "list",
+        "memory_manifest",
+        "context",
+        "source_evidence"
+      ]
     });
 
     const postResponse = await worker.fetch(
@@ -219,9 +264,11 @@ describe("wiki mcp worker", () => {
       "fetch_many",
       "find_databases",
       "list",
+      "memory_manifest",
       "read_path",
       "read_paths",
-      "search"
+      "search",
+      "source_evidence"
     ]);
     for (const tool of tools) {
       expect(tool.annotations).toMatchObject({
@@ -662,6 +709,44 @@ describe("wiki mcp worker", () => {
     });
   });
 
+  it("returns memory manifest for a public database", async () => {
+    await expect(readMemoryManifest(env, { database_id: "db_alpha" })).resolves.toEqual({
+      api_version: "kinic-stores-v1",
+      purpose: "Canister-backed memory",
+      enabled_stores: ["knowledge"],
+      roots: [{ path: "/Knowledge", kind: "knowledge" }],
+      entry_roots: [{ path: "/Knowledge", kind: "knowledge" }],
+      capabilities: [{ name: "query_context", description: "Task-scoped recall" }],
+      canonical_roles: [{ name: "index", path_pattern: "index.md", purpose: "Catalog" }],
+      write_policy: "stores_read_only",
+      recommended_entrypoint: "query_context",
+      max_depth: 2,
+      max_query_limit: 100,
+      budget_unit: "approx_chars_from_tokens"
+    });
+    expect(mocks.memoryManifest).toHaveBeenCalledWith(env, "db_alpha");
+  });
+
+  it("returns source evidence for a known path", async () => {
+    await expect(readSourceEvidenceRefs(env, { database_id: "db_alpha", node_path: "Knowledge/index.md" })).resolves.toEqual({
+      evidence: {
+        node_path: "/Knowledge/index.md",
+        refs: [
+          {
+            link_text: "Source",
+            via_path: "/Knowledge/index.md",
+            source_content_hash: "sha256:abc",
+            source_path: "/Sources/raw/source.md",
+            source_updated_at: "3",
+            source_etag: "source-etag",
+            raw_href: "/Sources/raw/source.md"
+          }
+        ]
+      }
+    });
+    expect(mocks.sourceEvidence).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
+  });
+
   it("rejects invalid and stale fetch ids as tool errors", async () => {
     await expect(fetchSearchResult(env, { id: "bad" })).resolves.toMatchObject({
       isError: true,
@@ -700,6 +785,17 @@ describe("wiki mcp worker", () => {
     const text = response.result.content[0].text as string;
     expect(JSON.parse(text).databases).toHaveLength(1);
     expect(JSON.parse(text).databases[0].database_id).toBe("db_alpha");
+  });
+
+  it("calls source_evidence through MCP JSON-RPC", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "source_evidence", arguments: { database_id: "db_alpha", node_path: "/Knowledge/index.md" } }
+    });
+    const text = response.result.content[0].text as string;
+    expect(JSON.parse(text).evidence.node_path).toBe("/Knowledge/index.md");
   });
 
   it("returns http 400 for non-json MCP requests", async () => {

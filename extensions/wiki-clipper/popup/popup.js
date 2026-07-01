@@ -212,5 +212,8 @@ function latestStatusLabel(value) {
       : value.status === "source_exists"
         ? "already saved"
         : value.status;
+  if (value.status === "error") {
+    return `${prefix}: ${value.message}${value.url ? ` ${value.url}` : ""}`;
+  }
   return `${prefix}: ${value.message}${value.sourcePath ? ` ${value.sourcePath}` : ""}`;
 }

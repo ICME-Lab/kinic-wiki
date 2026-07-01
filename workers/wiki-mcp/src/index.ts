@@ -8,13 +8,16 @@ import { z } from "zod";
 import {
   listDatabases,
   listNodes,
+  memoryManifest,
   queryContext,
   queryDatabaseSqlJson,
   readNode,
   resolveCanisterId,
   searchNodes,
+  sourceEvidence as readSourceEvidence,
   type DatabaseSummary,
   type LinkEdge,
+  type MemoryManifest,
   type NodeContext,
   type NodeEntry,
   type QueryContext,
@@ -51,7 +54,18 @@ const SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS = 220_000;
 const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/Knowledge";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
-const MCP_TOOL_NAMES = ["find_databases", "search", "fetch", "fetch_many", "read_path", "read_paths", "list", "context"] as const;
+const MCP_TOOL_NAMES = [
+  "find_databases",
+  "search",
+  "fetch",
+  "fetch_many",
+  "read_path",
+  "read_paths",
+  "list",
+  "memory_manifest",
+  "context",
+  "source_evidence"
+] as const;
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -210,6 +224,18 @@ export function createServer(env: RuntimeEnv): McpServer {
   );
 
   server.registerTool(
+    "memory_manifest",
+    {
+      description: "Discover Store API roots, capabilities, roles, and limits for one public Kinic Wiki database.",
+      inputSchema: {
+        database_id: z.string().min(1)
+      },
+      annotations: TOOL_ANNOTATIONS
+    },
+    async ({ database_id }) => toToolResult(await readMemoryManifest(env, { database_id }))
+  );
+
+  server.registerTool(
     "context",
     {
       description:
@@ -236,7 +262,20 @@ export function createServer(env: RuntimeEnv): McpServer {
           include_evidence,
           depth
         })
-      )
+    )
+  );
+
+  server.registerTool(
+    "source_evidence",
+    {
+      description: "Read source evidence references for one known Kinic Wiki knowledge node path.",
+      inputSchema: {
+        database_id: z.string().min(1),
+        node_path: z.string().min(1)
+      },
+      annotations: TOOL_ANNOTATIONS
+    },
+    async ({ database_id, node_path }) => toToolResult(await readSourceEvidenceRefs(env, { database_id, node_path }))
   );
 
   return server;
@@ -288,6 +327,15 @@ export type ContextInput = {
   budget_tokens?: number;
   include_evidence?: boolean;
   depth?: number;
+};
+
+export type MemoryManifestInput = {
+  database_id: string;
+};
+
+export type SourceEvidenceInput = {
+  database_id: string;
+  node_path: string;
 };
 
 export type SearchResultId = {
@@ -496,6 +544,25 @@ export async function queryTaskContext(env: RuntimeEnv, input: ContextInput) {
   return taskContext(context);
 }
 
+export async function readMemoryManifest(env: RuntimeEnv, input: MemoryManifestInput) {
+  const databaseId = input.database_id.trim();
+  if (!databaseId) {
+    return toolError("database_id is required", { error: "database_id is required" });
+  }
+  return manifestResult(await memoryManifest(env, databaseId));
+}
+
+export async function readSourceEvidenceRefs(env: RuntimeEnv, input: SourceEvidenceInput) {
+  const databaseId = input.database_id.trim();
+  if (!databaseId) {
+    return toolError("database_id is required", { error: "database_id is required" });
+  }
+  const nodePath = normalizePrefix(input.node_path);
+  return {
+    evidence: sourceEvidence(await readSourceEvidence(env, databaseId, nodePath))
+  };
+}
+
 export function encodeSearchResultId(payload: SearchResultId): string {
   return `kinic-wiki:${base64UrlEncode(JSON.stringify(payload))}`;
 }
@@ -655,6 +722,27 @@ function taskContext(context: QueryContext) {
         match_reasons: hit.matchReasons
       }
     }))
+  };
+}
+
+function manifestResult(manifest: MemoryManifest) {
+  return {
+    api_version: manifest.apiVersion,
+    purpose: manifest.purpose,
+    enabled_stores: manifest.enabledStores,
+    roots: manifest.roots,
+    entry_roots: manifest.entryRoots,
+    capabilities: manifest.capabilities,
+    canonical_roles: manifest.canonicalRoles.map((role) => ({
+      name: role.name,
+      path_pattern: role.pathPattern,
+      purpose: role.purpose
+    })),
+    write_policy: manifest.writePolicy,
+    recommended_entrypoint: manifest.recommendedEntrypoint,
+    max_depth: manifest.maxDepth,
+    max_query_limit: manifest.maxQueryLimit,
+    budget_unit: manifest.budgetUnit
   };
 }
 

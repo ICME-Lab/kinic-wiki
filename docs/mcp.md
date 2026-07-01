@@ -54,10 +54,18 @@ Route behavior:
   - Input: `{ "database_id": "db_...", "prefix": "/", "recursive": false, "limit": 99 }`
   - Calls canister `list_nodes`
   - Use for inventory and prefix discovery; it does not return node content
+- `memory_manifest`
+  - Input: `{ "database_id": "db_..." }`
+  - Calls canister `memory_manifest`
+  - Use to discover Store API roots, capabilities, roles, and limits
 - `context`
   - Input: `{ "database_id": "db_...", "task": "...", "entities": [], "namespace": "/Knowledge", "budget_tokens": 2000, "include_evidence": true, "depth": 1 }`
   - Calls canister `query_context`
   - Use first for normal question answering and task-scoped context collection
+- `source_evidence`
+  - Input: `{ "database_id": "db_...", "node_path": "/Knowledge/index.md" }`
+  - Calls canister `source_evidence`
+  - Use when a known knowledge node needs source-reference trust checks
 
 All tools keep read-only annotations:
 
@@ -75,7 +83,7 @@ For broad, list, or classification tasks:
 2. Use `preview_mode: "content-start"` when search result previews are used for candidate classification.
 3. If `/Knowledge` is thin, use `list` with `prefix: "/"` to discover top-level prefixes, then search `/Sources` and any discovered wiki prefix such as `/Wiki`.
 4. Separate title/path matches from topic or ability-term matches before synthesis. Do not mix another work's ability evidence into a title-matched work.
-5. Use `fetch_many` for several search result ids. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single final evidence check.
+5. Use `fetch_many` for several search result ids. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `source_evidence` for known-node source references. Use `read_path` for a single final evidence check.
 6. Report coverage limits: search queries, prefixes checked, fetched count, excluded candidates, and any `truncated: true` results.
 
 Recipe list example:
@@ -136,10 +144,11 @@ Use a separate wiki app or staging app. Do not replace the existing memory app e
 
 1. Configure MCP URL as `https://wiki-mcp-staging.kinic.xyz/mcp`.
 2. Refresh tools.
-3. Confirm tools list contains exactly `find_databases`, `search`, `fetch`, `fetch_many`, `read_path`, `read_paths`, `list`, and `context`.
+3. Confirm tools list contains exactly `find_databases`, `search`, `fetch`, `fetch_many`, `read_path`, `read_paths`, `list`, `memory_manifest`, `context`, and `source_evidence`.
 4. Run review test cases:
    - `find_databases` can select `KINIC-WIKI`.
    - `context` returns task-scoped nodes and evidence for a known public DB.
+   - `source_evidence` returns source refs for a known public node.
    - `search` for `clipper usage` returns an evidence node with `preview_mode: "content-start"`.
    - `list` with `prefix: "/"` discovers top-level prefixes.
    - `fetch` and `fetch_many` return node text for search result ids.

@@ -154,14 +154,18 @@ export function normalizeCreateDatabaseResult(raw) {
 }
 
 function normalizeDatabaseSummary(raw) {
-  const metadata = Array.isArray(raw.metadata) ? raw.metadata[0] : null;
-  if (!metadata) throw new Error("Database metadata is required");
+  const metadata = raw.metadata?.[0] ?? {
+    name: raw.name,
+    description: "",
+    llm_summary: [],
+    tags_json: "[]"
+  };
   return {
     databaseId: raw.database_id,
-    name: String(metadata.name),
-    description: String(metadata.description),
-    llmSummary: metadata.llm_summary[0] ? String(metadata.llm_summary[0]) : null,
-    tagsJson: String(metadata.tags_json),
+    name: String(metadata.name || raw.name || ""),
+    description: String(metadata.description || ""),
+    llmSummary: metadata.llm_summary?.[0] ? String(metadata.llm_summary[0]) : null,
+    tagsJson: String(metadata.tags_json || "[]"),
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),

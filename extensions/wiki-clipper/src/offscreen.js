@@ -32,17 +32,68 @@ if (globalThis.chrome?.runtime?.onMessage) {
 export function handleOffscreenMessage(message) {
   return message?.type === "save-evidence-source"
     ? saveEvidenceSource(message.evidenceSource, message.config)
-    : message?.type === "trigger-source-generation"
-      ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
-      : message?.type === "web-source-exists"
-        ? webSourceExists(message.sourcePath, message.config)
-        : message?.type === "auth-status"
-          ? authStatus()
-          : message?.type === "list-writable-databases"
-            ? listWritableDatabases(message.config)
-            : message?.type === "reset-auth-client"
-              ? resetOffscreenAuthState()
-              : null;
+    : message?.type === "run-source-capture-task"
+      ? acceptSourceCaptureTask(message)
+      : message?.type === "trigger-source-generation"
+        ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
+        : message?.type === "web-source-exists"
+          ? webSourceExists(message.sourcePath, message.config)
+          : message?.type === "auth-status"
+            ? authStatus()
+            : message?.type === "list-writable-databases"
+              ? listWritableDatabases(message.config)
+              : message?.type === "reset-auth-client"
+                ? resetOffscreenAuthState()
+                : null;
+}
+
+export async function acceptSourceCaptureTask(message) {
+  const task = validateSourceCaptureTask(message);
+  void runSourceCaptureTask(task);
+  return { accepted: true, taskId: task.taskId };
+}
+
+async function runSourceCaptureTask(task) {
+  try {
+    const saveResult = await saveEvidenceSource(task.evidenceSource, task.config);
+    const triggerResult = task.queueGeneration
+      ? await triggerSourceGeneration(task.config, saveResult.path, saveResult.etag, saveResult.sourceRunSessionNonce)
+      : null;
+    const generationQueued = task.queueGeneration ? Boolean(triggerResult?.triggered !== false) : false;
+    await notifySourceCaptureTaskResult({
+      type: "source-capture-task-result",
+      taskId: task.taskId,
+      inFlightKey: task.inFlightKey,
+      tabId: task.tabId,
+      ok: true,
+      result: {
+        url: task.url,
+        title: task.title,
+        sourcePath: saveResult.path,
+        sourceEtag: saveResult.etag,
+        sourceExists: task.sourceAlreadyExists,
+        sourceCreated: saveResult.created,
+        generationQueued,
+        generationSkipped: !task.queueGeneration,
+        generationError: generationQueued ? null : triggerResult?.triggerError || "generation queue failed"
+      }
+    });
+  } catch (error) {
+    await notifySourceCaptureTaskResult({
+      type: "source-capture-task-result",
+      taskId: task.taskId,
+      inFlightKey: task.inFlightKey,
+      tabId: task.tabId,
+      ok: false,
+      url: task.url,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function notifySourceCaptureTaskResult(message) {
+  if (!globalThis.chrome?.runtime?.sendMessage) return;
+  await chrome.runtime.sendMessage(message);
 }
 
 export async function saveEvidenceSource(evidenceSource, config) {
@@ -90,6 +141,26 @@ export async function triggerSourceGeneration(config, sourcePath, sourceEtag, se
     sourceEtag,
     triggered: trigger.ok,
     triggerError: trigger.error
+  };
+}
+
+function validateSourceCaptureTask(message) {
+  if (typeof message?.taskId !== "string" || !message.taskId) throw new Error("source capture task id is required");
+  if (typeof message.inFlightKey !== "string" || !message.inFlightKey) throw new Error("source capture in-flight key is required");
+  if (typeof message.url !== "string" || !message.url) throw new Error("source capture url is required");
+  if (!message.config?.canisterId) throw new Error("canister id is required");
+  if (!message.config?.databaseId) throw new Error("database id is required");
+  if (!message.evidenceSource?.path) throw new Error("evidence source path is required");
+  return {
+    taskId: message.taskId,
+    inFlightKey: message.inFlightKey,
+    tabId: Number.isInteger(message.tabId) ? message.tabId : undefined,
+    url: message.url,
+    title: typeof message.title === "string" ? message.title : "",
+    evidenceSource: message.evidenceSource,
+    config: message.config,
+    queueGeneration: message.queueGeneration !== false,
+    sourceAlreadyExists: message.sourceAlreadyExists === true
   };
 }
 

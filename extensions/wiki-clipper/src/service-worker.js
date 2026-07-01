@@ -41,7 +41,7 @@ const SOURCE_CAPTURE_IN_FLIGHT_KEY = "kinic-source-capture-in-flight-v1";
 const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
-const activeSourceCaptures = new Set();
+const activeSourceCaptures = new Map();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -122,6 +122,9 @@ export async function handleMessage(message, sender) {
   if (message?.type === "auth-session-changed") {
     return { ok: true, reset: await resetExistingOffscreenAuthState() };
   }
+  if (message?.type === "source-capture-task-result") {
+    return { ok: true, result: await handleSourceCaptureTaskResult(message, sender) };
+  }
   if (message?.type === "open-settings") {
     await openSettingsOnce();
     return { ok: true };
@@ -146,7 +149,9 @@ export async function handleMessage(message, sender) {
 export async function handleActionClick(tab, deps = defaultActionDeps(), options = {}) {
   const queueGeneration = options.queueGeneration !== false;
   let inFlightKey = null;
+  let taskId = null;
   let reservedInFlight = false;
+  let releaseInFinally = true;
   const tabId = tab?.id;
   try {
     const url = normalizedHttpUrl(tab?.url);
@@ -159,7 +164,8 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       return { ok: false, error: "config required" };
     }
     inFlightKey = sourceCaptureInFlightKey(config.databaseId, url);
-    reservedInFlight = await deps.reserveSourceCapture(inFlightKey);
+    taskId = newSourceCaptureTaskId();
+    reservedInFlight = await deps.reserveSourceCapture(inFlightKey, taskId);
     if (!reservedInFlight) {
       const status = busyStatus(url);
       await deps.writeStatus(status);
@@ -188,14 +194,21 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       };
     }
     await deps.ensureOffscreen();
-    const saveResponse = await deps.sendOffscreen({
+    const taskResponse = await deps.sendOffscreen({
       target: "offscreen",
-      type: "save-evidence-source",
+      type: "run-source-capture-task",
+      taskId,
+      inFlightKey,
+      tabId,
+      url,
+      title: tab?.title || "",
       evidenceSource,
-      config
+      config,
+      queueGeneration,
+      sourceAlreadyExists
     });
-    if (!saveResponse?.ok) {
-      const error = saveResponse?.error || "source save failed";
+    if (!taskResponse?.ok || taskResponse.result?.accepted !== true) {
+      const error = taskResponse?.error || "source capture task was not accepted";
       await deps.writeStatus(errorStatus(error, url));
       await deps.setBadge("ERR", "#b42318", tabId);
       if (shouldOpenSettingsForError(error)) {
@@ -203,39 +216,23 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       }
       return { ok: false, error };
     }
-    const triggerResponse = queueGeneration
-      ? await deps.sendOffscreen({
-          target: "offscreen",
-          type: "trigger-source-generation",
-          sourcePath: saveResponse.result.path,
-          sourceEtag: saveResponse.result.etag,
-          sessionNonce: saveResponse.result.sourceRunSessionNonce,
-          config
-        })
-      : null;
-    const result = {
+    releaseInFinally = false;
+    const accepted = {
       url,
       title: tab?.title || "",
-      sourcePath: saveResponse.result.path,
-      sourceEtag: saveResponse.result.etag,
+      sourcePath,
       sourceExists: sourceAlreadyExists,
-      sourceCreated: saveResponse.result.created,
-      generationQueued: queueGeneration ? Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false) : false,
-      generationSkipped: !queueGeneration,
-      generationError: triggerResponse?.ok ? triggerResponse.result?.triggerError || null : triggerResponse?.error || "generation queue failed"
+      generationRequested: queueGeneration,
+      generationSkipped: !queueGeneration
     };
-    const status = sourceCaptureStatus(result);
+    const status = acceptedSourceCaptureStatus(accepted);
     await deps.writeStatus(status);
-    if (result.generationSkipped) {
+    if (accepted.generationSkipped) {
       await deps.setBadge("SRC", "#5f6368", tabId);
-      return { ok: true, result };
-    }
-    if (!result.generationQueued) {
-      await deps.setBadge("SRC", "#5f6368", tabId);
-      return { ok: true, result };
+      return { ok: true, accepted: true, taskId, result: accepted };
     }
     await deps.setBadge("IN", "#137333", tabId);
-    return { ok: true, result };
+    return { ok: true, accepted: true, taskId, result: accepted };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await deps.writeStatus(errorStatus(message, tab?.url || ""));
@@ -245,9 +242,38 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     }
     return { ok: false, error: message };
   } finally {
-    if (reservedInFlight && inFlightKey) {
-      await deps.releaseSourceCapture(inFlightKey);
+    if (releaseInFinally && reservedInFlight && inFlightKey) {
+      await deps.releaseSourceCapture(inFlightKey, taskId);
     }
+  }
+}
+
+async function handleSourceCaptureTaskResult(message, sender, deps = defaultTaskResultDeps()) {
+  if (!isTrustedOffscreenSender(sender)) {
+    return { accepted: false, ignored: true, reason: "untrusted sender" };
+  }
+  const inFlightKey = typeof message.inFlightKey === "string" ? message.inFlightKey : "";
+  const taskId = typeof message.taskId === "string" ? message.taskId : "";
+  if (!inFlightKey || !taskId || !(await deps.isActiveSourceCapture(inFlightKey, taskId))) {
+    return { accepted: false, ignored: true, reason: "stale task result" };
+  }
+  const tabId = Number.isInteger(message.tabId) ? message.tabId : undefined;
+  try {
+    if (message.ok) {
+      await deps.writeStatus(sourceCaptureStatus(message.result || {}));
+      await deps.setBadge(message.result?.generationQueued === true ? "IN" : "SRC", message.result?.generationQueued === true ? "#137333" : "#5f6368", tabId);
+      return { accepted: true, status: "ok" };
+    }
+    const error = typeof message.error === "string" && message.error ? message.error : "source capture task failed";
+    const url = typeof message.url === "string" ? message.url : "";
+    await deps.writeStatus(errorStatus(error, url));
+    await deps.setBadge("ERR", "#b42318", tabId);
+    if (shouldOpenSettingsForError(error)) {
+      await deps.openSettings();
+    }
+    return { accepted: true, status: "error" };
+  } finally {
+    await deps.releaseSourceCapture(inFlightKey, taskId);
   }
 }
 
@@ -410,7 +436,7 @@ function sourceCaptureStatus(result) {
       url: result?.url || "",
       title: result?.title || "",
       sourcePath: result?.sourcePath || "",
-      message: "Evidence source saved.",
+      message: "Source saved.",
       updatedAt: new Date().toISOString()
     };
   }
@@ -427,6 +453,17 @@ function sourceCaptureStatus(result) {
   };
 }
 
+function acceptedSourceCaptureStatus(result) {
+  return {
+    status: result?.generationRequested === true ? "generation_requested" : "source_save_sent",
+    url: result?.url || "",
+    title: result?.title || "",
+    sourcePath: result?.sourcePath || "",
+    message: result?.generationRequested === true ? "Source generation requested." : "Source save sent.",
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function existingSourceStatus(result) {
   return {
     status: "source_exists",
@@ -434,7 +471,7 @@ function existingSourceStatus(result) {
     title: result?.title || "",
     sourcePath: result?.sourcePath || "",
     etag: result?.etag || null,
-    message: "Evidence source already saved.",
+    message: "Source already saved.",
     updatedAt: new Date().toISOString()
   };
 }
@@ -483,6 +520,26 @@ function defaultActionDeps() {
     captureTabSource,
     findWebSource
   };
+}
+
+function defaultTaskResultDeps() {
+  return {
+    writeStatus: writeLatestSourceCaptureStatus,
+    setBadge: setActionBadge,
+    openSettings: openSettingsOnce,
+    releaseSourceCapture,
+    isActiveSourceCapture
+  };
+}
+
+function isTrustedOffscreenSender(sender) {
+  if (!globalThis.chrome?.runtime?.getURL) return false;
+  return sender?.url === chrome.runtime.getURL("offscreen/offscreen.html");
+}
+
+function newSourceCaptureTaskId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `source-capture-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 async function findWebSource(config, sourcePath) {
@@ -568,12 +625,12 @@ async function createSettingsContextMenu() {
   }
   chrome.contextMenus.create({
     id: CREATE_WIKI_MENU_ID,
-    title: "Create Kinic wiki page",
+    title: "Save source and create page",
     contexts: ["action"]
   });
   chrome.contextMenus.create({
     id: SAVE_EVIDENCE_MENU_ID,
-    title: "Save evidence",
+    title: "Save source only",
     contexts: ["action"]
   });
   chrome.contextMenus.create({
@@ -751,17 +808,32 @@ async function openSettingsOnce(open = openSettings) {
   await open();
 }
 
-async function reserveSourceCapture(key) {
-  if (activeSourceCaptures.has(key)) return false;
-  activeSourceCaptures.add(key);
+async function reserveSourceCapture(key, taskId = "") {
+  const now = Date.now();
+  const active = activeSourceCaptures.get(key);
+  if (active !== undefined) {
+    if (active.expiresAt <= now) {
+      activeSourceCaptures.delete(key);
+    } else if (active.pending) {
+      return false;
+    } else {
+      const current = await readInFlightRecord();
+      if (current?.key === key && current.taskId === active.taskId && current.expiresAt > now) {
+        return false;
+      }
+      activeSourceCaptures.delete(key);
+    }
+  }
+  const expiresAt = now + SOURCE_CAPTURE_IN_FLIGHT_TTL_MS;
+  activeSourceCaptures.set(key, { taskId, expiresAt, pending: true });
   try {
     const current = await readInFlightRecord();
-    const now = Date.now();
     if (current?.key === key && current.expiresAt > now) {
       activeSourceCaptures.delete(key);
       return false;
     }
-    await writeInFlightRecord({ key, expiresAt: now + SOURCE_CAPTURE_IN_FLIGHT_TTL_MS });
+    await writeInFlightRecord({ key, taskId, expiresAt });
+    activeSourceCaptures.set(key, { taskId, expiresAt, pending: false });
     return true;
   } catch (error) {
     activeSourceCaptures.delete(key);
@@ -769,12 +841,26 @@ async function reserveSourceCapture(key) {
   }
 }
 
-async function releaseSourceCapture(key) {
+async function releaseSourceCapture(key, taskId = "") {
   activeSourceCaptures.delete(key);
   const current = await readInFlightRecord();
-  if (current?.key === key) {
+  if (current?.key === key && (!taskId || current.taskId === taskId)) {
     await chrome.storage.session.remove(SOURCE_CAPTURE_IN_FLIGHT_KEY);
   }
+}
+
+async function isActiveSourceCapture(key, taskId) {
+  const active = activeSourceCaptures.get(key);
+  if (active !== undefined) {
+    if (active.expiresAt <= Date.now()) {
+      activeSourceCaptures.delete(key);
+      return false;
+    }
+    const current = await readInFlightRecord();
+    return current?.key === key && current.taskId === taskId;
+  }
+  const current = await readInFlightRecord();
+  return current?.key === key && current.taskId === taskId && current.expiresAt > Date.now();
 }
 
 async function readInFlightRecord() {
@@ -785,7 +871,11 @@ async function readInFlightRecord() {
   try {
     const parsed = JSON.parse(raw);
     if (typeof parsed?.key !== "string" || typeof parsed?.expiresAt !== "number") return null;
-    return parsed;
+    return {
+      key: parsed.key,
+      taskId: typeof parsed.taskId === "string" ? parsed.taskId : "",
+      expiresAt: parsed.expiresAt
+    };
   } catch {
     return null;
   }

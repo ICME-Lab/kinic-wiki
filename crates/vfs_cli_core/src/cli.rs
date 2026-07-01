@@ -276,6 +276,63 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Discover Store API roots, capabilities, and limits")]
+    MemoryManifest {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read task-scoped Store API context; agents should prefer --json")]
+    QueryContext {
+        #[arg(long)]
+        task: String,
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long, default_value_t = 8_000)]
+        budget_tokens: u32,
+        #[arg(long, default_value_t = 1)]
+        depth: u32,
+        #[arg(long)]
+        no_evidence: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read source evidence references for one knowledge node")]
+    SourceEvidence {
+        #[arg(long)]
+        node_path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one Store API snapshot page for a path scope")]
+    ExportSnapshot {
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Fetch Store API changes since a known snapshot revision")]
+    FetchUpdates {
+        #[arg(long)]
+        known_snapshot_revision: String,
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        target_snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

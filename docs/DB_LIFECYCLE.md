@@ -89,7 +89,7 @@ Cycles history redacts payer/caller principals for reader and writer callers. DB
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with explicit `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID`. The script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh`. For existing mainnet deploys, the script resolves unset `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` from the current canister `get_cycles_billing_config`; fresh installs must set both explicitly. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
 
 Upgrade compatibility:
 
