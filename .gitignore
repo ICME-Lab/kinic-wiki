@@ -67,6 +67,7 @@ __pycache__/
 /canbench_results.csv
 /.benchmarks/
 /artifacts/
+/mobile/
 extensions/wiki-clipper/release/
 /skill-registry-web/next-env.d.ts
 /npm/kinic-vfs-cli/vendor/kinic-vfs-cli

@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
+import { hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
 import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
@@ -68,6 +68,7 @@ type DatabaseDirectoryState = {
   memberDatabases: DatabaseSummary[];
   cyclesConfig: CyclesBillingConfig | null;
   publicDatabaseIds: ReadonlySet<string>;
+  publicDatabasesLoaded: boolean;
   memberDatabasesLoaded: boolean;
   databaseListError: string | null;
 };
@@ -106,6 +107,7 @@ export function WikiBrowser() {
     memberDatabases,
     cyclesConfig,
     publicDatabaseIds,
+    publicDatabasesLoaded,
     memberDatabasesLoaded,
     databaseListError
   } = databaseDirectory.requestKey === databaseDirectoryRequestKey ? databaseDirectory : emptyCurrentDatabaseDirectory;
@@ -136,6 +138,7 @@ export function WikiBrowser() {
   const childNodesCache = useRef(new Map<string, ChildNode[]>());
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
   const invalidCanister = validateCanisterText(canisterId);
+  const canonicalRouteHref = useMemo(() => hrefForCanonicalDatabaseRoute(pathname, searchParams.toString()), [pathname, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +165,7 @@ export function WikiBrowser() {
     let publicDatabases: DatabaseSummary[] = [];
     let authenticatedDatabases: DatabaseSummary[] = [];
     let nextCyclesConfig: CyclesBillingConfig | null = null;
+    let nextPublicDatabasesLoaded = false;
     let nextMemberDatabasesLoaded = false;
     let cyclesConfigError: string | null = null;
     let publicListError: string | null = null;
@@ -173,6 +177,7 @@ export function WikiBrowser() {
         memberDatabases: authenticatedDatabases,
         cyclesConfig: nextCyclesConfig,
         publicDatabaseIds: new Set(publicDatabases.map((database) => database.databaseId)),
+        publicDatabasesLoaded: nextPublicDatabasesLoaded,
         memberDatabasesLoaded: nextMemberDatabasesLoaded,
         databaseListError: databaseListWarning(cyclesConfigError, publicListError, memberListError)
       });
@@ -183,12 +188,14 @@ export function WikiBrowser() {
         if (cancelled) return;
         publicDatabases = nextPublicDatabases;
         publicListError = null;
+        nextPublicDatabasesLoaded = true;
         updateDatabaseRows();
       })
       .catch((cause) => {
         if (cancelled) return;
         publicDatabases = [];
         publicListError = errorMessage(cause);
+        nextPublicDatabasesLoaded = false;
         updateDatabaseRows();
       });
 
@@ -225,6 +232,11 @@ export function WikiBrowser() {
       cancelled = true;
     };
   }, [canisterId, databaseDirectoryRequestKey, readIdentity]);
+
+  useEffect(() => {
+    if (!canonicalRouteHref) return;
+    router.replace(canonicalRouteHref);
+  }, [canonicalRouteHref, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -402,6 +414,15 @@ export function WikiBrowser() {
   }, [canLeaveDirtyEdit, logout]);
   const databaseOptions = useMemo(() => withCurrentDatabase(databases, databaseId), [databaseId, databases]);
   const currentDatabase = useMemo(() => databaseOptions.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databaseOptions]);
+  const databaseKnownToCurrentReader = useMemo(
+    () => publicDatabaseIds.has(databaseId) || memberDatabases.some((database) => database.databaseId === databaseId),
+    [databaseId, memberDatabases, publicDatabaseIds]
+  );
+  const canKnowDatabaseMissing = publicDatabasesLoaded && Boolean(readIdentity) && memberDatabasesLoaded;
+  useEffect(() => {
+    if (!databaseId || canonicalRouteHref || !canKnowDatabaseMissing || databaseKnownToCurrentReader) return;
+    router.replace("/dashboard");
+  }, [canKnowDatabaseMissing, canonicalRouteHref, databaseId, databaseKnownToCurrentReader, router]);
   const currentDatabaseCycleReason = useMemo(
     () => readIdentity && currentDatabaseRole ? databaseCyclesDisabledReason(currentDatabase, cyclesConfig) : null,
     [cyclesConfig, currentDatabase, currentDatabaseRole, readIdentity]
@@ -1540,6 +1561,7 @@ function emptyDatabaseDirectoryState(requestKey: string): DatabaseDirectoryState
     memberDatabases: EMPTY_DATABASE_SUMMARIES,
     cyclesConfig: null,
     publicDatabaseIds: EMPTY_PUBLIC_DATABASE_IDS,
+    publicDatabasesLoaded: false,
     memberDatabasesLoaded: false,
     databaseListError: null
   };

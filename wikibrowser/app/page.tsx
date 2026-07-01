@@ -8,23 +8,38 @@ import { publicDatabasePath } from "@/lib/share-links";
 
 export const metadata: Metadata = {
   title: "Kinic Wiki AI Memory",
-  description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with the browser UI as a companion surface.",
+  description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
   openGraph: {
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with the browser UI as a companion surface."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
   },
   twitter: {
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with the browser UI as a companion surface."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
   }
 };
 
 const officialDatabaseHref = publicDatabasePath("db_kva4v2twg6jv");
 
 const workflowSteps = [
-  "Create and fund canister-backed databases.",
-  "Browse /Knowledge and /Sources from the browser.",
-  "Use kinic-vfs-cli as the primary agent interface."
+  "Capture raw evidence under /Sources.",
+  "Compile durable knowledge under /Knowledge.",
+  "Search, cite, edit, and keep the wiki current with agents."
+];
+
+const wikiLayers = [
+  {
+    title: "Sources",
+    text: "Raw evidence stays under /Sources, where agents and humans can inspect what claims came from."
+  },
+  {
+    title: "Knowledge",
+    text: "Synthesized pages live under /Knowledge as named, linked, updateable notes."
+  },
+  {
+    title: "Agent maintenance",
+    text: "Useful answers, contradictions, and links can be written back instead of disappearing into chat history."
+  }
 ];
 
 export default function HomePage() {
@@ -57,7 +72,8 @@ export default function HomePage() {
             <p className="text-sm font-bold uppercase text-accent">CLI-first AI memory</p>
             <h1 className="mt-3 max-w-[650px] text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl">Kinic Wiki is AI memory for agents</h1>
             <p className="mt-5 max-w-[620px] text-lg leading-7 text-muted">
-              <code className="rounded-md bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">kinic-vfs-cli</code> is the primary interface. The browser UI is a companion for inspection, editing, database management, and source capture.
+              Kinic Wiki is canister-backed AI memory for agents: raw evidence under <code className="rounded-md bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">/Sources</code>, maintained knowledge under{" "}
+              <code className="rounded-md bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">/Knowledge</code>, and CLI-first workflows for search, citation, and safe edits.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link className="rounded-lg border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="/cli">
@@ -75,6 +91,26 @@ export default function HomePage() {
               <code>{"npm install -g kinic-vfs-cli\nkinic-vfs-cli database link <database-id>\nkinic-vfs-cli search-remote \"query\" --prefix /Knowledge --json"}</code>
             </pre>
           </aside>
+        </div>
+      </section>
+
+      <section className="border-y border-line bg-white px-4 py-12 sm:px-6">
+        <div className="mx-auto grid max-w-[1080px] gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start">
+          <div>
+            <p className="text-sm font-bold uppercase text-accent">Beyond one-shot RAG</p>
+            <h2 className="mt-3 text-2xl font-semibold leading-tight text-ink">Sources become a maintained wiki, not only retrieved chunks.</h2>
+            <p className="mt-4 text-sm leading-6 text-muted">
+              Traditional RAG retrieves similar chunks at question time. Kinic Wiki turns sources into a durable, linked knowledge base that agents keep maintaining. Evidence stays under /Sources, synthesized knowledge lives under /Knowledge, and useful answers can become part of the wiki instead of disappearing into chat history.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {wikiLayers.map((layer) => (
+              <article key={layer.title} className="rounded-lg border border-line bg-paper p-4">
+                <p className="text-sm font-semibold text-ink">{layer.title}</p>
+                <p className="mt-2 text-sm leading-6 text-muted">{layer.text}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
