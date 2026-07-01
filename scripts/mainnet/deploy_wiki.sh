@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Where: scripts/mainnet/deploy_wiki.sh
-# What: Deploy the wiki canister to a mainnet environment with cycles billing init args.
-# Why: Fresh SEV installs require explicit billing principals, while explicit production upgrades preserve current immutable values.
+# What: Deploy the wiki canister to the fresh mainnet SEV environment.
+# Why: Schema reset makes old-mainnet upgrades unsupported; fresh installs require explicit billing principals.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -11,7 +11,6 @@ ANONYMOUS_PRINCIPAL="2vxsx-fae"
 KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
 DEPLOY_ENVIRONMENT="${ICP_ENVIRONMENT:-mainnet-sev}"
-CURRENT_CYCLES_BILLING_CONFIG=""
 DRY_RUN=0
 DEPLOY_ARGS=()
 
@@ -40,47 +39,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-load_current_cycles_billing_config() {
-  if [[ -n "${CURRENT_CYCLES_BILLING_CONFIG}" ]]; then
-    return 0
-  fi
-
-  if ! CURRENT_CYCLES_BILLING_CONFIG="$(cd "${REPO_ROOT}" && icp canister call wiki get_cycles_billing_config '()' -e ic -o candid 2>/dev/null)"; then
-    echo "failed to read current mainnet cycles billing config; set KINIC_LEDGER_CANISTER_ID and BILLING_AUTHORITY_ID explicitly" >&2
+require_mainnet_sev_environment() {
+  if [[ "${DEPLOY_ENVIRONMENT}" != "mainnet-sev" ]]; then
+    echo "DEPLOY_ENVIRONMENT=${DEPLOY_ENVIRONMENT} is unsupported; this wrapper deploys fresh mainnet-sev only" >&2
     return 1
   fi
-
-  if [[ "${CURRENT_CYCLES_BILLING_CONFIG}" != *"Ok = record"* ]]; then
-    echo "current mainnet cycles billing config did not return Ok; set KINIC_LEDGER_CANISTER_ID and BILLING_AUTHORITY_ID explicitly" >&2
-    return 1
-  fi
-
-  return 0
-}
-
-extract_current_config_text() {
-  local field="$1"
-  load_current_cycles_billing_config || return 1
-  awk -v field="${field}" -F'"' '$0 ~ field { print $2; found = 1; exit } END { if (!found) exit 1 }' <<<"${CURRENT_CYCLES_BILLING_CONFIG}"
-}
-
-resolve_principal_env() {
-  local name="$1"
-  local field="$2"
-  local value
-  if [[ -n "${!name:-}" ]]; then
-    return 0
-  fi
-  if [[ "${DEPLOY_ENVIRONMENT}" != "ic" ]]; then
-    echo "${name} is required for ${DEPLOY_ENVIRONMENT} fresh deploy" >&2
-    return 1
-  fi
-  if ! value="$(extract_current_config_text "${field}")" || [[ -z "${value}" ]]; then
-    echo "${name} is required and could not be resolved from the current mainnet cycles billing config" >&2
-    return 1
-  fi
-  printf -v "${name}" '%s' "${value}"
-  export "${name}"
 }
 
 require_principal_env() {
@@ -100,8 +63,7 @@ require_principal_env() {
   fi
 }
 
-resolve_principal_env KINIC_LEDGER_CANISTER_ID kinic_ledger_canister_id
-resolve_principal_env BILLING_AUTHORITY_ID billing_authority_id
+require_mainnet_sev_environment
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env BILLING_AUTHORITY_ID
 
@@ -132,4 +94,8 @@ fi
 
 cd "${REPO_ROOT}"
 unset KINIC_VFS_LOCAL_II_ORIGINS
-icp deploy wiki -e "${DEPLOY_ENVIRONMENT}" --args-file "${ARGS_FILE}" "${DEPLOY_ARGS[@]}"
+if [[ "${#DEPLOY_ARGS[@]}" -gt 0 ]]; then
+  icp deploy wiki -e "${DEPLOY_ENVIRONMENT}" --args-file "${ARGS_FILE}" "${DEPLOY_ARGS[@]}"
+else
+  icp deploy wiki -e "${DEPLOY_ENVIRONMENT}" --args-file "${ARGS_FILE}"
+fi

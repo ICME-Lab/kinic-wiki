@@ -46,7 +46,7 @@ test("source capture trigger enqueues source capture message without background 
   assert.deepEqual(queue.messages, [
     {
       kind: "source_capture",
-      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
       databaseId: "db_1",
       requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1"
@@ -113,7 +113,7 @@ function sourceCaptureRequest(headers: Record<string, string> = {}, body: Record
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify({
-      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
       databaseId: "db_1",
       requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1",

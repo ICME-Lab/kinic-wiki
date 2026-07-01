@@ -17,7 +17,7 @@
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && wrangler deploy --minify",
-    "deploy:production": "NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai NEXT_PUBLIC_ENABLE_LOCAL_II_E2E= NEXT_PUBLIC_II_PROVIDER_URL= opennextjs-cloudflare build && wrangler deploy --minify",
+    "deploy:production": "NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai NEXT_PUBLIC_ENABLE_LOCAL_II_E2E= NEXT_PUBLIC_II_PROVIDER_URL= opennextjs-cloudflare build && wrangler deploy --minify",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "e2e:ii": "scripts/run-ii-e2e.sh",
     "e2e:ii:headed": "scripts/run-ii-e2e.sh --headed",

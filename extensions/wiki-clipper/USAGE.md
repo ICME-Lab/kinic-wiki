@@ -47,7 +47,7 @@ The release package excludes source files, tests, `node_modules`, and local `.en
 4. Select `extensions/wiki-clipper`.
 
 Do not use `Pack extension` for local testing. `Pack extension` is for producing a `.crx` package and reusing a private key.
-The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci` and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
+The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci` and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 
 Normal local testing does not require changing extension IDs. Treat the old local ID and additional Chrome extension origin as allowlist/debug notes only.
 
@@ -59,7 +59,7 @@ Use these extension settings:
 
 - `Database`: select a writable active database for the logged-in Internet Identity principal
 
-The extension fixes canister ID to `xis3j-paaaa-aaaai-axumq-cai` and IC host to `https://icp0.io`. If no writable database exists, enter a name in settings and click `Create`. The extension never creates a database automatically. Mainnet writes require explicit confirmation before ChatGPT/Claude raw export.
+The extension fixes canister ID to `6emaw-iyaaa-aaaay-aacka-cai` and IC host to `https://icp0.io`. If no writable database exists, enter a name in settings and click `Create`. The extension never creates a database automatically. Mainnet writes require explicit confirmation before ChatGPT/Claude raw export.
 
 Login with Internet Identity from the extension settings page and select a writable database before clicking the toolbar icon. The selected database is saved automatically. The logged-in principal must have writer access to the selected database.
 

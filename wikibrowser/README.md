@@ -1,7 +1,7 @@
 # Wiki Browser
 
 Dashboard for Kinic Wiki canister databases. The app is a lightweight knowledge IDE and debug UI, not the primary Store API surface.
-Official mainnet uses canister `xis3j-paaaa-aaaai-axumq-cai`; use placeholders only for forks or local deployments.
+Official mainnet uses canister `6emaw-iyaaa-aaaay-aacka-cai`; use placeholders only for forks or local deployments.
 
 ## Local
 
@@ -34,7 +34,7 @@ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<local-wiki-canister-id>
 
 # mainnet / Cloudflare Workers
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
-NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
+NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai
 ```
 
 Query Q&A uses `DEEPSEEK_API_KEY` only in the server runtime. Store it in `wikibrowser/.env.local` for local runs. For production, set it as a Cloudflare Worker secret:
@@ -174,7 +174,7 @@ Covered methods:
 
 ## Public MVP
 
-Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`.
+Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`.
 The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility and restricted database-scoped `sql:` queries.
 `sql:` in the Query panel calls `query_database_sql_json` against the current DB only. It accepts a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, requires SQL `LIMIT 1..100`, allows only one-column `ORDER BY` followed by `LIMIT`, rejects `OFFSET`, and expects exactly one result column containing valid JSON object TEXT.
 The CLI exposes the same database-scoped API as `query-sql`; both surfaces can query only DBs the caller can already read, including owned/member DBs, marketplace-entitled DBs, and public-readable DBs.
@@ -200,7 +200,7 @@ Cloudflare settings:
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
 - Build Command: `pnpm deploy:production`
-- Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai` for Preview and Production
+- Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai` for Preview and Production
 - Runtime: Cloudflare Workers via `@opennextjs/cloudflare`
 
 Both variables are public browser bundle values. Set them as Cloudflare build variables, not only runtime Worker variables, because Next.js inlines `NEXT_PUBLIC_*` values into the client bundle during build.

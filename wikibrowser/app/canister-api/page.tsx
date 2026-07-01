@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   }
 };
 
-const wikiCanisterId = "xis3j-paaaa-aaaai-axumq-cai";
+const wikiCanisterId = "6emaw-iyaaa-aaaay-aacka-cai";
 const publicDatabaseId = "db_kva4v2twg6jv";
 
 const healthCommands = [

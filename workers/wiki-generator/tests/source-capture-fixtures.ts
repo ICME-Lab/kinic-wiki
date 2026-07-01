@@ -19,7 +19,7 @@ import type { VfsClient } from "../src/vfs.js";
 
 export function workerConfig(): WorkerConfig {
   return {
-    canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+    canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
     targetRoot: "/Knowledge/conversations",
@@ -37,7 +37,7 @@ export function testEnv(queue: TestQueue): RuntimeEnv {
   return {
     DB: new TestD1(),
     WIKI_GENERATION_QUEUE: queue,
-    KINIC_WIKI_CANISTER_ID: "xis3j-paaaa-aaaai-axumq-cai",
+    KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
     KINIC_WIKI_WORKER_MODEL: "deepseek-v4-flash",
     KINIC_WIKI_WORKER_TARGET_ROOT: "/Knowledge/conversations",

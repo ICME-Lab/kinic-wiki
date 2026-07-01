@@ -129,7 +129,7 @@ curl -sS http://127.0.0.1:8787/mcp \
 
 `wrangler.jsonc` defaults:
 
-- `KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`
+- `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
 - `KINIC_WIKI_IC_HOST=https://icp0.io`
 - `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
 

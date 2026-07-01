@@ -27,4 +27,4 @@ Adds an extension settings shortcut.
 - `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and reads conversations only when the user starts export.
 - `https://claude.ai/*`: shows the Claude export UI and reads conversations only when the user starts export.
 - `https://icp0.io/*`: writes evidence sources and ingest requests to the Kinic Wiki canister.
-- `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io/*`: fixed derivation origin for Internet Identity.
+- `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io/*`: fixed derivation origin for Internet Identity.
