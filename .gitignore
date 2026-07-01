@@ -5,6 +5,9 @@
 .idea/
 .vscode/
 
+# Local agent instructions
+AGENTS.md
+
 # Rust build artifacts
 /target/
 **/target/
