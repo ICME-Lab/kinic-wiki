@@ -15,22 +15,20 @@ type ParsedNativeAuth = {
   state: string;
 };
 
+type BridgeState =
+  | { status: "idle" }
+  | { status: "ready"; parsed: ParsedNativeAuth }
+  | { status: "error"; message: string };
+
 export function NativeAuthBridge() {
-  const [state, setState] = useState<"idle" | "ready" | "error">("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [bridgeState] = useState<BridgeState>(() => initialBridgeState());
 
   useEffect(() => {
-    let parsed: ParsedNativeAuth | null = null;
-    try {
-      parsed = parseNativeAuthLocation(window.location);
-    } catch (cause) {
-      setState("error");
-      setError(cause instanceof Error ? cause.message : "Native auth request is invalid.");
+    if (bridgeState.status !== "ready") {
       return;
     }
-    if (!parsed) return;
-    setState("ready");
 
+    const parsed = bridgeState.parsed;
     let completed = false;
     let timer: number | null = null;
     const idpWindow = window.open(parsed.identityProvider.toString(), "kinic-ios-native-auth", "popup,width=520,height=720");
@@ -56,8 +54,6 @@ export function NativeAuthBridge() {
     };
 
     const fail = (message: string) => {
-      setState("error");
-      setError(message);
       const query = new URLSearchParams();
       query.set("error", base64URL(new TextEncoder().encode(message)));
       finish(query);
@@ -94,20 +90,35 @@ export function NativeAuthBridge() {
       window.removeEventListener("message", handleMessage);
       if (timer) window.clearInterval(timer);
     };
-  }, []);
+  }, [bridgeState]);
 
-  if (state === "idle") return null;
+  if (bridgeState.status === "idle") return null;
 
   return (
     <main className="fixed inset-0 z-50 grid place-items-center bg-white px-5 text-ink">
       <section className="grid max-w-sm gap-3 text-center">
         <h1 className="text-2xl font-semibold">KinicWikiApp Sign In</h1>
         <p className="text-sm leading-6 text-muted">
-          {state === "error" ? error : "Continue with Internet Identity to finish native sign in."}
+          {bridgeState.status === "error" ? bridgeState.message : "Continue with Internet Identity to finish native sign in."}
         </p>
       </section>
     </main>
   );
+}
+
+function initialBridgeState(): BridgeState {
+  if (typeof window === "undefined") {
+    return { status: "idle" };
+  }
+  try {
+    const parsed = parseNativeAuthLocation(window.location);
+    return parsed ? { status: "ready", parsed } : { status: "idle" };
+  } catch (cause) {
+    return {
+      status: "error",
+      message: cause instanceof Error ? cause.message : "Native auth request is invalid."
+    };
+  }
 }
 
 function parseNativeAuthLocation(location: Location): ParsedNativeAuth | null {
