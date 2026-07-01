@@ -43,6 +43,7 @@ fn record_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), 
 
 #[cfg(target_arch = "wasm32")]
 fn record_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
+    // Wasm migrations use deterministic metadata because canister code must not depend on host time.
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
         params![version],
@@ -145,20 +146,24 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
 }
 
 fn validate_fts_shape(conn: &Connection) -> Result<(), String> {
-    let sql = conn
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'fs_nodes_fts'",
-            params![],
-            |row| crate::sqlite::row_get::<String>(row, 0),
-        )
-        .optional()
+    let mut stmt = conn
+        .prepare("PRAGMA table_xinfo(fs_nodes_fts)")
         .map_err(|error| error.to_string())?;
-    match sql {
-        Some(sql) if sql.contains("path") && sql.contains("title") && sql.contains("content") => {
-            Ok(())
-        }
-        _ => Err("unsupported vfs_store schema: invalid fs_nodes_fts shape".to_string()),
+    let columns = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 1)?,
+            crate::sqlite::row_get::<i64>(row, 6)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    let public_columns: Vec<String> = columns
+        .into_iter()
+        .filter_map(|(name, hidden)| if hidden == 0 { Some(name) } else { None })
+        .collect();
+    if public_columns == ["path", "title", "content"] {
+        return Ok(());
     }
+    Err("unsupported vfs_store schema: invalid fs_nodes_fts shape".to_string())
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {

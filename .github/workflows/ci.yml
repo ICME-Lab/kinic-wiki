@@ -13,6 +13,7 @@ jobs:
     outputs:
       canister: ${{ steps.paths.outputs.canister }}
       rust_all: ${{ steps.paths.outputs.rust_all }}
+      probe: ${{ steps.paths.outputs.probe }}
       cli: ${{ steps.paths.outputs.cli }}
       wikibrowser: ${{ steps.paths.outputs.wikibrowser }}
       extension: ${{ steps.paths.outputs.extension }}
@@ -41,6 +42,7 @@ jobs:
             {
               echo "canister=true"
               echo "rust_all=true"
+              echo "probe=true"
               echo "cli=true"
               echo "wikibrowser=true"
               echo "extension=true"
@@ -69,6 +71,7 @@ jobs:
 
           set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs))'
           set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser '^(wikibrowser/|crates/vfs_canister/vfs\.did)'
           set_output extension '^(extensions/wiki-clipper/|crates/vfs_canister/vfs\.did)'
@@ -216,6 +219,41 @@ jobs:
       - name: Run canister core clippy
         if: needs.changes.outputs.rust_all != 'true'
         run: cargo clippy -p vfs-runtime -p vfs-canister --all-targets --locked -- -D warnings
+
+  ic-sqlite-vfs-canister-probe:
+    needs: changes
+    if: needs.changes.outputs.probe == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pocketic-tests/package-lock.json
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install WASI sysroot
+        run: sudo apt-get update && sudo apt-get install -y wasi-libc
+      - name: Install PocketIC probe dependencies
+        run: npm ci --prefix pocketic-tests
+      - name: Provision PocketIC runtime
+        run: bash scripts/setup_canbench_ci.sh
+      - name: Run ignored-native replacement canister probe
+        run: npm test --prefix pocketic-tests
 
   cli-artifacts:
     needs: changes

@@ -1671,6 +1671,64 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 }
 
 #[test]
+fn pending_database_activation_retry_reuses_staged_mount_after_migration_failure() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Retry activation", "owner", 1)
+        .expect("pending database should create");
+    let operation_id = service
+        .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
+        .expect("cycle purchase should begin");
+
+    fail_next_database_migration_for_test(&pending.database_id);
+    let error = service
+        .prepare_pending_database_activation(&pending.database_id, 3)
+        .expect_err("forced migration failure should reject pending activation");
+
+    assert!(error.contains("test database migration failure"));
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 11, None, true)
+    );
+
+    let retry_meta = service
+        .prepare_pending_database_activation(&pending.database_id, 4)
+        .expect("retry should reuse staged pending activation")
+        .expect("pending activation should still be available");
+    assert_eq!(retry_meta.mount_id, 11);
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 11, None, true)
+    );
+
+    let purchased_cycles = default_cycles_for_payment(1_000_000);
+    service
+        .complete_database_cycles_purchase_ledger_transfer(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            purchased_cycles,
+            42,
+        )
+        .expect("cycle purchase ledger transfer should complete");
+    service
+        .apply_database_cycles_purchase(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            purchased_cycles,
+            42,
+            5,
+        )
+        .expect("cycle purchase should activate after retry");
+
+    let row = database_index_row(&root, &pending.database_id);
+    assert_eq!(row.0, "active");
+    assert_eq!(row.1, Some(11));
+    assert_all_store_roots_exist(&service, &pending.database_id);
+}
+
+#[test]
 fn pending_database_creation_omits_removed_internal_profile() {
     let (service, root) = service_with_root();
     let pending = service

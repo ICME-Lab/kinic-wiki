@@ -292,6 +292,51 @@ fn current_fs_schema_missing_path_state_column_is_rejected() {
 }
 
 #[test]
+fn current_fs_schema_rejects_wrong_fts_column_order() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_nodes_fts;
+         CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
+             title,
+             path,
+             content
+         );",
+    )
+    .expect("malformed fts table should create");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("wrong fts column order should reject");
+
+    assert!(error.contains("invalid fs_nodes_fts shape"));
+}
+
+#[test]
+fn current_fs_schema_rejects_extra_fts_column() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_nodes_fts;
+         CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
+             path,
+             title,
+             content,
+             extra
+         );",
+    )
+    .expect("malformed fts table should create");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("extra fts column should reject");
+
+    assert!(error.contains("invalid fs_nodes_fts shape"));
+}
+
+#[test]
 fn list_queries_use_covering_indexes() {
     let (_dir, store) = new_store();
     write_file(&store, "/Knowledge/indexed.md", None, 10);

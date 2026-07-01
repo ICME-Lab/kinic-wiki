@@ -54,6 +54,30 @@ const sevMissingEnv = runDryRun(tempBinDir(), {});
 assert.notEqual(sevMissingEnv.status, 0);
 assert.match(sevMissingEnv.stderr, /KINIC_LEDGER_CANISTER_ID is required/);
 
+for (const invalidPrincipal of [
+  '73mez-iiaaa-aaaaq-aaasq-cai"',
+  "73mez-iiaaa-aaaaq-aaasq-cai;",
+  "73mez-iiaaa-aaaaq-aaasq-cai(",
+  "73MEZ-iiaaa-aaaaq-aaasq-cai"
+]) {
+  const invalidLedgerPrincipal = runDryRun(tempBinDir(), {
+    KINIC_LEDGER_CANISTER_ID: invalidPrincipal,
+    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+  });
+  assert.notEqual(invalidLedgerPrincipal.status, 0);
+  assert.match(
+    invalidLedgerPrincipal.stderr,
+    /KINIC_LEDGER_CANISTER_ID must be a textual principal using lowercase letters, digits, and hyphens only/
+  );
+}
+
+const whitespacePrincipal = runDryRun(tempBinDir(), {
+  KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai bad",
+  BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+});
+assert.notEqual(whitespacePrincipal.status, 0);
+assert.match(whitespacePrincipal.stderr, /KINIC_LEDGER_CANISTER_ID must not contain whitespace/);
+
 assertDryRun(
   tempBinDir(),
   {

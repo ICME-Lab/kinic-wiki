@@ -61,6 +61,10 @@ require_principal_env() {
     echo "${name} must not contain whitespace" >&2
     return 1
   fi
+  if ! [[ "${value}" =~ ^[a-z0-9-]+$ ]]; then
+    echo "${name} must be a textual principal using lowercase letters, digits, and hyphens only" >&2
+    return 1
+  fi
 }
 
 require_mainnet_sev_environment
