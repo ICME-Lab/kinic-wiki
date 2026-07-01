@@ -25,6 +25,11 @@
 - ユーザー向けの説明は日本語で簡潔に書く。
 - 互換を切る場合は、その理由と影響範囲を明示する。
 
+## Git
+
+- Git 操作、branch 作成、commit 作成、PR 作成、履歴変更、push、merge、rebase は必ず `$git-workflow` スキルを経由する。
+- PR title と body は英語で書く。branch の内容から重要な変更、検証、影響範囲がわかるように簡潔に記述する。
+
 ## レビュー規約
 
 - このリポジトリをレビューするときは、まず [`kinic-rust-review`](/Users/0xhude/Desktop/MyCLI/checker/skills/kinic-rust-review/SKILL.md) を読むこと。
