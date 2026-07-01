@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { BookOpen, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { NativeAuthBridge } from "@/components/native-auth-bridge";
 import { publicDatabasePath } from "@/lib/share-links";
 import heroImage from "./home-hero.png";
 
@@ -65,6 +66,7 @@ const commandLines = [
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-white text-ink">
+      <NativeAuthBridge />
       <section className="relative isolate min-h-[100svh] overflow-hidden bg-white px-4 py-7 sm:px-6">
         <Image className="absolute inset-0 -z-20 h-full w-full object-cover object-[84%_42%] sm:object-[70%_50%]" src={heroImage} alt="" fill priority sizes="100vw" />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(255,255,255,0.995)_0%,rgba(255,255,255,0.98)_58%,rgba(255,255,255,0.78)_100%)] sm:bg-[linear-gradient(90deg,rgba(255,255,255,0.99)_0%,rgba(255,255,255,0.94)_36%,rgba(255,255,255,0.48)_70%,rgba(255,255,255,0.10)_100%)]" />

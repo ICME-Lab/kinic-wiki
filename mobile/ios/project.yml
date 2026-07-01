@@ -1,0 +1,110 @@
+# Where: mobile/ios/project.yml
+# What: XcodeGen spec for the Kinic iOS app, Share Extension, and tests.
+# Why: Generated Xcode projects are safer than hand-maintained pbxproj files.
+
+name: Kinic
+options:
+  bundleIdPrefix: xyz.kinic
+  deploymentTarget:
+    iOS: "17.4"
+  developmentLanguage: en
+settings:
+  base:
+    DEVELOPMENT_TEAM: AKN976G7AK
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.4"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+  configs:
+    Debug:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+packages:
+  ICNativeClient:
+    url: https://github.com/humandebri/ICNativeClient
+    exactVersion: 0.1.0
+targets:
+  Kinic:
+    type: application
+    platform: iOS
+    productName: KinicWikiApp
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicApp
+    dependencies:
+      - package: ICNativeClient
+      - target: KinicShareExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_APP_BUNDLE_ID)"
+        INFOPLIST_FILE: KinicApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: KinicApp/Kinic.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: KinicWikiApp
+        PRODUCT_MODULE_NAME: Kinic
+    scheme:
+      testTargets:
+        - KinicTests
+      management:
+        shared: true
+  KinicShareExtension:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicShareExtension
+      - KinicApp/Models/AppConfiguration.swift
+      - KinicApp/Models/CaptureSubmission.swift
+      - KinicApp/Models/DatabaseRole.swift
+      - KinicApp/Models/DatabaseStatus.swift
+      - KinicApp/Models/DatabaseSummary.swift
+      - KinicApp/Models/PendingSharedURL.swift
+      - KinicApp/Models/ShareCaptureResult.swift
+      - KinicApp/Models/SharedURLRecord.swift
+      - KinicApp/Models/SourceCaptureRequest.swift
+      - KinicApp/Services/KinicAuthSessionStore.swift
+      - KinicApp/Services/KinicICClient.swift
+      - KinicApp/Services/ShareCaptureSubmitter.swift
+      - KinicApp/Services/ShareInbox.swift
+      - KinicApp/Services/SharedDefaultsStore.swift
+      - KinicApp/Services/SourceCaptureRequestBuilder.swift
+      - KinicApp/Services/SourceCaptureRequestError.swift
+      - KinicApp/Services/VFSCandidDecoder.swift
+      - KinicApp/Services/VFSCandidEncoder.swift
+      - KinicApp/Services/VFSCandidError.swift
+      - KinicApp/Services/VFSCandidLabels.swift
+      - KinicApp/Services/VFSCandidLEB.swift
+      - KinicApp/Services/VFSClient.swift
+      - KinicApp/Utilities/Bundle+Configuration.swift
+      - KinicApp/Utilities/URLNormalizer.swift
+      - KinicApp/Utilities/URLNormalizerError.swift
+      - KinicApp/Views/KinicDesign.swift
+      - KinicApp/Assets.xcassets
+    dependencies:
+      - package: ICNativeClient
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)"
+        INFOPLIST_FILE: KinicShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: KinicShareExtension/KinicShareExtension.entitlements
+        SKIP_INSTALL: true
+  KinicTests:
+    type: bundle.unit-test
+    platform: iOS
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicTests
+    dependencies:
+      - target: Kinic
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.kinic.mobile.tests

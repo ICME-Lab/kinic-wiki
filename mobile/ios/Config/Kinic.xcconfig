@@ -1,0 +1,15 @@
+// Where: mobile/ios/Config/Kinic.xcconfig
+// What: Shared build settings for the Kinic iOS app and Share Extension.
+// Why: App Store identifiers and Apple team values must be explicit and easy to replace.
+
+DEVELOPMENT_TEAM = AKN976G7AK
+KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki
+KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension
+APP_GROUP_ID = group.xyz.kinic.ios.KinicWiki
+KINIC_KEYCHAIN_ACCESS_GROUP = $(AppIdentifierPrefix)xyz.kinic.ios.KinicWiki
+KINIC_CANISTER_ID = xis3j-paaaa-aaaai-axumq-cai
+KINIC_API_BASE_URL = https:/$()/icp0.io
+KINIC_DERIVATION_ORIGIN = https:/$()/xis3j-paaaa-aaaai-axumq-cai.icp0.io
+KINIC_AUTH_ORIGIN = https:/$()/wiki.kinic.xyz
+KINIC_CALLBACK_DOMAIN = wiki.kinic.xyz
+KINIC_OPEN_URL = kinicwiki:/$()/share
