@@ -75,6 +75,11 @@ assert.match(wikiBrowserSource, /lg:col-start-2 lg:row-start-1/);
 assert.match(wikiBrowserSource, /lg:col-start-3 lg:row-start-1 lg:justify-end/);
 assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline"/);
 assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
+assert.match(wikiBrowserSource, /hrefForCanonicalDatabaseRoute\(pathname, searchParams\.toString\(\)\)/);
+assert.match(wikiBrowserSource, /router\.replace\(canonicalRouteHref\)/);
+assert.match(wikiBrowserSource, /publicDatabaseIds\.has\(databaseId\) \|\| memberDatabases\.some/);
+assert.match(wikiBrowserSource, /publicDatabasesLoaded && Boolean\(readIdentity\) && memberDatabasesLoaded/);
+assert.match(wikiBrowserSource, /router\.replace\("\/dashboard"\)/);
 assert.match(wikiBrowserSource, /<Network size=\{18\} aria-hidden \/>/);
 assert.match(wikiBrowserSource, /<Share2 aria-hidden size=\{18\} \/>/);
 assert.match(wikiBrowserSource, /sr-only sm:not-sr-only/);
@@ -139,10 +144,10 @@ assert.match(databaseLayoutSource, /loadDatabasePreview/);
 assert.match(databaseLayoutSource, /databasePreviewTitle/);
 assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/opengraph-image`/);
 assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/twitter-image`/);
-assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, databaseId, "\/opengraph-image"\)/);
+assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/opengraph-image"\)/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
-assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, databaseId, "\/twitter-image"\)/);
+assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/twitter-image"\)/);
 assert.doesNotMatch(databaseTwitterImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseTwitterImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
 assert.match(linkPreviewRegenerateRouteSource, /KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN/);
@@ -161,6 +166,8 @@ assert.deepEqual(databasePreview, {
   description: "",
   publicReadable: false
 });
+const aliasDatabasePreview = await loadDatabasePreview("canister-id", " db_bfzk4yokfnin ");
+assert.equal(aliasDatabasePreview.databaseId, "db_nnoe2kborlsq");
 assert.equal(databasePreviewTitle(databasePreview.databaseTitle), "Kinic Wiki: db_alpha");
 assert.equal(databasePreviewDescription(databasePreview), "Browse, search, and query the db_alpha wiki database.");
 assert.equal(databaseLinkPreviewImageKey(" db alpha "), "db-link-preview/v1/db%20alpha.png");
@@ -644,9 +651,13 @@ function child(path, name, kind, hasChildren = kind === "directory") {
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const rawSource = readFileSync(sourcePath, "utf8");
+  const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
+  const pathsSource = readFileSync(new URL("../lib/paths.ts", import.meta.url), "utf8").replace('import { databaseRouteBase } from "./share-links";', "");
   const source = relativePath === "../lib/paths.ts"
-    ? `${readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8")}\n${rawSource.replace('import { databaseRouteBase } from "./share-links";', "")}`
-    : rawSource;
+    ? `${shareLinksSource}\n${pathsSource}`
+    : relativePath === "../lib/database-preview.ts"
+      ? `${shareLinksSource}\n${pathsSource}\n${rawSource.replace('import { canonicalDatabaseId } from "@/lib/paths";', "")}`
+      : rawSource;
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,

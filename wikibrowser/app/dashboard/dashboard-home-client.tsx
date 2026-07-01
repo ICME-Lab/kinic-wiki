@@ -243,7 +243,7 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          paymentNote={freeGrantAvailable ? "無料枠あり: wallet approval is not required." : "wallet 支払い必要: wallet approval pays directly from ledger balance."}
+          paymentNote={freeGrantAvailable ? "Free grant available: wallet approval is not required." : "Wallet payment required: wallet approval pays directly from ledger balance."}
           requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
