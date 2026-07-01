@@ -4,8 +4,7 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, and links.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The canister also exposes read-only Store API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`STORE_API.md`](STORE_API.md).
-Those are direct canister/client methods, not CLI commands in this document.
+The CLI exposes the read-only Store API methods `memory_manifest`, `query_context`, `source_evidence`, `export_snapshot`, and `fetch_updates` as shell commands; see [`STORE_API.md`](STORE_API.md).
 Use the CLI commands below for shell workflows against the remote VFS.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
 For portable generated AI context artifacts, use Context Pack commands described in [`Context Pack.md`](Context%20Pack.md).
@@ -64,6 +63,20 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
 ```
 
 Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then host default. Use `database unlink` to remove the workspace DB link.
+
+## Store API
+
+Store API commands are read-only and use the same database access policy as `read-node`.
+Agents should prefer `--json`.
+The CLI intentionally does not expose `delete_database`, `canister_health`, `wiki_metrics`, or `wiki_metrics_series`.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> memory-manifest --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> query-context --task "answer auth question" --namespace /Knowledge --entity auth --budget-tokens 8000 --depth 1 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> source-evidence --node-path /Knowledge/auth.md --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> export-snapshot --prefix /Knowledge --limit 100 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json
+```
 
 ## Database Setup
 

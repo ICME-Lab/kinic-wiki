@@ -28,12 +28,12 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 ## Read Strategy
 
-1. Prefer `query_context` for task-scoped remote context when Store API or tool access is available.
+1. Prefer CLI `query-context --json` for task-scoped remote context.
 2. Use `list-nodes --prefix <path> --recursive --limit 100 --json` and link commands for structure checks that do not need content.
 3. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to expand findings before full reads.
 4. Use `query-sql` for known-path multi-node content reads when checking canonicality across several notes. If 2 or more known paths need bodies, default to one `query-sql` read instead of looping `read-node`.
-5. Use `export_snapshot` only through Store API/tool access when a whole scope must be inspected. It is not a normal CLI command.
-6. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+5. Use CLI `export-snapshot --json` when a whole scope must be inspected.
+6. Use CLI `fetch-updates --json` only when a trusted `snapshot_revision` already exists.
 7. Use `read-node --json` for a single final offending-line confirmation.
 8. Use `read-node-context` only when catalog, navigation, or link-aware context is needed. Do not use it for ordinary body reads or structure inventory.
 
@@ -75,9 +75,9 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Local lint: inspect Markdown files directly; no local mirror lint command exists.
 - OKF bundle validation: use `kinic-vfs-cli context-pack verify <bundle-dir>` through `kinic-context-pack`.
 - Remote inspection primitives:
-  - Store API/tool preferred entrypoint: `query_context`
-  - Store API/tool scope reads: `export_snapshot`, `fetch_updates`
-  - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Store API CLI preferred entrypoint: `query-context --json`
+  - Store API CLI scope reads: `export-snapshot --json`, `fetch-updates --json`
+  - CLI commands: `memory-manifest`, `query-context`, `source-evidence`, `export-snapshot`, `fetch-updates`, `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - DB metadata inspection: `database list --json`
   - Use `list-children` for one-level tree navigation.
   - Use `list-nodes --prefix <path> --recursive --limit 100 --json` for inventory, bulk repair review, and destructive operation review.

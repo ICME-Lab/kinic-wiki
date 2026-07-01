@@ -19,8 +19,8 @@ Apply small, auditable repairs to existing canister-backed knowledge nodes witho
 1. Use `list-nodes --prefix <path> --recursive --limit 100 --json` for path inventory and etag-only triage.
 2. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to identify likely matches before full reads.
 3. Use `query-sql` for known-path multi-node reads from `fs_nodes` when checking false positives or preparing full-body replacements. If 2 or more known paths need bodies, default to one `query-sql` read instead of looping `read-node`.
-4. Use `export_snapshot` only through Store API/tool access when a repair needs a whole scope. It is not a normal CLI command.
-5. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+4. Use CLI `export-snapshot --json` when a repair needs a whole scope.
+5. Use CLI `fetch-updates --json` only when a trusted `snapshot_revision` already exists.
 6. Always re-read each accepted node with `read-node --json` or `read-node --fields path,kind,etag,content` immediately before mutation.
 7. Use `read-node-context` only for link-aware repair planning. Do not use it for ordinary body reads or structure inventory.
 

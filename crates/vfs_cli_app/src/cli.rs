@@ -348,6 +348,63 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Discover Store API roots, capabilities, and limits")]
+    MemoryManifest {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read task-scoped Store API context; agents should prefer --json")]
+    QueryContext {
+        #[arg(long)]
+        task: String,
+        #[arg(long = "entity")]
+        entities: Vec<String>,
+        #[arg(long)]
+        namespace: Option<String>,
+        #[arg(long, default_value_t = 8_000)]
+        budget_tokens: u32,
+        #[arg(long, default_value_t = 1)]
+        depth: u32,
+        #[arg(long)]
+        no_evidence: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read source evidence references for one knowledge node")]
+    SourceEvidence {
+        #[arg(long)]
+        node_path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one Store API snapshot page for a path scope")]
+    ExportSnapshot {
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Fetch Store API changes since a known snapshot revision")]
+    FetchUpdates {
+        #[arg(long)]
+        known_snapshot_revision: String,
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        target_snapshot_revision: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Show target canister and database access status")]
     Status {
         #[arg(long)]
@@ -686,6 +743,11 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
+            | Self::MemoryManifest { .. }
+            | Self::QueryContext { .. }
+            | Self::SourceEvidence { .. }
+            | Self::ExportSnapshot { .. }
+            | Self::FetchUpdates { .. }
             | Self::Status { .. }
             | Self::ContextPack {
                 command:
@@ -717,6 +779,11 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
+            | Self::MemoryManifest { .. }
+            | Self::QueryContext { .. }
+            | Self::SourceEvidence { .. }
+            | Self::ExportSnapshot { .. }
+            | Self::FetchUpdates { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
             | Self::Market { .. }
@@ -968,6 +1035,56 @@ impl Command {
             Self::QuerySql { sql, limit, json } => Some(VfsCommand::QuerySql {
                 sql: sql.clone(),
                 limit: *limit,
+                json: *json,
+            }),
+            Self::MemoryManifest { json } => Some(VfsCommand::MemoryManifest { json: *json }),
+            Self::QueryContext {
+                task,
+                entities,
+                namespace,
+                budget_tokens,
+                depth,
+                no_evidence,
+                json,
+            } => Some(VfsCommand::QueryContext {
+                task: task.clone(),
+                entities: entities.clone(),
+                namespace: namespace.clone(),
+                budget_tokens: *budget_tokens,
+                depth: *depth,
+                no_evidence: *no_evidence,
+                json: *json,
+            }),
+            Self::SourceEvidence { node_path, json } => Some(VfsCommand::SourceEvidence {
+                node_path: node_path.clone(),
+                json: *json,
+            }),
+            Self::ExportSnapshot {
+                prefix,
+                limit,
+                cursor,
+                snapshot_revision,
+                json,
+            } => Some(VfsCommand::ExportSnapshot {
+                prefix: prefix.clone(),
+                limit: *limit,
+                cursor: cursor.clone(),
+                snapshot_revision: snapshot_revision.clone(),
+                json: *json,
+            }),
+            Self::FetchUpdates {
+                known_snapshot_revision,
+                prefix,
+                limit,
+                cursor,
+                target_snapshot_revision,
+                json,
+            } => Some(VfsCommand::FetchUpdates {
+                known_snapshot_revision: known_snapshot_revision.clone(),
+                prefix: prefix.clone(),
+                limit: *limit,
+                cursor: cursor.clone(),
+                target_snapshot_revision: target_snapshot_revision.clone(),
                 json: *json,
             }),
             _ => None,
@@ -1296,6 +1413,149 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_store_api_commands() {
+        let manifest = Cli::parse_from(["kinic-vfs-cli", "memory-manifest", "--json"]);
+        let Some(VfsCommand::MemoryManifest { json }) = manifest.command.as_vfs_command() else {
+            panic!("expected VFS memory-manifest command");
+        };
+        assert!(json);
+
+        let context = Cli::parse_from([
+            "kinic-vfs-cli",
+            "query-context",
+            "--task",
+            "answer auth",
+            "--entity",
+            "auth",
+            "--entity",
+            "ii",
+            "--namespace",
+            "/Knowledge/auth",
+            "--budget-tokens",
+            "12000",
+            "--depth",
+            "2",
+            "--no-evidence",
+            "--json",
+        ]);
+        let Some(VfsCommand::QueryContext {
+            task,
+            entities,
+            namespace,
+            budget_tokens,
+            depth,
+            no_evidence,
+            json,
+        }) = context.command.as_vfs_command()
+        else {
+            panic!("expected VFS query-context command");
+        };
+        assert_eq!(task, "answer auth");
+        assert_eq!(entities, vec!["auth", "ii"]);
+        assert_eq!(namespace.as_deref(), Some("/Knowledge/auth"));
+        assert_eq!(budget_tokens, 12000);
+        assert_eq!(depth, 2);
+        assert!(no_evidence);
+        assert!(json);
+
+        let context_defaults =
+            Cli::parse_from(["kinic-vfs-cli", "query-context", "--task", "summarize"]);
+        let Some(VfsCommand::QueryContext {
+            namespace,
+            budget_tokens,
+            depth,
+            no_evidence,
+            json,
+            ..
+        }) = context_defaults.command.as_vfs_command()
+        else {
+            panic!("expected VFS query-context default command");
+        };
+        assert_eq!(namespace, None);
+        assert_eq!(budget_tokens, 8000);
+        assert_eq!(depth, 1);
+        assert!(!no_evidence);
+        assert!(!json);
+
+        let evidence = Cli::parse_from([
+            "kinic-vfs-cli",
+            "source-evidence",
+            "--node-path",
+            "/Knowledge/a.md",
+            "--json",
+        ]);
+        let Some(VfsCommand::SourceEvidence { node_path, json }) =
+            evidence.command.as_vfs_command()
+        else {
+            panic!("expected VFS source-evidence command");
+        };
+        assert_eq!(node_path, "/Knowledge/a.md");
+        assert!(json);
+
+        let snapshot = Cli::parse_from([
+            "kinic-vfs-cli",
+            "export-snapshot",
+            "--prefix",
+            "/Knowledge",
+            "--limit",
+            "25",
+            "--cursor",
+            "cursor-1",
+            "--snapshot-revision",
+            "rev-1",
+            "--json",
+        ]);
+        let Some(VfsCommand::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            json,
+        }) = snapshot.command.as_vfs_command()
+        else {
+            panic!("expected VFS export-snapshot command");
+        };
+        assert_eq!(prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(limit, 25);
+        assert_eq!(cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(snapshot_revision.as_deref(), Some("rev-1"));
+        assert!(json);
+
+        let updates = Cli::parse_from([
+            "kinic-vfs-cli",
+            "fetch-updates",
+            "--known-snapshot-revision",
+            "rev-1",
+            "--prefix",
+            "/Knowledge",
+            "--limit",
+            "25",
+            "--cursor",
+            "cursor-1",
+            "--target-snapshot-revision",
+            "rev-2",
+            "--json",
+        ]);
+        let Some(VfsCommand::FetchUpdates {
+            known_snapshot_revision,
+            prefix,
+            limit,
+            cursor,
+            target_snapshot_revision,
+            json,
+        }) = updates.command.as_vfs_command()
+        else {
+            panic!("expected VFS fetch-updates command");
+        };
+        assert_eq!(known_snapshot_revision, "rev-1");
+        assert_eq!(prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(limit, 25);
+        assert_eq!(cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(target_snapshot_revision.as_deref(), Some("rev-2"));
+        assert!(json);
+    }
+
+    #[test]
     fn main_cli_parses_context_pack_commands() {
         let export = Cli::parse_from([
             "kinic-vfs-cli",
@@ -1438,6 +1698,29 @@ mod tests {
         let status = Cli::parse_from(["kinic-vfs-cli", "status"]);
         assert!(!status.command.requires_identity());
         assert!(status.command.probes_anonymous_database_read());
+
+        for command in [
+            Cli::parse_from(["kinic-vfs-cli", "memory-manifest"]).command,
+            Cli::parse_from(["kinic-vfs-cli", "query-context", "--task", "summary"]).command,
+            Cli::parse_from([
+                "kinic-vfs-cli",
+                "source-evidence",
+                "--node-path",
+                "/Knowledge/a.md",
+            ])
+            .command,
+            Cli::parse_from(["kinic-vfs-cli", "export-snapshot"]).command,
+            Cli::parse_from([
+                "kinic-vfs-cli",
+                "fetch-updates",
+                "--known-snapshot-revision",
+                "rev-1",
+            ])
+            .command,
+        ] {
+            assert!(!command.requires_identity());
+            assert!(command.probes_anonymous_database_read());
+        }
 
         let context_pack_export = Cli::parse_from([
             "kinic-vfs-cli",

@@ -15,13 +15,14 @@ use serde::Deserialize;
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS,
-    KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketEntitlementPage,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
-    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest,
+    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidenceRequest, UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest, kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -470,6 +471,139 @@ pub async fn run_vfs_command(
                 .await?;
             for line in sql_json_query_output_lines(&result, json)? {
                 println!("{line}");
+            }
+        }
+        VfsCommand::MemoryManifest { json } => {
+            let manifest = client.memory_manifest(database_id).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            } else {
+                println!("api_version\t{}", manifest.api_version);
+                println!(
+                    "recommended_entrypoint\t{}",
+                    manifest.recommended_entrypoint
+                );
+                println!("write_policy\t{}", manifest.write_policy);
+                for root in manifest.roots {
+                    println!("root\t{}\t{}", root.kind, root.path);
+                }
+            }
+        }
+        VfsCommand::QueryContext {
+            task,
+            entities,
+            namespace,
+            budget_tokens,
+            depth,
+            no_evidence,
+            json,
+        } => {
+            let context = client
+                .query_context(QueryContextRequest {
+                    database_id: database_id.to_string(),
+                    task,
+                    entities,
+                    namespace,
+                    budget_tokens,
+                    include_evidence: !no_evidence,
+                    depth,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&context)?);
+            } else {
+                println!("namespace\t{}", context.namespace);
+                println!("truncated\t{}", context.truncated);
+                for node_context in context.nodes {
+                    println!("node\t{}", node_context.node.path);
+                }
+                for evidence in context.evidence {
+                    println!("evidence\t{}\t{}", evidence.node_path, evidence.refs.len());
+                }
+                for hit in context.search_hits {
+                    println!("search_hit\t{}", hit.path);
+                }
+            }
+        }
+        VfsCommand::SourceEvidence { node_path, json } => {
+            let evidence = client
+                .source_evidence(SourceEvidenceRequest {
+                    database_id: database_id.to_string(),
+                    node_path,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&evidence)?);
+            } else {
+                println!("node_path\t{}", evidence.node_path);
+                for reference in evidence.refs {
+                    println!(
+                        "ref\t{}\t{}\t{}",
+                        reference.source_path, reference.via_path, reference.raw_href
+                    );
+                }
+            }
+        }
+        VfsCommand::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            json,
+        } => {
+            let snapshot = client
+                .export_snapshot(ExportSnapshotRequest {
+                    database_id: database_id.to_string(),
+                    prefix,
+                    limit,
+                    cursor,
+                    snapshot_revision,
+                    snapshot_session_id: None,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            } else {
+                println!("snapshot_revision\t{}", snapshot.snapshot_revision);
+                if let Some(next_cursor) = snapshot.next_cursor {
+                    println!("next_cursor\t{next_cursor}");
+                }
+                for node in snapshot.nodes {
+                    println!("node\t{}", node.path);
+                }
+            }
+        }
+        VfsCommand::FetchUpdates {
+            known_snapshot_revision,
+            prefix,
+            limit,
+            cursor,
+            target_snapshot_revision,
+            json,
+        } => {
+            let updates = client
+                .fetch_updates(FetchUpdatesRequest {
+                    database_id: database_id.to_string(),
+                    known_snapshot_revision,
+                    prefix,
+                    limit,
+                    cursor,
+                    target_snapshot_revision,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updates)?);
+            } else {
+                println!("snapshot_revision\t{}", updates.snapshot_revision);
+                if let Some(next_cursor) = updates.next_cursor {
+                    println!("next_cursor\t{next_cursor}");
+                }
+                for node in updates.changed_nodes {
+                    println!("changed\t{}", node.path);
+                }
+                for path in updates.removed_paths {
+                    println!("removed\t{path}");
+                }
             }
         }
     }
@@ -1305,6 +1439,11 @@ mod tests {
         node_lists: Mutex<Vec<ListNodesRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
+        memory_manifests: Mutex<Vec<String>>,
+        query_contexts: Mutex<Vec<QueryContextRequest>>,
+        source_evidence_requests: Mutex<Vec<SourceEvidenceRequest>>,
+        export_snapshots: Mutex<Vec<ExportSnapshotRequest>>,
+        fetch_updates_requests: Mutex<Vec<FetchUpdatesRequest>>,
         neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
     }
 
@@ -1533,6 +1672,59 @@ mod tests {
                 outgoing_links: Vec::new(),
             }))
         }
+        async fn memory_manifest(&self, database_id: &str) -> Result<MemoryManifest> {
+            self.memory_manifests
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(MemoryManifest {
+                api_version: "kinic-stores-v1".to_string(),
+                purpose: "test".to_string(),
+                enabled_stores: vec!["knowledge".to_string()],
+                roots: vec![MemoryRoot {
+                    path: "/Knowledge".to_string(),
+                    kind: "knowledge".to_string(),
+                }],
+                entry_roots: Vec::new(),
+                capabilities: Vec::new(),
+                canonical_roles: Vec::new(),
+                write_policy: "stores_read_only".to_string(),
+                recommended_entrypoint: "query_context".to_string(),
+                max_depth: 2,
+                max_query_limit: 100,
+                budget_unit: "approx_chars_from_tokens".to_string(),
+            })
+        }
+        async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+            self.query_contexts.lock().unwrap().push(request.clone());
+            Ok(QueryContext {
+                namespace: request.namespace.unwrap_or_else(|| "/Memory".to_string()),
+                task: request.task,
+                search_hits: Vec::new(),
+                nodes: Vec::new(),
+                graph_links: Vec::new(),
+                evidence: Vec::new(),
+                truncated: false,
+            })
+        }
+        async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+            self.source_evidence_requests
+                .lock()
+                .unwrap()
+                .push(request.clone());
+            Ok(SourceEvidence {
+                node_path: request.node_path,
+                refs: vec![SourceEvidenceRef {
+                    source_path: "/Sources/web/a.md".to_string(),
+                    via_path: "/Knowledge/a.md".to_string(),
+                    raw_href: "https://example.com".to_string(),
+                    link_text: "Source".to_string(),
+                    source_etag: Some("source-etag".to_string()),
+                    source_updated_at: Some(2),
+                    source_content_hash: Some("sha256:test".to_string()),
+                }],
+            })
+        }
         async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
             self.node_lists.lock().unwrap().push(request);
             Ok(self.entries.clone())
@@ -1621,15 +1813,27 @@ mod tests {
         }
         async fn export_snapshot(
             &self,
-            _request: ExportSnapshotRequest,
+            request: ExportSnapshotRequest,
         ) -> Result<ExportSnapshotResponse> {
-            unreachable!()
+            self.export_snapshots.lock().unwrap().push(request);
+            Ok(ExportSnapshotResponse {
+                snapshot_revision: "rev-2".to_string(),
+                snapshot_session_id: None,
+                nodes: vec![node("/Knowledge/a.md", NodeKind::File, "etag")],
+                next_cursor: Some("cursor-2".to_string()),
+            })
         }
         async fn fetch_updates(
             &self,
-            _request: FetchUpdatesRequest,
+            request: FetchUpdatesRequest,
         ) -> Result<FetchUpdatesResponse> {
-            unreachable!()
+            self.fetch_updates_requests.lock().unwrap().push(request);
+            Ok(FetchUpdatesResponse {
+                snapshot_revision: "rev-3".to_string(),
+                changed_nodes: vec![node("/Knowledge/b.md", NodeKind::File, "etag")],
+                removed_paths: vec!["/Knowledge/old.md".to_string()],
+                next_cursor: None,
+            })
         }
     }
 
@@ -2465,6 +2669,136 @@ mod tests {
                 "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1".to_string(),
                 10
             )]
+        );
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn memory_manifest_sends_database_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::MemoryManifest { json: true },
+        )
+        .await
+        .expect("memory-manifest should succeed");
+
+        assert_eq!(
+            client.memory_manifests.lock().unwrap().as_slice(),
+            &["alpha".to_string()]
+        );
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_context_sends_store_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::QueryContext {
+                task: "answer auth question".to_string(),
+                entities: vec!["auth".to_string(), "ii".to_string()],
+                namespace: Some("/Knowledge/auth".to_string()),
+                budget_tokens: 12_000,
+                depth: 2,
+                no_evidence: true,
+                json: true,
+            },
+        )
+        .await
+        .expect("query-context should succeed");
+
+        let requests = client.query_contexts.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].task, "answer auth question");
+        assert_eq!(requests[0].entities, vec!["auth", "ii"]);
+        assert_eq!(requests[0].namespace.as_deref(), Some("/Knowledge/auth"));
+        assert_eq!(requests[0].budget_tokens, 12_000);
+        assert_eq!(requests[0].depth, 2);
+        assert!(!requests[0].include_evidence);
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_evidence_sends_node_path_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::SourceEvidence {
+                node_path: "/Knowledge/a.md".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect("source-evidence should succeed");
+
+        let requests = client.source_evidence_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].node_path, "/Knowledge/a.md");
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn export_snapshot_sends_scope_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::ExportSnapshot {
+                prefix: Some("/Knowledge".to_string()),
+                limit: 25,
+                cursor: Some("cursor-1".to_string()),
+                snapshot_revision: Some("rev-1".to_string()),
+                json: true,
+            },
+        )
+        .await
+        .expect("export-snapshot should succeed");
+
+        let requests = client.export_snapshots.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(requests[0].limit, 25);
+        assert_eq!(requests[0].cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(requests[0].snapshot_revision.as_deref(), Some("rev-1"));
+        assert_eq!(requests[0].snapshot_session_id, None);
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_updates_sends_delta_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::FetchUpdates {
+                known_snapshot_revision: "rev-1".to_string(),
+                prefix: Some("/Knowledge".to_string()),
+                limit: 25,
+                cursor: Some("cursor-1".to_string()),
+                target_snapshot_revision: Some("rev-2".to_string()),
+                json: true,
+            },
+        )
+        .await
+        .expect("fetch-updates should succeed");
+
+        let requests = client.fetch_updates_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].known_snapshot_revision, "rev-1");
+        assert_eq!(requests[0].prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(requests[0].limit, 25);
+        assert_eq!(requests[0].cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(
+            requests[0].target_snapshot_revision.as_deref(),
+            Some("rev-2")
         );
         assert!(client.write_cycle_checks.lock().unwrap().is_empty());
     }

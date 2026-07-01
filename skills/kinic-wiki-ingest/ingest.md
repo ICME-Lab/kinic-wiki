@@ -9,7 +9,7 @@ Turn evidence source material into review-ready wiki updates under the canister-
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
 3. Decide whether the source should also be persisted under `/Sources/...`.
-4. Read existing wiki context with `query_context` when Store API/tool access is available. Use `read-node-context` only when `/Knowledge/index.md` navigation, catalog staleness, or link-aware context is needed.
+4. Read existing wiki context with CLI `query-context --json`. Use `read-node-context` only when `/Knowledge/index.md` navigation, catalog staleness, or link-aware context is needed.
    - If `/Knowledge/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
    - For wiki-only inspection or edits, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless evidence source material is explicitly needed.
@@ -27,12 +27,12 @@ Turn evidence source material into review-ready wiki updates under the canister-
 
 ## Read Strategy
 
-1. Prefer `query_context` for source/wiki context collection when Store API or tool access is available.
+1. Prefer `query-context --json` for source/wiki context collection.
 2. Use `list-nodes --prefix <path> --recursive --limit 100 --json` when only path inventory, node kind, or overwrite etags are needed.
 3. Use `search-remote` or `search-path-remote` with `--preview-mode content-start` to narrow candidate wiki pages before reading full bodies.
 4. Use `query-sql` for known-path multi-node reads from `fs_nodes`, including bulk ingest overwrite checks. If 2 or more known paths need bodies, default to one `query-sql` read instead of looping `read-node`.
-5. Use `export_snapshot` only through Store API/tool access when setup needs a whole `/Knowledge/...` scope. It is not a normal CLI command.
-6. Use `fetch_updates` only through Store API/tool access when a trusted `snapshot_revision` already exists.
+5. Use CLI `export-snapshot --json` when setup needs a whole `/Knowledge/...` scope.
+6. Use CLI `fetch-updates --json` only when a trusted `snapshot_revision` already exists.
 7. Use `read-node --json` or `read-node --fields path,kind,etag,content` for a single mutation-adjacent final check.
 8. Use `read-node-context` only for link-aware catalog/navigation context, not for ordinary body reads or structure inventory.
 
@@ -41,7 +41,7 @@ Turn evidence source material into review-ready wiki updates under the canister-
 Use this workflow when the user asks to improve DB discovery, public retrieval, or public memory metadata. This workflow updates only database metadata; it does not edit folder, source, or node metadata.
 
 1. Read current metadata with `kinic-vfs-cli database list --json`.
-2. Read `/Knowledge/index.md` only when catalog/navigation context is needed, then major linked `/Knowledge/**/index.md` pages and a small set of representative source/wiki nodes. Prefer `query_context`, search preview, or `query-sql` before direct single-node reads.
+2. Read `/Knowledge/index.md` only when catalog/navigation context is needed, then major linked `/Knowledge/**/index.md` pages and a small set of representative source/wiki nodes. Prefer `query-context --json`, search preview, or `query-sql` before direct single-node reads.
 3. Generate one candidate JSON object:
 
 ```json
@@ -99,7 +99,7 @@ Use this workflow when ingesting many local files, for example 10 or more eviden
 1. Normalize every evidence source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
 2. Build the full write set before mutating remote state: evidence sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
 3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
-4. Set `expected_etag` for overwrites by reading current nodes first. Use `list-nodes` for inventory and `query-sql` or `export_snapshot` for narrow or scoped body checks. If 2 or more existing nodes need body checks, default to `query-sql`. Use `None` only for new nodes.
+4. Set `expected_etag` for overwrites by reading current nodes first. Use `list-nodes` for inventory and `query-sql` or `export-snapshot --json` for narrow or scoped body checks. If 2 or more existing nodes need body checks, default to `query-sql`. Use `None` only for new nodes.
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
 
@@ -161,14 +161,14 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Default conversation wiki path: `/Knowledge/<llm-generated-title>.md`
 - Wiki target root: `/Knowledge/...`
 - Preferred primitives:
-  - Store API/tool preferred entrypoint: `query_context`
-  - Store API/tool scope reads: `export_snapshot`, `fetch_updates`
+  - Store API CLI preferred entrypoint: `query-context --json`
+  - Store API CLI scope reads: `export-snapshot --json`, `fetch-updates --json`
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
   - DB metadata updates: CLI `database metadata <database-id> --input <metadata.json> [--json]`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
   - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `query-sql`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - Search previews: pass `--preview-mode content-start` when candidate snippets can avoid full reads.
-  - Multi-node reads: use `query-sql` for prepared known-path reads from `fs_nodes`; 2 or more known paths should use `query-sql` by default. Use `export_snapshot` through Store API/tool access for whole-scope reads.
+  - Multi-node reads: use `query-sql` for prepared known-path reads from `fs_nodes`; 2 or more known paths should use `query-sql` by default. Use `export-snapshot --json` for whole-scope reads.
   - Link-aware reads: use `read-node-context` only for catalog/navigation context, not for normal body reads or structure inventory.
   - Multi-node edits: use `write-nodes` only for prepared full-body replacements; otherwise build a path list, read etags, and run etag-aware per-node edits
 - Delete semantics:
