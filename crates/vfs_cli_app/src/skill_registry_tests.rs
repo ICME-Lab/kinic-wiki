@@ -2,9 +2,9 @@ use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
 use crate::hermes::sync_projection;
 use crate::skill_registry::{
     SkillRunEvidenceInput, SkillRunInput, export_skill, find_skills, inspect_skill,
-    install_skill_lockfile, markdown_target_package_key, record_correction, record_skill_run,
-    record_skill_run_evidence, record_skill_run_evidence_with_override, rollback_skill_version,
-    set_skill_status, skill_history, upsert_skill,
+    install_skill_lockfile, list_skill_packages, markdown_target_package_key, record_correction,
+    record_skill_run, record_skill_run_evidence, record_skill_run_evidence_with_override,
+    rollback_skill_version, set_skill_status, skill_history, sync_skill_packages, upsert_skill,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -577,6 +577,258 @@ async fn skill_install_writes_lockfile_without_local_package_install() {
             .expect("read nonexistent install target"),
         None
     );
+}
+
+#[tokio::test]
+async fn skill_list_filters_default_and_explicit_statuses() {
+    let client = SkillMockClient::default();
+    let reviewed = tempfile::tempdir().expect("reviewed tempdir");
+    seed_legal_review_skill(&client, reviewed.path()).await;
+    seed_skill_package(&client, "team-db", "draft-skill", "draft").await;
+    seed_skill_package(&client, "team-db", "deprecated-skill", "deprecated").await;
+
+    let default_list = list_skill_packages(&client, "team-db", &[])
+        .await
+        .expect("default list");
+    let default_ids = skill_list_ids(&default_list);
+    assert_eq!(default_ids, vec!["legal-review"]);
+
+    let explicit_list = list_skill_packages(
+        &client,
+        "team-db",
+        &[SkillStatusArg::Draft, SkillStatusArg::Reviewed],
+    )
+    .await
+    .expect("explicit list");
+    let explicit_ids = skill_list_ids(&explicit_list);
+    assert_eq!(explicit_ids, vec!["draft-skill", "legal-review"]);
+}
+
+#[tokio::test]
+async fn skill_sync_dry_run_does_not_write_local_files() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    let target = temp.path().join("local-skills");
+
+    let result = sync_skill_packages(&client, "team-db", &target, &[], false, true)
+        .await
+        .expect("dry-run sync");
+
+    assert_eq!(result["dry_run"], true);
+    assert_eq!(result["added"].as_array().unwrap().len(), 1);
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn skill_sync_conflicts_existing_unmanaged_local_skill_on_first_run() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    let target = temp.path().join("local-skills");
+    std::fs::create_dir_all(target.join("legal-review")).expect("manual local dir");
+    std::fs::write(
+        target.join("legal-review/SKILL.md"),
+        "# Local skill is source of truth\n",
+    )
+    .expect("manual local skill");
+
+    let result = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("sync");
+
+    assert_eq!(result["added"].as_array().unwrap().len(), 0);
+    assert!(
+        result["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["reason"] == "unmanaged_existing_dir")
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("legal-review/SKILL.md")).expect("local skill"),
+        "# Local skill is source of truth\n"
+    );
+    assert!(!target.join(".kinic-skill-sync.json").exists());
+}
+
+#[tokio::test]
+async fn skill_sync_exports_updates_and_prunes_only_managed_skills() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    let target = temp.path().join("local-skills");
+
+    let initial = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("initial sync");
+    assert_eq!(initial["added"].as_array().unwrap().len(), 1);
+    assert!(target.join("legal-review/SKILL.md").is_file());
+    assert!(target.join(".kinic-skill-sync.json").is_file());
+
+    let unchanged = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("unchanged sync");
+    assert_eq!(unchanged["unchanged"].as_array().unwrap().len(), 1);
+
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Skills/legal-review/SKILL.md",
+        "# Legal Review\n\nUpdated registry copy.\n",
+    )
+    .await;
+    let updated = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("updated sync");
+    assert_eq!(updated["updated"].as_array().unwrap().len(), 1);
+    assert!(
+        std::fs::read_to_string(target.join("legal-review/SKILL.md"))
+            .expect("synced skill")
+            .contains("Updated registry copy.")
+    );
+
+    std::fs::create_dir_all(target.join("manual-skill")).expect("manual skill dir");
+    std::fs::write(target.join("manual-skill/SKILL.md"), "# Manual\n").expect("manual skill");
+    set_skill_status(
+        &client,
+        "team-db",
+        "legal-review",
+        SkillStatusArg::Deprecated,
+        Some("retired"),
+    )
+    .await
+    .expect("deprecate");
+    let pruned = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("prune sync");
+    assert_eq!(pruned["removed"].as_array().unwrap().len(), 1);
+    assert!(!target.join("legal-review").exists());
+    assert!(target.join("manual-skill/SKILL.md").is_file());
+}
+
+#[tokio::test]
+async fn skill_sync_conflicts_on_managed_local_dirty_before_remote_update() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    let target = temp.path().join("local-skills");
+    sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("initial sync");
+    std::fs::write(target.join("legal-review/SKILL.md"), "# Local edit\n").expect("local edit");
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Skills/legal-review/SKILL.md",
+        "# Remote edit\n",
+    )
+    .await;
+
+    let result = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("sync with dirty local");
+
+    assert_eq!(result["updated"].as_array().unwrap().len(), 0);
+    assert!(has_sync_conflict(&result, "managed_local_dirty"));
+    assert_eq!(
+        std::fs::read_to_string(target.join("legal-review/SKILL.md")).expect("local skill"),
+        "# Local edit\n"
+    );
+}
+
+#[tokio::test]
+async fn skill_sync_conflicts_on_managed_missing_and_extra_files() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    write(
+        temp.path(),
+        "SKILL.md",
+        "# Legal Review\n\nUse [helper](helper.md).",
+    );
+    write(temp.path(), "manifest.md", &manifest("reviewed"));
+    write(temp.path(), "helper.md", "# Helper\n");
+    upsert_skill(&client, "team-db", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
+    let target = temp.path().join("local-skills");
+    sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("initial sync");
+
+    let lock: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(target.join(".kinic-skill-sync.json")).expect("lockfile"),
+    )
+    .expect("lock JSON");
+    let files = lock["managed_skills"]["legal-review"]["files"]
+        .as_object()
+        .expect("files should be a hash map");
+    assert!(files["SKILL.md"].as_str().unwrap().len() == 64);
+    assert!(files["helper.md"].as_str().unwrap().len() == 64);
+
+    std::fs::write(
+        target.join("legal-review/helper.md"),
+        "# Local helper edit\n",
+    )
+    .expect("edit helper");
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Skills/legal-review/SKILL.md",
+        "# Remote edit\n",
+    )
+    .await;
+    let dirty = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("sync dirty helper");
+    assert!(has_sync_conflict(&dirty, "managed_local_dirty"));
+    assert_eq!(
+        std::fs::read_to_string(target.join("legal-review/helper.md")).expect("local helper"),
+        "# Local helper edit\n"
+    );
+
+    std::fs::write(target.join("legal-review/helper.md"), "# Helper\n").expect("restore helper");
+    std::fs::remove_file(target.join("legal-review/helper.md")).expect("remove helper");
+    let missing = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("sync missing file");
+    assert!(has_sync_conflict(&missing, "managed_file_missing"));
+
+    std::fs::write(target.join("legal-review/helper.md"), "# Helper\n").expect("restore helper");
+    std::fs::write(target.join("legal-review/local.md"), "# Local only\n").expect("extra file");
+    let extra = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("sync extra file");
+    assert!(has_sync_conflict(&extra, "managed_extra_file"));
+}
+
+#[tokio::test]
+async fn skill_sync_prune_keeps_dirty_managed_skill_as_conflict() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    seed_legal_review_skill(&client, temp.path()).await;
+    let target = temp.path().join("local-skills");
+    sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("initial sync");
+    std::fs::write(target.join("legal-review/SKILL.md"), "# Local edit\n").expect("local edit");
+    set_skill_status(
+        &client,
+        "team-db",
+        "legal-review",
+        SkillStatusArg::Deprecated,
+        Some("retired"),
+    )
+    .await
+    .expect("deprecate");
+
+    let result = sync_skill_packages(&client, "team-db", &target, &[], true, false)
+        .await
+        .expect("prune sync");
+
+    assert_eq!(result["removed"].as_array().unwrap().len(), 0);
+    assert!(has_sync_conflict(&result, "managed_local_dirty"));
+    assert!(target.join("legal-review/SKILL.md").is_file());
 }
 
 #[tokio::test]
@@ -1662,6 +1914,49 @@ async fn seed_legal_review_skill(client: &SkillMockClient, dir: &Path) {
     upsert_skill(client, "team-db", dir, "legal-review", false)
         .await
         .expect("upsert");
+}
+
+async fn seed_skill_package(client: &SkillMockClient, database_id: &str, id: &str, status: &str) {
+    let manifest = manifest(status).replace("id: legal-review", &format!("id: {id}"));
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: format!("/Skills/{id}/manifest.md"),
+            kind: NodeKind::File,
+            content: manifest,
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("seed manifest");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: format!("/Skills/{id}/SKILL.md"),
+            kind: NodeKind::File,
+            content: format!("# {id}\n"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("seed skill");
+}
+
+fn skill_list_ids(value: &serde_json::Value) -> Vec<&str> {
+    value["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|skill| skill["id"].as_str().unwrap())
+        .collect()
+}
+
+fn has_sync_conflict(value: &serde_json::Value, reason: &str) -> bool {
+    value["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|conflict| conflict["reason"] == reason)
 }
 
 fn assert_rfc3339_field(content: &str, key: &str) {
