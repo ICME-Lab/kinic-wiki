@@ -55,7 +55,7 @@ KINIC cycles uses one internal DB-scoped balance:
 
 - DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(CreateDatabaseRequest { name })`. The first database created by each authenticated caller receives one initial free grant of `10_000_000_000` cycles. That free-grant DB allocates a stable-memory mount immediately, starts as `active`, and records `kind = "free_grant"` in `database_cycle_ledger`. `database_free_cycle_grants` records the caller principal, granted database, grant cycles, and creation time, so deleting that DB does not reset the caller's grant.
+DB creation uses `create_database(CreateDatabaseRequest { name })`. The response includes the actual `status` and `initial_free_grant_applied` outcome from create execution. The first database created by each authenticated caller receives one initial free grant of `10_000_000_000` cycles. That free-grant DB allocates a stable-memory mount immediately, starts as `active`, and records `kind = "free_grant"` in `database_cycle_ledger`. `database_free_cycle_grants` records the caller principal, granted database, grant cycles, and creation time, so deleting that DB does not reset the caller's grant.
 
 After a caller has used the free grant, `create_database` creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
@@ -93,6 +93,8 @@ Cycles history redacts payer/caller principals for reader and writer callers. DB
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh`. For existing mainnet deploys, the script resolves unset `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` from the current canister `get_cycles_billing_config`; fresh installs must set both explicitly. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
 
+Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles. Keep the existing production canister `xis3j-paaaa-aaaai-axumq-cai` documented as the current production canister until traffic cutover is complete.
+
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
@@ -102,8 +104,8 @@ Upgrade compatibility:
 
 Normal operator flow:
 
-1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.
-2. If the free grant is already used, owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`.
+1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.
+2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.
 3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
 4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 5. Successful DB updates consume DB cycles balance.

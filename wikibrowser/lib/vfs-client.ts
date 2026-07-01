@@ -313,6 +313,15 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
+  status: Variant;
+  initial_free_grant_applied: boolean;
+};
+
+type CreateDatabaseResult = {
+  database_id: string;
+  name: string;
+  status: DatabaseStatus;
+  initial_free_grant_applied: boolean;
 };
 
 type RawUpdateDatabaseMetadataRequest = RawDatabaseMetadata & {
@@ -937,14 +946,19 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<CreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.create_database({ name });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return result.Ok;
+    return {
+      database_id: result.Ok.database_id,
+      name: result.Ok.name,
+      status: normalizeDatabaseStatus(result.Ok.status),
+      initial_free_grant_applied: Boolean(result.Ok.initial_free_grant_applied)
+    };
   });
 }
 

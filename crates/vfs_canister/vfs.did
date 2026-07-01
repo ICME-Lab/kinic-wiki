@@ -24,7 +24,12 @@ type ChildNode = record {
   is_virtual : bool;
 };
 type CreateDatabaseRequest = record { name : text };
-type CreateDatabaseResult = record { name : text; database_id : text };
+type CreateDatabaseResult = record {
+  status : DatabaseStatus;
+  name : text;
+  initial_free_grant_applied : bool;
+  database_id : text;
+};
 type CyclesBillingConfig = record {
   billing_authority_id : text;
   kinic_ledger_canister_id : text;
@@ -129,7 +134,6 @@ type DatabaseSummary = record {
   database_id : text;
   deleted_at_ms : opt int64;
 };
-type RenameDatabaseRequest = record { name : text; database_id : text };
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -481,6 +485,7 @@ type QueryContextRequest = record {
   depth : nat32;
   namespace : opt text;
 };
+type RenameDatabaseRequest = record { name : text; database_id : text };
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : InitialFreeDatabaseGrantStatus; Err : text };

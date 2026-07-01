@@ -295,7 +295,15 @@ export const expectedTypes = {
     fields: { url: "text", name: "text" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  CreateDatabaseResult: {
+    kind: "record",
+    fields: {
+      name: "text",
+      database_id: "text",
+      status: "DatabaseStatus",
+      initial_free_grant_applied: "bool"
+    }
+  },
   InitialFreeDatabaseGrantStatus: {
     kind: "record",
     fields: {

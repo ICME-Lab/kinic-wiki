@@ -99,8 +99,9 @@ kinic-vfs-cli cycles config
 # Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
 DB_ID="$(kinic-vfs-cli database create "<database-name>")"
 kinic-vfs-cli database list
-kinic-vfs-cli database purchase-cycles "$DB_ID" 1.25
 kinic-vfs-cli database cycles "$DB_ID"
+# First eligible databases are active immediately with the initial free grant. Run cycle purchase only when the database is pending.
+kinic-vfs-cli database purchase-cycles "$DB_ID" 1.25
 kinic-vfs-cli database cycles-history "$DB_ID"
 kinic-vfs-cli database cycles-pending "$DB_ID"
 kinic-vfs-cli database grant "$DB_ID" <principal> reader

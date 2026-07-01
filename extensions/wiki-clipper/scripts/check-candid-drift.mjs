@@ -48,7 +48,15 @@ const expectedTypes = {
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  CreateDatabaseResult: {
+    kind: "record",
+    fields: {
+      name: "text",
+      database_id: "text",
+      status: "DatabaseStatus",
+      initial_free_grant_applied: "bool"
+    }
+  },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",

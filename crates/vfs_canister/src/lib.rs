@@ -411,14 +411,16 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.create_generated_database_with_initial_free_grant_or_pending(
+        let outcome = service.create_generated_database_with_initial_free_grant_or_pending(
             &request.name,
             caller,
             now,
         )?;
         Ok(CreateDatabaseResult {
-            database_id: meta.database_id,
-            name: meta.metadata.name,
+            database_id: outcome.meta.database_id,
+            name: outcome.meta.metadata.name,
+            status: outcome.status,
+            initial_free_grant_applied: outcome.initial_free_grant_applied,
         })
     })
 }

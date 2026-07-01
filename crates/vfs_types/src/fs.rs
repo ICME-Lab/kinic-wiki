@@ -352,6 +352,8 @@ pub struct CreateDatabaseRequest {
 pub struct CreateDatabaseResult {
     pub database_id: String,
     pub name: String,
+    pub status: DatabaseStatus,
+    pub initial_free_grant_applied: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

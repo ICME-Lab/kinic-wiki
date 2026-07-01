@@ -214,7 +214,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const CreateDatabaseResult = idl.Record({
+    name: idl.Text,
+    database_id: idl.Text,
+    status: DatabaseStatus,
+    initial_free_grant_applied: idl.Bool
+  });
   const InitialFreeDatabaseGrantStatus = idl.Record({
     database_id: idl.Opt(idl.Text),
     created_at_ms: idl.Opt(idl.Int64),

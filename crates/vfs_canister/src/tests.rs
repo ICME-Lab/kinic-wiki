@@ -2650,6 +2650,8 @@ fn create_database_returns_result() {
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
+    assert_eq!(result.status, DatabaseStatus::Active);
+    assert!(result.initial_free_grant_applied);
 
     let summaries = list_databases().expect("database summaries should load");
     let summary = summaries
@@ -2678,6 +2680,8 @@ fn create_database_returns_result() {
         name: " Paid skills ".to_string(),
     })
     .expect("second database should create pending");
+    assert_eq!(pending.status, DatabaseStatus::Pending);
+    assert!(!pending.initial_free_grant_applied);
     let pending_summary = list_databases()
         .expect("database summaries should load")
         .into_iter()

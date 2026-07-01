@@ -1492,6 +1492,8 @@ mod tests {
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
                 name: name.to_string(),
+                status: vfs_types::DatabaseStatus::Active,
+                initial_free_grant_applied: true,
             })
         }
         async fn purchase_database_cycles(

@@ -158,13 +158,22 @@ export function DashboardHomeClient() {
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
-      if (freeGrantAvailable) {
-        setWalletMessage(`Database created with ${formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0")}.`);
+      const createdActive = result.initial_free_grant_applied || result.status === "active";
+      if (createdActive) {
+        setWalletMessage(
+          result.initial_free_grant_applied
+            ? "Database created with the initial free grant."
+            : "Database created active."
+        );
         await refreshDatabases(authClient);
         router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
         return;
       }
-      if (!wallet) return;
+      if (!wallet || !walletPaymentAvailable) {
+        setWalletMessage("Database created pending. Fund it from Cycles before opening /Knowledge.");
+        await refreshDatabases(authClient);
+        return;
+      }
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
