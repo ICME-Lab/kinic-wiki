@@ -30,7 +30,7 @@
 
 `update_cycles_billing_config` は認証済み caller のみ呼べる。caller が `billing_authority_id` と一致しない場合は拒否する。引数は `CyclesBillingConfigUpdate` record で、変更できる値は `cycles_per_kinic` と `min_update_cycles` のみである。
 
-mainnet deploy script は `KINIC_LEDGER_CANISTER_ID` と `BILLING_AUTHORITY_ID` を明示必須にする。`kinic_ledger_canister_id` は支払い ledger canister の ID であり、billing authority でも rate 設定でもない。
+mainnet deploy script は未設定の `KINIC_LEDGER_CANISTER_ID` と `BILLING_AUTHORITY_ID` を現在の mainnet canister の `get_cycles_billing_config` から解決する。fresh install など現在値を読めない deploy では両方を明示必須にする。`kinic_ledger_canister_id` は支払い ledger canister の ID であり、billing authority でも rate 設定でもない。
 
 設定値は次を満たす必要がある。
 

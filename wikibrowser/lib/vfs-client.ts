@@ -1368,7 +1368,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
     name: raw.name,
-    metadata: normalizeDatabaseMetadata(requiredDatabaseMetadata(raw.metadata)),
+    metadata: normalizeDatabaseMetadata(databaseMetadataOrFallback(raw)),
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
@@ -1378,12 +1378,13 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   };
 }
 
-function requiredDatabaseMetadata(raw: [] | [RawDatabaseMetadata]): RawDatabaseMetadata {
-  const metadata = raw[0];
-  if (!metadata) {
-    throw new ApiError("Database metadata is required", 502);
-  }
-  return metadata;
+function databaseMetadataOrFallback(raw: RawDatabaseSummary): RawDatabaseMetadata {
+  return raw.metadata[0] ?? {
+    name: raw.name,
+    description: "",
+    llm_summary: [],
+    tags_json: "[]"
+  };
 }
 
 function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {

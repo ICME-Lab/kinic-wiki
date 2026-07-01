@@ -10,6 +10,181 @@ pub use vfs_cli::cli::{
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
+const STATUS_AFTER_HELP: &str = r#"Purpose:
+  Confirm the selected canister, database, and read access before deeper work.
+
+Examples:
+  kinic-vfs-cli --database-id <db> status --json
+  kinic-vfs-cli --identity-mode anonymous --database-id <public-db> status --json
+
+Notes:
+  Agents should prefer --json. Use this as a target/access check, not as final answer evidence."#;
+
+const LIST_NODES_AFTER_HELP: &str = r#"Purpose:
+  Inventory paths, kinds, etags, and child markers without reading node content.
+
+Examples:
+  kinic-vfs-cli --database-id <db> list-nodes --prefix /Knowledge --recursive --limit 100 --json
+  kinic-vfs-cli --database-id <db> list-nodes --prefix / --recursive --limit 100 --json
+
+Notes:
+  Use list-nodes before broad repair, lint, or delete-tree review. Read content later with read-node, query-context, or query-sql."#;
+
+const SEARCH_REMOTE_AFTER_HELP: &str = r#"Purpose:
+  Search node content in one database and return candidate paths/snippets.
+
+Examples:
+  kinic-vfs-cli --database-id <db> search-remote "auth token" --prefix /Knowledge --top-k 10 --preview-mode content-start --json
+  kinic-vfs-cli --database-id <db> search-remote "receipt" --prefix /Sources --top-k 20 --preview-mode content-start --json
+
+Notes:
+  Agents should prefer --json and --preview-mode content-start for candidate classification. Search hits are routing data; read final evidence before answering."#;
+
+const SEARCH_PATH_REMOTE_AFTER_HELP: &str = r#"Purpose:
+  Search paths and basenames when content search misses or the user names a page.
+
+Examples:
+  kinic-vfs-cli --database-id <db> search-path-remote "auth" --prefix /Knowledge --top-k 20 --preview-mode content-start --json
+
+Notes:
+  Use this to find likely paths, then read selected nodes with read-node or query-sql."#;
+
+const READ_NODE_AFTER_HELP: &str = r#"Purpose:
+  Read one known VFS path. Use this for final evidence checks and etag capture.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/index.md --json
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/index.md --fields path,kind,etag,content --json
+
+Notes:
+  Agents should prefer --json. Before mutation, capture the current etag and pass it to --expected-etag on the write/edit/delete command."#;
+
+const READ_NODE_CONTEXT_AFTER_HELP: &str = r#"Purpose:
+  Read one node plus incoming and outgoing link context.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node-context --path /Knowledge/index.md --link-limit 20 --json
+
+Notes:
+  Use for link-aware catalog/navigation planning. For ordinary body reads, prefer read-node or query-sql."#;
+
+const QUERY_SQL_AFTER_HELP: &str = r#"Purpose:
+  Read several known paths or small classified slices with one restricted SELECT.
+
+Examples:
+  kinic-vfs-cli --database-id <db> query-sql "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path IN ('/Knowledge/a.md','/Knowledge/b.md') LIMIT 2" --limit 2 --json
+  kinic-vfs-cli --database-id <db> query-sql "SELECT json_object('path', path, 'head', substr(content, 1, 700)) FROM fs_nodes WHERE path LIKE '/Sources/%' LIMIT 20" --limit 20 --json
+
+Notes:
+  Restricted SELECT guardrail: use one SELECT, only fs_nodes or fs_links, one json_object(...) TEXT column, one explicit SQL LIMIT 1..100, and no mutation tokens. Escape literal single quotes by doubling them."#;
+
+const MEMORY_MANIFEST_AFTER_HELP: &str = r#"Purpose:
+  Discover Store API roots, enabled stores, roles, capabilities, and limits.
+
+Examples:
+  kinic-vfs-cli --database-id <db> memory-manifest --json
+
+Notes:
+  This is discovery metadata, not content evidence. The recommended Store API entrypoint is query-context."#;
+
+const QUERY_CONTEXT_AFTER_HELP: &str = r#"Purpose:
+  Read task-scoped Store API context for normal agent question answering.
+
+Examples:
+  kinic-vfs-cli --database-id <db> query-context --task "answer auth question" --namespace /Knowledge --entity auth --budget-tokens 8000 --depth 1 --json
+  kinic-vfs-cli --database-id <db> query-context --task "summarize current decisions" --namespace /Knowledge --json
+
+Notes:
+  Agents should prefer --json and answer from returned nodes/evidence, not search_hits alone. Use --entity multiple times to bias recall. Use --no-evidence only for lightweight routing."#;
+
+const SOURCE_EVIDENCE_AFTER_HELP: &str = r#"Purpose:
+  Read /Sources references for one known /Knowledge node.
+
+Examples:
+  kinic-vfs-cli --database-id <db> source-evidence --node-path /Knowledge/auth.md --json
+
+Notes:
+  Use after the knowledge node path is known and you need citation or trust checks. It returns source paths plus freshness metadata when available."#;
+
+const EXPORT_SNAPSHOT_AFTER_HELP: &str = r#"Purpose:
+  Export one read-only Store API snapshot page for a path scope.
+
+Examples:
+  kinic-vfs-cli --database-id <db> export-snapshot --prefix /Knowledge --limit 100 --json
+  kinic-vfs-cli --database-id <db> export-snapshot --prefix /Knowledge --cursor <cursor> --snapshot-revision <revision> --json
+
+Notes:
+  This is a CLI sync/export command. It is intentionally not exposed by the wiki MCP tool surface."#;
+
+const FETCH_UPDATES_AFTER_HELP: &str = r#"Purpose:
+  Fetch Store API changes since a known trusted snapshot revision.
+
+Examples:
+  kinic-vfs-cli --database-id <db> fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json
+
+Notes:
+  Use only when the caller already has a trusted snapshot_revision. This is a CLI sync command and is intentionally not exposed by the wiki MCP tool surface."#;
+
+const WRITE_NODE_AFTER_HELP: &str = r#"Purpose:
+  Write or replace one node from a local file.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/page.md --json
+  kinic-vfs-cli --database-id <db> write-node --path /Knowledge/page.md --input page.md --expected-etag <etag> --json
+
+Notes:
+  For existing nodes, read the current node first and pass --expected-etag. Omit --expected-etag only for intentional new-node creation."#;
+
+const APPEND_NODE_AFTER_HELP: &str = r#"Purpose:
+  Append local file content to one node.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/log.md --json
+  kinic-vfs-cli --database-id <db> append-node --path /Knowledge/log.md --input entry.md --expected-etag <etag> --json
+
+Notes:
+  Use --expected-etag after read-node for safe appends. Set --separator when the stored content needs an explicit boundary before appended text."#;
+
+const EDIT_NODE_AFTER_HELP: &str = r#"Purpose:
+  Replace text inside one node with an optional etag guard.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/page.md --json
+  kinic-vfs-cli --database-id <db> edit-node --path /Knowledge/page.md --old-text "old" --new-text "new" --expected-etag <etag> --json
+
+Notes:
+  Always read-node first for current content and etag. Use --replace-all only when every occurrence is intentionally in scope."#;
+
+const MULTI_EDIT_NODE_AFTER_HELP: &str = r#"Purpose:
+  Apply multiple prepared text edits to one node.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/page.md --json
+  kinic-vfs-cli --database-id <db> multi-edit-node --path /Knowledge/page.md --edits-file edits.json --expected-etag <etag> --json
+
+Notes:
+  Read the node immediately before mutation and pass --expected-etag. Keep the edits file limited to accepted replacements for that path."#;
+
+const DELETE_NODE_AFTER_HELP: &str = r#"Purpose:
+  Delete one node with optional etag guards.
+
+Examples:
+  kinic-vfs-cli --database-id <db> read-node --path /Knowledge/old.md --json
+  kinic-vfs-cli --database-id <db> delete-node --path /Knowledge/old.md --expected-etag <etag> --json
+
+Notes:
+  Inspect the target first. Use etag guards for destructive edits, especially when a folder index may change concurrently."#;
+
+const DELETE_TREE_AFTER_HELP: &str = r#"Purpose:
+  Delete all real node paths under one prefix, deepest-first.
+
+Examples:
+  kinic-vfs-cli --database-id <db> list-nodes --prefix /Knowledge/old --recursive --limit 100 --json
+  kinic-vfs-cli --database-id <db> delete-tree --path /Knowledge/old --json
+
+Notes:
+  Always inspect with list-nodes --prefix <path> --recursive --json before running delete-tree. Stop if the inventory contains unexpected paths."#;
+
 #[derive(Parser, Debug)]
 #[command(name = "kinic-vfs-cli")]
 #[command(version)]
@@ -88,7 +263,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Read one node by path; agents should prefer --json")]
+    #[command(
+        about = "Read one node by path; agents should prefer --json",
+        after_help = READ_NODE_AFTER_HELP
+    )]
     ReadNode {
         #[arg(long)]
         path: String,
@@ -99,7 +277,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List nodes under a prefix")]
+    #[command(about = "List nodes under a prefix", after_help = LIST_NODES_AFTER_HELP)]
     ListNodes {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         prefix: String,
@@ -118,7 +296,8 @@ pub enum Command {
         json: bool,
     },
     #[command(
-        about = "Write or replace one node; use --expected-etag after read-node for safe edits"
+        about = "Write or replace one node; use --expected-etag after read-node for safe edits",
+        after_help = WRITE_NODE_AFTER_HELP
     )]
     WriteNode {
         #[arg(long)]
@@ -142,7 +321,8 @@ pub enum Command {
         json: bool,
     },
     #[command(
-        about = "Append content to one node; use --expected-etag after read-node for safe edits"
+        about = "Append content to one node; use --expected-etag after read-node for safe edits",
+        after_help = APPEND_NODE_AFTER_HELP
     )]
     AppendNode {
         #[arg(long)]
@@ -161,7 +341,8 @@ pub enum Command {
         json: bool,
     },
     #[command(
-        about = "Replace text inside one node; use --expected-etag after read-node for safe edits"
+        about = "Replace text inside one node; use --expected-etag after read-node for safe edits",
+        after_help = EDIT_NODE_AFTER_HELP
     )]
     EditNode {
         #[arg(long)]
@@ -177,7 +358,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Delete one node; use etag guards for safe destructive edits")]
+    #[command(
+        about = "Delete one node; use etag guards for safe destructive edits",
+        after_help = DELETE_NODE_AFTER_HELP
+    )]
     DeleteNode {
         #[arg(long)]
         path: String,
@@ -191,7 +375,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Delete a node tree")]
+    #[command(about = "Delete a node tree", after_help = DELETE_TREE_AFTER_HELP)]
     DeleteTree {
         #[arg(long)]
         path: String,
@@ -246,7 +430,8 @@ pub enum Command {
         json: bool,
     },
     #[command(
-        about = "Read one node with incoming and outgoing link context; agents should prefer --json"
+        about = "Read one node with incoming and outgoing link context; agents should prefer --json",
+        after_help = READ_NODE_CONTEXT_AFTER_HELP
     )]
     ReadNodeContext {
         #[arg(long)]
@@ -294,7 +479,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Apply multiple text edits to one node with an optional etag guard")]
+    #[command(
+        about = "Apply multiple text edits to one node with an optional etag guard",
+        after_help = MULTI_EDIT_NODE_AFTER_HELP
+    )]
     MultiEditNode {
         #[arg(long)]
         path: String,
@@ -306,7 +494,10 @@ pub enum Command {
         json: bool,
     },
     #[command(alias = "search-nodes")]
-    #[command(about = "Search node content; agents should prefer --json before read-node")]
+    #[command(
+        about = "Search node content; agents should prefer --json before read-node",
+        after_help = SEARCH_REMOTE_AFTER_HELP
+    )]
     SearchRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -322,7 +513,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Search node paths; agents should prefer --json")]
+    #[command(
+        about = "Search node paths; agents should prefer --json",
+        after_help = SEARCH_PATH_REMOTE_AFTER_HELP
+    )]
     SearchPathRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -339,7 +533,8 @@ pub enum Command {
         json: bool,
     },
     #[command(
-        about = "Run one restricted JSON SELECT against the selected database; auto identity uses anonymous for public DBs unless the selected identity is a member"
+        about = "Run one restricted JSON SELECT against the selected database; auto identity uses anonymous for public DBs unless the selected identity is a member",
+        after_help = QUERY_SQL_AFTER_HELP
     )]
     QuerySql {
         sql: String,
@@ -348,12 +543,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Discover Store API roots, capabilities, and limits")]
+    #[command(
+        about = "Discover Store API roots, capabilities, and limits",
+        after_help = MEMORY_MANIFEST_AFTER_HELP
+    )]
     MemoryManifest {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Read task-scoped Store API context; agents should prefer --json")]
+    #[command(
+        about = "Read task-scoped Store API context; agents should prefer --json",
+        after_help = QUERY_CONTEXT_AFTER_HELP
+    )]
     QueryContext {
         #[arg(long)]
         task: String,
@@ -370,14 +571,20 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Read source evidence references for one knowledge node")]
+    #[command(
+        about = "Read source evidence references for one knowledge node",
+        after_help = SOURCE_EVIDENCE_AFTER_HELP
+    )]
     SourceEvidence {
         #[arg(long)]
         node_path: String,
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Export one Store API snapshot page for a path scope")]
+    #[command(
+        about = "Export one Store API snapshot page for a path scope",
+        after_help = EXPORT_SNAPSHOT_AFTER_HELP
+    )]
     ExportSnapshot {
         #[arg(long)]
         prefix: Option<String>,
@@ -390,7 +597,10 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Fetch Store API changes since a known snapshot revision")]
+    #[command(
+        about = "Fetch Store API changes since a known snapshot revision",
+        after_help = FETCH_UPDATES_AFTER_HELP
+    )]
     FetchUpdates {
         #[arg(long)]
         known_snapshot_revision: String,
@@ -405,7 +615,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Show target canister and database access status")]
+    #[command(about = "Show target canister and database access status", after_help = STATUS_AFTER_HELP)]
     Status {
         #[arg(long)]
         json: bool,
@@ -1103,6 +1313,15 @@ mod tests {
     use std::path::PathBuf;
     use vfs_cli::cli::VfsCommand;
 
+    fn top_level_command_help(name: &str) -> String {
+        let mut command = Cli::command();
+        command
+            .find_subcommand_mut(name)
+            .unwrap_or_else(|| panic!("missing {name} subcommand"))
+            .render_long_help()
+            .to_string()
+    }
+
     #[test]
     fn main_cli_help_describes_agent_entrypoints() {
         let mut command = Cli::command();
@@ -1141,6 +1360,41 @@ mod tests {
         assert!(help.contains("workspace database link"));
         assert!(help.contains("List databases attached"));
         assert!(help.contains("Grant owner, writer, or reader access"));
+    }
+
+    #[test]
+    fn main_cli_subcommand_help_includes_operational_guidance() {
+        let query_context = top_level_command_help("query-context");
+        assert!(query_context.contains("Examples:"));
+        assert!(query_context.contains("--json"));
+        assert!(query_context.contains("--namespace"));
+
+        let query_sql = top_level_command_help("query-sql");
+        assert!(query_sql.contains("Restricted SELECT guardrail"));
+        assert!(query_sql.contains("fs_nodes"));
+        assert!(query_sql.contains("json_object"));
+
+        let edit_node = top_level_command_help("edit-node");
+        assert!(edit_node.contains("read-node"));
+        assert!(edit_node.contains("--expected-etag"));
+
+        let delete_tree = top_level_command_help("delete-tree");
+        assert!(delete_tree.contains("list-nodes --prefix <path> --recursive --json"));
+        assert!(delete_tree.contains("unexpected paths"));
+
+        let store_api_help = [
+            ("memory-manifest", "Discover Store API roots"),
+            ("query-context", "Read task-scoped Store API context"),
+            ("source-evidence", "Read /Sources references"),
+            ("export-snapshot", "CLI sync/export command"),
+            ("fetch-updates", "known trusted snapshot revision"),
+        ];
+        for (command, expected) in store_api_help {
+            assert!(
+                top_level_command_help(command).contains(expected),
+                "{command} help should contain {expected}"
+            );
+        }
     }
 
     #[test]

@@ -88,6 +88,37 @@ export type SourceEvidence = {
   refs: SourceEvidenceRef[];
 };
 
+export type MemoryRoot = {
+  path: string;
+  kind: string;
+};
+
+export type MemoryCapability = {
+  name: string;
+  description: string;
+};
+
+export type CanonicalRole = {
+  name: string;
+  pathPattern: string;
+  purpose: string;
+};
+
+export type MemoryManifest = {
+  apiVersion: string;
+  purpose: string;
+  enabledStores: string[];
+  roots: MemoryRoot[];
+  entryRoots: MemoryRoot[];
+  capabilities: MemoryCapability[];
+  canonicalRoles: CanonicalRole[];
+  writePolicy: string;
+  recommendedEntrypoint: string;
+  maxDepth: number;
+  maxQueryLimit: number;
+  budgetUnit: string;
+};
+
 export type QueryContext = {
   truncated: boolean;
   task: string;
@@ -180,6 +211,37 @@ type RawSourceEvidence = {
   refs: RawSourceEvidenceRef[];
 };
 
+type RawMemoryRoot = {
+  path: string;
+  kind: string;
+};
+
+type RawMemoryCapability = {
+  name: string;
+  description: string;
+};
+
+type RawCanonicalRole = {
+  name: string;
+  path_pattern: string;
+  purpose: string;
+};
+
+type RawMemoryManifest = {
+  api_version: string;
+  purpose: string;
+  enabled_stores: string[];
+  roots: RawMemoryRoot[];
+  entry_roots: RawMemoryRoot[];
+  capabilities: RawMemoryCapability[];
+  canonical_roles: RawCanonicalRole[];
+  write_policy: string;
+  recommended_entrypoint: string;
+  max_depth: number;
+  max_query_limit: number;
+  budget_unit: string;
+};
+
 type RawQueryContext = {
   truncated: boolean;
   task: string;
@@ -215,6 +277,8 @@ type VfsActor = {
     include_evidence: boolean;
     depth: number;
   }) => Promise<Result<RawQueryContext>>;
+  memory_manifest: (request: { database_id: string }) => Promise<Result<RawMemoryManifest>>;
+  source_evidence: (request: { database_id: string; node_path: string }) => Promise<Result<RawSourceEvidence>>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<Result<RawIndexSqlJsonQueryResult>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
 };
@@ -285,6 +349,16 @@ export async function queryContext(
     })
   );
   return normalizeQueryContext(raw);
+}
+
+export async function memoryManifest(env: RuntimeEnv, databaseId: string): Promise<MemoryManifest> {
+  const actor = await createVfsActor(env);
+  return normalizeMemoryManifest(unwrap(await actor.memory_manifest({ database_id: databaseId })));
+}
+
+export async function sourceEvidence(env: RuntimeEnv, databaseId: string, nodePath: string): Promise<SourceEvidence> {
+  const actor = await createVfsActor(env);
+  return normalizeSourceEvidence(unwrap(await actor.source_evidence({ database_id: databaseId, node_path: nodePath })));
 }
 
 export async function queryDatabaseSqlJson(
@@ -437,6 +511,37 @@ function normalizeSourceEvidence(raw: RawSourceEvidence): SourceEvidence {
   };
 }
 
+function normalizeMemoryManifest(raw: RawMemoryManifest): MemoryManifest {
+  return {
+    apiVersion: raw.api_version,
+    purpose: raw.purpose,
+    enabledStores: raw.enabled_stores,
+    roots: raw.roots.map(normalizeMemoryRoot),
+    entryRoots: raw.entry_roots.map(normalizeMemoryRoot),
+    capabilities: raw.capabilities.map((capability) => ({
+      name: capability.name,
+      description: capability.description
+    })),
+    canonicalRoles: raw.canonical_roles.map((role) => ({
+      name: role.name,
+      pathPattern: role.path_pattern,
+      purpose: role.purpose
+    })),
+    writePolicy: raw.write_policy,
+    recommendedEntrypoint: raw.recommended_entrypoint,
+    maxDepth: raw.max_depth,
+    maxQueryLimit: raw.max_query_limit,
+    budgetUnit: raw.budget_unit
+  };
+}
+
+function normalizeMemoryRoot(raw: RawMemoryRoot): MemoryRoot {
+  return {
+    path: raw.path,
+    kind: raw.kind
+  };
+}
+
 function normalizeQueryContext(raw: RawQueryContext): QueryContext {
   return {
     truncated: raw.truncated,
@@ -578,6 +683,33 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     node_path: idl.Text,
     refs: idl.Vec(SourceEvidenceRef)
   });
+  const MemoryRoot = idl.Record({
+    path: idl.Text,
+    kind: idl.Text
+  });
+  const MemoryCapability = idl.Record({
+    name: idl.Text,
+    description: idl.Text
+  });
+  const CanonicalRole = idl.Record({
+    name: idl.Text,
+    path_pattern: idl.Text,
+    purpose: idl.Text
+  });
+  const MemoryManifest = idl.Record({
+    api_version: idl.Text,
+    purpose: idl.Text,
+    enabled_stores: idl.Vec(idl.Text),
+    roots: idl.Vec(MemoryRoot),
+    entry_roots: idl.Vec(MemoryRoot),
+    capabilities: idl.Vec(MemoryCapability),
+    canonical_roles: idl.Vec(CanonicalRole),
+    write_policy: idl.Text,
+    recommended_entrypoint: idl.Text,
+    max_depth: idl.Nat32,
+    max_query_limit: idl.Nat32,
+    budget_unit: idl.Text
+  });
   const QueryContext = idl.Record({
     truncated: idl.Bool,
     task: idl.Text,
@@ -596,11 +728,18 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     include_evidence: idl.Bool,
     depth: idl.Nat32
   });
+  const DatabaseIdRequest = idl.Record({ database_id: idl.Text });
+  const SourceEvidenceRequest = idl.Record({
+    database_id: idl.Text,
+    node_path: idl.Text
+  });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultNodes = idl.Variant({ Ok: idl.Vec(NodeEntry), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
+  const ResultMemoryManifest = idl.Variant({ Ok: MemoryManifest, Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
+  const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const IndexSqlJsonQueryResult = idl.Record({
     rows: idl.Vec(idl.Text),
     row_count: idl.Nat32,
@@ -611,7 +750,9 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_nodes: idl.Func([ListNodesRequest], [ResultNodes], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
+    memory_manifest: idl.Func([DatabaseIdRequest], [ResultMemoryManifest], ["query"]),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
+    source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"])
   });
