@@ -24,19 +24,19 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketListingStatus, MarketListingView, MarketOrder,
-    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
-    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
+    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
+    MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -90,6 +90,8 @@ const INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS: &str =
     "database_index:036_rename_url_ingest_trigger_sessions";
 const INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE: &str =
     "database_index:037_drop_archive_restore_lifecycle";
+const INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS: &str =
+    "database_index:038_initial_free_database_grants";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -118,6 +120,7 @@ pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
 pub const DEFAULT_CYCLES_TOP_UP_THRESHOLD: u128 = 2_000_000_000_000;
+pub const INITIAL_FREE_DATABASE_GRANT_CYCLES: u64 = 10_000_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
@@ -138,15 +141,29 @@ const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
 const MARKET_LISTING_STATUS_PAUSED: &str = "paused";
 
 #[cfg(any(test, debug_assertions))]
-static TEST_DATABASE_MIGRATION_FAIL_ONCE: LazyLock<Mutex<Option<String>>> =
-    LazyLock::new(|| Mutex::new(None));
+static TEST_DATABASE_MIGRATION_FAIL_ONCE: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
 
 #[cfg(any(test, debug_assertions))]
 pub fn fail_next_database_migration_for_test(database_id: &str) {
-    *TEST_DATABASE_MIGRATION_FAIL_ONCE
+    TEST_DATABASE_MIGRATION_FAIL_ONCE
         .lock()
-        .expect("test migration failure lock should not poison") = Some(database_id.to_string());
+        .expect("test migration failure lock should not poison")
+        .insert(database_id.to_string());
 }
+
+#[cfg(any(test, debug_assertions))]
+static TEST_DISCARD_DATABASE_RESERVATION_FAIL_ONCE: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+#[cfg(any(test, debug_assertions))]
+pub fn fail_next_discard_database_reservation_for_test(database_id: &str) {
+    TEST_DISCARD_DATABASE_RESERVATION_FAIL_ONCE
+        .lock()
+        .expect("test discard failure lock should not poison")
+        .insert(database_id.to_string());
+}
+
 const MARKET_ENTITLEMENT_STATUS_ACTIVE: &str = "active";
 const GENERATED_LISTING_ID_PREFIX: &str = "";
 const GENERATED_ORDER_ID_PREFIX: &str = "order_";
@@ -160,6 +177,13 @@ pub struct DatabaseMeta {
     pub mount_id: u16,
     pub schema_version: String,
     pub logical_size_bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatabaseCreateOutcome {
+    pub meta: DatabaseMeta,
+    pub status: DatabaseStatus,
+    pub initial_free_grant_applied: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -468,6 +492,34 @@ impl VfsService {
         self.read_index(load_cycles_billing_config)
     }
 
+    pub fn initial_free_database_grant_status(
+        &self,
+        caller: &str,
+    ) -> Result<InitialFreeDatabaseGrantStatus, String> {
+        self.read_index(|conn| load_initial_free_database_grant_status(conn, caller))
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub fn mark_initial_free_database_grant_used_for_test(
+        &self,
+        caller: &str,
+        database_id: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        self.write_index(|tx| {
+            if load_initial_free_database_grant(tx, caller)?.is_none() {
+                insert_initial_free_database_grant(
+                    tx,
+                    caller,
+                    database_id,
+                    cycles_to_i64(INITIAL_FREE_DATABASE_GRANT_CYCLES)?,
+                    now,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn update_cycles_billing_config(
         &self,
         update: CyclesBillingConfigUpdate,
@@ -532,6 +584,103 @@ impl VfsService {
             });
         }
         Ok(meta)
+    }
+
+    pub fn create_generated_database_with_initial_free_grant_or_pending(
+        &self,
+        name: &str,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseCreateOutcome, String> {
+        if self.initial_free_database_grant_status(caller)?.available {
+            return self.create_generated_database_with_initial_free_grant(name, caller, now);
+        }
+        let meta = self.reserve_pending_generated_database(name, caller, now)?;
+        Ok(DatabaseCreateOutcome {
+            meta,
+            status: DatabaseStatus::Pending,
+            initial_free_grant_applied: false,
+        })
+    }
+
+    fn create_generated_database_with_initial_free_grant(
+        &self,
+        name: &str,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseCreateOutcome, String> {
+        let cycles_i64 = cycles_to_i64(INITIAL_FREE_DATABASE_GRANT_CYCLES)?;
+        let metadata = normalize_database_metadata(DatabaseMetadata {
+            name: name.to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })?;
+        let meta = self.write_index(|tx| {
+            if load_initial_free_database_grant(tx, caller)?.is_some() {
+                return Err("initial free database grant already used".to_string());
+            }
+            let mount_id = allocate_mount_id(tx)?;
+            let mut selected_database_id = None;
+            for attempt in 0_u32..100 {
+                let database_id = generated_database_id(caller, now, mount_id, attempt);
+                if !database_exists(tx, &database_id)? {
+                    selected_database_id = Some(database_id);
+                    break;
+                }
+            }
+            let database_id = selected_database_id
+                .ok_or_else(|| "failed to generate unique database id".to_string())?;
+            let meta = self.insert_database_reservation(
+                tx,
+                &database_id,
+                &metadata,
+                caller,
+                now,
+                mount_id,
+                cycles_i64,
+            )?;
+            insert_initial_free_database_grant(tx, caller, &database_id, cycles_i64, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id: &database_id,
+                    kind: "free_grant",
+                    amount_cycles: cycles_i64,
+                    balance_after_cycles: cycles_i64,
+                    payment_amount_e8s: None,
+                    caller,
+                    method: Some("create_database"),
+                    cycles_delta: None,
+                    config: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            Ok(meta)
+        })?;
+        if let Err(error) = self
+            .run_database_migrations(&meta.database_id)
+            .and_then(|_| self.seed_database_store_roots(&meta, now))
+        {
+            let mut cleanup_errors = Vec::new();
+            if let Err(cleanup_error) = self.discard_database_reservation(&meta.database_id) {
+                cleanup_errors.push(format!(
+                    "discard_database_reservation failed: {cleanup_error}"
+                ));
+            }
+            if let Err(cleanup_error) = self.delete_initial_free_database_grant(caller) {
+                cleanup_errors.push(format!(
+                    "delete_initial_free_database_grant failed: {cleanup_error}"
+                ));
+            }
+            return Err(format_create_cleanup_error(error, cleanup_errors));
+        }
+        Ok(DatabaseCreateOutcome {
+            meta,
+            status: DatabaseStatus::Active,
+            initial_free_grant_applied: true,
+        })
     }
 
     pub fn reserve_generated_database_for_mount(
@@ -738,6 +887,18 @@ impl VfsService {
     }
 
     pub fn discard_database_reservation(&self, database_id: &str) -> Result<(), String> {
+        #[cfg(any(test, debug_assertions))]
+        {
+            let should_fail = {
+                let mut next_failure = TEST_DISCARD_DATABASE_RESERVATION_FAIL_ONCE
+                    .lock()
+                    .expect("test discard failure lock should not poison");
+                next_failure.remove(database_id)
+            };
+            if should_fail {
+                return Err("test discard database reservation failure".to_string());
+            }
+        }
         let db_file_name = self.write_index(|tx| {
             let db_file_name: Option<String> = tx
                 .query_row(
@@ -801,6 +962,17 @@ impl VfsService {
             return Err(error.to_string());
         }
         Ok(())
+    }
+
+    fn delete_initial_free_database_grant(&self, caller: &str) -> Result<(), String> {
+        self.write_index(|tx| {
+            tx.execute(
+                "DELETE FROM database_free_cycle_grants WHERE principal = ?1",
+                params![caller],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
     }
 
     pub fn prepare_pending_database_activation(
@@ -2116,12 +2288,7 @@ impl VfsService {
                 let mut next_failure = TEST_DATABASE_MIGRATION_FAIL_ONCE
                     .lock()
                     .expect("test migration failure lock should not poison");
-                if next_failure.as_deref() == Some(database_id) {
-                    *next_failure = None;
-                    true
-                } else {
-                    false
-                }
+                next_failure.remove(database_id)
             };
             if should_fail {
                 return Err("test database migration failure".to_string());
@@ -3206,6 +3373,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 enum IndexSchemaState {
     Latest,
     LegacyProfileLatest,
+    InitialFreeDatabaseGrantsPending,
     Mainnet011,
     Mainnet026,
     Mainnet031,
@@ -3229,6 +3397,12 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::LegacyProfileLatest => {
             apply_database_metadata_index_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::InitialFreeDatabaseGrantsPending => {
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
@@ -3236,6 +3410,7 @@ fn ensure_existing_index_schema_is_latest(
             apply_database_metadata_index_migration(conn)?;
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
@@ -3245,11 +3420,13 @@ fn ensure_existing_index_schema_is_latest(
             validate_cycles_billing_config(config)?;
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
@@ -3258,6 +3435,7 @@ fn ensure_existing_index_schema_is_latest(
             apply_database_metadata_index_migration(conn)?;
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
@@ -3265,33 +3443,39 @@ fn ensure_existing_index_schema_is_latest(
             apply_database_metadata_index_migration(conn)?;
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::RenameSourceCaptureTriggerSessions => {
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
         IndexSchemaState::RenameSourceCaptureTriggerSessionsStoreRootsPending => {
             apply_rename_source_capture_trigger_sessions_migration(conn)?;
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::DropArchiveRestoreLifecycle => {
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::None)
         }
         IndexSchemaState::DropArchiveRestoreLifecycleStoreRootsPending => {
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::StoreRootsPending => {
             apply_drop_archive_restore_lifecycle_migration(conn)?;
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
@@ -3336,12 +3520,27 @@ fn classify_existing_index_schema_state(
     )?;
     let drop_archive_restore_lifecycle_applied =
         migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE)?;
+    let initial_free_database_grants_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
+    if store_roots_applied
+        && database_metadata_applied
+        && rename_source_capture_trigger_sessions_applied
+        && drop_archive_restore_lifecycle_applied
+        && initial_free_database_grants_applied
+    {
+        return Ok(IndexSchemaState::Latest);
+    }
+    if initial_free_database_grants_applied {
+        return Err(format!(
+            "unsupported partial index schema: migration {INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS} is already applied"
+        ));
+    }
     if store_roots_applied
         && database_metadata_applied
         && rename_source_capture_trigger_sessions_applied
         && drop_archive_restore_lifecycle_applied
     {
-        return Ok(IndexSchemaState::Latest);
+        return Ok(IndexSchemaState::InitialFreeDatabaseGrantsPending);
     }
     if store_roots_applied
         && database_profile_applied
@@ -3624,6 +3823,28 @@ fn apply_drop_archive_restore_lifecycle_migration(conn: &Transaction<'_>) -> Res
     Ok(())
 }
 
+fn apply_initial_free_database_grants_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE database_free_cycle_grants (
+           principal TEXT PRIMARY KEY,
+           database_id TEXT NOT NULL,
+           grant_cycles INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL
+         );",
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
+    Ok(())
+}
+
+fn format_create_cleanup_error(error: String, cleanup_errors: Vec<String>) -> String {
+    if cleanup_errors.is_empty() {
+        error
+    } else {
+        format!("{error}; cleanup failed: {}", cleanup_errors.join("; "))
+    }
+}
+
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
@@ -3820,6 +4041,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DATABASE_METADATA,
     INDEX_SCHEMA_VERSION_RENAME_URL_INGEST_TRIGGER_SESSIONS,
     INDEX_SCHEMA_VERSION_DROP_ARCHIVE_RESTORE_LIFECYCLE,
+    INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3834,6 +4056,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_restore_sessions",
     "database_cycle_accounts",
     "database_cycle_ledger",
+    "database_free_cycle_grants",
     "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
@@ -3871,6 +4094,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_accounts",
     "database_cycle_ledger",
+    "database_free_cycle_grants",
     "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
@@ -4038,6 +4262,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "source_capture_trigger_sessions",
         "database_cycle_accounts",
         "database_cycle_ledger",
+        "database_free_cycle_grants",
         "database_cycle_pending_operations",
         "cycles_billing_config",
         "storage_billing_state",
@@ -4107,6 +4332,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "ledger_block_index",
                 "created_at_ms",
             ][..],
+        ),
+        (
+            "database_free_cycle_grants",
+            &["principal", "database_id", "grant_cycles", "created_at_ms"][..],
         ),
         (
             "database_cycle_pending_operations",
@@ -4969,6 +5198,65 @@ fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<
         |row| crate::sqlite::row_get(row, 0),
     )
     .map_err(|error| error.to_string())
+}
+
+fn load_initial_free_database_grant_status(
+    conn: &Connection,
+    caller: &str,
+) -> Result<InitialFreeDatabaseGrantStatus, String> {
+    match load_initial_free_database_grant(conn, caller)? {
+        Some((database_id, grant_cycles, created_at_ms)) => Ok(InitialFreeDatabaseGrantStatus {
+            available: false,
+            grant_cycles,
+            database_id: Some(database_id),
+            created_at_ms: Some(created_at_ms),
+        }),
+        None => Ok(InitialFreeDatabaseGrantStatus {
+            available: true,
+            grant_cycles: INITIAL_FREE_DATABASE_GRANT_CYCLES,
+            database_id: None,
+            created_at_ms: None,
+        }),
+    }
+}
+
+fn load_initial_free_database_grant(
+    conn: &Connection,
+    caller: &str,
+) -> Result<Option<(String, u64, i64)>, String> {
+    conn.query_row(
+        "SELECT database_id, grant_cycles, created_at_ms
+         FROM database_free_cycle_grants
+         WHERE principal = ?1",
+        params![caller],
+        |row| {
+            let grant_cycles: i64 = crate::sqlite::row_get(row, 1)?;
+            Ok((
+                crate::sqlite::row_get(row, 0)?,
+                grant_cycles.max(0) as u64,
+                crate::sqlite::row_get(row, 2)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn insert_initial_free_database_grant(
+    conn: &Connection,
+    caller: &str,
+    database_id: &str,
+    grant_cycles: i64,
+    now: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO database_free_cycle_grants
+         (principal, database_id, grant_cycles, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![caller, database_id, grant_cycles, now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn complete_pending_database_activation(
@@ -7055,6 +7343,16 @@ fn generated_database_id(caller: &str, now: i64, mount_id: u16, attempt: u32) ->
     )
 }
 
+#[cfg(any(test, debug_assertions))]
+pub fn generated_database_id_for_test(
+    caller: &str,
+    now: i64,
+    mount_id: u16,
+    attempt: u32,
+) -> String {
+    generated_database_id(caller, now, mount_id, attempt)
+}
+
 fn base32_lower(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
     let mut output = String::new();
@@ -8241,11 +8539,34 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("market table count should load");
+        let free_grant_tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name = 'database_free_cycle_grants'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("free grant table count should load");
         assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
+        assert_eq!(free_grant_tables, 1);
         assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
+        );
+        assert_eq!(
+            schema_marker_count(
+                &index_path,
+                INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS
+            ),
+            1
+        );
+        assert!(
+            service
+                .initial_free_database_grant_status("owner")
+                .expect("free grant status should load after 026 upgrade")
+                .available
         );
         assert_eq!(
             schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_METADATA),

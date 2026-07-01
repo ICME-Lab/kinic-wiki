@@ -20,6 +20,7 @@ import type {
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
+  InitialFreeDatabaseGrantStatus,
   IndexSqlJsonQueryResult,
   LinkEdge,
   MarketCreateListingRequest,
@@ -92,6 +93,13 @@ export type DatabaseCyclesPurchaseRequest = {
   database_id: string;
   payment_amount_e8s: bigint;
   min_expected_cycles: bigint;
+};
+
+type RawInitialFreeDatabaseGrantStatus = {
+  available: boolean;
+  grant_cycles: bigint;
+  database_id: [] | [string];
+  created_at_ms: [] | [bigint];
 };
 
 type RawDatabaseSummary = {
@@ -305,6 +313,15 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
+  status: Variant;
+  initial_free_grant_applied: boolean;
+};
+
+type CreateDatabaseResult = {
+  database_id: string;
+  name: string;
+  status: DatabaseStatus;
+  initial_free_grant_applied: boolean;
 };
 
 type RawUpdateDatabaseMetadataRequest = RawDatabaseMetadata & {
@@ -484,6 +501,7 @@ type VfsActor = {
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
+  get_initial_free_database_grant_status: () => Promise<{ Ok: RawInitialFreeDatabaseGrantStatus } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
@@ -928,14 +946,30 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<CreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.create_database({ name });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return result.Ok;
+    return {
+      database_id: result.Ok.database_id,
+      name: result.Ok.name,
+      status: normalizeDatabaseStatus(result.Ok.status),
+      initial_free_grant_applied: Boolean(result.Ok.initial_free_grant_applied)
+    };
+  });
+}
+
+export async function getInitialFreeDatabaseGrantStatus(canisterId: string, identity: Identity): Promise<InitialFreeDatabaseGrantStatus> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.get_initial_free_database_grant_status();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeInitialFreeDatabaseGrantStatus(result.Ok);
   });
 }
 
@@ -1393,6 +1427,15 @@ function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {
     description: raw.description,
     llmSummary: raw.llm_summary[0] ?? null,
     tagsJson: raw.tags_json
+  };
+}
+
+function normalizeInitialFreeDatabaseGrantStatus(raw: RawInitialFreeDatabaseGrantStatus): InitialFreeDatabaseGrantStatus {
+  return {
+    available: raw.available,
+    grantCycles: raw.grant_cycles.toString(),
+    databaseId: raw.database_id[0] ?? null,
+    createdAtMs: raw.created_at_ms[0]?.toString() ?? null
   };
 }
 

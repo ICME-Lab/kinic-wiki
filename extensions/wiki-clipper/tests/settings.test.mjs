@@ -139,14 +139,26 @@ test("database creation delegates create_database and normalizes result", async 
     {
       async create_database(request) {
         calls.push(request);
-        return { Ok: { database_id: "db_created", name: request.name } };
+        return {
+          Ok: {
+            database_id: "db_created",
+            name: request.name,
+            status: { Active: null },
+            initial_free_grant_applied: true
+          }
+        };
       }
     },
     "My Team Wiki"
   );
 
   assert.deepEqual(calls, [{ name: "My Team Wiki" }]);
-  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki" });
+  assert.deepEqual(result, {
+    databaseId: "db_created",
+    name: "My Team Wiki",
+    status: "Active",
+    initialFreeGrantApplied: true
+  });
 });
 
 test("database creation surfaces canister errors", async () => {

@@ -99,8 +99,9 @@ kinic-vfs-cli cycles config
 # Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
 DB_ID="$(kinic-vfs-cli database create "<database-name>")"
 kinic-vfs-cli database list
-kinic-vfs-cli database purchase-cycles "$DB_ID" 1.25
 kinic-vfs-cli database cycles "$DB_ID"
+# First eligible databases are active immediately with the initial free grant. Run cycle purchase only when the database is pending.
+kinic-vfs-cli database purchase-cycles "$DB_ID" 1.25
 kinic-vfs-cli database cycles-history "$DB_ID"
 kinic-vfs-cli database cycles-pending "$DB_ID"
 kinic-vfs-cli database grant "$DB_ID" <principal> reader
@@ -111,7 +112,7 @@ kinic-vfs-cli query-sql "SELECT json_object('path', path, 'updated_at', updated_
 ```
 
 `cycles config` prints the KINIC ledger canister, billing authority principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `100_000 e8s`.
-`database create <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase.
+`database create <database-name>` creates a generated database ID and prints it on success. The caller's first database consumes the initial free grant, starts active, and receives `10_000_000_000` cycles. Later databases start pending with zero DB cycles balance and do not allocate a DB mount until the first successful cycle purchase.
 Every database uses the same four-store roots and the same VFS schema.
 
 Common examples:

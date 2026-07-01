@@ -33,18 +33,19 @@ use super::{
     clear_ledger_transactions_for_test, create_database,
     cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config, glob_nodes,
-    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
-    incoming_links, last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config,
+    get_initial_free_database_grant_status, glob_nodes, grant_database_access, graph_links,
+    graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
+    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
-    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
-    market_purchase_access, memory_manifest, mkdir_node, move_node, multi_edit_node,
-    outgoing_links, parse_upgrade_cycles_billing_config_arg, purchase_database_cycles,
-    query_context, query_database_sql_json, query_index_sql_json, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
-    set_next_cycles_top_up_launcher_result_for_test,
+    mark_initial_free_database_grant_used_for_test, market_create_listing, market_get_listing,
+    market_list_seller_listings, market_pause_listing, market_purchase_access, memory_manifest,
+    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
+    query_database_sql_json, query_index_sql_json, read_node, read_node_context, rename_database,
+    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
+    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
     status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
@@ -833,6 +834,7 @@ fn transfer_from_bad_fee_outcome_is_typed() {
 fn purchase_database_cycles_cycles_completed_transfer_from() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Funded".to_string(),
     })
@@ -871,6 +873,7 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
 fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Anonymous purchase".to_string(),
     })
@@ -897,6 +900,7 @@ fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
 fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Duplicate ledger".to_string(),
     })
@@ -930,6 +934,7 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
 fn list_database_cycle_entries_paginates_with_clamped_limits() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Cycle history pages".to_string(),
     })
@@ -964,6 +969,7 @@ fn list_database_cycle_entries_paginates_with_clamped_limits() {
 fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Bad fee".to_string(),
     })
@@ -997,6 +1003,7 @@ fn purchase_database_cycles_rejects_bad_fee_without_credit() {
 fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Purchase validation".to_string(),
     })
@@ -1029,6 +1036,7 @@ fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
 fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Overflow".to_string(),
     })
@@ -1066,6 +1074,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
 fn purchase_database_cycles_uses_current_config_amount() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Current config".to_string(),
     })
@@ -1105,6 +1114,7 @@ fn purchase_database_cycles_uses_current_config_amount() {
 fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Rejected".to_string(),
     })
@@ -1134,6 +1144,7 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
 fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_review() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Ambiguous".to_string(),
     })
@@ -1180,6 +1191,7 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
         Principal::from_text("bkyz2-fmaaa-aaaaa-qaaaq-cai").expect("stranger should parse");
     let database = {
         let _owner = AuthenticatedCallerGuard::install_principal(owner);
+        mark_initial_free_database_grant_used_for_test();
         create_database(CreateDatabaseRequest {
             name: "Pending".to_string(),
         })
@@ -1227,6 +1239,7 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
 fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Mount review".to_string(),
     })
@@ -1273,6 +1286,7 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
 fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
+    mark_initial_free_database_grant_used_for_test();
     let database = create_database(CreateDatabaseRequest {
         name: "Apply review".to_string(),
     })
@@ -1327,6 +1341,7 @@ fn purchase_database_cycles_allows_non_owner_payer() {
     install_empty_test_service();
     let database_id = {
         let _owner = AuthenticatedCallerGuard::install();
+        mark_initial_free_database_grant_used_for_test();
         create_database(CreateDatabaseRequest {
             name: "Public funding".to_string(),
         })
@@ -2510,6 +2525,7 @@ fn check_database_write_cycles_requires_authenticated_writer() {
         Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("reader principal should parse");
     let database_id = {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        mark_initial_free_database_grant_used_for_test();
         create_database(CreateDatabaseRequest {
             name: "Write cycles check".to_string(),
         })
@@ -2623,6 +2639,10 @@ fn write_nodes_allows_source_paths_without_schema_validation() {
 fn create_database_returns_result() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+    let initial_grant =
+        get_initial_free_database_grant_status().expect("initial grant status should load");
+    assert!(initial_grant.available);
+
     let result = create_database(CreateDatabaseRequest {
         name: " Team skills ".to_string(),
     })
@@ -2630,31 +2650,62 @@ fn create_database_returns_result() {
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
+    assert_eq!(result.status, DatabaseStatus::Active);
+    assert!(result.initial_free_grant_applied);
 
     let summaries = list_databases().expect("database summaries should load");
     let summary = summaries
         .iter()
         .find(|summary| summary.database_id == result.database_id)
         .expect("created database summary should exist");
-    assert_eq!(summary.status, DatabaseStatus::Pending);
-    let pending_read = list_children(ListChildrenRequest {
+    assert_eq!(summary.status, DatabaseStatus::Active);
+    let used_grant =
+        get_initial_free_database_grant_status().expect("used grant status should load");
+    assert!(!used_grant.available);
+    assert_eq!(
+        used_grant.database_id.as_deref(),
+        Some(result.database_id.as_str())
+    );
+
+    let children = list_children(ListChildrenRequest {
         database_id: result.database_id.clone(),
+        path: "/".to_string(),
+    })
+    .expect("free grant database should list");
+    assert!(children.iter().any(|child| {
+        child.path == "/Skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
+    }));
+
+    let pending = create_database(CreateDatabaseRequest {
+        name: " Paid skills ".to_string(),
+    })
+    .expect("second database should create pending");
+    assert_eq!(pending.status, DatabaseStatus::Pending);
+    assert!(!pending.initial_free_grant_applied);
+    let pending_summary = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|summary| summary.database_id == pending.database_id)
+        .expect("pending database summary should exist");
+    assert_eq!(pending_summary.status, DatabaseStatus::Pending);
+    let pending_read = list_children(ListChildrenRequest {
+        database_id: pending.database_id.clone(),
         path: "/Knowledge".to_string(),
     })
-    .expect_err("pending DB should reject reads");
+    .expect_err("second DB should reject reads until funded");
     assert!(pending_read.contains("database is pending"));
 
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
     block_on_ready(purchase_database_cycles(cycles_purchase_request(
-        &result.database_id,
+        &pending.database_id,
         1_000_000,
     )))
     .expect("cycle purchase should activate database");
-    let status = status(result.database_id.clone());
+    let status = status(pending.database_id.clone());
     assert_eq!(status.file_count, 0);
     assert_eq!(status.source_count, 0);
     let children = list_children(ListChildrenRequest {
-        database_id: result.database_id,
+        database_id: pending.database_id,
         path: "/".to_string(),
     })
     .expect("activated database should list");
@@ -2667,6 +2718,11 @@ fn create_database_returns_result() {
 fn create_database_rejects_pending_database_limit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
+
+    let free = create_database(CreateDatabaseRequest {
+        name: "Free".to_string(),
+    })
+    .expect("initial free database should create active");
 
     for offset in 0..3 {
         create_database(CreateDatabaseRequest {
@@ -2682,11 +2738,16 @@ fn create_database_rejects_pending_database_limit() {
     assert!(error.contains("too many pending databases for caller"));
 
     let summaries = list_databases().expect("database summaries should load");
-    assert_eq!(summaries.len(), 3);
-    assert!(
+    assert_eq!(summaries.len(), 4);
+    assert!(summaries.iter().any(|summary| {
+        summary.database_id == free.database_id && summary.status == DatabaseStatus::Active
+    }));
+    assert_eq!(
         summaries
             .iter()
-            .all(|summary| summary.status == DatabaseStatus::Pending)
+            .filter(|summary| summary.status == DatabaseStatus::Pending)
+            .count(),
+        3
     );
 }
 

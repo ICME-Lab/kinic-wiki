@@ -48,19 +48,19 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
-    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
-    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
+    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
+    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
+    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -411,12 +411,24 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
+        let outcome = service.create_generated_database_with_initial_free_grant_or_pending(
+            &request.name,
+            caller,
+            now,
+        )?;
         Ok(CreateDatabaseResult {
-            database_id: meta.database_id,
-            name: meta.metadata.name,
+            database_id: outcome.meta.database_id,
+            name: outcome.meta.metadata.name,
+            status: outcome.status,
+            initial_free_grant_applied: outcome.initial_free_grant_applied,
         })
     })
+}
+
+#[query]
+fn get_initial_free_database_grant_status() -> Result<InitialFreeDatabaseGrantStatus, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.initial_free_database_grant_status(&caller_text()))
 }
 
 #[update]
@@ -1591,6 +1603,18 @@ fn set_test_caller_principal_for_test(principal: Principal) {
     TEST_CALLER_PRINCIPAL.with(|slot| {
         slot.replace(Some(principal));
     });
+}
+
+#[cfg(test)]
+fn mark_initial_free_database_grant_used_for_test() {
+    with_service(|service| {
+        service.mark_initial_free_database_grant_used_for_test(
+            &caller_text(),
+            "test_free_grant_consumed",
+            0,
+        )
+    })
+    .expect("test free grant marker should insert");
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ export function CreateDatabaseDialog({
   creating,
   databaseName,
   open,
+  paymentNote,
   requiredBalanceLabel,
   validationError,
   onCancel,
@@ -21,6 +22,7 @@ export function CreateDatabaseDialog({
   creating: boolean;
   databaseName: string;
   open: boolean;
+  paymentNote: string;
   requiredBalanceLabel: string;
   validationError: string | null;
   onCancel: () => void;
@@ -47,7 +49,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Create requires {requiredBalanceLabel}. Wallet approval pays directly from ledger balance.
+              Create requires {requiredBalanceLabel}. {paymentNote}
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>

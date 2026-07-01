@@ -108,6 +108,13 @@ CREATE TABLE database_cycle_ledger (
 CREATE INDEX database_cycle_ledger_database_idx
   ON database_cycle_ledger(database_id, entry_id);
 
+CREATE TABLE database_free_cycle_grants (
+  principal TEXT PRIMARY KEY,
+  database_id TEXT NOT NULL,
+  grant_cycles INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL
+);
+
 CREATE TABLE database_cycle_pending_operations (
   operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
   database_id TEXT NOT NULL,

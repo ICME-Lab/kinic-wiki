@@ -158,6 +158,13 @@ export type CyclesPurchaseResult = {
   balanceCycles: string;
 };
 
+export type InitialFreeDatabaseGrantStatus = {
+  available: boolean;
+  grantCycles: string;
+  databaseId: string | null;
+  createdAtMs: string | null;
+};
+
 export type DatabaseCycleEntry = {
   entryId: string;
   databaseId: string;

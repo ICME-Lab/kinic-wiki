@@ -51,7 +51,12 @@ function idlFactory({ IDL: idl }) {
     top_up: CyclesTopUpConfig
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
+  const CreateDatabaseResult = idl.Record({
+    database_id: idl.Text,
+    name: idl.Text,
+    status: DatabaseStatus,
+    initial_free_grant_applied: idl.Bool
+  });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -149,7 +154,9 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name)
+    name: String(raw.name),
+    status: normalizeDatabaseStatus(raw.status),
+    initialFreeGrantApplied: Boolean(raw.initial_free_grant_applied)
   };
 }
 

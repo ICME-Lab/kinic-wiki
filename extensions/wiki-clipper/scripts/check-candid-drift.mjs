@@ -48,7 +48,15 @@ const expectedTypes = {
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  CreateDatabaseResult: {
+    kind: "record",
+    fields: {
+      name: "text",
+      database_id: "text",
+      status: "DatabaseStatus",
+      initial_free_grant_applied: "bool"
+    }
+  },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -190,10 +198,11 @@ function normalizeDidResult(value) {
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_16") return "ResultDatabases";
-  if (normalized === "Result_28") return "ResultMkdirNode";
-  if (normalized === "Result_33") return "ResultNode";
-  if (normalized === "Result_42") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_10") return "ResultInitialFreeDatabaseGrantStatus";
+  if (normalized === "Result_17") return "ResultDatabases";
+  if (normalized === "Result_29") return "ResultMkdirNode";
+  if (normalized === "Result_34") return "ResultNode";
+  if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

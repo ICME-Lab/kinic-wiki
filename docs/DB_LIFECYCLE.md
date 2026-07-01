@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
+The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The latest schema requires `database_index:038_initial_free_database_grants` and `database_free_cycle_grants`. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
 
 Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active DBs consume one active user DB slot. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
@@ -55,7 +55,9 @@ KINIC cycles uses one internal DB-scoped balance:
 
 - DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(CreateDatabaseRequest { name })`. It creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
+DB creation uses `create_database(CreateDatabaseRequest { name })`. The response includes the actual `status` and `initial_free_grant_applied` outcome from create execution. The first database created by each authenticated caller receives one initial free grant of `10_000_000_000` cycles. That free-grant DB allocates a stable-memory mount immediately, starts as `active`, and records `kind = "free_grant"` in `database_cycle_ledger`. `database_free_cycle_grants` records the caller principal, granted database, grant cycles, and creation time, so deleting that DB does not reset the caller's grant.
+
+After a caller has used the free grant, `create_database` creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
 External ledger calls are used for DB cycles purchase and App KINIC balance movement:
 
@@ -91,6 +93,8 @@ Cycles history redacts payer/caller principals for reader and writer callers. DB
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh`. For existing mainnet deploys, the script resolves unset `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` from the current canister `get_cycles_billing_config`; fresh installs must set both explicitly. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
 
+Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles. Keep the existing production canister `xis3j-paaaa-aaaai-axumq-cai` documented as the current production canister until traffic cutover is complete.
+
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
@@ -100,11 +104,12 @@ Upgrade compatibility:
 
 Normal operator flow:
 
-1. Owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`.
-2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
-4. Successful DB updates consume DB cycles balance.
-5. DB delete discards any remaining cycles.
+1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.
+2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.
+3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
+4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
+5. Successful DB updates consume DB cycles balance.
+6. DB delete discards any remaining cycles.
 
 source capture and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. source capture source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
@@ -122,6 +127,7 @@ Delete is a hard delete:
 
 - the SQLite DB file is removed where file deletion is available
 - DB membership, cycles, pending operations, and transient sessions are removed from the index
+- the caller-level initial free grant record is retained
 - `database_mount_history` is retained so the stable-memory mount ID is not reused by another DB in v1
 - the stable-memory mount ID is not reused by another DB in v1
 

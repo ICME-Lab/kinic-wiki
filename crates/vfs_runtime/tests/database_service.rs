@@ -8,7 +8,9 @@ use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL,
     DEFAULT_CYCLES_TOP_UP_THRESHOLD, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, VfsService, cycles_for_payment_amount_e8s,
+    DatabaseCyclesPurchaseWithLedgerDetails, INITIAL_FREE_DATABASE_GRANT_CYCLES, VfsService,
+    cycles_for_payment_amount_e8s, fail_next_database_migration_for_test,
+    fail_next_discard_database_reservation_for_test, generated_database_id_for_test,
 };
 use vfs_store::FsStore;
 use vfs_types::{
@@ -287,8 +289,13 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
     assert!(table_exists(&root, "source_capture_trigger_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
     assert!(!index_exists(
         &root,
         "url_ingest_trigger_sessions_expiry_idx"
@@ -326,8 +333,10 @@ fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_na
              WHERE version IN (
                'database_index:034_database_metadata',
                'database_index:036_rename_url_ingest_trigger_sessions',
-               'database_index:037_drop_archive_restore_lifecycle'
+               'database_index:037_drop_archive_restore_lifecycle',
+               'database_index:038_initial_free_database_grants'
              );
+            DROP TABLE database_free_cycle_grants;
             ALTER TABLE market_listings ADD COLUMN title TEXT NOT NULL DEFAULT '';
             ALTER TABLE market_listings ADD COLUMN description TEXT NOT NULL DEFAULT '';
             ALTER TABLE market_listings ADD COLUMN llm_summary TEXT;
@@ -894,6 +903,17 @@ fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<Strin
         .expect("database ledger rows should load")
 }
 
+fn free_cycle_grant_database_id(root: &std::path::Path, principal: &str) -> Option<String> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT database_id FROM database_free_cycle_grants WHERE principal = ?1",
+        params![principal],
+        |row| row.get(0),
+    )
+    .optional()
+    .expect("free cycle grant should load")
+}
+
 fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -952,6 +972,10 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(table_exists(&root, "market_listings"));
     assert!(table_exists(&root, "market_purchase_pending_operations"));
     assert!(table_exists(&root, "market_entitlements"));
@@ -960,6 +984,7 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     assert!(!table_exists(&root, "kinic_pending_operations"));
     assert!(!table_exists(&root, "database_restore_chunks"));
     assert!(!table_exists(&root, "database_restore_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
     assert!(!index_exists(
         &root,
         "database_restore_chunks_database_id_idx"
@@ -1196,6 +1221,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:011_source_run_sessions"),
         1
     );
@@ -1236,6 +1265,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
         1
     );
     assert_eq!(
@@ -1910,6 +1943,140 @@ fn database_create_returns_generated_id_and_name() {
     assert_eq!(row.1, Some(11));
     assert!(row.2 > 0);
     assert_all_store_roots_exist(&service, &result.database_id);
+}
+
+#[test]
+fn initial_free_database_grant_creates_active_database_once_per_principal() {
+    let (service, root) = service_with_root();
+
+    let first = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("first database should use free grant");
+    assert_eq!(first.status, DatabaseStatus::Active);
+    assert!(first.initial_free_grant_applied);
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(first.meta.database_id.as_str())
+    );
+    assert_eq!(status.grant_cycles, INITIAL_FREE_DATABASE_GRANT_CYCLES);
+    assert_eq!(status.created_at_ms, Some(1));
+    assert_eq!(
+        database_cycles_balance(&root, &first.meta.database_id),
+        i64::try_from(INITIAL_FREE_DATABASE_GRANT_CYCLES).expect("grant should fit i64")
+    );
+    assert_eq!(
+        database_cycles_suspended_at(&root, &first.meta.database_id),
+        None
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, &first.meta.database_id),
+        vec!["free_grant"]
+    );
+    assert_eq!(
+        database_index_row(&root, &first.meta.database_id).0,
+        "active".to_string()
+    );
+
+    let second = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner paid", "owner", 2)
+        .expect("second database should reserve pending");
+    assert_eq!(second.status, DatabaseStatus::Pending);
+    assert!(!second.initial_free_grant_applied);
+    assert_eq!(
+        database_index_row(&root, &second.meta.database_id),
+        ("pending".to_string(), None, 0)
+    );
+    assert_eq!(database_cycles_balance(&root, &second.meta.database_id), 0);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(first.meta.database_id.as_str())
+    );
+}
+
+#[test]
+fn initial_free_database_grant_migration_failure_restores_grant() {
+    let (service, root) = service_with_root();
+    let caller = "owner-migration-failure";
+    let database_id = generated_database_id_for_test(caller, 1, 11, 0);
+    fail_next_database_migration_for_test(&database_id);
+
+    let error = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", caller, 1)
+        .expect_err("forced migration failure should reject free grant creation");
+    let status = service
+        .initial_free_database_grant_status(caller)
+        .expect("free grant status should load after failed create");
+
+    assert!(error.contains("test database migration failure"));
+    assert!(status.available);
+    assert_eq!(status.database_id, None);
+    assert_eq!(free_cycle_grant_database_id(&root, caller), None);
+}
+
+#[test]
+fn initial_free_database_grant_cleanup_deletes_grant_when_reservation_cleanup_fails() {
+    let (service, root) = service_with_root();
+    let caller = "owner-discard-failure";
+    let database_id = generated_database_id_for_test(caller, 1, 11, 0);
+    fail_next_database_migration_for_test(&database_id);
+    fail_next_discard_database_reservation_for_test(&database_id);
+
+    let error = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", caller, 1)
+        .expect_err("forced cleanup failure should reject free grant creation");
+    let status = service
+        .initial_free_database_grant_status(caller)
+        .expect("free grant status should load after partial cleanup");
+
+    assert!(error.contains("test database migration failure"));
+    assert!(error.contains("discard_database_reservation failed"));
+    assert!(status.available);
+    assert_eq!(status.database_id, None);
+    assert_eq!(free_cycle_grant_database_id(&root, caller), None);
+}
+
+#[test]
+fn initial_free_database_grant_is_per_principal_and_survives_delete() {
+    let (service, root) = service_with_root();
+
+    let owner = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("owner free database should create");
+    let other = service
+        .create_generated_database_with_initial_free_grant_or_pending("Other free", "other", 2)
+        .expect("other free database should create");
+
+    assert_ne!(owner.meta.database_id, other.meta.database_id);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "other").as_deref(),
+        Some(other.meta.database_id.as_str())
+    );
+
+    service
+        .delete_database(delete_request(&owner.meta.database_id), "owner", 3)
+        .expect("owner free database should delete");
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load after delete");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.meta.database_id.as_str())
+    );
 }
 
 #[test]

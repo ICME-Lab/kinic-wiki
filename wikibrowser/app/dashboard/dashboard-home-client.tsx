@@ -9,13 +9,13 @@ import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
 import { DatabaseBody, StatusPanel } from "../home-ui";
 import { AdminContent } from "@/components/admin-shell";
-import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
+import { formatRawCycles, KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { hrefForPath } from "@/lib/paths";
-import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
-import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
+import type { CyclesBillingConfig, DatabaseSummary, InitialFreeDatabaseGrantStatus } from "@/lib/types";
+import { createDatabaseAuthenticated, getCyclesBillingConfig, getInitialFreeDatabaseGrantStatus, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
 import type { DatabaseRow } from "../home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -44,6 +44,7 @@ export function DashboardHomeClient() {
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
   const [purchasedDatabaseIds, setPurchasedDatabaseIds] = useState<Set<string>>(() => new Set());
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
+  const [freeGrantStatus, setFreeGrantStatus] = useState<InitialFreeDatabaseGrantStatus | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
@@ -68,8 +69,9 @@ export function DashboardHomeClient() {
       setWarning(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [cyclesResult, publicResult, memberResult, entitlementResult] = await Promise.allSettled([
+        const [cyclesResult, freeGrantResult, publicResult, memberResult, entitlementResult] = await Promise.allSettled([
           getCyclesBillingConfig(canisterId),
+          identity ? getInitialFreeDatabaseGrantStatus(canisterId, identity) : Promise.resolve<InitialFreeDatabaseGrantStatus | null>(null),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
           identity ? listPurchasedDatabaseIds(canisterId, identity) : Promise.resolve(new Set<string>())
@@ -85,6 +87,7 @@ export function DashboardHomeClient() {
         setDatabases(nextDatabases);
         setPurchasedDatabaseIds(nextPurchasedDatabaseIds);
         setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
+        setFreeGrantStatus(freeGrantResult.status === "fulfilled" ? freeGrantResult.value : null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
         setWarning(listWarning(memberResult, entitlementResult));
         setLoadState("ready");
@@ -122,6 +125,7 @@ export function DashboardHomeClient() {
       if (cancelled) return;
       setCyclesBillingConfig(null);
       setPurchasedDatabaseIds(new Set());
+      setFreeGrantStatus(null);
       setCreateDialogOpen(false);
       setNewDatabaseName("");
       setWalletMessage(null);
@@ -133,6 +137,7 @@ export function DashboardHomeClient() {
 
   const walletReadyToFundCreate = balanceCanFundCreate(walletBalance, createDatabaseWalletRequiredBalanceE8s());
   const walletPaymentAvailable = walletReadyToFundCreate;
+  const freeGrantAvailable = freeGrantStatus?.available === true;
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
@@ -143,7 +148,7 @@ export function DashboardHomeClient() {
       setLoadState("error");
       return;
     }
-    if (!wallet || !walletPaymentAvailable) return;
+    if (!freeGrantAvailable && (!wallet || !walletPaymentAvailable)) return;
     setCreating(true);
     setError(null);
     setWalletMessage(null);
@@ -153,6 +158,22 @@ export function DashboardHomeClient() {
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
+      const createdActive = result.initial_free_grant_applied || result.status === "active";
+      if (createdActive) {
+        setWalletMessage(
+          result.initial_free_grant_applied
+            ? "Database created with the initial free grant."
+            : "Database created active."
+        );
+        await refreshDatabases(authClient);
+        router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
+        return;
+      }
+      if (!wallet || !walletPaymentAvailable) {
+        setWalletMessage("Database created pending. Fund it from Cycles before opening /Knowledge.");
+        await refreshDatabases(authClient);
+        return;
+      }
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
@@ -183,11 +204,11 @@ export function DashboardHomeClient() {
   const trimmedDatabaseName = newDatabaseName.trim();
   const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
   const createUnavailable = !principal || loadState === "loading" || walletBusyProvider !== null;
-  const selectedPaymentReady = walletPaymentAvailable;
+  const selectedPaymentReady = freeGrantAvailable || walletPaymentAvailable;
   const createDisabled =
     creating ||
     createUnavailable ||
-    walletBalanceLoading ||
+    (!freeGrantAvailable && walletBalanceLoading) ||
     !selectedPaymentReady ||
     databaseNameValidationError !== null;
   const createButtonLabel = databaseCreateButtonLabel({
@@ -218,11 +239,12 @@ export function DashboardHomeClient() {
         {walletMessage ? <StatusPanel tone="info" message={walletMessage} /> : null}
         <CreateDatabaseDialog
           createDisabled={createDisabled}
-          createLabel="Create with wallet"
+          createLabel={freeGrantAvailable ? "Create" : "Create with wallet"}
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          requiredBalanceLabel={formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
+          paymentNote={freeGrantAvailable ? "無料枠あり: wallet approval is not required." : "wallet 支払い必要: wallet approval pays directly from ledger balance."}
+          requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
@@ -317,6 +339,11 @@ function createDatabasePurchaseFailureMessage(databaseId: string, cause: unknown
 function balanceCanFundCreate(balanceE8s: string | null, requiredE8s: bigint): boolean {
   if (!balanceE8s || !/^\d+$/.test(balanceE8s)) return false;
   return BigInt(balanceE8s) >= requiredE8s;
+}
+
+function formatFreeGrantCycles(value: string): string {
+  if (!/^\d+$/.test(value)) return "0 cycles";
+  return `${formatRawCycles(BigInt(value))} cycles`;
 }
 
 function databaseCreateButtonLabel({
