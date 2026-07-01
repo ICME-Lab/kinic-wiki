@@ -1,6 +1,6 @@
 # Wiki Canister Browser Design
 
-Historical MVP design note. The current WikiBrowser also includes authenticated database creation, access management, Markdown editing, URL ingest, and dashboard workflows. Treat this file as design background unless it is explicitly refreshed.
+Historical MVP design note. The current WikiBrowser also includes authenticated database creation, access management, Markdown editing, source capture, and dashboard workflows. Treat this file as design background unless it is explicitly refreshed.
 
 ## Product Positioning
 
@@ -14,9 +14,9 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 
 ## Layout
 
-- Left sidebar: collapsible file tree for `/Wiki` and `/Sources/raw`
+- Left sidebar: collapsible file tree for `/Knowledge` and `/Sources`
 - Center: selected Markdown note rendered as readable document
-- Right: inspector showing path, etag, updated_at, backlinks, outgoing links, note role, canonicality warnings, raw source, provenance
+- Right: inspector showing path, etag, updated_at, backlinks, outgoing links, note role, canonicality warnings, evidence source, provenance
 - Top bar: global search, path search, full-text search, mode tabs: Browse, Search, Lint, Recent
 
 ## Visual Style
@@ -41,4 +41,4 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 - Search results with snippets
 - Search and link graph inspection
 - Lint warnings panel
-- Provenance jump from Wiki note to `/Sources/raw`
+- Provenance jump from Wiki note to `/Sources`

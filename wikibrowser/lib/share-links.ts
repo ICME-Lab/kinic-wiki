@@ -12,7 +12,7 @@ export function isRoutableDatabaseId(databaseId: string): boolean {
 
 export function publicDatabasePath(databaseId: string): string {
   assertPublicDatabaseId(databaseId);
-  return `${databaseRouteBase(databaseId)}/Wiki`;
+  return `${databaseRouteBase(databaseId)}/Knowledge`;
 }
 
 export function databaseRouteBase(databaseId: string): string {
@@ -26,15 +26,15 @@ export function publicDatabaseUrl(databaseId: string, origin = PUBLIC_WIKI_ORIGI
 
 export function xShareDatabaseHref({
   databaseId,
-  databaseName,
+  databaseTitle,
   origin = PUBLIC_WIKI_ORIGIN
 }: {
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
   origin?: string;
 }): string {
   const intent = new URL(X_TWEET_INTENT_URL);
-  intent.searchParams.set("text", `Kinic Wiki: ${databaseName}`);
+  intent.searchParams.set("text", `Kinic Wiki: ${databaseTitle}`);
   intent.searchParams.set("url", publicDatabaseUrl(databaseId, origin));
   return intent.toString();
 }

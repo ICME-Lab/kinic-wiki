@@ -6,8 +6,8 @@ const databaseId = readDatabaseId();
 const smokeWaitMs = 30_000;
 const pollMs = 500;
 
-run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Wiki/does-not-exist.md`]);
-assertSnapshotIncludes("No wiki node at this path");
+run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Knowledge/does-not-exist.md`]);
+assertSnapshotIncludes("No knowledge node at this path");
 assertSnapshotIncludes("Search this path");
 
 console.log(`Wiki browser error smoke OK: ${databaseId}`);

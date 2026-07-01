@@ -8,7 +8,7 @@ description: Kinic Wiki workflow skill for safe remote wiki page edits, redactio
 Use this skill when the user wants to:
 
 - remove or redact leaked, stale, duplicated, or invalid text from wiki nodes
-- edit existing `/Wiki/...` pages without new source ingestion
+- edit existing `/Knowledge/...` pages without new source ingestion
 - repair many existing nodes after a lint, search, or incident finding
 - apply the same text replacement across multiple wiki pages
 
@@ -16,7 +16,7 @@ Do not use this skill for:
 
 - answer-only wiki queries; use `kinic-wiki-query`
 - report-only health checks; use `kinic-wiki-lint`
-- raw source ingestion or new evidence synthesis; use `kinic-wiki-ingest`
+- evidence source ingestion or new evidence synthesis; use `kinic-wiki-ingest`
 - skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:

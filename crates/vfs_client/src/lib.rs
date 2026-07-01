@@ -12,21 +12,20 @@ use ic_agent::{
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseMember, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence, KnowledgeEvidenceRequest,
-    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
-    MarketEntitlementPage, MarketListing, MarketListingPage, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecall,
-    MemoryRecallRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OutgoingLinksRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, Status, StoreManifest, StoreManifestRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    CyclesBillingConfig, CyclesPurchaseResult, DatabaseCycleEntryPage,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseMetadata,
+    DatabaseRole, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
+    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -39,18 +38,19 @@ pub trait VfsApi: Sync {
     async fn canister_health(&self) -> Result<CanisterHealth> {
         Err(anyhow!("canister_health is not implemented by this client"))
     }
-    async fn store_manifest(&self, _database_id: &str) -> Result<StoreManifest> {
-        Err(anyhow!("store_manifest is not implemented by this client"))
+    async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
+        Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(
-        &self,
-        _name: &str,
-        _profile: DatabaseProfile,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
-    async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-        Err(anyhow!("rename_database is not implemented by this client"))
+    async fn update_database_metadata(
+        &self,
+        _request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        Err(anyhow!(
+            "update_database_metadata is not implemented by this client"
+        ))
     }
     async fn purchase_database_cycles(
         &self,
@@ -136,7 +136,7 @@ pub trait VfsApi: Sync {
             "market_list_database_listings is not implemented by this client"
         ))
     }
-    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListingDetail> {
         Err(anyhow!(
             "market_get_listing is not implemented by this client"
         ))
@@ -205,63 +205,6 @@ pub trait VfsApi: Sync {
     async fn delete_database(&self, _request: DeleteDatabaseRequest) -> Result<()> {
         Err(anyhow!("delete_database is not implemented by this client"))
     }
-    async fn begin_database_archive(&self, _database_id: &str) -> Result<DatabaseArchiveInfo> {
-        Err(anyhow!(
-            "begin_database_archive is not implemented by this client"
-        ))
-    }
-    async fn read_database_archive_chunk(
-        &self,
-        _database_id: &str,
-        _offset: u64,
-        _max_bytes: u32,
-    ) -> Result<DatabaseArchiveChunk> {
-        Err(anyhow!(
-            "read_database_archive_chunk is not implemented by this client"
-        ))
-    }
-    async fn finalize_database_archive(
-        &self,
-        _database_id: &str,
-        _snapshot_hash: Vec<u8>,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "finalize_database_archive is not implemented by this client"
-        ))
-    }
-    async fn cancel_database_archive(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "cancel_database_archive is not implemented by this client"
-        ))
-    }
-    async fn begin_database_restore(
-        &self,
-        _database_id: &str,
-        _snapshot_hash: Vec<u8>,
-        _size_bytes: u64,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "begin_database_restore is not implemented by this client"
-        ))
-    }
-    async fn write_database_restore_chunk(
-        &self,
-        _request: DatabaseRestoreChunkRequest,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "write_database_restore_chunk is not implemented by this client"
-        ))
-    }
-    async fn finalize_database_restore(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "finalize_database_restore is not implemented by this client"
-        ))
-    }
-    async fn cancel_database_restore(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "cancel_database_restore is not implemented by this client"
-        ))
-    }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
     async fn read_node_context(&self, _request: NodeContextRequest) -> Result<Option<NodeContext>> {
         Err(anyhow!(
@@ -299,8 +242,8 @@ pub trait VfsApi: Sync {
     }
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult>;
     async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>>;
-    async fn memory_recall(&self, _request: MemoryRecallRequest) -> Result<MemoryRecall> {
-        Err(anyhow!("memory_recall is not implemented by this client"))
+    async fn query_context(&self, _request: QueryContextRequest) -> Result<QueryContext> {
+        Err(anyhow!("query_context is not implemented by this client"))
     }
     async fn query_database_sql_json(
         &self,
@@ -321,13 +264,8 @@ pub trait VfsApi: Sync {
             "wiki_metrics_series is not implemented by this client"
         ))
     }
-    async fn knowledge_evidence(
-        &self,
-        _request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence> {
-        Err(anyhow!(
-            "knowledge_evidence is not implemented by this client"
-        ))
+    async fn source_evidence(&self, _request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+        Err(anyhow!("source_evidence is not implemented by this client"))
     }
     async fn search_node_paths(
         &self,
@@ -534,11 +472,11 @@ impl VfsApi for CanisterVfsClient {
         self.query("canister_health", &()).await
     }
 
-    async fn store_manifest(&self, database_id: &str) -> Result<StoreManifest> {
-        let result: Result<StoreManifest, String> = self
+    async fn memory_manifest(&self, database_id: &str) -> Result<MemoryManifest> {
+        let result: Result<MemoryManifest, String> = self
             .query(
-                "store_manifest",
-                &StoreManifestRequest {
+                "memory_manifest",
+                &vfs_types::DatabaseIdRequest {
                     database_id: database_id.to_string(),
                 },
             )
@@ -546,33 +484,24 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn create_database(
-        &self,
-        name: &str,
-        profile: DatabaseProfile,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
                     name: name.to_string(),
-                    profile,
                 },
             )
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn rename_database(&self, database_id: &str, name: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update(
-                "rename_database",
-                &RenameDatabaseRequest {
-                    database_id: database_id.to_string(),
-                    name: name.to_string(),
-                },
-            )
-            .await?;
+    async fn update_database_metadata(
+        &self,
+        request: UpdateDatabaseMetadataRequest,
+    ) -> Result<DatabaseMetadata> {
+        let result: Result<DatabaseMetadata, String> =
+            self.update("update_database_metadata", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -694,8 +623,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListing> {
-        let result: Result<MarketListing, String> = self
+    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListingDetail> {
+        let result: Result<MarketListingDetail, String> = self
             .query("market_get_listing", &listing_id.to_string())
             .await?;
         result.map_err(|error| anyhow!(error))
@@ -785,93 +714,6 @@ impl VfsApi for CanisterVfsClient {
 
     async fn delete_database(&self, request: DeleteDatabaseRequest) -> Result<()> {
         let result: Result<(), String> = self.update("delete_database", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
-        let result: Result<DatabaseArchiveInfo, String> = self
-            .update("begin_database_archive", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn read_database_archive_chunk(
-        &self,
-        database_id: &str,
-        offset: u64,
-        max_bytes: u32,
-    ) -> Result<DatabaseArchiveChunk> {
-        let result: Result<DatabaseArchiveChunk, String> = self
-            .query3(
-                "read_database_archive_chunk",
-                &database_id.to_string(),
-                &offset,
-                &max_bytes,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn finalize_database_archive(
-        &self,
-        database_id: &str,
-        snapshot_hash: Vec<u8>,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update2(
-                "finalize_database_archive",
-                &database_id.to_string(),
-                &snapshot_hash,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn cancel_database_archive(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("cancel_database_archive", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn begin_database_restore(
-        &self,
-        database_id: &str,
-        snapshot_hash: Vec<u8>,
-        size_bytes: u64,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update3(
-                "begin_database_restore",
-                &database_id.to_string(),
-                &snapshot_hash,
-                &size_bytes,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn write_database_restore_chunk(
-        &self,
-        request: DatabaseRestoreChunkRequest,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("write_database_restore_chunk", &request)
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn finalize_database_restore(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("finalize_database_restore", &database_id.to_string())
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn cancel_database_restore(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("cancel_database_restore", &database_id.to_string())
-            .await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -972,8 +814,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
-        let result: Result<MemoryRecall, String> = self.query("memory_recall", &request).await?;
+    async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+        let result: Result<QueryContext, String> = self.query("query_context", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -1005,12 +847,9 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn knowledge_evidence(
-        &self,
-        request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence> {
-        let result: Result<KnowledgeEvidence, String> =
-            self.query("knowledge_evidence", &request).await?;
+    async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+        let result: Result<SourceEvidence, String> =
+            self.query("source_evidence", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

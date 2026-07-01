@@ -10,22 +10,22 @@ import {
   handleMessage,
   refreshTabBadgeForTest,
   resetSettingsOpenThrottleForTest,
-  resetUrlIngestInFlightForTest,
+  resetSourceCaptureInFlightForTest,
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
-test("save-source delegates raw source writes to offscreen", async () => {
+test("save-source delegates evidence source writes to offscreen", async () => {
   const syncStorage = memoryStorage();
   const restore = installChromeStorage(syncStorage);
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    if (message.type === "save-raw-source") {
+    if (message.type === "save-evidence-source") {
       return {
         ok: true,
         result: {
-          path: message.rawSource.path,
-          sourceId: message.rawSource.sourceId,
+          path: message.evidenceSource.path,
+          sourceId: message.evidenceSource.sourceId,
           created: false,
           etag: "etag-2",
           sourceRunSessionNonce: "session-source"
@@ -46,12 +46,12 @@ test("save-source delegates raw source writes to offscreen", async () => {
     );
 
     assert.equal(response.ok, true);
-    assert.equal(calls[0].type, "save-raw-source");
+    assert.equal(calls[0].type, "save-evidence-source");
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].config.databaseId, "team-db");
-    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt/abc.md");
+    assert.match(calls[0].evidenceSource.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, calls[0].evidenceSource.path);
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);
@@ -66,15 +66,15 @@ test("save-source delegates raw source writes to offscreen", async () => {
   }
 });
 
-test("save-source keeps raw source result when generation queue fails", async () => {
+test("save-source keeps evidence source result when generation queue fails", async () => {
   const restore = installChromeStorage(memoryStorage());
   setOffscreenBridgeForTest(async (message) => {
-    if (message.type === "save-raw-source") {
+    if (message.type === "save-evidence-source") {
       return {
         ok: true,
         result: {
-          path: message.rawSource.path,
-          sourceId: message.rawSource.sourceId,
+          path: message.evidenceSource.path,
+          sourceId: message.evidenceSource.sourceId,
           created: true,
           etag: "etag-1",
           sourceRunSessionNonce: "session-source"
@@ -95,7 +95,7 @@ test("save-source keeps raw source result when generation queue fails", async ()
     );
 
     assert.equal(response.ok, true);
-    assert.equal(response.result.path, "/Sources/raw/chatgpt/abc.md");
+    assert.match(response.result.path, /^\/Sources\/chatgpt\/project-[a-f0-9]{8}\.md$/);
     assert.equal(response.result.etag, "etag-1");
     assert.equal(response.result.created, true);
     assert.equal(response.result.generationQueued, false);
@@ -223,20 +223,6 @@ test("auth-session-changed does not create a missing offscreen document", async 
 
     assert.deepEqual(response, { ok: true, reset: false });
     assert.deepEqual(calls, [["contexts", "chrome-extension://id/offscreen/offscreen.html"]]);
-  } finally {
-    restore();
-  }
-});
-
-test("auth-session-changed fails when existing offscreen auth reset fails", async () => {
-  const calls = [];
-  const restore = installChromeForOffscreenReset(calls, true, { ok: false, error: "auth reset failed" });
-  try {
-    await assert.rejects(() => handleMessage({ type: "auth-session-changed" }, null), /auth reset failed/);
-    assert.deepEqual(calls, [
-      ["contexts", "chrome-extension://id/offscreen/offscreen.html"],
-      ["message", { target: "offscreen", type: "reset-auth-client" }]
-    ]);
   } finally {
     restore();
   }
@@ -388,41 +374,71 @@ test("action click opens settings when source save is unauthenticated", async ()
 test("action click saves browser source then queues generation", async () => {
   const messages = [];
   const badges = [];
+  const statuses = [];
   const response = await handleActionClick(
     { id: 3, url: "https://example.com/#section", title: "Example" },
     actionDeps({
       sendOffscreen: async (message) => {
         messages.push(message);
-        if (message.type === "save-raw-source") {
-          return {
-            ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-          };
-        }
-        return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
+        return message.type === "run-source-capture-task" ? { ok: true, result: { accepted: true, taskId: message.taskId } } : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
       },
+      writeStatus: async (status) => statuses.push(status),
       setBadge: async (text, _color, tabId) => badges.push({ text, tabId })
     })
   );
   assert.equal(response.ok, true);
+  assert.equal(response.accepted, true);
   assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
-  assert.equal(messages[1].type, "save-raw-source");
-  assert.equal(messages[1].rawSource.path, "/Sources/raw/web/abc.md");
+  assert.equal(messages[1].type, "run-source-capture-task");
+  assert.equal(messages[1].evidenceSource.path, rawWebSource().path);
   assert.equal(messages[1].config.databaseId, "team-db");
-  assert.equal(messages[2].type, "trigger-source-generation");
-  assert.equal(messages[2].sourcePath, "/Sources/raw/web/abc.md");
-  assert.equal(messages[2].sourceEtag, "etag-source");
-  assert.equal(messages[2].sessionNonce, "session-source");
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
-  assert.equal(response.result.generationQueued, true);
+  assert.equal(messages[1].queueGeneration, true);
+  assert.equal(response.result.sourcePath, rawWebSource().path);
+  assert.equal(response.result.generationRequested, true);
+  assert.equal(statuses[0].status, "generation_requested");
+  assert.equal(statuses[0].message, "Source generation requested.");
   assert.deepEqual(badges, [
     { text: "...", tabId: 3 },
     { text: "IN", tabId: 3 }
   ]);
 });
 
-test("action click refreshes existing browser source for only the current tab", async () => {
+test("action click queues generation for existing browser source", async () => {
+  const calls = [];
+  const messages = [];
+  const response = await handleActionClick(
+    { id: 7, url: "https://example.com/#section", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: true, path: sourcePath, etag: "etag-old" };
+      },
+      sendOffscreen: async (message) => {
+        messages.push(message);
+        return { ok: true, result: { accepted: true, taskId: message.taskId } };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.accepted, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.generationRequested, true);
+  assert.equal(messages[0].type, "run-source-capture-task");
+  assert.equal(messages[0].sourceAlreadyExists, true);
+  assert.equal(messages[0].queueGeneration, true);
+  const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
+  assert.equal(lookupPath, rawWebSource().path);
+  assert.deepEqual(calls, [
+    ["badge", "...", 7],
+    ["lookup", lookupPath],
+    ["badge", "IN", 7]
+  ]);
+});
+
+test("action click skips write and generation for existing browser source when saving source only", async () => {
   const calls = [];
   const response = await handleActionClick(
     { id: 7, url: "https://example.com/#section", title: "Example" },
@@ -433,64 +449,52 @@ test("action click refreshes existing browser source for only the current tab", 
       },
       sendOffscreen: async (message) => {
         calls.push(["message", message.type]);
-        if (message.type === "save-raw-source") {
-          return {
-            ok: true,
-            result: { path: message.rawSource.path, created: false, etag: "etag-refreshed", sourceRunSessionNonce: "session-source" }
-          };
-        }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
       },
-      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath, status.etag, status.message]),
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
-    })
+    }),
+    { queueGeneration: false }
   );
 
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourceCreated, false);
-  assert.equal(response.result.sourceEtag, "etag-refreshed");
-  assert.equal(response.result.generationQueued, true);
+  assert.equal(response.result.sourceExists, true);
+  assert.equal(response.result.sourceEtag, "etag-source");
+  assert.equal(response.result.generationQueued, false);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.equal(lookupPath, rawWebSource().path);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
-    ["message", "save-raw-source"],
-    ["message", "trigger-source-generation"],
-    ["status", "ok", response.result.sourcePath],
+    ["status", "source_exists", lookupPath, "etag-source", "Source already saved."],
     ["badge", "IN", 7]
   ]);
 });
 
-test("action click keeps source result when generation trigger fails", async () => {
+test("action click reports generation requested before trigger completion", async () => {
   const calls = [];
   const response = await handleActionClick(
     { url: "https://example.com/#section", title: "Example" },
     actionDeps({
       sendOffscreen: async (message) => {
-        if (message.type === "save-raw-source") {
-          return {
-            ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-          };
-        }
-        return { ok: true, result: { sourcePath: message.sourcePath, triggered: false, triggerError: "worker trigger failed: HTTP 502" } };
+        return message.type === "run-source-capture-task" ? { ok: true, result: { accepted: true, taskId: message.taskId } } : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
       },
       writeStatus: async (status) => calls.push(["status", status.status, status.message]),
       setBadge: async (text) => calls.push(["badge", text])
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
-  assert.equal(response.result.generationQueued, false);
+  assert.equal(response.accepted, true);
+  assert.equal(response.result.sourcePath, rawWebSource().path);
+  assert.equal(response.result.generationRequested, true);
   assert.deepEqual(calls, [
     ["badge", "..."],
-    ["status", "source_saved", "Source saved. Generation queue failed: worker trigger failed: HTTP 502"],
-    ["badge", "SRC"]
+    ["status", "generation_requested", "Source generation requested."],
+    ["badge", "IN"]
   ]);
 });
 
-test("context menu opens settings without starting URL ingest", async () => {
+test("context menu opens settings without starting source capture", async () => {
   const createdMenus = [];
   let optionsOpened = 0;
   const restore = installChromeForContextMenu(createdMenus, () => {
@@ -501,8 +505,8 @@ test("context menu opens settings without starting URL ingest", async () => {
     await handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
 
     assert.deepEqual(createdMenus, [
-      { id: "kinic-wiki-clipper-create-wiki", title: "Create Kinic wiki page", contexts: ["action"] },
-      { id: "kinic-wiki-clipper-save-raw", title: "Save raw", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-create-wiki", title: "Save source and create page", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-save-evidence", title: "Save source only", contexts: ["action"] },
       { id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }
     ]);
     assert.equal(optionsOpened, 1);
@@ -522,10 +526,7 @@ test("action click can save browser source without queueing generation", async (
         if (message.type === "web-source-exists") {
           return { ok: true, result: { exists: false, path: message.sourcePath, etag: null } };
         }
-        return {
-          ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-        };
+        return { ok: true, result: { accepted: true, taskId: message.taskId } };
       },
       writeStatus: async (status) => calls.push(["status", status.status, status.message]),
       setBadge: async (text) => calls.push(["badge", text])
@@ -536,80 +537,214 @@ test("action click can save browser source without queueing generation", async (
   assert.equal(response.ok, true);
   assert.equal(messages.length, 2);
   assert.equal(messages[0].type, "web-source-exists");
-  assert.equal(messages[1].type, "save-raw-source");
+  assert.equal(messages[1].type, "run-source-capture-task");
+  assert.equal(messages[1].queueGeneration, false);
   assert.equal(response.result.generationSkipped, true);
-  assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
-    ["status", "source_saved", "Raw source saved."],
-    ["badge", "RAW"]
+    ["status", "source_save_sent", "Source save sent."],
+    ["badge", "SRC"]
   ]);
 });
 
-test("context menu raw save skips generation trigger", async () => {
-  resetUrlIngestInFlightForTest();
+test("context menu source-only save skips generation trigger", async () => {
+  resetSourceCaptureInFlightForTest();
   const restore = installChromeForAction();
   try {
     const response = await handleContextMenuClickForTest(
-      { menuItemId: "kinic-wiki-clipper-save-raw" },
+      { menuItemId: "kinic-wiki-clipper-save-evidence" },
       { id: 1, url: "https://example.com/", title: "Example" }
     );
 
     assert.equal(response, undefined);
     assert.equal(restore.messages.length, 2);
     assert.equal(restore.messages[0].type, "web-source-exists");
-    assert.equal(restore.messages[1].type, "save-raw-source");
-    assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
+    assert.equal(restore.messages[1].type, "run-source-capture-task");
+    assert.equal(restore.messages[1].queueGeneration, false);
+    assert.ok(restore.badges.some((badge) => badge.text === "SRC"));
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
-test("action click rejects duplicate in-flight URL ingest", async () => {
-  resetUrlIngestInFlightForTest();
-  const deferred = createDeferred();
-  let saveCalls = 0;
-  const restore = installChromeForAction({
-    sendOffscreen(message) {
-      if (message.type === "save-raw-source") {
-        saveCalls += 1;
-        if (saveCalls === 1) return deferred.promise;
-        return {
-          ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-        };
-      }
-      return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
-    }
-  });
+test("action click rejects duplicate in-flight source capture", async () => {
+  resetSourceCaptureInFlightForTest();
+  const restore = installChromeForAction();
   try {
-    const first = handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
     await waitUntil(() => restore.messages.length === 2);
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
-    assert.equal(restore.messages.length, 3);
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
+    assert.equal(restore.messages.length, 2);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
-    deferred.resolve({
-      ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-    });
-    assert.equal((await first).ok, true);
+    await completeSourceCaptureTask(restore.messages[1]);
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.length, 7);
+    assert.equal(restore.messages.length, 4);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("source capture task failure stores URL error status and releases lock", async () => {
+  resetSourceCaptureInFlightForTest();
+  const restore = installChromeForAction();
+  try {
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
+    const task = restore.messages[1];
+
+    const result = await handleMessage(
+      {
+        type: "source-capture-task-result",
+        taskId: task.taskId,
+        inFlightKey: task.inFlightKey,
+        tabId: task.tabId,
+        ok: false,
+        url: task.url,
+        error: "worker trigger failed: HTTP 502"
+      },
+      { url: "chrome-extension://id/offscreen/offscreen.html" }
+    );
+
+    assert.equal(result.ok, true);
+    const latest = JSON.parse(restore.sessionStorage.getItem("kinic-source-capture-status-v1"));
+    assert.equal(latest.status, "error");
+    assert.equal(latest.url, "https://example.com/");
+    assert.equal(latest.message, "worker trigger failed: HTTP 502");
+    assert.ok(restore.badges.some((badge) => badge.text === "ERR"));
+
+    const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(retry.ok, true);
+  } finally {
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("source capture reservation recovers after accepted task TTL expires without result", async () => {
+  resetSourceCaptureInFlightForTest();
+  const sessionStorage = memoryStorage();
+  const restore = installChromeForAction({ sessionStorage });
+  const originalNow = Date.now;
+  try {
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
+    const task = restore.messages[1];
+    const futureNow = originalNow() + 121_000;
+    Date.now = () => futureNow;
+
+    const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(retry.ok, true);
+    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages[3].type, "run-source-capture-task");
+    assert.notEqual(restore.messages[3].taskId, task.taskId);
+  } finally {
+    Date.now = originalNow;
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("source capture reservation recovers when session in-flight record is missing", async () => {
+  resetSourceCaptureInFlightForTest();
+  const sessionStorage = memoryStorage();
+  const restore = installChromeForAction({ sessionStorage });
+  try {
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
+    const task = restore.messages[1];
+    sessionStorage.removeItem("kinic-source-capture-in-flight-v1");
+
+    const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(retry.ok, true);
+    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages[3].type, "run-source-capture-task");
+    assert.notEqual(restore.messages[3].taskId, task.taskId);
+  } finally {
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("source capture task result ignores spoofed senders", async () => {
+  resetSourceCaptureInFlightForTest();
+  const restore = installChromeForAction();
+  try {
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
+    const task = restore.messages[1];
+
+    const spoofed = await handleMessage(
+      {
+        type: "source-capture-task-result",
+        taskId: task.taskId,
+        inFlightKey: task.inFlightKey,
+        tabId: task.tabId,
+        ok: false,
+        url: task.url,
+        error: "spoofed"
+      },
+      { url: "chrome-extension://id/popup/popup.html" }
+    );
+    assert.deepEqual(spoofed, { ok: true, result: { accepted: false, ignored: true, reason: "untrusted sender" } });
+
+    const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(duplicate.ok, false);
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
+
+    await completeSourceCaptureTask(task);
+  } finally {
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("source capture task result ignores stale task ids for the same URL", async () => {
+  resetSourceCaptureInFlightForTest();
+  const sessionStorage = memoryStorage();
+  const restore = installChromeForAction({ sessionStorage });
+  try {
+    const first = await handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    assert.equal(first.ok, true);
+    const staleTask = restore.messages[1];
+    sessionStorage.setItem(
+      "kinic-source-capture-in-flight-v1",
+      JSON.stringify({ key: staleTask.inFlightKey, taskId: staleTask.taskId, expiresAt: Date.now() - 1 })
+    );
+    resetSourceCaptureInFlightForTest();
+
+    const second = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(second.ok, true);
+    const activeTask = restore.messages[3];
+
+    const stale = await completeSourceCaptureTask(staleTask);
+    assert.deepEqual(stale, { ok: true, result: { accepted: false, ignored: true, reason: "stale task result" } });
+
+    const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(duplicate.ok, false);
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
+
+    const active = await completeSourceCaptureTask(activeTask);
+    assert.deepEqual(active, { ok: true, result: { accepted: true, status: "ok" } });
+
+    const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(retry.ok, true);
+  } finally {
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click reserves URL before delayed session storage read", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   const storageRead = createDeferred();
   let getCalls = 0;
@@ -640,19 +775,19 @@ test("action click reserves URL before delayed session storage read", async () =
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
 
     storageRead.resolve();
     assert.equal((await first).ok, true);
-    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+    assert.equal(restore.messages.filter((message) => message.type === "run-source-capture-task").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click rolls back URL reservation when session storage write fails", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   let failSet = true;
   const sessionArea = {
@@ -685,75 +820,56 @@ test("action click rolls back URL reservation when session storage write fails",
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+    assert.equal(restore.messages.filter((message) => message.type === "run-source-capture-task").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click allows a different URL while another URL is in flight", async () => {
-  resetUrlIngestInFlightForTest();
-  const deferred = createDeferred();
-  let saveCalls = 0;
-  const restore = installChromeForAction({
-    sendOffscreen(message) {
-      if (message.type === "save-raw-source") {
-        saveCalls += 1;
-        if (saveCalls === 1) return deferred.promise;
-        return {
-          ok: true,
-          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-        };
-      }
-      return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
-    }
-  });
+  resetSourceCaptureInFlightForTest();
+  const restore = installChromeForAction();
   try {
-    const first = handleActionClick({ id: 1, url: "https://example.com/a", title: "A" });
+    const first = await handleActionClick({ id: 1, url: "https://example.com/a", title: "A" });
+    assert.equal(first.ok, true);
     await waitUntil(() => restore.messages.length === 2);
 
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
-    assert.equal(restore.messages.length, 5);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
-    assert.notEqual(restore.messages[1].rawSource.path, restore.messages[3].rawSource.path);
-
-    deferred.resolve({
-      ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-    });
-    assert.equal((await first).ok, true);
+    assert.equal(restore.messages.length, 4);
+    assert.match(restore.messages[1].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
+    assert.match(restore.messages[3].evidenceSource.path, /^\/Sources\/web\/example-[a-f0-9]{8}\.md$/);
+    assert.notEqual(restore.messages[1].evidenceSource.path, restore.messages[3].evidenceSource.path);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click honors session in-flight TTL", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   sessionStorage.setItem(
-    "kinic-url-ingest-in-flight-v1",
+    "kinic-source-capture-in-flight-v1",
     JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() + 120_000 })
   );
   const restore = installChromeForAction({ sessionStorage });
   try {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
-    assert.equal(busy.error, "URL ingest is already running for this page.");
-    assert.equal(restore.messages.length, 1);
+    assert.equal(busy.error, "Source capture is already running for this page.");
+    assert.equal(restore.messages.length, 0);
 
     sessionStorage.setItem(
-      "kinic-url-ingest-in-flight-v1",
+      "kinic-source-capture-in-flight-v1",
       JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() - 1 })
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
-    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages.length, 2);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
@@ -795,7 +911,7 @@ test("tab badge refresh clears missing sources and unsupported pages", async () 
     actionDeps({
       findWebSource: async () => {
         calls.push(["unexpected lookup"]);
-        return { exists: true, path: "/Sources/raw/web/nope.md", etag: "etag" };
+        return { exists: true, path: "/Sources/web/nope.md", etag: "etag" };
       },
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
     })
@@ -967,7 +1083,7 @@ function installChromeForContextMenu(createdMenus, onOpenOptions) {
   };
 }
 
-function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { ok: true, result: { reset: true } }) {
+function installChromeForOffscreenReset(calls, hasOffscreen) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -982,7 +1098,7 @@ function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { o
         },
         async sendMessage(message) {
           calls.push(["message", message]);
-          return resetResponse;
+          return { ok: true, result: { reset: true } };
         }
       }
     }
@@ -1024,10 +1140,10 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
           sendCount += 1;
           messages.push(message);
           if (sendOffscreen) return sendOffscreen(message, sendCount);
-          if (message.type === "save-raw-source") {
+          if (message.type === "run-source-capture-task") {
             return {
               ok: true,
-              result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+              result: { accepted: true, taskId: message.taskId }
             };
           }
           return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
@@ -1051,6 +1167,7 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
   };
   restore.badges = badges;
   restore.messages = messages;
+  restore.sessionStorage = sessionStorage;
   return restore;
 }
 
@@ -1079,11 +1196,8 @@ function actionDeps(overrides = {}) {
   const sendOffscreen =
     overrides.sendOffscreen ||
     (async (message) =>
-      message.type === "save-raw-source"
-        ? {
-            ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-          }
+      message.type === "run-source-capture-task"
+        ? { ok: true, result: { accepted: true, taskId: message.taskId } }
         : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } });
   return {
     loadConfig: async () => ({
@@ -1107,8 +1221,8 @@ function actionDeps(overrides = {}) {
     writeStatus: async () => {},
     setBadge: async () => {},
     openSettings: async () => {},
-    reserveUrlIngest: async () => true,
-    releaseUrlIngest: async () => {},
+    reserveSourceCapture: async () => true,
+    releaseSourceCapture: async () => {},
     captureTabSource: async () => rawWebSource(),
     ...overrides
   };
@@ -1116,8 +1230,8 @@ function actionDeps(overrides = {}) {
 
 function rawWebSource() {
   return {
-    path: "/Sources/raw/web/abc.md",
-    sourceId: "web-abc",
+    path: "/Sources/web/example-1a2b3c4d.md",
+    sourceId: "web-example-1a2b3c4d",
     content: "# Example",
     metadataJson: "{}"
   };
@@ -1131,6 +1245,32 @@ function createDeferred() {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+async function completeSourceCaptureTask(taskMessage, overrides = {}) {
+  return handleMessage(
+    {
+      type: "source-capture-task-result",
+      taskId: taskMessage.taskId,
+      inFlightKey: taskMessage.inFlightKey,
+      tabId: taskMessage.tabId,
+      ok: true,
+      result: {
+        url: taskMessage.url,
+        title: taskMessage.title,
+        sourcePath: taskMessage.evidenceSource.path,
+        sourceEtag: "etag-source",
+        sourceExists: Boolean(taskMessage.sourceAlreadyExists),
+        sourceCreated: true,
+        generationQueued: taskMessage.queueGeneration !== false,
+        generationSkipped: taskMessage.queueGeneration === false,
+        generationError: null,
+        ...overrides.result
+      },
+      ...overrides
+    },
+    { url: "chrome-extension://id/offscreen/offscreen.html" }
+  );
 }
 
 async function waitUntil(predicate) {

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { safeMarkdownImageSrc } from "@/lib/markdown-images";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import { renderWikilinksAsMarkdown } from "@/lib/markdown-wikilinks";
 import { hrefForMarkdownLink } from "@/lib/paths";
@@ -33,6 +34,13 @@ export function MarkdownPreview({
               return <a href={href} {...props}>{children}</a>;
             }
             return <Link href={wikiHref} {...props}>{children}</Link>;
+          },
+          img({ src, alt, ...props }) {
+            const safeSrc = safeMarkdownImageSrc(src);
+            if (!safeSrc) {
+              return alt ? <span className="text-xs text-muted">{alt}</span> : null;
+            }
+            return <img src={safeSrc} alt={alt ?? ""} {...props} />;
           }
         }}
       >
@@ -52,10 +60,10 @@ function TrustBanner({
   fields: { key: string; value: string }[];
 }) {
   const status = valueFor(fields, "status");
-  const sourcePath = valueFor(fields, "source_path") ?? valueFor(fields, "kinic.source_path");
+  const storePath = valueFor(fields, "source_path") ?? valueFor(fields, "kinic.source_path") ?? valueFor(fields, "kinic.store_path");
   const canonicalizedBy = valueFor(fields, "canonicalized_by");
   const canonicalizedAt = valueFor(fields, "canonicalized_at");
-  if (!status && !sourcePath && !canonicalizedBy && !canonicalizedAt) return null;
+  if (!status && !storePath && !canonicalizedBy && !canonicalizedAt) return null;
   const tone = status === "canonical" ? "green" : status === "archived" ? "muted" : "yellow";
   return (
     <section className={`mb-5 rounded-lg border px-4 py-3 text-sm ${tone === "green" ? "border-green-200 bg-green-50 text-green-950" : tone === "yellow" ? "border-yellow-200 bg-yellow-50 text-yellow-950" : "border-line bg-paper text-ink"}`}>
@@ -64,11 +72,11 @@ function TrustBanner({
         {canonicalizedBy ? <span className="rounded border border-current/20 bg-white/60 px-2 py-1 font-mono text-[11px]">canonicalized_by {canonicalizedBy}</span> : null}
         {canonicalizedAt ? <span className="rounded border border-current/20 bg-white/60 px-2 py-1 font-mono text-[11px]">canonicalized_at {canonicalizedAt}</span> : null}
       </div>
-      {sourcePath ? (
+      {storePath ? (
         <p className="mt-2 truncate font-mono text-xs">
-          source{" "}
-          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Wiki/index.md", sourcePath) ?? "#"}>
-            {sourcePath}
+          store{" "}
+          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Knowledge/index.md", storePath) ?? "#"}>
+            {storePath}
           </Link>
         </p>
       ) : null}

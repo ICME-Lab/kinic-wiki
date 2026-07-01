@@ -8,7 +8,7 @@ The database unit is `database_id`.
 
 Principals are attached through `database_members`:
 
-- `owner`: all operations, including grant, revoke, delete, archive, and restore
+- `owner`: all operations, including grant, revoke, and delete
 - `writer`: read and write VFS nodes
 - `reader`: read VFS nodes and query/search/list
 
@@ -26,29 +26,28 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the latest schema (`database_index:035_initial_free_database_grants`). Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
+The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The latest schema requires `database_index:038_initial_free_database_grants` and `database_free_cycle_grants`. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
 
-Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
+Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active DBs consume one active user DB slot. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
 ## Status
 
-Databases move through five statuses:
+Databases move through three statuses:
 
 - `pending`: metadata reserved, no mounted SQLite DB yet, only cycle purchase and owner management are available
 - `active`: mounted and usable for VFS read/write/search/list
-- `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
-- `archived`: not mounted, active mount released, snapshot metadata retained
-- `restoring`: mounted for chunk import, VFS operations rejected until finalize succeeds
+- `deleted`: hard-deleted from public database lists and normal DB operations
 
 Only `active` DBs are available to normal VFS APIs.
+Archive/restore lifecycle states are intentionally removed. No archive/restore API or CLI path is restored in v1.
 
 ## Size Tracking
 
 `logical_size_bytes` is the billable SQLite bytes for an active database.
 
-It is updated after VFS mutations, restore finalization, and storage billing settle. SQLite free pages are included. Index DB bytes, canister heap, and shared management state are excluded.
+It is updated after VFS mutations and storage billing settle. SQLite free pages are included. Index DB bytes, canister heap, and shared management state are excluded.
 
-Deleting or archiving a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
+Deleting a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
 
 ## Cycles
 
@@ -56,7 +55,9 @@ KINIC cycles uses one internal DB-scoped balance:
 
 - DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(CreateDatabaseRequest { name, profile })`. The first database created by each caller principal receives a fixed `10_000_000_000` cycle free grant, allocates a stable-memory mount immediately, records `kind = "free_grant"` in `database_cycle_ledger`, and starts as `active`. The free grant is tracked per principal outside the DB ledger, so deleting the granted DB does not restore the grant. Later databases from the same principal keep the paid flow: generated `database_id`, owner membership, profile, and a zero DB cycles balance without allocating a stable-memory mount ID. Those DBs remain `pending` and cycles-suspended until the first successful cycle purchase activates the mounted SQLite DB.
+DB creation uses `create_database(CreateDatabaseRequest { name })`. The first database created by each authenticated caller receives one initial free grant of `10_000_000_000` cycles. That free-grant DB allocates a stable-memory mount immediately, starts as `active`, and records `kind = "free_grant"` in `database_cycle_ledger`. `database_free_cycle_grants` records the caller principal, granted database, grant cycles, and creation time, so deleting that DB does not reset the caller's grant.
+
+After a caller has used the free grant, `create_database` creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
 External ledger calls are used for DB cycles purchase and App KINIC balance movement:
 
@@ -80,7 +81,7 @@ Storage billing settles every 24h from a canister timer, with controller-only `s
 storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
 ```
 
-Storage charges use the latest `logical_size_bytes` stored in the index DB and write `kind = "storage_charge"` ledger entries for actually collected cycles. Settlement does not open every DB to remeasure size; write/update/archive paths keep `logical_size_bytes` current enough for billing. Insufficient-balance unpaid cycles are not carried forward or tracked as debt in v1. The residual cost above the remaining balance is forgiven as subsidy/suspension policy, the remaining balance is consumed, and the DB is suspended. Timer settlement persists `cursor_mount_id` and a fixed `billing_now_ms` in the index DB, processes up to six 1000-DB batches per message, and schedules a short continuation timer while `next_cursor_mount_id` remains. The same `billing_now_ms` is reused until the run finishes, so DBs in one run do not receive different elapsed times. Settlement execution overhead allocation and index DB byte billing are outside this flow.
+Storage charges use the latest `logical_size_bytes` stored in the index DB and write `kind = "storage_charge"` ledger entries for actually collected cycles. Settlement does not open every DB to remeasure size; write/update paths keep `logical_size_bytes` current enough for billing. Insufficient-balance unpaid cycles are not carried forward or tracked as debt in v1. The residual cost above the remaining balance is forgiven as subsidy/suspension policy, the remaining balance is consumed, and the DB is suspended. Timer settlement persists `cursor_mount_id` and a fixed `billing_now_ms` in the index DB, processes up to six 1000-DB batches per message, and schedules a short continuation timer while `next_cursor_mount_id` remains. The same `billing_now_ms` is reused until the run finishes, so DBs in one run do not receive different elapsed times. Settlement execution overhead allocation and index DB byte billing are outside this flow.
 
 `database_cycle_ledger` is the cycles source of truth. Successful charged update calls are recorded there directly. Ledger-backed cycle purchase entries store ledger block indexes in `ledger_block_index`.
 
@@ -88,9 +89,9 @@ Cycles history redacts payer/caller principals for reader and writer callers. DB
 
 `kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local cycle purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
+`scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with explicit `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID`. The script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh`. For existing mainnet deploys, the script resolves unset `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` from the current canister `get_cycles_billing_config`; fresh installs must set both explicitly. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
 
 Upgrade compatibility:
 
@@ -101,14 +102,14 @@ Upgrade compatibility:
 
 Normal operator flow:
 
-1. Owner creates a pending DB with `create_database(CreateDatabaseRequest { name, profile })`.
-2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. The caller's first DB starts active with the free grant. Later DBs require a payer to call `purchase_database_cycles` with the payment amount.
-4. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
+1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `get_initial_free_database_grant_status` reports `available = true`, this consumes the caller's free grant and returns an active DB with `10_000_000_000` cycles.
+2. If the free grant is already used, owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`.
+3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
+4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 5. Successful DB updates consume DB cycles balance.
-6. DB delete discards any remaining cycles. It does not reset the caller's initial free grant usage.
+6. DB delete discards any remaining cycles.
 
-URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
+source capture and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. source capture source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
 Treasury sweep, DB-specific ledger subaccounts, repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented.
 
@@ -123,47 +124,15 @@ Pending cycle operations are temporary state for transfer-in-flight, ambiguous l
 Delete is a hard delete:
 
 - the SQLite DB file is removed where file deletion is available
-- DB membership, cycles, pending operations, restore chunks, restore sessions, and transient sessions are removed from the index
+- DB membership, cycles, pending operations, and transient sessions are removed from the index
+- the caller-level initial free grant record is retained
 - `database_mount_history` is retained so the stable-memory mount ID is not reused by another DB in v1
 - the stable-memory mount ID is not reused by another DB in v1
 
 Delete requires no pending cycle purchase operations. The request carries only `database_id`. Remaining DB cycles are discarded with the deleted index rows.
 
-Delete is treated as irreversible. If recovery is required, archive first and store the exported bytes outside the canister.
+Delete is treated as irreversible.
 Deleted DBs are absent from `list_databases` and subsequent DB operations return `database not found`.
-
-## Archive
-
-Archive is a low-level snapshot byte export flow:
-
-1. `begin_database_archive(database_id)` moves the DB to `archiving`, updates `updated_at_ms`, and returns the current DB file size.
-2. `read_database_archive_chunk(database_id, offset, max_bytes)` exports file bytes by range.
-3. Caller stores the bytes outside the canister.
-4. `finalize_database_archive(database_id, snapshot_hash)` verifies the SHA-256 digest, marks the DB archived, and releases the active mount.
-
-The canister does not persist archive bytes. The caller owns external storage and retry behavior.
-
-`snapshot_hash` must be the 32-byte SHA-256 digest of the exported SQLite bytes.
-If hash verification fails, the DB stays `archiving`; the caller can reread bytes and retry finalize or call `cancel_database_archive(database_id)` to return the DB to `active`.
-`cancel_database_archive` is owner-only and only valid while the DB is `archiving`.
-Archive reads reject chunks larger than 1 MiB.
-Finalize computes the digest by reading the whole SQLite file in one update. Large DBs can increase instruction and cycle cost; a future archive flow can move this to incremental chunk hashing.
-
-## Restore
-
-Restore is a low-level snapshot byte import flow:
-
-1. `begin_database_restore(database_id, snapshot_hash, size_bytes)` moves an archived DB to `restoring` and allocates a new slot.
-2. `write_database_restore_chunk(database_id, offset, bytes)` writes imported bytes.
-3. `finalize_database_restore(database_id)` checks file size and SHA-256 digest, runs DB migrations, and returns the DB to `active`.
-
-Restore can only begin from `archived`. It cannot begin from `active` or while already `restoring`.
-If the canister cannot mount the newly allocated DB file during begin, the DB rolls back to its previous `archived` state. The failed mount ID remains in mount history and is not reused.
-
-If finalize fails because the file size is wrong, the DB stays `restoring`. The caller can write missing bytes and retry finalize.
-If the restore must be abandoned, `cancel_database_restore(database_id)` returns the DB to the pre-restore `archived` state and removes partial restore chunks and bytes. The restore mount ID remains in mount history and is not reused.
-Restore rejects chunks larger than 1 MiB and declared DB sizes larger than `i64::MAX`.
-Restore finalize also hashes the whole restored SQLite file in one update, so large imports have the same instruction and cycle-cost concern as archive finalize.
 
 ## Snapshot Sync Retry
 
@@ -174,11 +143,7 @@ Busy DBs may require caller retry by restarting the snapshot export flow.
 ## Current Limits
 
 - At most 32757 lifetime user DB slots per canister: mount IDs `11..=32767`.
-- Archive export and restore import chunks are limited to 1 MiB.
-- Declared restore DB size must fit the runtime database size limit, currently `i64::MAX`.
-- v1 does not treat archived slots as reusable concurrent capacity.
 
 ## Follow-ups
 
-- The CLI exposes archive export/import as `database archive-export` and `database archive-restore`. External object storage integration is still caller-owned.
 - Caffeine or external object storage integration is out of scope for v1.

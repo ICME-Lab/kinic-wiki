@@ -5,57 +5,51 @@ use std::future::Future;
 use std::task::{Context, Poll, Waker};
 
 use candid::{Encode, Nat, Principal};
-use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL, DEFAULT_CYCLES_TOP_UP_THRESHOLD,
-    DEFAULT_LLM_WRITER_PRINCIPAL, INITIAL_FREE_DATABASE_GRANT_CYCLES, VfsService,
+    DEFAULT_LLM_WRITER_PRINCIPAL, VfsService,
 };
 use vfs_types::{
-    AppendNodeRequest, CreateDatabaseRequest, CreateDatabaseResult, CyclesBillingConfig,
-    CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseProfile,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
-    DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    KINIC_LEDGER_FEE_E8S, KnowledgeEvidenceRequest, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    AppendNodeRequest, CreateDatabaseRequest, CyclesBillingConfig, CyclesBillingConfigUpdate,
+    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
     RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    StorageBillingBatchRequest, StoreManifestRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    SourceEvidenceRequest, StorageBillingBatchRequest, UpdateDatabaseMetadataRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
     CyclesTopUpCheckStatus, CyclesTopUpLauncherError, CyclesTopUpLauncherResult,
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
     Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
-    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_cycles_top_up, check_database_write_cycles,
+    SERVICE, TransferFromError, append_node, check_cycles_top_up, check_database_write_cycles,
     clear_cycles_top_up_state_for_test, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database,
     cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
-    finalize_database_restore, get_cycles_billing_config, get_initial_free_database_grant_status,
-    glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    icrc21_canister_call_consent_message, incoming_links, knowledge_evidence,
+    fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config,
+    get_initial_free_database_grant_status, glob_nodes, grant_database_access, graph_links,
+    graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
     last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     mark_initial_free_database_grant_used_for_test, market_create_listing, market_get_listing,
-    market_list_seller_listings, market_pause_listing, market_purchase_access,
-    market_update_listing, memory_recall, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_database_sql_json,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
-    set_next_cycles_top_up_launcher_result_for_test,
+    market_list_seller_listings, market_pause_listing, market_purchase_access, memory_manifest,
+    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
+    query_database_sql_json, query_index_sql_json, read_node, read_node_context, rename_database,
+    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
+    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, status,
-    store_manifest, transfer_from_error_outcome, update_charge_cycles,
-    update_cycles_billing_config, wiki_metrics, wiki_metrics_series, write_database_restore_chunk,
-    write_node, write_nodes,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
+    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
+    update_database_metadata, wiki_metrics, wiki_metrics_series, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -186,13 +180,6 @@ fn install_empty_test_service() {
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
-fn create_pending_database_for_test(
-    request: CreateDatabaseRequest,
-) -> Result<CreateDatabaseResult, String> {
-    mark_initial_free_database_grant_used_for_test();
-    create_database(request)
-}
-
 fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);
@@ -218,10 +205,6 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
         payout_principal: Principal::management_canister().to_text(),
-        title: "Private market DB".to_string(),
-        description: "Paid reader access".to_string(),
-        llm_summary: None,
-        tags_json: "[]".to_string(),
         price_e8s,
     }
 }
@@ -345,7 +328,7 @@ fn reader_can_query_database_sql_json_without_controller_role() {
                 "2vxsx-fae",
                 WriteNodeRequest {
                     database_id: "default".to_string(),
-                    path: "/Wiki/sql.md".to_string(),
+                    path: "/Knowledge/sql.md".to_string(),
                     kind: NodeKind::File,
                     content: "database sql".to_string(),
                     metadata_json: "{}".to_string(),
@@ -368,7 +351,7 @@ fn reader_can_query_database_sql_json_without_controller_role() {
 
     let result = query_database_sql_json(
         "default".to_string(),
-        "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/sql.md' LIMIT 1".to_string(),
+        "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Knowledge/sql.md' LIMIT 1".to_string(),
         10,
     )
     .expect("reader should query database SQL");
@@ -376,7 +359,7 @@ fn reader_can_query_database_sql_json_without_controller_role() {
     assert_eq!(result.row_count, 1);
     assert_eq!(
         result.rows,
-        vec![r#"{"path":"/Wiki/sql.md","content":"database sql"}"#]
+        vec![r#"{"path":"/Knowledge/sql.md","content":"database sql"}"#]
     );
 }
 
@@ -563,7 +546,7 @@ fn controller_can_settle_database_storage_charges_batch() {
                 "2vxsx-fae",
                 WriteNodeRequest {
                     database_id: "default".to_string(),
-                    path: "/Wiki/storage.md".to_string(),
+                    path: "/Knowledge/storage.md".to_string(),
                     kind: NodeKind::File,
                     content: "storage billing".to_string(),
                     metadata_json: "{}".to_string(),
@@ -683,7 +666,7 @@ fn index_sql_json_rejects_oversized_row_at_entrypoint() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     let error = query_index_sql_json(
-        "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1".to_string(),
+        "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1".to_string(),
         1,
     )
     .expect_err("oversized index SQL row should reject");
@@ -851,9 +834,9 @@ fn transfer_from_bad_fee_outcome_is_typed() {
 fn purchase_database_cycles_cycles_completed_transfer_from() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Funded".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -890,9 +873,9 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
 fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Anonymous purchase".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     drop(_caller);
@@ -917,9 +900,9 @@ fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
 fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Duplicate ledger".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
@@ -951,9 +934,9 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
 fn list_database_cycle_entries_paginates_with_clamped_limits() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Cycle history pages".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     for index in 0..105 {
@@ -986,9 +969,9 @@ fn list_database_cycle_entries_paginates_with_clamped_limits() {
 fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Bad fee".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::BadFee {
@@ -1020,9 +1003,9 @@ fn purchase_database_cycles_rejects_bad_fee_without_credit() {
 fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Purchase validation".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
 
@@ -1050,92 +1033,12 @@ fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
 }
 
 #[test]
-fn purchase_database_cycles_rejects_archive_restore_statuses() {
-    install_test_service();
-    let _owner = AuthenticatedCallerGuard::install_principal(Principal::anonymous());
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    clear_last_ledger_memo_for_test();
-    let archiving = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("archiving database should reject purchase")
-    };
-    assert!(archiving.contains("database is archiving"));
-    assert_eq!(last_ledger_memo_for_test(), None);
-
-    let bytes = read_database_archive_chunk(
-        "default".to_string(),
-        0,
-        archive
-            .size_bytes
-            .try_into()
-            .expect("test archive should fit in one chunk"),
-    )
-    .expect("archive chunk should read")
-    .bytes;
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    let archived = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("archived database should reject purchase")
-    };
-    assert!(archived.contains("database is archived"));
-
-    begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
-        .expect("restore should begin");
-    let restoring = {
-        let _caller = AuthenticatedCallerGuard::install();
-        block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            "default", 500,
-        )))
-        .expect_err("restoring database should reject purchase")
-    };
-    assert!(restoring.contains("database is restoring"));
-}
-
-#[test]
-fn begin_database_archive_rejects_pending_cycle_purchase() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
-        name: "Pending lifecycle".to_string(),
-        profile: DatabaseProfile::Workspace,
-    })
-    .expect("database should create");
-    fund_database(&database.database_id, 1_000_000, 41);
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .begin_database_cycles_purchase(
-                &database.database_id,
-                &Principal::management_canister().to_text(),
-                500,
-                1_700_000_000_001,
-            )
-            .expect("cycle purchase should begin")
-    });
-
-    let error = begin_database_archive(database.database_id)
-        .expect_err("archive should reject pending cycle operation");
-
-    assert!(error.contains("pending cycle operation"));
-}
-
-#[test]
 fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Overflow".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1171,9 +1074,9 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
 fn purchase_database_cycles_uses_current_config_amount() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Current config".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1211,9 +1114,9 @@ fn purchase_database_cycles_uses_current_config_amount() {
 fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Rejected".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::LedgerErr(
@@ -1241,9 +1144,9 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
 fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_review() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Ambiguous".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
@@ -1288,9 +1191,9 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
         Principal::from_text("bkyz2-fmaaa-aaaaa-qaaaq-cai").expect("stranger should parse");
     let database = {
         let _owner = AuthenticatedCallerGuard::install_principal(owner);
-        create_pending_database_for_test(CreateDatabaseRequest {
+        mark_initial_free_database_grant_used_for_test();
+        create_database(CreateDatabaseRequest {
             name: "Pending".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
     };
@@ -1336,9 +1239,9 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
 fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Mount review".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -1383,9 +1286,9 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
 fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    mark_initial_free_database_grant_used_for_test();
+    let database = create_database(CreateDatabaseRequest {
         name: "Apply review".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
@@ -1438,9 +1341,9 @@ fn purchase_database_cycles_allows_non_owner_payer() {
     install_empty_test_service();
     let database_id = {
         let _owner = AuthenticatedCallerGuard::install();
-        create_pending_database_for_test(CreateDatabaseRequest {
+        mark_initial_free_database_grant_used_for_test();
+        create_database(CreateDatabaseRequest {
             name: "Public funding".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
         .database_id
@@ -1473,9 +1376,8 @@ fn purchase_database_cycles_allows_non_owner_payer() {
 fn icrc21_purchase_database_cycles_returns_consent_message() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    let database = create_database(CreateDatabaseRequest {
         name: "Consent".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     let request = cycles_purchase_request(&database.database_id, 50_000);
@@ -1551,9 +1453,8 @@ fn icrc21_market_purchase_access_returns_consent_message() {
         Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Market consent".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1580,7 +1481,7 @@ fn icrc21_market_purchase_access_returns_consent_message() {
         }
     };
     assert!(message.contains("Purchase marketplace database access"));
-    assert!(message.contains("Listing: `Private market DB`"));
+    assert!(message.contains("Listing: `Market consent`"));
     assert!(message.contains("Payment: `2.5` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
     assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
@@ -1602,9 +1503,8 @@ fn icrc21_market_purchase_access_canonicalizes_access_principal() {
         Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Market canonical consent".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1646,9 +1546,8 @@ fn icrc21_market_purchase_access_rejects_price_mismatch() {
         Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Price mismatch".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 302);
@@ -1683,9 +1582,8 @@ fn icrc21_market_purchase_access_rejects_inactive_listing() {
         Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
     let listing = {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Inactive listing".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 303);
@@ -1720,17 +1618,15 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     let seller_b = Principal::management_canister();
     {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
-        let first = create_pending_database_for_test(CreateDatabaseRequest {
+        let first = create_database(CreateDatabaseRequest {
             name: "Seller A first".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("first database should create");
         fund_database(&first.database_id, 1_000_000, 304);
         market_create_listing(market_listing_request(&first.database_id, 100))
             .expect("first listing should create");
-        let second = create_pending_database_for_test(CreateDatabaseRequest {
+        let second = create_database(CreateDatabaseRequest {
             name: "Seller A second".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("second database should create");
         fund_database(&second.database_id, 1_000_000, 305);
@@ -1739,9 +1635,8 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     }
     {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
-        let other = create_pending_database_for_test(CreateDatabaseRequest {
+        let other = create_database(CreateDatabaseRequest {
             name: "Seller B listing".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("other database should create");
         fund_database(&other.database_id, 1_000_000, 306);
@@ -1752,13 +1647,19 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
     let first_page = market_list_seller_listings(seller_a.to_text(), None, 1)
         .expect("first seller page should load");
     assert_eq!(first_page.listings.len(), 1);
-    assert_eq!(first_page.listings[0].seller_principal, seller_a.to_text());
+    assert_eq!(
+        first_page.listings[0].listing.seller_principal,
+        seller_a.to_text()
+    );
     assert!(first_page.next_cursor.is_some());
 
     let second_page = market_list_seller_listings(seller_a.to_text(), first_page.next_cursor, 10)
         .expect("second seller page should load");
     assert_eq!(second_page.listings.len(), 1);
-    assert_eq!(second_page.listings[0].seller_principal, seller_a.to_text());
+    assert_eq!(
+        second_page.listings[0].listing.seller_principal,
+        seller_a.to_text()
+    );
     assert!(second_page.next_cursor.is_none());
 }
 
@@ -1766,9 +1667,8 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
 fn purchase_database_cycles_sends_operation_memo_to_ledger() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    let database = create_database(CreateDatabaseRequest {
         name: "Memo".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     clear_last_ledger_memo_for_test();
@@ -1803,9 +1703,8 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     .expect_err("unknown database should reject");
     assert!(missing.contains("database not found"));
 
-    let database = create_pending_database_for_test(CreateDatabaseRequest {
+    let database = create_database(CreateDatabaseRequest {
         name: "Deleted".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 44);
@@ -1910,10 +1809,6 @@ fn install_low_balance_default_service() {
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
-fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
-    Sha256::digest(bytes).to_vec()
-}
-
 fn ensure_parent_folders(path: &str) {
     let segments = path
         .split('/')
@@ -1989,18 +1884,17 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
-fn market_listing_description_allows_newlines() {
+fn database_metadata_description_allows_newlines() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let database_id;
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
-            name: "Multiline market".to_string(),
-            profile: DatabaseProfile::Workspace,
+        let database = create_database(CreateDatabaseRequest {
+            name: "Multiline metadata".to_string(),
         })
-        .expect("market database should create");
+        .expect("database should create");
         database_id = database.database_id;
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(220));
         block_on_ready(purchase_database_cycles(cycles_purchase_request(
@@ -2009,48 +1903,34 @@ fn market_listing_description_allows_newlines() {
         )))
         .expect("market database should activate");
 
-        let mut create = market_listing_request(&database_id, 500);
-        create.description = "Line one\nLine two\r\n\tIndented".to_string();
-        create.llm_summary = Some("Summary one\nSummary two".to_string());
-        let listing = market_create_listing(create).expect("multiline description should create");
-        assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
-        assert_eq!(
-            listing.llm_summary,
-            Some("Summary one\nSummary two".to_string())
-        );
-
-        let updated = market_update_listing(MarketUpdateListingRequest {
-            listing_id: listing.listing_id,
-            expected_revision: listing.revision,
-            payout_principal: Principal::management_canister().to_text(),
-            title: "Updated market DB".to_string(),
-            description: "Updated one\nUpdated two".to_string(),
-            llm_summary: Some("Updated summary\nSecond line".to_string()),
+        let metadata = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id,
+            name: "Multiline metadata".to_string(),
+            description: "Line one\nLine two\r\n\tIndented".to_string(),
+            llm_summary: Some("Summary one\nSummary two".to_string()),
             tags_json: "[]".to_string(),
-            price_e8s: 600,
         })
-        .expect("multiline description should update");
-        assert_eq!(updated.description, "Updated one\nUpdated two");
+        .expect("multiline metadata should update");
+        assert_eq!(metadata.description, "Line one\nLine two\r\n\tIndented");
         assert_eq!(
-            updated.llm_summary,
-            Some("Updated summary\nSecond line".to_string())
+            metadata.llm_summary,
+            Some("Summary one\nSummary two".to_string())
         );
     }
 }
 
 #[test]
-fn market_listing_description_rejects_non_whitespace_control_characters() {
+fn database_metadata_rejects_non_whitespace_control_characters() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let database_id;
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
-            name: "Control market".to_string(),
-            profile: DatabaseProfile::Workspace,
+        let database = create_database(CreateDatabaseRequest {
+            name: "Control metadata".to_string(),
         })
-        .expect("market database should create");
+        .expect("database should create");
         database_id = database.database_id;
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(221));
         block_on_ready(purchase_database_cycles(cycles_purchase_request(
@@ -2059,26 +1939,89 @@ fn market_listing_description_rejects_non_whitespace_control_characters() {
         )))
         .expect("market database should activate");
 
-        let mut bad_description = market_listing_request(&database_id, 500);
-        bad_description.description = "bad\0description".to_string();
-        let description_error = market_create_listing(bad_description)
-            .expect_err("NUL in description should be rejected");
-        assert!(
-            description_error
-                .contains("market listing description may not contain control characters")
-        );
+        let description_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id: database_id.clone(),
+            name: "Control metadata".to_string(),
+            description: "bad\0description".to_string(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })
+        .expect_err("NUL in description should be rejected");
+        assert!(description_error.contains("database description may only contain newline"));
 
-        let mut bad_title = market_listing_request(&database_id, 500);
-        bad_title.title = "bad\ntitle".to_string();
-        let title_error =
-            market_create_listing(bad_title).expect_err("title newline should be rejected");
-        assert!(title_error.contains("market listing title may not contain control characters"));
+        let name_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id: database_id.clone(),
+            name: "bad\nname".to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[]".to_string(),
+        })
+        .expect_err("name newline should be rejected");
+        assert!(name_error.contains("database name may not contain control characters"));
 
-        let mut bad_tags = market_listing_request(&database_id, 500);
-        bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
-        let tags_error =
-            market_create_listing(bad_tags).expect_err("tags newline should be rejected");
-        assert!(tags_error.contains("market listing tags may not contain control characters"));
+        let tags_error = update_database_metadata(UpdateDatabaseMetadataRequest {
+            database_id,
+            name: "Control metadata".to_string(),
+            description: String::new(),
+            llm_summary: None,
+            tags_json: "[\"bad\ntag\"]".to_string(),
+        })
+        .expect_err("tags newline should be rejected");
+        assert!(tags_error.contains("database tags may not contain control characters"));
+    }
+}
+
+#[test]
+fn database_metadata_rejects_invalid_tags_json() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Tags metadata".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(222));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        for (tags_json, expected) in [
+            (
+                "{\"tag\":\"not-array\"}",
+                "database tags_json must be a JSON string array",
+            ),
+            (
+                "[\"valid\", 1]",
+                "database tags_json must be a JSON string array",
+            ),
+            (
+                "[\"valid\", \" \"]",
+                "database tags_json must not contain empty tags",
+            ),
+            (
+                "[\"bad\\ntag\"]",
+                "database tags_json must not contain control characters",
+            ),
+        ] {
+            let error = update_database_metadata(UpdateDatabaseMetadataRequest {
+                database_id: database_id.clone(),
+                name: "Tags metadata".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: tags_json.to_string(),
+            })
+            .expect_err("invalid tags_json should be rejected");
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} in {error:?}"
+            );
+        }
     }
 }
 
@@ -2094,9 +2037,8 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Private market".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2108,7 +2050,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         .expect("market database should activate");
         write_node(WriteNodeRequest {
             database_id: database_id.clone(),
-            path: "/Wiki/paid.md".to_string(),
+            path: "/Knowledge/paid.md".to_string(),
             kind: NodeKind::File,
             content: "# Paid\n\nPrivate body".to_string(),
             metadata_json: "{}".to_string(),
@@ -2158,16 +2100,20 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
             .expect("entitled database should appear in authenticated list");
         assert_eq!(summary.role, DatabaseRole::Reader);
 
-        let node = read_node(database_id.clone(), "/Wiki/paid.md".to_string())
+        let node = read_node(database_id.clone(), "/Knowledge/paid.md".to_string())
             .expect("entitled buyer read should succeed")
             .expect("paid node should exist");
         assert_eq!(node.content, "# Paid\n\nPrivate body");
         let children = list_children(ListChildrenRequest {
             database_id: database_id.clone(),
-            path: "/Wiki".to_string(),
+            path: "/Knowledge".to_string(),
         })
         .expect("entitled buyer should list children");
-        assert!(children.iter().any(|child| child.path == "/Wiki/paid.md"));
+        assert!(
+            children
+                .iter()
+                .any(|child| child.path == "/Knowledge/paid.md")
+        );
     }
 
     let anonymous_summaries = list_databases().expect("anonymous summaries should load");
@@ -2204,9 +2150,8 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
-        let database = create_pending_database_for_test(CreateDatabaseRequest {
+        let database = create_database(CreateDatabaseRequest {
             name: "Market character counts".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2218,23 +2163,21 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
         .expect("market database should activate");
         write_node(WriteNodeRequest {
             database_id: database_id.clone(),
-            path: "/Wiki/japanese.md".to_string(),
+            path: "/Knowledge/japanese.md".to_string(),
             kind: NodeKind::File,
             content: japanese_content.to_string(),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
         .expect("wiki node should write");
-        for path in ["/Sources", "/Sources/raw", "/Sources/raw/test"] {
-            mkdir_node(MkdirNodeRequest {
-                database_id: database_id.clone(),
-                path: path.to_string(),
-            })
-            .expect("source parent folder should create");
-        }
+        mkdir_node(MkdirNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Sources/test".to_string(),
+        })
+        .expect("source parent folder should create");
         write_node(WriteNodeRequest {
             database_id: database_id.clone(),
-            path: "/Sources/raw/test/source.md".to_string(),
+            path: "/Sources/test/source.md".to_string(),
             kind: NodeKind::Source,
             content: "source text should not appear in marketplace node sizes".to_string(),
             metadata_json: "{}".to_string(),
@@ -2252,7 +2195,7 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
         .preview
         .excerpts
         .iter()
-        .find(|excerpt| excerpt.path == "/Wiki/japanese.md")
+        .find(|excerpt| excerpt.path == "/Knowledge/japanese.md")
         .expect("wiki file should appear in marketplace node size details");
     assert_eq!(
         excerpt.content_chars,
@@ -2293,14 +2236,14 @@ fn write_nodes_records_instruction_charge_and_writes_nodes() {
         database_id: "default".to_string(),
         nodes: vec![
             WriteNodeItem {
-                path: "/Wiki/batch-a.md".to_string(),
+                path: "/Knowledge/batch-a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha".to_string(),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
             WriteNodeItem {
-                path: "/Wiki/batch-b.md".to_string(),
+                path: "/Knowledge/batch-b.md".to_string(),
                 kind: NodeKind::File,
                 content: "beta".to_string(),
                 metadata_json: "{}".to_string(),
@@ -2322,7 +2265,7 @@ fn write_nodes_records_instruction_charge_and_writes_nodes() {
     assert_eq!(charge.cycles_delta, Some(20_000_321));
     assert_eq!(charge.method.as_deref(), Some("write_nodes"));
     assert!(
-        read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
+        read_node("default".to_string(), "/Knowledge/batch-a.md".to_string())
             .expect("read should succeed")
             .is_some()
     );
@@ -2335,7 +2278,7 @@ fn write_node_and_write_nodes_record_instruction_charges() {
 
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/single.md".to_string(),
+        path: "/Knowledge/single.md".to_string(),
         kind: NodeKind::File,
         content: "single".to_string(),
         metadata_json: "{}".to_string(),
@@ -2345,7 +2288,7 @@ fn write_node_and_write_nodes_record_instruction_charges() {
     write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
-            path: "/Wiki/batch.md".to_string(),
+            path: "/Knowledge/batch.md".to_string(),
             kind: NodeKind::File,
             content: "batch".to_string(),
             metadata_json: "{}".to_string(),
@@ -2381,7 +2324,7 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
     set_update_charge_units_for_test(vec![0, 1_000_000_000_000]);
     let written = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/overdrawn.md".to_string(),
+        path: "/Knowledge/overdrawn.md".to_string(),
         kind: NodeKind::File,
         content: "overdrawn charge still writes".to_string(),
         metadata_json: "{}".to_string(),
@@ -2389,9 +2332,9 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
     })
     .expect("overdrawn post-charge should not trap");
 
-    assert_eq!(written.node.path, "/Wiki/overdrawn.md");
+    assert_eq!(written.node.path, "/Knowledge/overdrawn.md");
     assert!(
-        read_node("default".to_string(), "/Wiki/overdrawn.md".to_string())
+        read_node("default".to_string(), "/Knowledge/overdrawn.md".to_string())
             .expect("written node should read")
             .is_some()
     );
@@ -2423,7 +2366,7 @@ fn failed_update_keeps_original_error_when_instruction_counter_decreases() {
 
     let error = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/stale.md".to_string(),
+        path: "/Knowledge/stale.md".to_string(),
         kind: NodeKind::File,
         content: "stale write".to_string(),
         metadata_json: "{}".to_string(),
@@ -2444,7 +2387,7 @@ fn write_nodes_rejects_low_database_cycles_balance() {
 
     let single = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/no-balance-single.md".to_string(),
+        path: "/Knowledge/no-balance-single.md".to_string(),
         kind: NodeKind::File,
         content: "no balance single".to_string(),
         metadata_json: "{}".to_string(),
@@ -2454,7 +2397,7 @@ fn write_nodes_rejects_low_database_cycles_balance() {
     let error = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
-            path: "/Wiki/no-balance.md".to_string(),
+            path: "/Knowledge/no-balance.md".to_string(),
             kind: NodeKind::File,
             content: "no balance".to_string(),
             metadata_json: "{}".to_string(),
@@ -2468,15 +2411,18 @@ fn write_nodes_rejects_low_database_cycles_balance() {
     assert!(
         read_node(
             "default".to_string(),
-            "/Wiki/no-balance-single.md".to_string()
+            "/Knowledge/no-balance-single.md".to_string()
         )
         .expect("single path read should succeed")
         .is_none()
     );
     assert!(
-        read_node("default".to_string(), "/Wiki/no-balance.md".to_string())
-            .expect("batch path read should succeed")
-            .is_none()
+        read_node(
+            "default".to_string(),
+            "/Knowledge/no-balance.md".to_string()
+        )
+        .expect("batch path read should succeed")
+        .is_none()
     );
 }
 
@@ -2487,7 +2433,7 @@ fn suspended_database_rejects_metered_mutations() {
     let batch = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
-            path: "/Wiki/suspended.md".to_string(),
+            path: "/Knowledge/suspended.md".to_string(),
             kind: NodeKind::File,
             content: "suspended".to_string(),
             metadata_json: "{}".to_string(),
@@ -2497,15 +2443,12 @@ fn suspended_database_rejects_metered_mutations() {
     .expect_err("suspended database should reject batch write");
     let mkdir = mkdir_node(MkdirNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/suspended-folder".to_string(),
+        path: "/Knowledge/suspended-folder".to_string(),
     })
     .expect_err("suspended database should reject mkdir");
-    let cancel = super::cancel_database_restore("default".to_string())
-        .expect_err("suspended database should reject restore cancel before runtime mutation");
 
     assert!(batch.contains("database cycles are suspended"));
     assert!(mkdir.contains("database cycles are suspended"));
-    assert!(cancel.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -2520,11 +2463,14 @@ fn suspended_database_rejects_grant_but_allows_unmetered_owner_management_operat
     .expect_err("suspended database should reject metered grant");
     assert!(grant.contains("database cycles are suspended"));
 
-    rename_database(RenameDatabaseRequest {
+    update_database_metadata(UpdateDatabaseMetadataRequest {
         database_id: "default".to_string(),
         name: "Suspended rename".to_string(),
+        description: String::new(),
+        llm_summary: None,
+        tags_json: "[]".to_string(),
     })
-    .expect("suspended database owner should rename");
+    .expect("suspended database owner should update metadata");
     super::delete_database(delete_database_request("default"))
         .expect("suspended database owner should delete");
 }
@@ -2558,7 +2504,7 @@ fn metered_update_checks_access_before_cycles_state() {
     let error = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
-            path: "/Wiki/no-access.md".to_string(),
+            path: "/Knowledge/no-access.md".to_string(),
             kind: NodeKind::File,
             content: "no access".to_string(),
             metadata_json: "{}".to_string(),
@@ -2579,9 +2525,9 @@ fn check_database_write_cycles_requires_authenticated_writer() {
         Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("reader principal should parse");
     let database_id = {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
-        create_pending_database_for_test(CreateDatabaseRequest {
+        mark_initial_free_database_grant_used_for_test();
+        create_database(CreateDatabaseRequest {
             name: "Write cycles check".to_string(),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
         .database_id
@@ -2656,7 +2602,7 @@ fn write_nodes_rejects_reader_role() {
     let error = write_nodes(WriteNodesRequest {
         database_id: "public".to_string(),
         nodes: vec![WriteNodeItem {
-            path: "/Wiki/nope.md".to_string(),
+            path: "/Knowledge/nope.md".to_string(),
             kind: NodeKind::File,
             content: "nope".to_string(),
             metadata_json: "{}".to_string(),
@@ -2669,10 +2615,10 @@ fn write_nodes_rejects_reader_role() {
 }
 
 #[test]
-fn write_nodes_rejects_invalid_source_path() {
+fn write_nodes_allows_source_paths_without_schema_validation() {
     install_test_service();
 
-    let error = write_nodes(WriteNodesRequest {
+    let results = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
             path: "/Sources/not-raw.md".to_string(),
@@ -2682,10 +2628,11 @@ fn write_nodes_rejects_invalid_source_path() {
             expected_etag: None,
         }],
     })
-    .expect_err("invalid source path should fail");
+    .expect("source path schema should not be checked at entrypoint");
 
-    assert!(error.contains("source path"));
-    assert!(database_charge_methods("default").is_empty());
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].node.path, "/Sources/not-raw.md");
+    assert_eq!(results[0].node.kind, NodeKind::Source);
 }
 
 #[test]
@@ -2695,14 +2642,9 @@ fn create_database_returns_result() {
     let initial_grant =
         get_initial_free_database_grant_status().expect("initial grant status should load");
     assert!(initial_grant.available);
-    assert_eq!(
-        initial_grant.grant_cycles,
-        INITIAL_FREE_DATABASE_GRANT_CYCLES
-    );
 
     let result = create_database(CreateDatabaseRequest {
         name: " Team skills ".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     assert!(result.database_id.starts_with("db_"));
@@ -2715,27 +2657,6 @@ fn create_database_returns_result() {
         .find(|summary| summary.database_id == result.database_id)
         .expect("created database summary should exist");
     assert_eq!(summary.status, DatabaseStatus::Active);
-    assert_eq!(
-        summary.cycles_balance,
-        Some(INITIAL_FREE_DATABASE_GRANT_CYCLES)
-    );
-    let children = list_children(ListChildrenRequest {
-        database_id: result.database_id.clone(),
-        path: "/Wiki".to_string(),
-    })
-    .expect("free database should list");
-    assert!(children.iter().any(|child| {
-        child.path == "/Wiki/skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
-    }));
-    let entries = list_database_cycle_entries(result.database_id.clone(), None, 10)
-        .expect("free database ledger should load")
-        .entries;
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "free_grant");
-    assert_eq!(
-        entries[0].amount_cycles,
-        INITIAL_FREE_DATABASE_GRANT_CYCLES as i64
-    );
     let used_grant =
         get_initial_free_database_grant_status().expect("used grant status should load");
     assert!(!used_grant.available);
@@ -2744,17 +2665,32 @@ fn create_database_returns_result() {
         Some(result.database_id.as_str())
     );
 
+    let children = list_children(ListChildrenRequest {
+        database_id: result.database_id.clone(),
+        path: "/".to_string(),
+    })
+    .expect("free grant database should list");
+    assert!(children.iter().any(|child| {
+        child.path == "/Skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
+    }));
+
     let pending = create_database(CreateDatabaseRequest {
-        name: "Second".to_string(),
-        profile: DatabaseProfile::Workspace,
+        name: " Paid skills ".to_string(),
     })
     .expect("second database should create pending");
+    let pending_summary = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|summary| summary.database_id == pending.database_id)
+        .expect("pending database summary should exist");
+    assert_eq!(pending_summary.status, DatabaseStatus::Pending);
     let pending_read = list_children(ListChildrenRequest {
         database_id: pending.database_id.clone(),
-        path: "/Wiki".to_string(),
+        path: "/Knowledge".to_string(),
     })
-    .expect_err("pending DB should reject reads");
+    .expect_err("second DB should reject reads until funded");
     assert!(pending_read.contains("database is pending"));
+
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
     block_on_ready(purchase_database_cycles(cycles_purchase_request(
         &pending.database_id,
@@ -2766,11 +2702,11 @@ fn create_database_returns_result() {
     assert_eq!(status.source_count, 0);
     let children = list_children(ListChildrenRequest {
         database_id: pending.database_id,
-        path: "/Wiki".to_string(),
+        path: "/".to_string(),
     })
     .expect("activated database should list");
     assert!(children.iter().any(|child| {
-        child.path == "/Wiki/skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
+        child.path == "/Skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
     }));
 }
 
@@ -2779,42 +2715,91 @@ fn create_database_rejects_pending_database_limit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
 
+    let free = create_database(CreateDatabaseRequest {
+        name: "Free".to_string(),
+    })
+    .expect("initial free database should create active");
+
     for offset in 0..3 {
-        create_pending_database_for_test(CreateDatabaseRequest {
+        create_database(CreateDatabaseRequest {
             name: format!("Pending {offset}"),
-            profile: DatabaseProfile::Workspace,
         })
         .expect("pending database should create within limit");
     }
 
-    let error = create_pending_database_for_test(CreateDatabaseRequest {
+    let error = create_database(CreateDatabaseRequest {
         name: "Pending 3".to_string(),
-        profile: DatabaseProfile::Workspace,
     })
     .expect_err("fourth pending database should reject");
     assert!(error.contains("too many pending databases for caller"));
 
     let summaries = list_databases().expect("database summaries should load");
-    assert_eq!(summaries.len(), 3);
-    assert!(
+    assert_eq!(summaries.len(), 4);
+    assert!(summaries.iter().any(|summary| {
+        summary.database_id == free.database_id && summary.status == DatabaseStatus::Active
+    }));
+    assert_eq!(
         summaries
             .iter()
-            .all(|summary| summary.status == DatabaseStatus::Pending)
+            .filter(|summary| summary.status == DatabaseStatus::Pending)
+            .count(),
+        3
     );
 }
 
 #[test]
-fn canister_rename_database_requires_owner() {
+fn canister_update_database_metadata_requires_owner() {
     install_test_service();
+
+    update_database_metadata(UpdateDatabaseMetadataRequest {
+        database_id: "default".to_string(),
+        name: "Renamed default".to_string(),
+        description: "Updated description".to_string(),
+        llm_summary: Some("Updated summary".to_string()),
+        tags_json: "[\"updated\"]".to_string(),
+    })
+    .expect("owner should update database metadata");
+
+    let summaries = list_databases().expect("database summaries should load");
+    let metadata = summaries[0]
+        .metadata
+        .as_ref()
+        .expect("database summary should include metadata");
+    assert_eq!(metadata.name, "Renamed default");
+    assert_eq!(metadata.description, "Updated description");
+    assert_eq!(metadata.llm_summary.as_deref(), Some("Updated summary"));
+    assert_eq!(metadata.tags_json, "[\"updated\"]");
+}
+
+#[test]
+fn canister_rename_database_updates_name_only() {
+    install_test_service();
+
+    update_database_metadata(UpdateDatabaseMetadataRequest {
+        database_id: "default".to_string(),
+        name: "Before rename".to_string(),
+        description: "Keep description".to_string(),
+        llm_summary: Some("Keep summary".to_string()),
+        tags_json: "[\"keep\"]".to_string(),
+    })
+    .expect("owner should seed database metadata");
 
     rename_database(RenameDatabaseRequest {
         database_id: "default".to_string(),
-        name: "Renamed default".to_string(),
+        name: "Renamed through old API".to_string(),
     })
     .expect("owner should rename database");
 
     let summaries = list_databases().expect("database summaries should load");
-    assert_eq!(summaries[0].name, "Renamed default");
+    let metadata = summaries[0]
+        .metadata
+        .as_ref()
+        .expect("database summary should include metadata");
+    assert_eq!(summaries[0].name, "Renamed through old API");
+    assert_eq!(metadata.name, "Renamed through old API");
+    assert_eq!(metadata.description, "Keep description");
+    assert_eq!(metadata.llm_summary.as_deref(), Some("Keep summary"));
+    assert_eq!(metadata.tags_json, "[\"keep\"]");
 }
 
 #[test]
@@ -2945,7 +2930,7 @@ fn anonymous_reader_grant_allows_public_read() {
         .expect("anonymous reader should grant");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 
-    let node = read_node("public".to_string(), "/Wiki/missing.md".to_string())
+    let node = read_node("public".to_string(), "/Knowledge/missing.md".to_string())
         .expect("anonymous reader query should pass role check");
 
     assert_eq!(node, None);
@@ -2972,26 +2957,66 @@ fn status_stays_available_after_fs_migrations() {
 fn store_entrypoints_return_four_store_contract() {
     install_test_service();
 
-    let manifest = store_manifest(StoreManifestRequest {
+    let manifest = memory_manifest(MemoryManifestRequest {
         database_id: "default".to_string(),
     })
-    .expect("store manifest should load default database profile");
+    .expect("store manifest should load default database");
     assert_eq!(manifest.api_version, "kinic-stores-v1");
-    assert_eq!(manifest.write_policy, "store_recall_read_only");
-    assert_eq!(manifest.recommended_entrypoint, "memory_recall");
+    assert_eq!(manifest.write_policy, "stores_read_only");
+    assert_eq!(manifest.recommended_entrypoint, "query_context");
+    assert!(is_canister_method_entrypoint(
+        &manifest.recommended_entrypoint
+    ));
+    assert!(!is_canister_method_entrypoint("skill inspect"));
     assert_eq!(manifest.max_depth, 2);
-    assert!(manifest.roots.iter().any(|root| root.path == "/Wiki"));
+    assert_eq!(
+        manifest.enabled_stores,
+        vec!["memory", "knowledge", "skill", "session"]
+    );
+    assert_eq!(
+        manifest
+            .entry_roots
+            .iter()
+            .map(|root| (root.path.as_str(), root.kind.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("/Memory", "memory"),
+            ("/Knowledge", "knowledge"),
+            ("/Skills", "skill"),
+            ("/Sessions", "session"),
+        ]
+    );
+    assert!(manifest.purpose.contains("knowledge"));
+    assert!(manifest.roots.iter().any(|root| root.path == "/Knowledge"));
     assert!(
         manifest
             .roots
             .iter()
-            .any(|root| root.path == "/Wiki/skills" && root.kind == "skill")
+            .any(|root| root.path == "/Sessions" && root.kind == "session")
     );
     assert!(
         manifest
             .roots
             .iter()
-            .any(|root| root.path == "/Sources/raw" && root.kind == "knowledge_evidence")
+            .any(|root| root.path == "/Skills" && root.kind == "skill")
+    );
+    assert!(
+        manifest
+            .roots
+            .iter()
+            .any(|root| root.path == "/Sources" && root.kind == "source_evidence")
+    );
+    assert!(
+        manifest
+            .roots
+            .iter()
+            .any(|root| root.path == "/Sources/sessions" && root.kind == "session_evidence")
+    );
+    assert!(
+        manifest
+            .roots
+            .iter()
+            .any(|root| root.path == "/Sources/skill-runs" && root.kind == "skill_run_evidence")
     );
     assert!(
         manifest
@@ -3007,17 +3032,20 @@ fn store_entrypoints_return_four_store_contract() {
     );
 
     for (path, content) in [
-        ("/Wiki/scope/index.md", "# Index\n\n[Overview](overview.md)"),
         (
-            "/Wiki/scope/overview.md",
-            "# Overview\n\nbeam memory [Raw](/Sources/raw/a/a.md)",
+            "/Knowledge/scope/index.md",
+            "# Index\n\n[Overview](overview.md)",
         ),
-        ("/Wiki/scope/schema.md", "# Schema\n\nread-only"),
         (
-            "/Wiki/scope/provenance.md",
-            "# Provenance\n\n[Raw](/Sources/raw/a/a.md)",
+            "/Knowledge/scope/overview.md",
+            "# Overview\n\nbeam memory [Raw](/Sources/a/a.md)",
         ),
-        ("/Sources/raw/a/a.md", "raw source"),
+        ("/Knowledge/scope/schema.md", "# Schema\n\nread-only"),
+        (
+            "/Knowledge/scope/provenance.md",
+            "# Provenance\n\n[Raw](/Sources/a/a.md)",
+        ),
+        ("/Sources/a/a.md", "raw source"),
     ] {
         ensure_parent_folders(path);
         write_node(WriteNodeRequest {
@@ -3035,11 +3063,11 @@ fn store_entrypoints_return_four_store_contract() {
         .expect("write should succeed");
     }
 
-    let context = memory_recall(MemoryRecallRequest {
+    let context = query_context(QueryContextRequest {
         database_id: "default".to_string(),
         task: "beam memory".to_string(),
         entities: Vec::new(),
-        namespace: Some("/Wiki/scope".to_string()),
+        namespace: Some("/Knowledge/scope".to_string()),
         budget_tokens: 1_000,
         include_evidence: true,
         depth: 1,
@@ -3049,28 +3077,61 @@ fn store_entrypoints_return_four_store_contract() {
         context
             .nodes
             .iter()
-            .any(|node| node.node.path == "/Wiki/scope/overview.md")
+            .any(|node| node.node.path == "/Knowledge/scope/overview.md")
     );
     assert!(!context.evidence.is_empty());
 
-    let evidence = knowledge_evidence(KnowledgeEvidenceRequest {
+    let evidence = source_evidence(SourceEvidenceRequest {
         database_id: "default".to_string(),
-        node_path: "/Wiki/scope/overview.md".to_string(),
+        node_path: "/Knowledge/scope/overview.md".to_string(),
     })
     .expect("evidence should load");
     assert!(
         evidence
             .refs
             .iter()
-            .any(|item| item.source_path == "/Sources/raw/a/a.md")
+            .any(|item| item.source_path == "/Sources/a/a.md")
     );
     let source_ref = evidence
         .refs
         .iter()
-        .find(|item| item.source_path == "/Sources/raw/a/a.md")
+        .find(|item| item.source_path == "/Sources/a/a.md")
         .expect("source evidence ref should exist");
     assert!(source_ref.source_etag.is_some());
     assert!(source_ref.source_updated_at.is_some());
+}
+
+fn is_canister_method_entrypoint(value: &str) -> bool {
+    fn method_chars(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    }
+
+    let mut parts = value.splitn(2, ':');
+    let method = parts.next().unwrap_or_default();
+    if !method_chars(method) {
+        return false;
+    }
+    parts.next().is_none_or(|path| path.starts_with('/'))
+}
+
+#[test]
+fn memory_manifest_roots_are_readable() {
+    install_test_service();
+    let database_id = "default".to_string();
+    let manifest = memory_manifest(MemoryManifestRequest {
+        database_id: database_id.clone(),
+    })
+    .expect("store manifest should load");
+    for root in manifest.roots {
+        assert!(
+            read_node(database_id.clone(), root.path)
+                .expect("root should read")
+                .is_some()
+        );
+    }
 }
 
 #[test]
@@ -3079,7 +3140,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/foo.md".to_string(),
+        path: "/Knowledge/foo.md".to_string(),
         kind: NodeKind::File,
         content: "# Foo\n\nalpha body".to_string(),
         metadata_json: "{}".to_string(),
@@ -3088,11 +3149,11 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     .expect("write should succeed");
     assert!(created.created);
 
-    ensure_parent_folders("/Wiki/nested/bar.md");
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Knowledge/nested/bar.md");
+    ensure_parent_folders("/Sources/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/nested/bar.md".to_string(),
+        path: "/Knowledge/nested/bar.md".to_string(),
         kind: NodeKind::File,
         content: "# Bar\n\nbeta body".to_string(),
         metadata_json: "{}".to_string(),
@@ -3100,14 +3161,14 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     })
     .expect("nested write should succeed");
 
-    let node = read_node("default".to_string(), "/Wiki/foo.md".to_string())
+    let node = read_node("default".to_string(), "/Knowledge/foo.md".to_string())
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(node.kind, NodeKind::File);
 
     let stale_write = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/foo.md".to_string(),
+        path: "/Knowledge/foo.md".to_string(),
         kind: NodeKind::File,
         content: "# Foo\n\nrewrite".to_string(),
         metadata_json: "{}".to_string(),
@@ -3117,26 +3178,29 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 
     let entries = list_nodes(ListNodesRequest {
         database_id: "default".to_string(),
-        prefix: "/Wiki".to_string(),
+        prefix: "/Knowledge".to_string(),
         recursive: false,
+        limit: 100,
     })
     .expect("list should succeed");
     assert!(
-        entries
-            .iter()
-            .any(|entry| { entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Folder })
+        entries.iter().any(|entry| {
+            entry.path == "/Knowledge/nested" && entry.kind == NodeEntryKind::Folder
+        })
     );
 
     let children = list_children(ListChildrenRequest {
         database_id: "default".to_string(),
-        path: "/Wiki".to_string(),
+        path: "/Knowledge".to_string(),
     })
     .expect("children should list");
     assert!(children.iter().any(|child| {
-        child.path == "/Wiki/nested" && child.kind == NodeEntryKind::Folder && !child.is_virtual
+        child.path == "/Knowledge/nested"
+            && child.kind == NodeEntryKind::Folder
+            && !child.is_virtual
     }));
     assert!(children.iter().any(|child| {
-        child.path == "/Wiki/foo.md"
+        child.path == "/Knowledge/foo.md"
             && child.kind == NodeEntryKind::File
             && child.etag.as_deref() == Some(created.node.etag.as_str())
     }));
@@ -3144,18 +3208,18 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "alpha".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         top_k: 5,
         preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].path, "/Wiki/foo.md");
+    assert_eq!(hits[0].path, "/Knowledge/foo.md");
 
     let path_hits = search_node_paths(SearchNodePathsRequest {
         database_id: "default".to_string(),
         query_text: "NeStEd".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         top_k: 5,
         preview_mode: None,
     })
@@ -3163,30 +3227,25 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     assert!(
         path_hits
             .iter()
-            .any(|hit| hit.path == "/Wiki/nested/bar.md")
+            .any(|hit| hit.path == "/Knowledge/nested/bar.md")
     );
 
     let snapshot = export_snapshot(ExportSnapshotRequest {
         database_id: "default".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         snapshot_revision: None,
         snapshot_session_id: None,
     })
     .expect("snapshot should export");
-    assert_eq!(snapshot.nodes.len(), 5);
-    assert!(
-        snapshot
-            .nodes
-            .iter()
-            .any(|node| { node.path == "/Wiki/skills" && node.kind == NodeKind::Folder })
-    );
+    assert_eq!(snapshot.nodes.len(), 4);
+    assert!(snapshot.nodes.iter().all(|node| node.path != "/Skills"));
 
     let empty_delta = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: snapshot.snapshot_revision.clone(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         target_snapshot_revision: None,
@@ -3198,7 +3257,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let invalid_delta = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: "missing".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         target_snapshot_revision: None,
@@ -3210,20 +3269,20 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 
     let deleted = delete_node(DeleteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/foo.md".to_string(),
+        path: "/Knowledge/foo.md".to_string(),
         expected_etag: Some(created.node.etag.clone()),
         expected_folder_index_etag: None,
     })
     .expect("delete should succeed");
-    assert_eq!(deleted.path, "/Wiki/foo.md");
+    assert_eq!(deleted.path, "/Knowledge/foo.md");
 
-    let deleted_read =
-        read_node("default".to_string(), "/Wiki/foo.md".to_string()).expect("read should succeed");
+    let deleted_read = read_node("default".to_string(), "/Knowledge/foo.md".to_string())
+        .expect("read should succeed");
     assert!(deleted_read.is_none());
 
     let stale_delete = delete_node(DeleteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/nested/bar.md".to_string(),
+        path: "/Knowledge/nested/bar.md".to_string(),
         expected_etag: Some("stale".to_string()),
         expected_folder_index_etag: None,
     });
@@ -3233,14 +3292,14 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 #[test]
 fn fs_entrypoints_cover_backlink_queries() {
     install_test_service();
-    ensure_parent_folders("/Wiki/topic/source.md");
+    ensure_parent_folders("/Knowledge/topic/source.md");
 
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Sources/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/topic/source.md".to_string(),
+        path: "/Knowledge/topic/source.md".to_string(),
         kind: NodeKind::File,
-        content: "[Target](../target.md) and [[/Wiki/target.md]]".to_string(),
+        content: "[Target](../target.md) and [[/Knowledge/target.md]]".to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
@@ -3248,7 +3307,7 @@ fn fs_entrypoints_cover_backlink_queries() {
 
     let incoming = incoming_links(IncomingLinksRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/target.md".to_string(),
+        path: "/Knowledge/target.md".to_string(),
         limit: 10,
     })
     .expect("incoming links should load");
@@ -3256,12 +3315,12 @@ fn fs_entrypoints_cover_backlink_queries() {
     assert!(
         incoming
             .iter()
-            .all(|edge| edge.source_path == "/Wiki/topic/source.md")
+            .all(|edge| edge.source_path == "/Knowledge/topic/source.md")
     );
 
     let outgoing = outgoing_links(OutgoingLinksRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/topic/source.md".to_string(),
+        path: "/Knowledge/topic/source.md".to_string(),
         limit: 10,
     })
     .expect("outgoing links should load");
@@ -3269,7 +3328,7 @@ fn fs_entrypoints_cover_backlink_queries() {
 
     let graph = graph_links(GraphLinksRequest {
         database_id: "default".to_string(),
-        prefix: "/Wiki/topic".to_string(),
+        prefix: "/Knowledge/topic".to_string(),
         limit: 10,
     })
     .expect("graph links should load");
@@ -3277,17 +3336,17 @@ fn fs_entrypoints_cover_backlink_queries() {
 
     let context = read_node_context(NodeContextRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/topic/source.md".to_string(),
+        path: "/Knowledge/topic/source.md".to_string(),
         link_limit: 10,
     })
     .expect("context should load")
     .expect("node should exist");
-    assert_eq!(context.node.path, "/Wiki/topic/source.md");
+    assert_eq!(context.node.path, "/Knowledge/topic/source.md");
     assert_eq!(context.outgoing_links.len(), 2);
 
     let neighborhood = graph_neighborhood(GraphNeighborhoodRequest {
         database_id: "default".to_string(),
-        center_path: "/Wiki/target.md".to_string(),
+        center_path: "/Knowledge/target.md".to_string(),
         depth: 1,
         limit: 10,
     })
@@ -3301,15 +3360,15 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
 
     let mkdir = mkdir_node(MkdirNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/work".to_string(),
+        path: "/Knowledge/work".to_string(),
     })
     .expect("mkdir should succeed");
     assert!(mkdir.created);
-    assert_eq!(mkdir.path, "/Wiki/work");
+    assert_eq!(mkdir.path, "/Knowledge/work");
 
     let appended = append_node(AppendNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/work/log.md".to_string(),
+        path: "/Knowledge/work/log.md".to_string(),
         content: "alpha".to_string(),
         expected_etag: None,
         separator: None,
@@ -3321,7 +3380,7 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
 
     let appended_again = append_node(AppendNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/work/log.md".to_string(),
+        path: "/Knowledge/work/log.md".to_string(),
         content: "beta".to_string(),
         expected_etag: Some(appended.node.etag.clone()),
         separator: Some("\n".to_string()),
@@ -3329,14 +3388,14 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
         kind: None,
     })
     .expect("append update should succeed");
-    let appended_node = read_node("default".to_string(), "/Wiki/work/log.md".to_string())
+    let appended_node = read_node("default".to_string(), "/Knowledge/work/log.md".to_string())
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(appended_node.content, "alpha\nbeta");
 
     let edited = edit_node(EditNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/work/log.md".to_string(),
+        path: "/Knowledge/work/log.md".to_string(),
         old_text: "beta".to_string(),
         new_text: "gamma".to_string(),
         expected_etag: Some(appended_again.node.etag.clone()),
@@ -3344,71 +3403,72 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
     })
     .expect("edit should succeed");
     assert_eq!(edited.replacement_count, 1);
-    let edited_node = read_node("default".to_string(), "/Wiki/work/log.md".to_string())
+    let edited_node = read_node("default".to_string(), "/Knowledge/work/log.md".to_string())
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(edited_node.content, "alpha\ngamma");
 }
 
 #[test]
-fn fs_entrypoints_reject_noncanonical_source_paths() {
+fn fs_entrypoints_allow_source_paths_without_schema_validation() {
     install_test_service();
 
-    let write_error = write_node(WriteNodeRequest {
+    let written = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/source.md".to_string(),
+        path: "/Sources/source.md".to_string(),
         kind: NodeKind::Source,
         content: "source".to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect_err("noncanonical source write should fail");
-    assert!(write_error.contains("source path must"));
+    .expect("source write should not enforce source path schema");
+    assert_eq!(written.node.path, "/Sources/source.md");
 
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Sources/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/source/source.md".to_string(),
+        path: "/Sources/source/source.md".to_string(),
         kind: NodeKind::Source,
         content: "source".to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
-    let append_error = append_node(AppendNodeRequest {
+    let appended = append_node(AppendNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/topic.md".to_string(),
+        path: "/Knowledge/topic.md".to_string(),
         content: "next".to_string(),
         expected_etag: None,
         separator: None,
         metadata_json: None,
         kind: Some(NodeKind::Source),
     })
-    .expect_err("noncanonical source append should fail");
-    assert!(append_error.contains("source path must"));
+    .expect("source append should not enforce source path schema");
+    assert_eq!(appended.node.kind, NodeKind::Source);
 
-    ensure_parent_folders("/Sources/raw/keep/keep.md");
+    ensure_parent_folders("/Sources/keep/keep.md");
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/keep/keep.md".to_string(),
+        path: "/Sources/keep/keep.md".to_string(),
         kind: NodeKind::Source,
         content: "keep".to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
-    .expect("canonical source write should succeed");
+    .expect("safe source write should succeed");
 
-    ensure_parent_folders("/Sources/raw/renamed-/wrong.md");
-    let move_error = move_node(MoveNodeRequest {
+    ensure_parent_folders("/Sources/renamed-/wrong.md");
+    let moved = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
-        from_path: "/Sources/raw/keep/keep.md".to_string(),
-        to_path: "/Sources/raw/renamed-/wrong.md".to_string(),
+        from_path: "/Sources/keep/keep.md".to_string(),
+        to_path: "/Sources/renamed-/wrong.md".to_string(),
         expected_etag: Some(created.node.etag),
         overwrite: false,
     })
-    .expect_err("noncanonical source move should fail");
-    assert!(move_error.contains("source path must"));
+    .expect("source move should not enforce source path schema");
+    assert_eq!(moved.node.path, "/Sources/renamed-/wrong.md");
+    assert_eq!(moved.node.kind, NodeKind::Source);
 }
 
 #[test]
@@ -3416,11 +3476,11 @@ fn fs_entrypoints_search_large_hits_without_trap() {
     install_test_service();
 
     let payload = format!("shared-bench-search {}", "x".repeat(1024 * 1024 - 20));
-    ensure_parent_folders("/Wiki/large/node-000.md");
+    ensure_parent_folders("/Knowledge/large/node-000.md");
     for index in 0..10 {
         write_node(WriteNodeRequest {
             database_id: "default".to_string(),
-            path: format!("/Wiki/large/node-{index:03}.md"),
+            path: format!("/Knowledge/large/node-{index:03}.md"),
             kind: NodeKind::File,
             content: payload.clone(),
             metadata_json: "{}".to_string(),
@@ -3432,7 +3492,7 @@ fn fs_entrypoints_search_large_hits_without_trap() {
     let hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "shared-bench-search".to_string(),
-        prefix: Some("/Wiki/large".to_string()),
+        prefix: Some("/Knowledge/large".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
@@ -3443,7 +3503,7 @@ fn fs_entrypoints_search_large_hits_without_trap() {
         assert!(window[0].score <= window[1].score);
     }
     for hit in hits {
-        assert!(hit.path.starts_with("/Wiki/large/"));
+        assert!(hit.path.starts_with("/Knowledge/large/"));
         assert!(hit.snippet.is_none());
         assert!(hit.preview.is_none());
     }
@@ -3452,12 +3512,15 @@ fn fs_entrypoints_search_large_hits_without_trap() {
 #[test]
 fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     install_test_service();
-    ensure_parent_folders("/Wiki/search/node-0.md");
+    ensure_parent_folders("/Knowledge/search/node-0.md");
 
     for (path, content) in [
-        ("/Wiki/search/node-0.md", "alpha beta gamma"),
-        ("/Wiki/search/node-1.md", "alpha beta"),
-        ("/Wiki/search/検索改善メモ.md", "検索精度改善の作業メモ"),
+        ("/Knowledge/search/node-0.md", "alpha beta gamma"),
+        ("/Knowledge/search/node-1.md", "alpha beta"),
+        (
+            "/Knowledge/search/検索改善メモ.md",
+            "検索精度改善の作業メモ",
+        ),
     ] {
         write_node(WriteNodeRequest {
             database_id: "default".to_string(),
@@ -3473,7 +3536,7 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     let multi_term_hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "alpha beta missing".to_string(),
-        prefix: Some("/Wiki/search".to_string()),
+        prefix: Some("/Knowledge/search".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
@@ -3481,18 +3544,18 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     assert!(
         multi_term_hits
             .iter()
-            .any(|hit| hit.path == "/Wiki/search/node-0.md")
+            .any(|hit| hit.path == "/Knowledge/search/node-0.md")
     );
     assert!(
         multi_term_hits
             .iter()
-            .any(|hit| hit.path == "/Wiki/search/node-1.md")
+            .any(|hit| hit.path == "/Knowledge/search/node-1.md")
     );
 
     let cjk_hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "検索改善".to_string(),
-        prefix: Some("/Wiki/search".to_string()),
+        prefix: Some("/Knowledge/search".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
@@ -3500,15 +3563,18 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     assert!(
         cjk_hits
             .iter()
-            .any(|hit| hit.path == "/Wiki/search/検索改善メモ.md")
+            .any(|hit| hit.path == "/Knowledge/search/検索改善メモ.md")
     );
 
-    let deleted = read_node("default".to_string(), "/Wiki/search/node-1.md".to_string())
-        .expect("read should succeed")
-        .expect("node should exist");
+    let deleted = read_node(
+        "default".to_string(),
+        "/Knowledge/search/node-1.md".to_string(),
+    )
+    .expect("read should succeed")
+    .expect("node should exist");
     delete_node(DeleteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/search/node-1.md".to_string(),
+        path: "/Knowledge/search/node-1.md".to_string(),
         expected_etag: Some(deleted.etag),
         expected_folder_index_etag: None,
     })
@@ -3517,7 +3583,7 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     let after_delete_hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "alpha beta missing".to_string(),
-        prefix: Some("/Wiki/search".to_string()),
+        prefix: Some("/Knowledge/search".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
@@ -3525,19 +3591,19 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
     assert!(
         after_delete_hits
             .iter()
-            .all(|hit| hit.path != "/Wiki/search/node-1.md")
+            .all(|hit| hit.path != "/Knowledge/search/node-1.md")
     );
 }
 
 #[test]
 fn fs_entrypoints_cover_move_glob_and_multi_edit() {
     install_test_service();
-    ensure_parent_folders("/Wiki/work/item.md");
-    ensure_parent_folders("/Wiki/archive/item.md");
+    ensure_parent_folders("/Knowledge/work/item.md");
+    ensure_parent_folders("/Knowledge/archive/item.md");
 
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/work/item.md".to_string(),
+        path: "/Knowledge/work/item.md".to_string(),
         kind: NodeKind::File,
         content: "alpha beta".to_string(),
         metadata_json: "{}".to_string(),
@@ -3547,31 +3613,31 @@ fn fs_entrypoints_cover_move_glob_and_multi_edit() {
 
     let moved = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
-        from_path: "/Wiki/work/item.md".to_string(),
-        to_path: "/Wiki/archive/item.md".to_string(),
+        from_path: "/Knowledge/work/item.md".to_string(),
+        to_path: "/Knowledge/archive/item.md".to_string(),
         expected_etag: Some(created.node.etag.clone()),
         overwrite: false,
     })
     .expect("move should succeed");
-    assert_eq!(moved.from_path, "/Wiki/work/item.md");
-    assert_eq!(moved.node.path, "/Wiki/archive/item.md");
+    assert_eq!(moved.from_path, "/Knowledge/work/item.md");
+    assert_eq!(moved.node.path, "/Knowledge/archive/item.md");
 
     let globbed = glob_nodes(GlobNodesRequest {
         database_id: "default".to_string(),
         pattern: "**".to_string(),
-        path: Some("/Wiki".to_string()),
+        path: Some("/Knowledge".to_string()),
         node_type: Some(GlobNodeType::Directory),
     })
     .expect("glob should succeed");
     assert!(
         globbed
             .iter()
-            .any(|hit| hit.path == "/Wiki/archive" && hit.kind == NodeEntryKind::Folder)
+            .any(|hit| hit.path == "/Knowledge/archive" && hit.kind == NodeEntryKind::Folder)
     );
 
     let edited = multi_edit_node(MultiEditNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/archive/item.md".to_string(),
+        path: "/Knowledge/archive/item.md".to_string(),
         edits: vec![
             MultiEdit {
                 old_text: "alpha".to_string(),
@@ -3586,315 +3652,11 @@ fn fs_entrypoints_cover_move_glob_and_multi_edit() {
     })
     .expect("multi edit should succeed");
     assert_eq!(edited.replacement_count, 2);
-    let edited_node = read_node("default".to_string(), "/Wiki/archive/item.md".to_string())
-        .expect("read should succeed")
-        .expect("node should exist");
-    assert_eq!(edited_node.content, "one two");
-}
-
-#[test]
-fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
-    install_test_service();
-
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/archive-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "# Archive Smoke\n\nalpha body [raw](/Sources/raw/smoke/smoke.md)".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-    ensure_parent_folders("/Sources/raw/smoke/smoke.md");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Sources/raw/smoke/smoke.md".to_string(),
-        kind: NodeKind::Source,
-        content: "raw alpha body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("source write should succeed");
-
-    let outgoing = outgoing_links(OutgoingLinksRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/archive-smoke.md".to_string(),
-        limit: 10,
-    })
-    .expect("outgoing should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/raw/smoke/smoke.md");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    assert!(archive.size_bytes > 0);
-    let mut offset = 0_u64;
-    let mut bytes = Vec::new();
-    while offset < archive.size_bytes {
-        let chunk = read_database_archive_chunk("default".to_string(), offset, 17)
-            .expect("archive chunk should read")
-            .bytes;
-        assert!(!chunk.is_empty());
-        offset += chunk.len() as u64;
-        bytes.extend(chunk);
-    }
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    assert!(
-        read_node("default".to_string(), "/Wiki/archive-smoke.md".to_string())
-            .expect_err("archived DB should reject normal reads")
-            .contains("database is archived")
-    );
-
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Archived);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn database_archive_restore_entrypoints_restore_search_and_links() {
-    install_test_service();
-    ensure_parent_folders("/Sources/raw/archive/archive.md");
-
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Sources/raw/archive/archive.md".to_string(),
-        kind: NodeKind::Source,
-        content: "raw archive restore evidence".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("source write should succeed");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/archive-restore.md".to_string(),
-        kind: NodeKind::File,
-        content: "# Archive Restore\n\nalpha restore search [raw](/Sources/raw/archive/archive.md)"
-            .to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    let mut offset = 0_u64;
-    let mut bytes = Vec::new();
-    while offset < archive.size_bytes {
-        let chunk = read_database_archive_chunk("default".to_string(), offset, 23)
-            .expect("archive chunk should read")
-            .bytes;
-        assert!(!chunk.is_empty());
-        offset += chunk.len() as u64;
-        bytes.extend(chunk);
-    }
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-    begin_database_restore(
+    let edited_node = read_node(
         "default".to_string(),
-        snapshot_hash.clone(),
-        archive.size_bytes,
-    )
-    .expect("restore should begin");
-
-    let split_at = bytes.len() / 2;
-    write_database_restore_chunk(DatabaseRestoreChunkRequest {
-        database_id: "default".to_string(),
-        offset: split_at as u64,
-        bytes: bytes[split_at..].to_vec(),
-    })
-    .expect("second restore chunk should write");
-    write_database_restore_chunk(DatabaseRestoreChunkRequest {
-        database_id: "default".to_string(),
-        offset: 0,
-        bytes: bytes[..split_at].to_vec(),
-    })
-    .expect("first restore chunk should write");
-    finalize_database_restore("default".to_string()).expect("restore should finalize");
-
-    let node = read_node(
-        "default".to_string(),
-        "/Wiki/archive-restore.md".to_string(),
+        "/Knowledge/archive/item.md".to_string(),
     )
     .expect("read should succeed")
-    .expect("restored node should exist");
-    assert!(node.content.contains("alpha restore search"));
-
-    let hits = search_nodes(SearchNodesRequest {
-        database_id: "default".to_string(),
-        query_text: "alpha restore".to_string(),
-        prefix: Some("/Wiki".to_string()),
-        top_k: 10,
-        preview_mode: Some(SearchPreviewMode::None),
-    })
-    .expect("restored search should succeed");
-    assert!(
-        hits.iter()
-            .any(|hit| hit.path == "/Wiki/archive-restore.md")
-    );
-
-    let links = outgoing_links(OutgoingLinksRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/archive-restore.md".to_string(),
-        limit: 10,
-    })
-    .expect("restored links should load");
-    assert!(
-        links
-            .iter()
-            .any(|edge| edge.target_path == "/Sources/raw/archive/archive.md")
-    );
-
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn begin_database_restore_rolls_back_when_mount_fails() {
-    install_test_service();
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/restore-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "restore body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    let bytes = read_database_archive_chunk("default".to_string(), 0, archive.size_bytes as u32)
-        .expect("archive chunk should read")
-        .bytes;
-    let snapshot_hash = sha256_bytes(&bytes);
-    finalize_database_archive("default".to_string(), snapshot_hash.clone())
-        .expect("archive should finalize");
-
-    fail_next_mount_database_file_for_test();
-    let error = begin_database_restore(
-        "default".to_string(),
-        snapshot_hash.clone(),
-        archive.size_bytes,
-    )
-    .expect_err("mount failure should fail restore begin");
-    assert!(error.contains("test mount failure"));
-    let rolled_back = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(rolled_back.status, DatabaseStatus::Archived);
-    assert_eq!(rolled_back.role, DatabaseRole::Owner);
-
-    begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
-        .expect("restore begin should retry after rollback");
-    let restoring = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(restoring.status, DatabaseStatus::Restoring);
-    assert_eq!(restoring.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn cancel_database_archive_entrypoint_returns_database_to_active() {
-    install_test_service();
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/cancel-smoke.md".to_string(),
-        kind: NodeKind::File,
-        content: "cancel body".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("wiki write should succeed");
-
-    begin_database_archive("default".to_string()).expect("archive should begin");
-    assert!(
-        write_node(WriteNodeRequest {
-            database_id: "default".to_string(),
-            path: "/Wiki/blocked.md".to_string(),
-            kind: NodeKind::File,
-            content: "blocked".to_string(),
-            metadata_json: "{}".to_string(),
-            expected_etag: None,
-        })
-        .expect_err("archiving DB should reject writes")
-        .contains("database is archiving")
-    );
-
-    cancel_database_archive("default".to_string()).expect("archive cancel should succeed");
-    write_node(WriteNodeRequest {
-        database_id: "default".to_string(),
-        path: "/Wiki/after-cancel.md".to_string(),
-        kind: NodeKind::File,
-        content: "after cancel".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    })
-    .expect("write should succeed after cancel");
-    let info = list_databases()
-        .expect("database summaries should load")
-        .into_iter()
-        .find(|info| info.database_id == "default")
-        .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
-    assert_eq!(info.role, DatabaseRole::Owner);
-}
-
-#[test]
-fn cancel_database_archive_entrypoint_rejects_non_owner() {
-    let dir = tempdir().expect("tempdir should create");
-    let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
-    service
-        .run_index_migrations()
-        .expect("index migrations should run");
-    service
-        .create_database("default", "owner", 1_700_000_000_000)
-        .expect("default database should create");
-    service
-        .begin_database_cycles_purchase("default", "owner", 1_000_000, 1_700_000_000_001)
-        .and_then(|operation_id| {
-            let cycles = cycles_for_test_payment(&service, 1_000_000);
-            service.complete_database_cycles_purchase_ledger_transfer(
-                operation_id,
-                "default",
-                "owner",
-                cycles,
-                1,
-            )?;
-            service.apply_database_cycles_purchase(
-                operation_id,
-                "default",
-                "owner",
-                cycles,
-                1,
-                1_700_000_000_001,
-            )
-        })
-        .expect("database should have write cycles available");
-    service
-        .begin_database_archive("default", "owner", 1_700_000_000_002)
-        .expect("archive should begin");
-    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
-
-    assert!(
-        cancel_database_archive("default".to_string())
-            .expect_err("non-owner cancel should fail")
-            .contains("principal has no access")
-    );
+    .expect("node should exist");
+    assert_eq!(edited_node.content, "one two");
 }

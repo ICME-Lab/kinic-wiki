@@ -16,9 +16,10 @@ assert.match(dashboardClient, /setActiveTab\("access"\)/);
 
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
-assert.match(dashboardHome, /No wallet approval is needed/);
-assert.match(dashboardHome, /free cycles/);
-assert.match(dashboardHome, /Wallet approval pays directly from ledger balance/);
+assert.match(dashboardHome, /無料枠あり/);
+assert.match(dashboardHome, /wallet 支払い必要/);
+assert.match(dashboardHome, /wallet approval is not required/);
+assert.match(dashboardHome, /wallet approval pays directly from ledger balance/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);
 assert.match(dashboardHome, /KinicAfterApproveError/);
 assert.match(dashboardHome, /purchase_database_cycles failed/);

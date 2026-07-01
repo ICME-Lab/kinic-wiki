@@ -115,15 +115,7 @@ class HermesKinicPluginTests(unittest.TestCase):
                 self.assertIn("recorded_locally_at", payload)
                 self.assertEqual(payload["plugin_version"], "0.1.2")
 
-    def test_runner_falls_back_to_packaged_evolve_script(self) -> None:
-        from kinic_hermes import client as client_module
-
-        with mock.patch.dict(os.environ, {"KINIC_SKILL_EVOLVE": ""}, clear=False), mock.patch("shutil.which", return_value=None):
-            client = client_module.KinicClient(cli="/missing/kinic-vfs-cli")
-            self.assertIsNotNone(client.runner)
-            self.assertTrue(client.runner[-1].endswith("evolve.py"))
-
-    def test_record_run_uses_create_ready_jobs_flag(self) -> None:
+    def test_record_run_does_not_create_ready_jobs(self) -> None:
         from kinic_hermes import client as client_module
         from kinic_agent_runtime import cli as runtime_cli
 
@@ -142,7 +134,7 @@ class HermesKinicPluginTests(unittest.TestCase):
 
         command = run.call_args.args[0]
         self.assertEqual(command[0], sys.executable)
-        self.assertIn("--create-ready-jobs", command)
+        self.assertNotIn("--create-ready-jobs", command)
         self.assertEqual(payloads[0]["recorded_by"], "hermes-plugin")
 
     def test_record_run_pending_forces_hermes_recorded_by(self) -> None:
@@ -302,33 +294,17 @@ class HermesKinicPluginTests(unittest.TestCase):
 
     def test_allow_non_ii_env_unset_keeps_cli_shape(self) -> None:
         from kinic_hermes import client as client_module
+        from kinic_agent_runtime import cli as runtime_cli
 
         completed = subprocess.CompletedProcess(["kinic-vfs-cli"], 0, stdout="{}", stderr="")
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False), mock.patch.object(client_module.subprocess, "run", return_value=completed) as run:
+            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False), mock.patch.object(runtime_cli.subprocess, "run", return_value=completed) as run:
                 client = client_module.KinicClient(cli=sys.executable)
-                client.complete_job("job-1", "done", "ok")
+                self.assertTrue(client.record_run("legal-review", {"summary": "x"}))
 
         command = run.call_args.args[0]
         self.assertEqual(command[0], sys.executable)
         self.assertNotIn("--allow-non-ii-identity", command)
-
-    def test_finish_job_passes_default_projection_dir(self) -> None:
-        from kinic_hermes import client as client_module
-
-        completed = subprocess.CompletedProcess(["kinic-skill-evolve"], 0, stdout='{"job_status":"done"}', stderr="")
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False), mock.patch.object(client_module.subprocess, "run", return_value=completed) as run:
-                client = client_module.KinicClient(cli=sys.executable)
-                client.runner = [sys.executable, "/tmp/evolve.py"]
-
-                self.assertEqual(client.finish_job("job-1", "# Legal Review\n"), '{"job_status":"done"}')
-
-        command = run.call_args.args[0]
-        self.assertIn("--projection-dir", command)
-        self.assertEqual(command[command.index("--projection-dir") + 1], str(Path(tmp) / "hermes-current" / "skills"))
-        self.assertEqual(command[command.index("--generator") + 1], "hermes-plugin")
-        self.assertEqual(command[command.index("--llm-route") + 1], "hermes-ctx-llm")
 
     def test_skill_view_and_usage_diff_record_one_run(self) -> None:
         import kinic_hermes as plugin_module
@@ -350,128 +326,8 @@ class HermesKinicPluginTests(unittest.TestCase):
                 self.assertEqual(records[0][0], "legal-review")
                 self.assertEqual(records[0][1]["usage_delta"], {"use_count": 1})
                 self.assertEqual(records[0][1]["agent_outcome"], "unknown")
-                plugin.client.create_ready_jobs.assert_not_called()
 
-    def test_post_llm_call_auto_evolves_one_job_after_recording(self) -> None:
-        import kinic_hermes as plugin_module
-
-        class Llm:
-            def complete(self, **_kwargs):
-                return mock.Mock(text="# Legal Review\nBetter guidance.\n")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            hermes_home = Path(tmp) / "hermes"
-            usage_path = hermes_home / "skills" / ".usage.json"
-            usage_path.parent.mkdir(parents=True)
-            usage_path.write_text(json.dumps({"legal-review": {"use_count": 1}}))
-            with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}, clear=False):
-                plugin = plugin_module.KinicPlugin()
-                plugin.ctx = mock.Mock(llm=Llm())
-                plugin.client = mock.Mock()
-                plugin.client.record_run.return_value = True
-                plugin.client.prepare_job.return_value = {
-                    "job_id": "job-1",
-                    "messages": [{"role": "user", "content": "prompt"}],
-                }
-                plugin.client.finish_job.return_value = '{"job_status":"done"}'
-
-                plugin.post_tool_call("skill_view", {"name": "legal-review"}, "viewed", 10)
-                usage_path.write_text(json.dumps({"legal-review": {"use_count": 2}}))
-                plugin.post_llm_call()
-
-        plugin.client.record_run.assert_called_once()
-        plugin.client.prepare_job.assert_called_once_with(None)
-        plugin.client.finish_job.assert_called_once_with("job-1", "# Legal Review\nBetter guidance.")
-        plugin.client._log.assert_called_with('auto evolve result: {"job_status":"done"}')
-
-    def test_post_llm_call_logs_when_no_queued_auto_evolve_job(self) -> None:
-        import kinic_hermes as plugin_module
-
-        with tempfile.TemporaryDirectory() as tmp:
-            hermes_home = Path(tmp) / "hermes"
-            usage_path = hermes_home / "skills" / ".usage.json"
-            usage_path.parent.mkdir(parents=True)
-            usage_path.write_text(json.dumps({"legal-review": {"use_count": 1}}))
-            with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}, clear=False):
-                plugin = plugin_module.KinicPlugin()
-                plugin.ctx = mock.Mock(llm=mock.Mock(complete=mock.Mock()))
-                plugin.client = mock.Mock()
-                plugin.client.record_run.return_value = True
-                plugin.client.prepare_job.side_effect = RuntimeError("no queued Kinic skill evolution jobs")
-
-                plugin.post_tool_call("skill_view", {"name": "legal-review"}, "viewed", 10)
-                usage_path.write_text(json.dumps({"legal-review": {"use_count": 2}}))
-                plugin.post_llm_call()
-
-        plugin.client.prepare_job.assert_called_once_with(None)
-        log_messages = [call.args[0] for call in plugin.client._log.call_args_list]
-        self.assertIn(
-            'auto evolve result: {"error": "no queued Kinic skill evolution jobs"}',
-            log_messages,
-        )
-        plugin.client.finish_job.assert_not_called()
-
-    def test_post_llm_call_skips_auto_evolve_without_ctx_llm(self) -> None:
-        import kinic_hermes as plugin_module
-
-        with tempfile.TemporaryDirectory() as tmp:
-            hermes_home = Path(tmp) / "hermes"
-            usage_path = hermes_home / "skills" / ".usage.json"
-            usage_path.parent.mkdir(parents=True)
-            usage_path.write_text(json.dumps({"legal-review": {"use_count": 1}}))
-            with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}, clear=False):
-                plugin = plugin_module.KinicPlugin()
-                plugin.ctx = mock.Mock()
-                plugin.ctx.llm = None
-                plugin.client = mock.Mock()
-                plugin.client.record_run.return_value = True
-
-                plugin.post_tool_call("skill_view", {"name": "legal-review"}, "viewed", 10)
-                usage_path.write_text(json.dumps({"legal-review": {"use_count": 2}}))
-                plugin.post_llm_call()
-
-        plugin.client.prepare_job.assert_not_called()
-        plugin.client._log.assert_called_with("auto evolve skipped: Hermes ctx.llm unavailable")
-
-    def test_auto_evolve_reentry_does_not_process_second_job(self) -> None:
-        import kinic_hermes as plugin_module
-
-        with tempfile.TemporaryDirectory() as tmp:
-            hermes_home = Path(tmp) / "hermes"
-            usage_path = hermes_home / "skills" / ".usage.json"
-            usage_path.parent.mkdir(parents=True)
-            usage_path.write_text(json.dumps({"legal-review": {"use_count": 1}, "debug-review": {"use_count": 0}}))
-            with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}, clear=False):
-                plugin = plugin_module.KinicPlugin()
-
-                class Llm:
-                    def complete(self, **_kwargs):
-                        plugin.post_tool_call("skill_view", {"name": "debug-review"}, "viewed", 10)
-                        usage_path.write_text(
-                            json.dumps({"legal-review": {"use_count": 2}, "debug-review": {"use_count": 1}})
-                        )
-                        plugin.post_llm_call()
-                        return mock.Mock(text="# Legal Review\nBetter guidance.\n")
-
-                plugin.ctx = mock.Mock(llm=Llm())
-                plugin.client = mock.Mock()
-                plugin.client.record_run.return_value = True
-                plugin.client.prepare_job.return_value = {
-                    "job_id": "job-1",
-                    "messages": [{"role": "user", "content": "prompt"}],
-                }
-                plugin.client.finish_job.return_value = '{"job_status":"done"}'
-
-                plugin.post_tool_call("skill_view", {"name": "legal-review"}, "viewed", 10)
-                usage_path.write_text(json.dumps({"legal-review": {"use_count": 2}, "debug-review": {"use_count": 0}}))
-                plugin.post_llm_call()
-
-        self.assertEqual(plugin.client.record_run.call_count, 2)
-        plugin.client.prepare_job.assert_called_once_with(None)
-        log_messages = [call.args[0] for call in plugin.client._log.call_args_list]
-        self.assertIn("auto evolve skipped: already running", log_messages)
-
-    def test_post_llm_call_does_not_auto_evolve_pending_recording(self) -> None:
+    def test_post_llm_call_logs_pending_recording(self) -> None:
         import kinic_hermes as plugin_module
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -489,11 +345,9 @@ class HermesKinicPluginTests(unittest.TestCase):
                 usage_path.write_text(json.dumps({"legal-review": {"use_count": 2}}))
                 plugin.post_llm_call()
 
-        plugin.client.prepare_job.assert_not_called()
-        plugin.client.finish_job.assert_not_called()
-        plugin.client._log.assert_called_with("auto evolve skipped: run recording saved pending evidence")
+        plugin.client._log.assert_called_with("run recording saved pending evidence")
 
-    def test_agent_skill_docs_auto_evolve_once_after_record_run(self) -> None:
+    def test_agent_skill_docs_record_run_only(self) -> None:
         cases = [
             PLUGIN_ROOT.parent / "codex/skills/kinic-record-skill-run/SKILL.md",
             PLUGIN_ROOT.parent / "claude-code/skills/kinic-record-skill-run/SKILL.md",
@@ -501,19 +355,9 @@ class HermesKinicPluginTests(unittest.TestCase):
         for path in cases:
             with self.subTest(path=path):
                 content = path.read_text()
-                self.assertIn("record-run succeeds", content)
-                self.assertIn("kinic-evolve-skill-job", content)
-                self.assertIn("at most one queued evolution job", content)
-
-        evolve_cases = [
-            PLUGIN_ROOT.parent / "codex/skills/kinic-evolve-skill-job/SKILL.md",
-            PLUGIN_ROOT.parent / "claude-code/skills/kinic-evolve-skill-job/SKILL.md",
-        ]
-        for path in evolve_cases:
-            with self.subTest(path=path):
-                content = path.read_text()
-                self.assertIn("Process exactly one queued job", content)
-                self.assertIn("Do not loop", content)
+                self.assertIn("record-run", content)
+                self.assertNotIn("kinic-evolve-skill-job", content)
+                self.assertNotIn("queued evolution job", content)
 
     def test_register_tool_uses_hermes_keyword_api(self) -> None:
         import kinic_hermes as plugin_module
@@ -536,91 +380,11 @@ class HermesKinicPluginTests(unittest.TestCase):
         ctx = Ctx()
         plugin_module.register(ctx)
         self.assertIn("on_session_end", ctx.hooks)
-        self.assertIn("kinic_evolve_job", ctx.commands)
+        self.assertNotIn("kinic_evolve_job", ctx.commands)
         self.assertEqual(ctx.tools[0]["name"], "kinic_record_correction")
         self.assertEqual(ctx.tools[0]["toolset"], "kinic")
         self.assertIn("schema", ctx.tools[0])
         self.assertIn("handler", ctx.tools[0])
-
-    def test_evolve_command_requires_ctx_llm(self) -> None:
-        import kinic_hermes as plugin_module
-
-        class Ctx:
-            pass
-
-        client = mock.Mock()
-        result = plugin_module.handle_kinic_evolve_job(Ctx(), client, "")
-        self.assertIn("ctx.llm is required", result)
-        client.prepare_job.assert_not_called()
-
-    def test_evolve_command_uses_ctx_llm_and_finish_job(self) -> None:
-        import kinic_hermes as plugin_module
-
-        class Llm:
-            def __init__(self) -> None:
-                self.calls: list[dict] = []
-
-            def complete(self, **kwargs):
-                self.calls.append(kwargs)
-                return mock.Mock(text="# Legal Review\nBetter guidance.\n")
-
-        ctx = mock.Mock()
-        ctx.llm = Llm()
-        client = mock.Mock()
-        messages = [
-            {"role": "system", "content": "Return the full candidate SKILL.md only."},
-            {"role": "user", "content": "prepared prompt"},
-        ]
-        client.prepare_job.return_value = {
-            "job_id": "job-1",
-            "skill_id": "legal-review",
-            "messages": messages,
-        }
-        client.finish_job.return_value = '{"job_status":"done"}'
-
-        result = plugin_module.handle_kinic_evolve_job(ctx, client, "job-1")
-
-        self.assertEqual(result, '{"job_status":"done"}')
-        self.assertEqual(ctx.llm.calls[0]["purpose"], "kinic.skill-evolve")
-        self.assertEqual(ctx.llm.calls[0]["messages"], messages)
-        client.prepare_job.assert_called_once_with("job-1")
-        client.finish_job.assert_called_once_with("job-1", "# Legal Review\nBetter guidance.")
-        client.complete_job.assert_not_called()
-
-    def test_evolve_command_marks_claimed_job_failed_after_llm_error(self) -> None:
-        import kinic_hermes as plugin_module
-
-        class Llm:
-            def complete(self, **_kwargs):
-                raise RuntimeError("model unavailable")
-
-        ctx = mock.Mock()
-        ctx.llm = Llm()
-        client = mock.Mock()
-        client.prepare_job.return_value = {
-            "job_id": "job-1",
-            "skill_id": "legal-review",
-            "messages": [{"role": "user", "content": "prompt"}],
-        }
-
-        result = json.loads(plugin_module.handle_kinic_evolve_job(ctx, client, "job-1"))
-
-        self.assertEqual(result["job_id"], "job-1")
-        self.assertEqual(result["error"], "model unavailable")
-        client.complete_job.assert_called_once_with("job-1", "failed", "model unavailable")
-
-    def test_evolve_command_does_not_complete_when_prepare_fails(self) -> None:
-        import kinic_hermes as plugin_module
-
-        ctx = mock.Mock()
-        ctx.llm = mock.Mock()
-        client = mock.Mock()
-        client.prepare_job.side_effect = RuntimeError("no queued Kinic skill evolution jobs")
-
-        result = json.loads(plugin_module.handle_kinic_evolve_job(ctx, client, ""))
-
-        self.assertEqual(result["error"], "no queued Kinic skill evolution jobs")
-        client.complete_job.assert_not_called()
 
 
 if __name__ == "__main__":

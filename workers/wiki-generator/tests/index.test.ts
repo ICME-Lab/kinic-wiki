@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import worker from "../src/index.js";
 import { processQueueMessage } from "../src/processing.js";
-import { testEnv, TestQueue } from "./url-ingest-fixtures.js";
+import { testEnv, TestQueue } from "./source-capture-fixtures.js";
 
 Object.defineProperty(crypto.subtle, "timingSafeEqual", {
   configurable: true,
@@ -15,60 +15,60 @@ Object.defineProperty(crypto.subtle, "timingSafeEqual", {
   }
 });
 
-test("url ingest trigger requires worker token config", async () => {
-  const response = await fetchWorker(urlIngestRequest(), { ...testEnv(new TestQueue()), KINIC_WIKI_WORKER_TOKEN: "" });
+test("source capture trigger requires worker token config", async () => {
+  const response = await fetchWorker(sourceCaptureRequest(), { ...testEnv(new TestQueue()), KINIC_WIKI_WORKER_TOKEN: "" });
 
   assert.equal(response.status, 503);
   assert.match(await response.text(), /KINIC_WIKI_WORKER_TOKEN is required/);
 });
 
-test("url ingest trigger rejects missing bearer token", async () => {
+test("source capture trigger rejects missing bearer token", async () => {
   const queue = new TestQueue();
-  const response = await fetchWorker(urlIngestRequest(), testEnv(queue));
+  const response = await fetchWorker(sourceCaptureRequest(), testEnv(queue));
 
   assert.equal(response.status, 401);
   assert.match(await response.text(), /unauthorized/);
   assert.equal(queue.messages.length, 0);
 });
 
-test("url ingest trigger enqueues URL ingest message without background work", async () => {
+test("source capture trigger enqueues source capture message without background work", async () => {
   const context = recordingCtx();
   const queue = new TestQueue();
-  const response = await fetchWorker(authorizedUrlIngestRequest(), testEnv(queue), context);
+  const response = await fetchWorker(authorizedSourceCaptureRequest(), testEnv(queue), context);
 
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), {
     accepted: true,
     databaseId: "db_1",
-    requestPath: "/Sources/ingest-requests/1.md"
+    requestPath: "/Sources/source-capture-requests/1.md"
   });
   assert.equal(context.waitUntilCount, 0);
   assert.deepEqual(queue.messages, [
     {
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md",
+      requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1"
     }
   ]);
 });
 
-test("url ingest trigger rejects invalid request path before background work", async () => {
+test("source capture trigger rejects invalid request path before background work", async () => {
   const context = recordingCtx();
   const queue = new TestQueue();
-  const response = await fetchWorker(authorizedUrlIngestRequest({ requestPath: "/Sources/raw/1.md" }), testEnv(queue), context);
+  const response = await fetchWorker(authorizedSourceCaptureRequest({ requestPath: "/Sources/1.md" }), testEnv(queue), context);
 
   assert.equal(response.status, 400);
-  assert.match(await response.text(), /non-canonical ingest request path/);
+  assert.match(await response.text(), /invalid source capture request path/);
   assert.equal(context.waitUntilCount, 0);
   assert.equal(queue.messages.length, 0);
 });
 
-test("url ingest trigger rejects missing canister config before background work", async () => {
+test("source capture trigger rejects missing canister config before background work", async () => {
   const context = recordingCtx();
   const queue = new TestQueue();
-  const response = await fetchWorker(authorizedUrlIngestRequest(), { ...testEnv(queue), KINIC_WIKI_CANISTER_ID: "" }, context);
+  const response = await fetchWorker(authorizedSourceCaptureRequest(), { ...testEnv(queue), KINIC_WIKI_CANISTER_ID: "" }, context);
 
   assert.equal(response.status, 500);
   assert.match(await response.text(), /KINIC_WIKI_CANISTER_ID is required/);
@@ -76,10 +76,10 @@ test("url ingest trigger rejects missing canister config before background work"
   assert.equal(queue.messages.length, 0);
 });
 
-test("url ingest trigger rejects canister mismatches before background work", async () => {
+test("source capture trigger rejects canister mismatches before background work", async () => {
   const context = recordingCtx();
   const queue = new TestQueue();
-  const response = await fetchWorker(authorizedUrlIngestRequest({ canisterId: "aaaaa-aa" }), testEnv(queue), context);
+  const response = await fetchWorker(authorizedSourceCaptureRequest({ canisterId: "aaaaa-aa" }), testEnv(queue), context);
 
   assert.equal(response.status, 400);
   assert.match(await response.text(), /canisterId does not match worker canister config/);
@@ -87,13 +87,13 @@ test("url ingest trigger rejects canister mismatches before background work", as
   assert.equal(queue.messages.length, 0);
 });
 
-test("queue URL ingest message failures reject for retry", async () => {
+test("queue source capture message propagates config failures", async () => {
   await assert.rejects(
     processQueueMessage(testEnv(new TestQueue()), {
-      kind: "url_ingest",
+      kind: "source_capture",
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md",
+      requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1"
     }),
     /canisterId does not match worker canister config/
@@ -104,18 +104,18 @@ test("worker does not expose scheduled cron handler", () => {
   assert.equal("scheduled" in worker, false);
 });
 
-function authorizedUrlIngestRequest(body: Record<string, string> = {}): Request {
-  return urlIngestRequest({ authorization: "Bearer worker-token" }, body);
+function authorizedSourceCaptureRequest(body: Record<string, string> = {}): Request {
+  return sourceCaptureRequest({ authorization: "Bearer worker-token" }, body);
 }
 
-function urlIngestRequest(headers: Record<string, string> = {}, body: Record<string, string> = {}): Request {
-  return new Request("https://wiki-generator.kinic.xyz/url-ingest", {
+function sourceCaptureRequest(headers: Record<string, string> = {}, body: Record<string, string> = {}): Request {
+  return new Request("https://wiki-generator.kinic.xyz/source-capture", {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify({
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md",
+      requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1",
       ...body
     })

@@ -14,8 +14,7 @@ import { databaseCyclesDisabledReason, databaseCanWrite } from "@/lib/cycles-sta
 import { hrefForPath } from "@/lib/paths";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
-import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
-import { approveSkillProposal, recordSkillEvent, recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
+import { recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
 import type { CyclesBillingConfig, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 
@@ -24,7 +23,6 @@ type ActionDraft = {
   busy: boolean;
   error: string | null;
   message: string | null;
-  preview: ProposalDiffPreview | null;
   statusReason: string;
   runTask: string;
   runOutcome: RunOutcome;
@@ -36,7 +34,6 @@ const DEFAULT_ACTION: ActionDraft = {
   busy: false,
   error: null,
   message: null,
-  preview: null,
   statusReason: "",
   runTask: "",
   runOutcome: "success",
@@ -216,7 +213,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
         <AdminHeader
           title="Skill Registry"
           nav={
-            <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, "/Wiki")}>
+            <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, "/Knowledge")}>
               Wiki
             </Link>
           }
@@ -300,23 +297,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                             }),
                           true
                         ),
-                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
-                      previewProposal: (proposal) =>
-                        void runSkillAction(
-                          skill,
-                          async (activeIdentity) => {
-                            const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
-                            patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
-                          },
-                          false,
-                          false
-                        ),
-                      applyProposal: (proposal) =>
-                        void runSkillAction(skill, async (activeIdentity, draft) => {
-                          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
-                          await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
-                          await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
-                        })
                     }}
                   />
                 ))}

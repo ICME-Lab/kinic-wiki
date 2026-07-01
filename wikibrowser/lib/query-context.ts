@@ -1,7 +1,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { NodeContext, WikiNode } from "@/lib/types";
 import { queryAnswerSearchTerms } from "@/lib/query-actions";
-import { memoryRecall, readNodeContext, searchNodes } from "@/lib/vfs-client";
+import { queryContext, readNodeContext, searchNodes } from "@/lib/vfs-client";
 
 export type QueryAnswerContext = {
   path: string;
@@ -26,23 +26,44 @@ export async function collectQueryAnswerContext(input: {
   if (input.currentNode && isAnswerContextNode(input.currentNode)) {
     nodes.set(input.currentNode.path, input.currentNode);
   }
-  const context = await memoryRecall(input.canisterId, input.databaseId, input.question, CONTEXT_BUDGET_TOKENS, input.readIdentity ?? undefined);
-  for (const nodeContext of context.nodes) {
-    if (nodes.size >= MAX_CONTEXT_ITEMS) break;
-    const node = nodeContext.node;
-    if (isAnswerContextNode(node) && !nodes.has(node.path)) nodes.set(node.path, node);
-  }
+  const context = await queryContext(
+    input.canisterId,
+    input.databaseId,
+    input.question,
+    CONTEXT_BUDGET_TOKENS,
+    input.readIdentity ?? undefined
+  );
+  appendRankedAnswerNodes(nodes, context.nodes.map((item) => item.node));
   for (const term of queryAnswerSearchTerms(input.question)) {
     if (nodes.size >= MAX_CONTEXT_ITEMS) break;
-    const hits = await searchNodes(input.canisterId, input.databaseId, term, 4, "/Wiki", "light", input.readIdentity ?? undefined);
-    for (const hit of hits) {
+    const hits = await searchNodes(input.canisterId, input.databaseId, term, MAX_CONTEXT_ITEMS * 2, null, "light", input.readIdentity ?? undefined);
+    for (const hit of rankAnswerPaths(hits.map((item) => item.path))) {
       if (nodes.size >= MAX_CONTEXT_ITEMS) break;
-      if (nodes.has(hit.path)) continue;
-      const nodeContext = await readNodeContext(input.canisterId, input.databaseId, hit.path, 5, input.readIdentity ?? undefined);
+      if (nodes.has(hit)) continue;
+      const nodeContext = await readNodeContext(input.canisterId, input.databaseId, hit, 5, input.readIdentity ?? undefined);
       if (nodeContext && isAnswerContextNode(nodeContext.node)) nodes.set(nodeContext.node.path, nodeContext.node);
     }
   }
   return trimContext([...nodes.values()].map((node) => contextFromNode(node, context.nodes.find((item) => item.node.path === node.path) ?? null)));
+}
+
+export function rankAnswerPaths(paths: string[]): string[] {
+  const primary = paths.filter((path) => !isRawSourcePath(path));
+  const sources = paths.filter(isRawSourcePath);
+  return [...primary, ...sources];
+}
+
+function appendRankedAnswerNodes(nodes: Map<string, WikiNode>, candidates: WikiNode[]): void {
+  for (const node of rankAnswerNodes(candidates)) {
+    if (nodes.size >= MAX_CONTEXT_ITEMS) break;
+    if (isAnswerContextNode(node) && !nodes.has(node.path)) nodes.set(node.path, node);
+  }
+}
+
+function rankAnswerNodes(nodes: WikiNode[]): WikiNode[] {
+  return rankAnswerPaths(nodes.map((node) => node.path))
+    .map((path) => nodes.find((node) => node.path === path))
+    .filter((node) => node !== undefined);
 }
 
 function contextFromNode(node: WikiNode, context: NodeContext | null): QueryAnswerContext {
@@ -78,7 +99,15 @@ function excerptForNode(node: WikiNode, context: NodeContext | null): string {
 }
 
 function isContextPath(path: string): boolean {
-  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
+  return isDatabaseContextPath(path);
+}
+
+function isDatabaseContextPath(path: string): boolean {
+  return ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"].some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+function isRawSourcePath(path: string): boolean {
+  return path === "/Sources" || path.startsWith("/Sources/");
 }
 
 function isAnswerContextNode(node: WikiNode): boolean {

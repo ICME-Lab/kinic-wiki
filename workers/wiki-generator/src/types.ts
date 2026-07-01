@@ -89,11 +89,15 @@ export type SourceQueueMessage = {
   sessionNonce?: string;
 };
 
-export type UrlIngestQueueMessage = UrlIngestTriggerInput & {
-  kind: "url_ingest";
+export type SourceCaptureQueueMessage = {
+  kind: "source_capture";
+  canisterId: string;
+  databaseId: string;
+  requestPath: string;
+  sessionNonce: string;
 };
 
-export type QueueMessage = SourceQueueMessage | UrlIngestQueueMessage;
+export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage;
 
 export type ManualRunInput = {
   databaseId: string;
@@ -130,12 +134,12 @@ export type SourceJob = {
   updated_at: string;
 };
 
-export type IngestRequestStatus = "queued" | "fetching" | "source_written" | "generating" | "completed" | "failed";
+export type SourceCaptureRequestStatus = "queued" | "fetching" | "source_written" | "generating" | "completed" | "failed";
 
-export type UrlIngestRequest = {
+export type SourceCaptureRequest = {
   path: string;
   etag: string;
-  status: IngestRequestStatus;
+  status: SourceCaptureRequestStatus;
   url: string;
   requestedBy: string;
   requestedAt: string;
@@ -147,7 +151,7 @@ export type UrlIngestRequest = {
   metadataJson: string;
 };
 
-export type UrlIngestTriggerInput = {
+export type SourceCaptureTriggerInput = {
   canisterId: string;
   databaseId: string;
   requestPath: string;

@@ -2,7 +2,7 @@
 // What: Popup settings and Internet Identity session controls.
 // Why: Toolbar click runs without UI, but setup/login need a visible extension page.
 import { authSnapshot, loginWithInternetIdentity, logoutInternetIdentity } from "../src/auth-client.js";
-import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/url-ingest-request.js";
+import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/source-capture-request.js";
 import { createDatabase, listWritableDatabases } from "../src/vfs-actor.js";
 import {
   DEFAULT_DATABASE_NAME,
@@ -200,7 +200,7 @@ function setCreateDatabaseFormVisible(visible) {
 }
 
 async function refreshLatestStatus() {
-  const response = await send({ type: "latest-url-ingest-status" });
+  const response = await send({ type: "latest-source-capture-status" });
   const value = response.value ? JSON.parse(response.value) : null;
   latestStatusText.textContent = value ? latestStatusLabel(value) : "No run yet.";
 }
@@ -212,5 +212,8 @@ function latestStatusLabel(value) {
       : value.status === "source_exists"
         ? "already saved"
         : value.status;
-  return `${prefix}: ${value.message}${value.requestPath ? ` ${value.requestPath}` : ""}`;
+  if (value.status === "error") {
+    return `${prefix}: ${value.message}${value.url ? ` ${value.url}` : ""}`;
+  }
+  return `${prefix}: ${value.message}${value.sourcePath ? ` ${value.sourcePath}` : ""}`;
 }

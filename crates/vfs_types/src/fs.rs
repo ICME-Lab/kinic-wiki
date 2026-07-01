@@ -30,56 +30,38 @@ pub enum DatabaseStatus {
     Active,
     #[serde(alias = "Pending")]
     Pending,
-    #[serde(alias = "Restoring")]
-    Restoring,
-    #[serde(alias = "Archiving")]
-    Archiving,
-    #[serde(alias = "Archived")]
-    Archived,
     #[serde(alias = "Deleted")]
     Deleted,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-#[serde(rename_all = "snake_case")]
-pub enum DatabaseProfile {
-    #[serde(alias = "Workspace")]
-    #[default]
-    Workspace,
-    #[serde(alias = "Knowledge")]
-    Knowledge,
-    #[serde(alias = "Memory")]
-    Memory,
-    #[serde(alias = "Skill")]
-    Skill,
-    #[serde(alias = "Session")]
-    Session,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseInfo {
     pub database_id: String,
-    pub name: String,
-    pub profile: DatabaseProfile,
+    pub metadata: DatabaseMetadata,
     pub status: DatabaseStatus,
     pub mount_id: Option<u16>,
     pub schema_version: String,
     pub logical_size_bytes: u64,
-    pub snapshot_hash: Option<Vec<u8>>,
-    pub archived_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseMetadata {
+    pub name: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub tags_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseSummary {
     pub database_id: String,
     pub name: String,
-    pub profile: DatabaseProfile,
+    pub metadata: Option<DatabaseMetadata>,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
     pub cycles_balance: Option<u64>,
     pub cycles_suspended_at_ms: Option<i64>,
-    pub archived_at_ms: Option<i64>,
     pub deleted_at_ms: Option<i64>,
 }
 
@@ -177,10 +159,6 @@ pub struct MarketListing {
     pub seller_principal: String,
     pub payout_principal: String,
     pub database_id: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
     pub status: MarketListingStatus,
     pub revision: u64,
@@ -240,15 +218,21 @@ pub struct MarketListingPreview {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MarketListingDetail {
+pub struct MarketListingView {
     pub listing: MarketListing,
+    pub database_metadata: DatabaseMetadata,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingDetail {
+    pub listing: MarketListingView,
     pub verified_stats: MarketListingVerifiedStats,
     pub preview: MarketListingPreview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct MarketListingPage {
-    pub listings: Vec<MarketListing>,
+    pub listings: Vec<MarketListingView>,
     pub next_cursor: Option<String>,
 }
 
@@ -256,10 +240,6 @@ pub struct MarketListingPage {
 pub struct MarketCreateListingRequest {
     pub database_id: String,
     pub payout_principal: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
 }
 
@@ -268,10 +248,6 @@ pub struct MarketUpdateListingRequest {
     pub listing_id: String,
     pub expected_revision: u64,
     pub payout_principal: String,
-    pub title: String,
-    pub description: String,
-    pub llm_summary: Option<String>,
-    pub tags_json: String,
     pub price_e8s: u64,
 }
 
@@ -370,14 +346,12 @@ pub struct WikiMetricsPoint {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
-    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseResult {
     pub database_id: String,
     pub name: String,
-    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -387,27 +361,20 @@ pub struct RenameDatabaseRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DeleteDatabaseRequest {
+pub struct UpdateDatabaseMetadataRequest {
     pub database_id: String,
+    pub name: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub tags_json: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseArchiveInfo {
+pub struct DatabaseIdRequest {
     pub database_id: String,
-    pub size_bytes: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseArchiveChunk {
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseRestoreChunkRequest {
-    pub database_id: String,
-    pub offset: u64,
-    pub bytes: Vec<u8>,
-}
+pub type DeleteDatabaseRequest = DatabaseIdRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
@@ -449,6 +416,7 @@ pub struct ListNodesRequest {
     pub database_id: String,
     pub prefix: String,
     pub recursive: bool,
+    pub limit: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -514,13 +482,13 @@ pub struct WriteNodesRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionRequest {
+pub struct SourceCaptureTriggerSessionRequest {
     pub database_id: String,
     pub session_nonce: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct UrlIngestTriggerSessionCheckRequest {
+pub struct SourceCaptureTriggerSessionCheckRequest {
     pub database_id: String,
     pub request_path: String,
     pub session_nonce: String,
@@ -834,21 +802,18 @@ pub struct FetchUpdatesResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct StoreRoot {
+pub struct MemoryRoot {
     pub path: String,
     pub kind: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct StoreCapability {
+pub struct MemoryCapability {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct StoreManifestRequest {
-    pub database_id: String,
-}
+pub type MemoryManifestRequest = DatabaseIdRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CanonicalRole {
@@ -858,14 +823,13 @@ pub struct CanonicalRole {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct StoreManifest {
+pub struct MemoryManifest {
     pub api_version: String,
-    pub profile: DatabaseProfile,
     pub purpose: String,
     pub enabled_stores: Vec<String>,
-    pub roots: Vec<StoreRoot>,
-    pub entry_roots: Vec<StoreRoot>,
-    pub capabilities: Vec<StoreCapability>,
+    pub roots: Vec<MemoryRoot>,
+    pub entry_roots: Vec<MemoryRoot>,
+    pub capabilities: Vec<MemoryCapability>,
     pub canonical_roles: Vec<CanonicalRole>,
     pub write_policy: String,
     pub recommended_entrypoint: String,
@@ -875,7 +839,7 @@ pub struct StoreManifest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MemoryRecallRequest {
+pub struct QueryContextRequest {
     pub database_id: String,
     pub task: String,
     pub entities: Vec<String>,
@@ -886,24 +850,24 @@ pub struct MemoryRecallRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, CandidType)]
-pub struct MemoryRecall {
+pub struct QueryContext {
     pub namespace: String,
     pub task: String,
     pub search_hits: Vec<SearchNodeHit>,
     pub nodes: Vec<NodeContext>,
     pub graph_links: Vec<LinkEdge>,
-    pub evidence: Vec<KnowledgeEvidence>,
+    pub evidence: Vec<SourceEvidence>,
     pub truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KnowledgeEvidenceRequest {
+pub struct SourceEvidenceRequest {
     pub database_id: String,
     pub node_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KnowledgeEvidenceRef {
+pub struct SourceEvidenceRef {
     pub source_path: String,
     pub via_path: String,
     pub raw_href: String,
@@ -914,7 +878,7 @@ pub struct KnowledgeEvidenceRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KnowledgeEvidence {
+pub struct SourceEvidence {
     pub node_path: String,
-    pub refs: Vec<KnowledgeEvidenceRef>,
+    pub refs: Vec<SourceEvidenceRef>,
 }

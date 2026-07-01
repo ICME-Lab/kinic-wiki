@@ -8,20 +8,19 @@ const viewports = [
   [390, 844]
 ];
 const browserRoutes = [
-  "/Wiki",
-  "/Wiki?view=raw",
-  "/Wiki?view=edit",
-  "/Wiki?tab=query",
-  "/Wiki?tab=ingest",
-  "/Wiki?tab=clipper",
+  "/Knowledge",
+  "/Knowledge?view=raw",
+  "/Knowledge?view=edit",
+  "/Knowledge?tab=query",
+  "/Knowledge?tab=source-capture",
   "/search?q=Wiki&kind=path",
   "/help",
-  "/graph?center=%2FWiki&depth=1",
+  "/graph?center=%2FKnowledge&depth=1",
   "/graph"
 ];
 
 runOptional("close", []);
-run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Wiki`]);
+run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Knowledge`]);
 for (const [width, height] of viewports) {
   run("resize", [String(width), String(height)]);
   for (const route of browserRoutes) {
@@ -51,7 +50,7 @@ function readDatabaseId() {
 }
 
 function wikiLayoutProbe(route) {
-  const expectsTallDocument = route.startsWith("/Wiki?");
+  const expectsTallDocument = route.startsWith("/Knowledge?");
   return `async () => {
     const failures = [];
     const documentPanel = document.querySelector('[data-tid="wiki-document-panel"]');
@@ -64,7 +63,7 @@ function wikiLayoutProbe(route) {
     const graphLabel = graphLink?.querySelector("span");
     const searchForm = document.querySelector('form[aria-label], form');
     if (!documentPanel) failures.push("missing document panel");
-    if (${JSON.stringify(expectsTallDocument)} && /node|directory|\\/Wiki|skill-categories/i.test(documentHeader?.textContent ?? "")) failures.push("document header shows node path metadata");
+    if (${JSON.stringify(expectsTallDocument)} && /node|directory|\\/Knowledge|skill-categories/i.test(documentHeader?.textContent ?? "")) failures.push("document header shows node path metadata");
     if (!explorerPanel) failures.push("missing explorer panel");
     if (!mobileMenuButton) failures.push("missing mobile sidebar toggle");
     if (!isVisible(brandLink)) failures.push("brand link is not visible before mobile menu opens");
@@ -76,7 +75,7 @@ function wikiLayoutProbe(route) {
     if (graphLink?.getBoundingClientRect().height !== document.querySelector('a[title="Share on X"]')?.getBoundingClientRect().height) {
       failures.push("graph and share button heights differ");
     }
-    if (location.pathname.endsWith("/graph") && !graphLink?.getAttribute("href")?.includes("/Wiki")) {
+    if (location.pathname.endsWith("/graph") && !graphLink?.getAttribute("href")?.includes("/Knowledge")) {
       failures.push("graph link does not close graph view");
     }
     if (isVisible(explorerPanel)) failures.push("explorer panel is visible before mobile menu opens");
@@ -110,9 +109,9 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link disappears after mobile menu opens");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button is not expanded after click");
     const visibleTabs = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).filter((link) => isVisible(link)).map((link) => link.textContent?.trim()).join(",");
-    if (visibleTabs !== "explorer,query,ingest,clipper") failures.push("mobile sidebar tabs are not visible");
-    const ingestLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "ingest");
-    ingestLink?.click();
+    if (visibleTabs !== "explorer,query,source-capture") failures.push("mobile sidebar tabs are not visible");
+    const sourceCaptureLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "source-capture");
+    sourceCaptureLink?.click();
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (!isVisible(explorerPanel)) failures.push("explorer panel closes after mobile sidebar navigation");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button collapses after sidebar navigation");
@@ -139,7 +138,7 @@ function dashboardLayoutProbe() {
     if (table && table.getBoundingClientRect().width > 0) {
       failures.push("database table is visible on mobile");
     }
-    const databaseLinks = Array.from(document.querySelectorAll('a[href*="/Wiki"]')).filter((link) => link.textContent?.includes("Open"));
+    const databaseLinks = Array.from(document.querySelectorAll('a[href*="/Knowledge"]')).filter((link) => link.textContent?.includes("Open"));
     if (databaseLinks.length > 0) {
       const readableCards = databaseLinks.some((link) => {
         const card = link.closest("article");

@@ -70,7 +70,7 @@ fn ensure_bench_service() {
 }
 
 fn bench_prefix(case: BenchCase) -> String {
-    format!("/Wiki/canbench/{}/n-{:06}", case.operation, case.n)
+    format!("/Knowledge/canbench/{}/n-{:06}", case.operation, case.n)
 }
 
 fn node_path(prefix: &str, index: usize) -> String {
@@ -325,7 +325,7 @@ fn seed_storage_billing_databases(case: BenchCase) {
                 &caller,
                 WriteNodeRequest {
                     database_id: database_id.clone(),
-                    path: "/Wiki/storage-billing.md".to_string(),
+                    path: "/Knowledge/storage-billing.md".to_string(),
                     kind: NodeKind::File,
                     content: node_content(index, true),
                     metadata_json: "{}".to_string(),
@@ -525,13 +525,13 @@ mod tests {
     #[test]
     fn parent_folder_paths_returns_ordered_ancestors_without_leaf() {
         assert_eq!(
-            parent_folder_paths("/Wiki/canbench/write/n-001000/l1-00/node.md"),
+            parent_folder_paths("/Knowledge/canbench/write/n-001000/l1-00/node.md"),
             vec![
-                "/Wiki",
-                "/Wiki/canbench",
-                "/Wiki/canbench/write",
-                "/Wiki/canbench/write/n-001000",
-                "/Wiki/canbench/write/n-001000/l1-00"
+                "/Knowledge",
+                "/Knowledge/canbench",
+                "/Knowledge/canbench/write",
+                "/Knowledge/canbench/write/n-001000",
+                "/Knowledge/canbench/write/n-001000/l1-00"
             ]
         );
     }
@@ -542,7 +542,7 @@ mod tests {
             snapshot_revision: "snap-1".to_string(),
             snapshot_session_id: None,
             nodes: vec![Node {
-                path: "/Wiki/bench/node.md".to_string(),
+                path: "/Knowledge/bench/node.md".to_string(),
                 kind: NodeKind::File,
                 content: "hello 😀".to_string(),
                 created_at: 1,

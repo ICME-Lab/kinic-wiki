@@ -1,23 +1,24 @@
 // Where: extensions/wiki-clipper/src/web-source.js
-// What: Build canonical raw source nodes from active-page DOM text snapshots.
+// What: Build canonical evidence source nodes from active-page DOM text snapshots.
 // Why: Web page capture should save source evidence before queueing generation.
-import { normalizedHttpUrl } from "./url-ingest-request.js";
+import { sourceStemFromTitleHash } from "./source-filename.js";
+import { normalizedHttpUrl } from "./source-capture-request.js";
 
 const MAX_WEB_SOURCE_CHARS = 300_000;
 
-export async function buildWebRawSource(snapshot, now = new Date()) {
+export async function buildWebEvidenceSource(snapshot, now = new Date()) {
   const finalUrl = normalizedHttpUrl(snapshot?.url);
-  const sourceId = await webSourceId(finalUrl);
   const text = String(snapshot?.text || "").trim();
   if (!text) {
     throw new Error("page text is empty");
   }
   const sourceText = limitSourceText(text, MAX_WEB_SOURCE_CHARS);
   const title = webSourceTitle(snapshot?.title, finalUrl);
+  const sourceId = await webSourceId(finalUrl, title);
   const capturedAt = now.toISOString();
   const content = [
     "---",
-    "kind: kinic.raw_web_source",
+    "kind: kinic.evidence_web_source",
     "schema_version: 1",
     `url: ${JSON.stringify(finalUrl)}`,
     `final_url: ${JSON.stringify(finalUrl)}`,
@@ -56,9 +57,9 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
   };
 }
 
-export async function webSourcePathForUrl(value) {
+export async function webSourcePathForUrl(value, title = "") {
   const finalUrl = normalizedHttpUrl(value);
-  return webSourcePathFromId(await webSourceId(finalUrl));
+  return webSourcePathFromId(await webSourceId(finalUrl, webSourceTitle(title, finalUrl)));
 }
 
 export function collectWebPageSnapshot() {
@@ -204,8 +205,9 @@ export function collectWebPageSnapshot() {
   };
 }
 
-async function webSourceId(finalUrl) {
-  return `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
+async function webSourceId(finalUrl, title) {
+  const hash = (await sha256Hex(finalUrl)).slice(0, 8);
+  return `web-${sourceStemFromTitleHash(title, hash, hostnameForUrl(finalUrl))}`;
 }
 
 function webSourceTitle(value, finalUrl) {
@@ -218,8 +220,16 @@ function webSourceTitle(value, finalUrl) {
   }
 }
 
+function hostnameForUrl(finalUrl) {
+  try {
+    return new URL(finalUrl).hostname || "web-source";
+  } catch {
+    return "web-source";
+  }
+}
+
 function webSourcePathFromId(sourceId) {
-  return `/Sources/raw/web/${sourceId.slice("web-".length)}.md`;
+  return `/Sources/web/${sourceId.slice("web-".length)}.md`;
 }
 
 function limitSourceText(text, maxChars) {

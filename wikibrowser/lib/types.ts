@@ -81,12 +81,12 @@ export type MoveNodeResult = {
   overwrote: boolean;
 };
 
-export type UrlIngestTriggerSessionRequest = {
+export type SourceCaptureTriggerSessionRequest = {
   databaseId: string;
   sessionNonce: string;
 };
 
-export type UrlIngestTriggerSessionCheckRequest = {
+export type SourceCaptureTriggerSessionCheckRequest = {
   databaseId: string;
   requestPath: string;
   sessionNonce: string;
@@ -111,23 +111,32 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseProfile = "workspace" | "memory" | "knowledge" | "skill" | "session";
-export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "deleted";
+
+export type DatabaseMetadata = {
+  name: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+};
 
 export type DatabaseSummary = {
   databaseId: string;
   name: string;
+  metadata: DatabaseMetadata;
   role: DatabaseRole;
-  profile: DatabaseProfile;
   status: DatabaseStatus;
   logicalSizeBytes: string;
   cyclesBalance: string;
   cyclesSuspendedAtMs: string | null;
-  archivedAtMs: string | null;
   deletedAtMs: string | null;
 };
 
 export type DeleteDatabaseRequest = {
+  databaseId: string;
+};
+
+export type UpdateDatabaseMetadataRequest = DatabaseMetadata & {
   databaseId: string;
 };
 
@@ -218,10 +227,6 @@ export type MarketListing = {
   sellerPrincipal: string;
   payoutPrincipal: string;
   databaseId: string;
-  title: string;
-  description: string;
-  llmSummary: string | null;
-  tagsJson: string;
   priceE8s: string;
   status: MarketListingStatus;
   revision: string;
@@ -229,6 +234,11 @@ export type MarketListing = {
   reportCount: string;
   createdAtMs: string;
   updatedAtMs: string;
+};
+
+export type MarketListingView = {
+  listing: MarketListing;
+  databaseMetadata: DatabaseMetadata;
 };
 
 export type MarketListingVerifiedStats = {
@@ -275,23 +285,19 @@ export type MarketListingPreview = {
 };
 
 export type MarketListingDetail = {
-  listing: MarketListing;
+  listing: MarketListingView;
   verifiedStats: MarketListingVerifiedStats;
   preview: MarketListingPreview;
 };
 
 export type MarketListingPage = {
-  listings: MarketListing[];
+  listings: MarketListingView[];
   nextCursor: string | null;
 };
 
 export type MarketCreateListingRequest = {
   databaseId: string;
   payoutPrincipal: string;
-  title: string;
-  description: string;
-  llmSummary: string | null;
-  tagsJson: string;
   priceE8s: string;
 };
 
@@ -378,7 +384,7 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
-export type KnowledgeEvidenceRef = {
+export type SourceEvidenceRef = {
   sourcePath: string;
   viaPath: string;
   rawHref: string;
@@ -388,18 +394,18 @@ export type KnowledgeEvidenceRef = {
   sourceContentHash: string | null;
 };
 
-export type KnowledgeEvidence = {
+export type SourceEvidence = {
   nodePath: string;
-  refs: KnowledgeEvidenceRef[];
+  refs: SourceEvidenceRef[];
 };
 
-export type MemoryRecall = {
+export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];
   nodes: NodeContext[];
   graphLinks: LinkEdge[];
-  evidence: KnowledgeEvidence[];
+  evidence: SourceEvidence[];
   truncated: boolean;
 };
 

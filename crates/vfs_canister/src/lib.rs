@@ -43,26 +43,25 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseProfile,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
+    DatabaseIdRequest, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
-    KnowledgeEvidence, KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
-    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest,
+    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
+    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
+    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    StoreCapability, StoreManifest, StoreManifestRequest, StoreRoot,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -351,105 +350,43 @@ fn canister_health() -> CanisterHealth {
 }
 
 #[query]
-fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String> {
-    let profile =
-        with_service(|service| service.database_profile(&request.database_id, &caller_text()))?;
-    Ok(store_manifest_for_profile(profile))
-}
-
-fn store_manifest_for_profile(profile: DatabaseProfile) -> StoreManifest {
-    StoreManifest {
+fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
+    with_service(|service| service.status(&request.database_id, &caller_text()))?;
+    Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
-        profile,
-        purpose: store_manifest_purpose(profile).to_string(),
-        enabled_stores: store_manifest_enabled_stores(profile),
-        roots: store_manifest_roots(profile),
-        entry_roots: store_manifest_entry_roots(profile),
+        purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
+            .to_string(),
+        enabled_stores: ["memory", "knowledge", "skill", "session"]
+            .iter()
+            .map(|store| (*store).to_string())
+            .collect(),
+        roots: vec![
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+            store_root("/Sources", "source_evidence"),
+            store_root("/Sources/sessions", "session_evidence"),
+            store_root("/Sources/skill-runs", "skill_run_evidence"),
+        ],
+        entry_roots: vec![
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+        ],
         capabilities: store_capabilities(),
         canonical_roles: canonical_roles(),
-        write_policy: "store_recall_read_only".to_string(),
-        recommended_entrypoint: store_manifest_recommended_entrypoint(profile).to_string(),
+        write_policy: "stores_read_only".to_string(),
+        recommended_entrypoint: "query_context".to_string(),
         max_depth: 2,
         max_query_limit: 100,
         budget_unit: "approx_chars_from_tokens".to_string(),
-    }
+    })
 }
 
-fn store_manifest_purpose(profile: DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Workspace => {
-            "Canister-backed memory, knowledge, skill, and session stores for agents"
-        }
-        DatabaseProfile::Knowledge => "Long-term wiki and digital garden knowledge store",
-        DatabaseProfile::Memory => "Agent memory and recall store with evidence links",
-        DatabaseProfile::Skill => "Skill registry store with run evidence",
-        DatabaseProfile::Session => "Agent session audit and replay source store",
-    }
-}
-
-fn store_manifest_enabled_stores(profile: DatabaseProfile) -> Vec<String> {
-    let stores: &[&str] = match profile {
-        DatabaseProfile::Workspace => &["memory", "knowledge", "skill", "session"],
-        DatabaseProfile::Knowledge => &["knowledge"],
-        DatabaseProfile::Memory => &["memory", "knowledge"],
-        DatabaseProfile::Skill => &["skill", "knowledge"],
-        DatabaseProfile::Session => &["session"],
-    };
-    stores.iter().map(|store| (*store).to_string()).collect()
-}
-
-fn store_manifest_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
-    match profile {
-        DatabaseProfile::Workspace => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "knowledge_evidence"),
-        ],
-        DatabaseProfile::Knowledge => vec![store_root("/Wiki", "knowledge")],
-        DatabaseProfile::Memory => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Sources/raw", "knowledge_evidence"),
-        ],
-        DatabaseProfile::Skill => vec![
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sources/skill-runs", "skill_run_evidence"),
-        ],
-        DatabaseProfile::Session => vec![
-            store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "session_audit_sources"),
-        ],
-    }
-}
-
-fn store_manifest_entry_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
-    match profile {
-        DatabaseProfile::Workspace => vec![
-            store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
-            store_root("/Sessions", "session"),
-        ],
-        DatabaseProfile::Knowledge => vec![store_root("/Wiki", "knowledge")],
-        DatabaseProfile::Memory => vec![store_root("/Memory", "memory")],
-        DatabaseProfile::Skill => vec![store_root("/Wiki/skills", "skill")],
-        DatabaseProfile::Session => vec![store_root("/Sessions", "session")],
-    }
-}
-
-fn store_manifest_recommended_entrypoint(profile: DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Workspace | DatabaseProfile::Memory => "memory_recall",
-        DatabaseProfile::Knowledge => "read_node_context:/Wiki/index.md",
-        DatabaseProfile::Skill => "skill inspect",
-        DatabaseProfile::Session => "list_nodes:/Sessions",
-    }
-}
-
-fn store_root(path: &str, kind: &str) -> StoreRoot {
-    StoreRoot {
+fn store_root(path: &str, kind: &str) -> MemoryRoot {
+    MemoryRoot {
         path: path.to_string(),
         kind: kind.to_string(),
     }
@@ -476,14 +413,12 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
     with_unmetered_update("create_database", None, |service, caller, now| {
         let meta = service.create_generated_database_with_initial_free_grant_or_pending(
             &request.name,
-            request.profile,
             caller,
             now,
         )?;
         Ok(CreateDatabaseResult {
             database_id: meta.database_id,
-            name: meta.name,
-            profile: meta.profile,
+            name: meta.metadata.name,
         })
     })
 }
@@ -501,9 +436,20 @@ fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
         "rename_database",
         Some(database_id),
         RequiredRole::Owner,
-        |service, caller, now| {
-            service.rename_database(&request.database_id, caller, &request.name, now)
-        },
+        |service, caller, now| service.rename_database(caller, request, now),
+    )
+}
+
+#[update]
+fn update_database_metadata(
+    request: UpdateDatabaseMetadataRequest,
+) -> Result<DatabaseMetadata, String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
+        "update_database_metadata",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, now| service.update_database_metadata(caller, request, now),
     )
 }
 
@@ -624,12 +570,18 @@ fn icrc21_canister_call_consent_message(
                 Err(error) => return icrc21_unsupported(error),
             };
             let listing = validation.listing;
+            let listing_title = match with_service(|service| {
+                service.market_listing_database_name_for_consent(&listing.listing_id)
+            }) {
+                Ok(title) => title,
+                Err(error) => return icrc21_unsupported(error),
+            };
             let access_principal = validation.request.access_principal;
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
                     "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nSeller payout principal: `{payout}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
-                    listing_title = listing.title,
+                    listing_title = listing_title,
                     database_id = listing.database_id,
                     payment = format_e8s(purchase.price_e8s),
                     fee = format_e8s(KINIC_LEDGER_FEE_E8S),
@@ -1130,7 +1082,7 @@ fn update_cycles_billing_config(update: CyclesBillingConfigUpdate) -> Result<(),
 }
 
 #[update]
-fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_unmetered_update(
         "delete_database",
@@ -1145,133 +1097,6 @@ fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
             if let Some(meta) = meta {
                 unmount_database_file(&meta.db_file_name);
             }
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn begin_database_archive(database_id: String) -> Result<DatabaseArchiveInfo, String> {
-    with_role_metered_update(
-        "begin_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| service.begin_database_archive(&database_id, caller, now),
-    )
-}
-
-#[query]
-fn read_database_archive_chunk(
-    database_id: String,
-    offset: u64,
-    max_bytes: u32,
-) -> Result<DatabaseArchiveChunk, String> {
-    with_service(|service| {
-        service
-            .read_database_archive_chunk(&database_id, &caller_text(), offset, max_bytes)
-            .map(|bytes| DatabaseArchiveChunk { bytes })
-    })
-}
-
-#[update]
-fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Result<(), String> {
-    with_role_metered_update(
-        "finalize_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta =
-                service.finalize_database_archive(&database_id, caller, snapshot_hash, now)?;
-            unmount_database_file(&meta.db_file_name);
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn cancel_database_archive(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "cancel_database_archive",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            service.cancel_database_archive(&database_id, caller, now)?;
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn begin_database_restore(
-    database_id: String,
-    snapshot_hash: Vec<u8>,
-    size_bytes: u64,
-) -> Result<(), String> {
-    with_role_metered_update(
-        "begin_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let restore = service.begin_database_restore_session(
-                &database_id,
-                caller,
-                snapshot_hash,
-                size_bytes,
-                now,
-            )?;
-            if let Err(error) = mount_database_file(&restore.meta) {
-                service
-                    .rollback_database_restore_begin(restore.rollback, now)
-                    .map_err(|rollback_error| {
-                        format!("{error}; restore rollback failed: {rollback_error}")
-                    })?;
-                return Err(error);
-            }
-            Ok(())
-        },
-    )
-}
-
-#[update]
-fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<(), String> {
-    let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_database_restore_chunk",
-        Some(database_id),
-        RequiredRole::Owner,
-        |service, caller, _now| {
-            service.write_database_restore_chunk(
-                &request.database_id,
-                caller,
-                request.offset,
-                &request.bytes,
-            )
-        },
-    )
-}
-
-#[update]
-fn finalize_database_restore(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "finalize_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta = service.finalize_database_restore(&database_id, caller, now)?;
-            mount_database_file(&meta)
-        },
-    )
-}
-
-#[update]
-fn cancel_database_restore(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
-        "cancel_database_restore",
-        Some(database_id.clone()),
-        RequiredRole::Owner,
-        |service, caller, now| {
-            let meta = service.cancel_database_restore(&database_id, caller, now)?;
-            unmount_database_file(&meta.db_file_name);
             Ok(())
         },
     )
@@ -1313,23 +1138,25 @@ fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, Strin
 }
 
 #[update]
-fn authorize_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionRequest,
+fn authorize_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(
-        "authorize_url_ingest_trigger_session",
+        "authorize_source_capture_trigger_session",
         Some(database_id),
         RequiredRole::Writer,
-        |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
+        |service, caller, now| {
+            service.authorize_source_capture_trigger_session(caller, request, now)
+        },
     )
 }
 
 #[query]
-fn check_url_ingest_trigger_session(
-    request: UrlIngestTriggerSessionCheckRequest,
+fn check_source_capture_trigger_session(
+    request: SourceCaptureTriggerSessionCheckRequest,
 ) -> Result<(), String> {
-    with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
+    with_service(|service| service.check_source_capture_trigger_session(request, now_millis()))
 }
 
 #[query]
@@ -1446,13 +1273,13 @@ fn read_node_context(request: NodeContextRequest) -> Result<Option<NodeContext>,
 }
 
 #[query]
-fn memory_recall(request: MemoryRecallRequest) -> Result<MemoryRecall, String> {
-    with_service(|service| service.memory_recall(&caller_text(), request))
+fn query_context(request: QueryContextRequest) -> Result<QueryContext, String> {
+    with_service(|service| service.query_context(&caller_text(), request))
 }
 
 #[query]
-fn knowledge_evidence(request: KnowledgeEvidenceRequest) -> Result<KnowledgeEvidence, String> {
-    with_service(|service| service.knowledge_evidence(&caller_text(), request))
+fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, String> {
+    with_service(|service| service.source_evidence(&caller_text(), request))
 }
 
 #[update]
@@ -1699,18 +1526,6 @@ fn fail_next_apply_database_cycles_purchase_apply_for_test() {
 }
 
 #[cfg(test)]
-fn mark_initial_free_database_grant_used_for_test() {
-    with_service(|service| {
-        service.mark_initial_free_database_grant_used_for_test(
-            &caller_text(),
-            "test_free_grant_consumed",
-            now_millis(),
-        )
-    })
-    .expect("test free grant marker should insert");
-}
-
-#[cfg(test)]
 fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
     TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
         slot.replace(vec![outcome]);
@@ -1786,6 +1601,18 @@ fn set_test_caller_principal_for_test(principal: Principal) {
     TEST_CALLER_PRINCIPAL.with(|slot| {
         slot.replace(Some(principal));
     });
+}
+
+#[cfg(test)]
+fn mark_initial_free_database_grant_used_for_test() {
+    with_service(|service| {
+        service.mark_initial_free_database_grant_used_for_test(
+            &caller_text(),
+            "test_free_grant_consumed",
+            0,
+        )
+    })
+    .expect("test free grant marker should insert");
 }
 
 #[cfg(test)]
@@ -2331,18 +2158,18 @@ where
     })
 }
 
-fn store_capabilities() -> Vec<StoreCapability> {
+fn store_capabilities() -> Vec<MemoryCapability> {
     [
         (
-            "store_manifest",
+            "memory_manifest",
             "Discover the four-store API shape, limits, and policy",
         ),
         (
-            "memory_recall",
+            "query_context",
             "Primary memory-store entrypoint for task-scoped recall",
         ),
         (
-            "knowledge_evidence",
+            "source_evidence",
             "Read source-path evidence for one knowledge node",
         ),
         (
@@ -2356,7 +2183,7 @@ fn store_capabilities() -> Vec<StoreCapability> {
         ),
     ]
     .into_iter()
-    .map(|(name, description)| StoreCapability {
+    .map(|(name, description)| MemoryCapability {
         name: name.to_string(),
         description: description.to_string(),
     })
@@ -2598,18 +2425,18 @@ fn normalize_candid_interface(interface: String) -> String {
     );
     let normalized = normalize_candid_method_input(
         &normalized,
+        "authorize_source_capture_trigger_session",
+        "OpsAnswerSessionRequest",
+        "SourceCaptureTriggerSessionRequest",
+    );
+    let normalized = normalize_candid_method_input(
+        &normalized,
         "rename_database",
         "CreateDatabaseResult",
         "RenameDatabaseRequest",
     );
-    let normalized = normalize_candid_method_input(
-        &normalized,
-        "authorize_url_ingest_trigger_session",
-        "OpsAnswerSessionRequest",
-        "UrlIngestTriggerSessionRequest",
-    );
-    ensure_url_ingest_trigger_session_request(ensure_rename_database_request(
-        ensure_outgoing_links_request(normalized),
+    ensure_source_capture_trigger_session_request(ensure_rename_database_request(
+        ensure_update_database_metadata_request(ensure_outgoing_links_request(normalized)),
     ))
 }
 
@@ -2651,23 +2478,33 @@ fn ensure_outgoing_links_request(interface: String) -> String {
     )
 }
 
+fn ensure_update_database_metadata_request(interface: String) -> String {
+    if interface.contains("type UpdateDatabaseMetadataRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type DatabaseMember = record {",
+        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; name : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
+    )
+}
+
 fn ensure_rename_database_request(interface: String) -> String {
     if interface.contains("type RenameDatabaseRequest = record {") {
         return interface;
     }
     interface.replace(
-        "type DatabaseArchiveChunk = record {",
-        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseArchiveChunk = record {",
+        "type DeleteNodeRequest = record {",
+        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DeleteNodeRequest = record {",
     )
 }
 
-fn ensure_url_ingest_trigger_session_request(interface: String) -> String {
-    if interface.contains("type UrlIngestTriggerSessionRequest = record {") {
+fn ensure_source_capture_trigger_session_request(interface: String) -> String {
+    if interface.contains("type SourceCaptureTriggerSessionRequest = record {") {
         return interface;
     }
     interface.replace(
         "type WriteNodeItem = record {",
-        "type UrlIngestTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
+        "type SourceCaptureTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
     )
 }
 

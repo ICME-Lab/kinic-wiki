@@ -14,7 +14,7 @@ export function DatabaseDangerZone(props: {
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
   onDelete: () => Promise<string | null>;
 }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -43,7 +43,7 @@ export function DatabaseDangerZone(props: {
               This action is irreversible. Archive first if recovery is required.
             </p>
             <p className="mt-2 break-all font-mono text-xs text-red-900">
-              {props.databaseName} / {props.databaseId}
+              {props.databaseTitle} / {props.databaseId}
             </p>
             <DeleteEntitlementNotice count={props.activeEntitlementCount} />
             <DeleteCyclesNotice />
@@ -58,7 +58,7 @@ export function DatabaseDangerZone(props: {
           busy={props.busy}
           activeEntitlementCount={props.activeEntitlementCount}
           databaseId={props.databaseId}
-          databaseName={props.databaseName}
+          databaseTitle={props.databaseTitle}
           deleting={props.busyAction?.kind === "delete"}
           deleteError={deleteError}
           onCancel={cancelDeleteDialog}
@@ -73,7 +73,7 @@ function ConfirmDeleteDatabaseDialog(props: {
   activeEntitlementCount: string | null;
   busy: boolean;
   databaseId: string;
-  databaseName: string;
+  databaseTitle: string;
   deleting: boolean;
   deleteError: string | null;
   onCancel: () => void;
@@ -91,7 +91,7 @@ function ConfirmDeleteDatabaseDialog(props: {
       <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">Delete database</h3>
         <p className="mt-3 text-sm leading-6 text-muted">
-          Delete {props.databaseName}. This action is irreversible. Archive first if recovery is required.
+          Delete {props.databaseTitle}. This action is irreversible. Archive first if recovery is required.
         </p>
         <DeleteEntitlementNotice count={props.activeEntitlementCount} />
         <p className="mt-3 break-all rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-ink">{props.databaseId}</p>

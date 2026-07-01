@@ -202,11 +202,11 @@ fn test_http_get(url: &str) -> HttpRequest {
 fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     install_test_service();
 
-    ensure_parent_folders("/Wiki/project-alpha/one.md");
-    ensure_parent_folders("/Wiki/project-beta/two.md");
+    ensure_parent_folders("/Knowledge/project-alpha/one.md");
+    ensure_parent_folders("/Knowledge/project-beta/two.md");
     let alpha = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/project-alpha/one.md".to_string(),
+        path: "/Knowledge/project-alpha/one.md".to_string(),
         kind: NodeKind::File,
         content: "alpha shared term".to_string(),
         metadata_json: "{}".to_string(),
@@ -215,7 +215,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     .expect("alpha write should succeed");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/project-beta/two.md".to_string(),
+        path: "/Knowledge/project-beta/two.md".to_string(),
         kind: NodeKind::File,
         content: "beta shared term".to_string(),
         metadata_json: "{}".to_string(),
@@ -225,7 +225,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
 
     delete_node(DeleteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/project-alpha/one.md".to_string(),
+        path: "/Knowledge/project-alpha/one.md".to_string(),
         expected_etag: Some(alpha.node.etag),
         expected_folder_index_etag: None,
     })
@@ -234,7 +234,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     let hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "shared".to_string(),
-        prefix: Some("/Wiki/project-alpha".to_string()),
+        prefix: Some("/Knowledge/project-alpha".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
@@ -244,18 +244,18 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     let beta_hits = search_nodes(SearchNodesRequest {
         database_id: "default".to_string(),
         query_text: "shared".to_string(),
-        prefix: Some("/Wiki/project-beta".to_string()),
+        prefix: Some("/Knowledge/project-beta".to_string()),
         top_k: 10,
         preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(beta_hits.len(), 1);
-    assert_eq!(beta_hits[0].path, "/Wiki/project-beta/two.md");
+    assert_eq!(beta_hits[0].path, "/Knowledge/project-beta/two.md");
 
     let path_hits = search_node_paths(SearchNodePathsRequest {
         database_id: "default".to_string(),
         query_text: "PROJECT-beta".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         top_k: 10,
         preview_mode: None,
     })
@@ -263,7 +263,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     assert!(
         path_hits
             .iter()
-            .any(|hit| hit.path == "/Wiki/project-beta/two.md")
+            .any(|hit| hit.path == "/Knowledge/project-beta/two.md")
     );
 }
 
@@ -271,10 +271,10 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
 fn canister_fetch_updates_reports_removed_paths_after_delete() {
     install_test_service();
 
-    ensure_parent_folders("/Wiki/scope/item.md");
+    ensure_parent_folders("/Knowledge/scope/item.md");
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/scope/item.md".to_string(),
+        path: "/Knowledge/scope/item.md".to_string(),
         kind: NodeKind::File,
         content: "scope body".to_string(),
         metadata_json: "{}".to_string(),
@@ -284,7 +284,7 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
 
     let snapshot = export_snapshot(ExportSnapshotRequest {
         database_id: "default".to_string(),
-        prefix: Some("/Wiki/scope".to_string()),
+        prefix: Some("/Knowledge/scope".to_string()),
         limit: 100,
         cursor: None,
         snapshot_revision: None,
@@ -294,7 +294,7 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
 
     delete_node(DeleteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/scope/item.md".to_string(),
+        path: "/Knowledge/scope/item.md".to_string(),
         expected_etag: Some(created.node.etag),
         expected_folder_index_etag: None,
     })
@@ -303,7 +303,7 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
     let updates = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: snapshot.snapshot_revision,
-        prefix: Some("/Wiki/scope".to_string()),
+        prefix: Some("/Knowledge/scope".to_string()),
         limit: 100,
         cursor: None,
         target_snapshot_revision: None,
@@ -312,7 +312,7 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
     assert!(updates.changed_nodes.is_empty());
     assert_eq!(
         updates.removed_paths,
-        vec!["/Wiki/scope/item.md".to_string()]
+        vec!["/Knowledge/scope/item.md".to_string()]
     );
 }
 
@@ -320,11 +320,11 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
 fn canister_fetch_updates_rejects_prefix_scope_changes() {
     install_test_service();
 
-    ensure_parent_folders("/Wiki/a/one.md");
-    ensure_parent_folders("/Wiki/b/two.md");
+    ensure_parent_folders("/Knowledge/a/one.md");
+    ensure_parent_folders("/Knowledge/b/two.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/a/one.md".to_string(),
+        path: "/Knowledge/a/one.md".to_string(),
         kind: NodeKind::File,
         content: "alpha".to_string(),
         metadata_json: "{}".to_string(),
@@ -333,7 +333,7 @@ fn canister_fetch_updates_rejects_prefix_scope_changes() {
     .expect("write should succeed");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/b/two.md".to_string(),
+        path: "/Knowledge/b/two.md".to_string(),
         kind: NodeKind::File,
         content: "beta".to_string(),
         metadata_json: "{}".to_string(),
@@ -343,7 +343,7 @@ fn canister_fetch_updates_rejects_prefix_scope_changes() {
 
     let narrow = export_snapshot(ExportSnapshotRequest {
         database_id: "default".to_string(),
-        prefix: Some("/Wiki/a".to_string()),
+        prefix: Some("/Knowledge/a".to_string()),
         limit: 100,
         cursor: None,
         snapshot_revision: None,
@@ -353,7 +353,7 @@ fn canister_fetch_updates_rejects_prefix_scope_changes() {
     let widened = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: narrow.snapshot_revision,
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         target_snapshot_revision: None,
@@ -370,7 +370,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
 
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/base.md".to_string(),
+        path: "/Knowledge/base.md".to_string(),
         kind: NodeKind::File,
         content: "base".to_string(),
         metadata_json: "{}".to_string(),
@@ -379,7 +379,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
     .expect("base write should succeed");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Wiki/unchanged.md".to_string(),
+        path: "/Knowledge/unchanged.md".to_string(),
         kind: NodeKind::File,
         content: "unchanged".to_string(),
         metadata_json: "{}".to_string(),
@@ -389,7 +389,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
 
     let base = export_snapshot(ExportSnapshotRequest {
         database_id: "default".to_string(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         snapshot_revision: None,
@@ -400,7 +400,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
     for index in 0..300 {
         write_node(WriteNodeRequest {
             database_id: "default".to_string(),
-            path: format!("/Wiki/history-{index}.md"),
+            path: format!("/Knowledge/history-{index}.md"),
             kind: NodeKind::File,
             content: format!("revision {index}"),
             metadata_json: "{}".to_string(),
@@ -412,7 +412,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
     let first = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: base.snapshot_revision.clone(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: None,
         target_snapshot_revision: None,
@@ -421,7 +421,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
     let second = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: base.snapshot_revision.clone(),
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: first.next_cursor.clone(),
         target_snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -430,7 +430,7 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
     let third = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
         known_snapshot_revision: base.snapshot_revision,
-        prefix: Some("/Wiki".to_string()),
+        prefix: Some("/Knowledge".to_string()),
         limit: 100,
         cursor: second.next_cursor.clone(),
         target_snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -442,11 +442,15 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
         .collect::<Vec<_>>();
 
     assert_eq!(updates.len(), 300);
-    assert!(!updates.iter().any(|node| node.path == "/Wiki/unchanged.md"));
+    assert!(
+        !updates
+            .iter()
+            .any(|node| node.path == "/Knowledge/unchanged.md")
+    );
     assert!(
         updates
             .iter()
-            .all(|node| node.path.starts_with("/Wiki/history-"))
+            .all(|node| node.path.starts_with("/Knowledge/history-"))
     );
 }
 
@@ -487,10 +491,10 @@ fn mkdir_node_request_type_is_fixed_at_interface_boundary() {
         assert!(
             has_method_input(
                 did,
-                "authorize_url_ingest_trigger_session",
-                "UrlIngestTriggerSessionRequest"
+                "authorize_source_capture_trigger_session",
+                "SourceCaptureTriggerSessionRequest"
             ),
-            "authorize_url_ingest_trigger_session must consume UrlIngestTriggerSessionRequest",
+            "authorize_source_capture_trigger_session must consume SourceCaptureTriggerSessionRequest",
         );
         assert!(
             has_query_method_input(did, "outgoing_links", "OutgoingLinksRequest"),

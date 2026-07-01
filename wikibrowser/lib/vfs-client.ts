@@ -12,14 +12,15 @@ import type {
   DatabaseCycleEntry,
   DatabaseCycleEntryPage,
   DatabaseCyclesPendingPurchase,
+  DatabaseMetadata,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
   DeleteNodeResult,
   DatabaseMember,
-  DatabaseProfile,
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
+  InitialFreeDatabaseGrantStatus,
   IndexSqlJsonQueryResult,
   LinkEdge,
   MarketCreateListingRequest,
@@ -32,6 +33,7 @@ import type {
   MarketOrderPage,
   MarketPurchasePreview,
   MarketUpdateListingRequest,
+  UpdateDatabaseMetadataRequest,
   MkdirNodeRequest,
   MkdirNodeResult,
   MoveNodeRequest,
@@ -39,17 +41,16 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
-  MemoryRecall,
+  QueryContext,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
-  KnowledgeEvidence,
-  InitialFreeDatabaseGrantStatus,
+  SourceEvidence,
   SourceRunSessionCheckRequest,
-  UrlIngestTriggerSessionCheckRequest,
-  UrlIngestTriggerSessionRequest,
+  SourceCaptureTriggerSessionCheckRequest,
+  SourceCaptureTriggerSessionRequest,
   WikiMetrics,
   WikiMetricsPoint,
   WikiNode,
@@ -88,17 +89,17 @@ type RawCyclesBillingConfig = {
   };
 };
 
+export type DatabaseCyclesPurchaseRequest = {
+  database_id: string;
+  payment_amount_e8s: bigint;
+  min_expected_cycles: bigint;
+};
+
 type RawInitialFreeDatabaseGrantStatus = {
   available: boolean;
   grant_cycles: bigint;
   database_id: [] | [string];
   created_at_ms: [] | [bigint];
-};
-
-export type DatabaseCyclesPurchaseRequest = {
-  database_id: string;
-  payment_amount_e8s: bigint;
-  min_expected_cycles: bigint;
 };
 
 type RawDatabaseSummary = {
@@ -107,11 +108,17 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
-  profile: Variant;
+  metadata: [] | [RawDatabaseMetadata];
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
-  archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
+};
+
+type RawDatabaseMetadata = {
+  name: string;
+  description: string;
+  llm_summary: [] | [string];
+  tags_json: string;
 };
 
 type RawDatabaseCycleEntry = {
@@ -176,10 +183,6 @@ type RawMarketListing = {
   seller_principal: string;
   payout_principal: string;
   database_id: string;
-  title: string;
-  description: string;
-  llm_summary: [] | [string];
-  tags_json: string;
   price_e8s: bigint;
   status: RawMarketListingStatus;
   revision: bigint;
@@ -187,6 +190,11 @@ type RawMarketListing = {
   report_count: bigint;
   created_at_ms: bigint;
   updated_at_ms: bigint;
+};
+
+type RawMarketListingView = {
+  listing: RawMarketListing;
+  database_metadata: RawDatabaseMetadata;
 };
 
 type RawMarketListingVerifiedStats = {
@@ -233,23 +241,19 @@ type RawMarketListingPreview = {
 };
 
 type RawMarketListingDetail = {
-  listing: RawMarketListing;
+  listing: RawMarketListingView;
   verified_stats: RawMarketListingVerifiedStats;
   preview: RawMarketListingPreview;
 };
 
 type RawMarketListingPage = {
-  listings: RawMarketListing[];
+  listings: RawMarketListingView[];
   next_cursor: [] | [string];
 };
 
 type RawMarketCreateListingRequest = {
   database_id: string;
   payout_principal: string;
-  title: string;
-  description: string;
-  llm_summary: [] | [string];
-  tags_json: string;
   price_e8s: bigint;
 };
 
@@ -309,7 +313,10 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
-  profile: Variant;
+};
+
+type RawUpdateDatabaseMetadataRequest = RawDatabaseMetadata & {
+  database_id: string;
 };
 
 type RawDatabaseMember = {
@@ -400,12 +407,12 @@ type RawMoveNodeResult = {
   overwrote: boolean;
 };
 
-type RawUrlIngestTriggerSessionRequest = {
+type RawSourceCaptureTriggerSessionRequest = {
   database_id: string;
   session_nonce: string;
 };
 
-type RawUrlIngestTriggerSessionCheckRequest = {
+type RawSourceCaptureTriggerSessionCheckRequest = {
   database_id: string;
   request_path: string;
   session_nonce: string;
@@ -447,7 +454,7 @@ type RawNodeContext = {
   outgoing_links: RawLinkEdge[];
 };
 
-type RawKnowledgeEvidenceRef = {
+type RawSourceEvidenceRef = {
   source_path: string;
   via_path: string;
   raw_href: string;
@@ -457,31 +464,31 @@ type RawKnowledgeEvidenceRef = {
   source_content_hash: [] | [string];
 };
 
-type RawKnowledgeEvidence = {
+type RawSourceEvidence = {
   node_path: string;
-  refs: RawKnowledgeEvidenceRef[];
+  refs: RawSourceEvidenceRef[];
 };
 
-type RawMemoryRecall = {
+type RawQueryContext = {
   namespace: string;
   task: string;
   search_hits: RawSearchHit[];
   nodes: RawNodeContext[];
   graph_links: RawLinkEdge[];
-  evidence: RawKnowledgeEvidence[];
+  evidence: RawSourceEvidence[];
   truncated: boolean;
 };
 
 type VfsActor = {
   // Query answer wrappers keep the public browser naming while the current canister Candid surface still exposes ops_* session methods.
   authorize_ops_answer_session: (request: RawQueryAnswerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
-  authorize_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
+  authorize_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
-  check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
+  check_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
-  create_database: (request: { name: string; profile: Variant }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
@@ -508,7 +515,7 @@ type VfsActor = {
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
-  rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
+  update_database_metadata: (request: RawUpdateDatabaseMetadataRequest) => Promise<{ Ok: RawDatabaseMetadata } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
@@ -516,7 +523,7 @@ type VfsActor = {
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
-  memory_recall: (request: {
+  query_context: (request: {
     database_id: string;
     task: string;
     entities: string[];
@@ -524,7 +531,7 @@ type VfsActor = {
     budget_tokens: number;
     include_evidence: boolean;
     depth: number;
-  }) => Promise<{ Ok: RawMemoryRecall } | { Err: string }>;
+  }) => Promise<{ Ok: RawQueryContext } | { Err: string }>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   query_index_sql_json: (sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   wiki_metrics: () => Promise<{ Ok: RawWikiMetrics } | { Err: string }>;
@@ -661,17 +668,6 @@ export async function getCyclesBillingConfig(canisterId: string): Promise<Cycles
       throwCanisterError(result.Err);
     }
     return normalizeCyclesBillingConfig(result.Ok);
-  });
-}
-
-export async function getInitialFreeDatabaseGrantStatus(canisterId: string, identity: Identity): Promise<InitialFreeDatabaseGrantStatus> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.get_initial_free_database_grant_status();
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeInitialFreeDatabaseGrantStatus(result.Ok);
   });
 }
 
@@ -941,14 +937,25 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string, profile: DatabaseProfile = "workspace"): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database({ name, profile: databaseProfileVariant(profile) });
+    const result = await actor.create_database({ name });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
     return result.Ok;
+  });
+}
+
+export async function getInitialFreeDatabaseGrantStatus(canisterId: string, identity: Identity): Promise<InitialFreeDatabaseGrantStatus> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.get_initial_free_database_grant_status();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeInitialFreeDatabaseGrantStatus(result.Ok);
   });
 }
 
@@ -964,13 +971,18 @@ export async function deleteDatabaseAuthenticated(canisterId: string, identity: 
   });
 }
 
-export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, name: string): Promise<void> {
+export async function updateDatabaseMetadataAuthenticated(
+  canisterId: string,
+  identity: Identity,
+  request: UpdateDatabaseMetadataRequest
+): Promise<DatabaseMetadata> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.rename_database({ database_id: databaseId, name });
+    const result = await actor.update_database_metadata(rawUpdateDatabaseMetadataRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
+    return normalizeDatabaseMetadata(result.Ok);
   });
 }
 
@@ -1074,24 +1086,24 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
   });
 }
 
-export async function authorizeUrlIngestTriggerSession(
+export async function authorizeSourceCaptureTriggerSession(
   canisterId: string,
   identity: Identity,
-  request: UrlIngestTriggerSessionRequest
+  request: SourceCaptureTriggerSessionRequest
 ): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.authorize_url_ingest_trigger_session(rawUrlIngestTriggerSessionRequest(request));
+    const result = await actor.authorize_source_capture_trigger_session(rawSourceCaptureTriggerSessionRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
   });
 }
 
-export async function checkUrlIngestTriggerSession(canisterId: string, request: UrlIngestTriggerSessionCheckRequest): Promise<void> {
+export async function checkSourceCaptureTriggerSession(canisterId: string, request: SourceCaptureTriggerSessionCheckRequest): Promise<void> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.check_url_ingest_trigger_session(rawUrlIngestTriggerSessionCheckRequest(request));
+    const result = await actor.check_source_capture_trigger_session(rawSourceCaptureTriggerSessionCheckRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1257,17 +1269,17 @@ export async function graphNeighborhood(canisterId: string, databaseId: string, 
   });
 }
 
-export async function memoryRecall(
+export async function queryContext(
   canisterId: string,
   databaseId: string,
   task: string,
   budgetTokens: number,
   identity?: Identity,
   namespace?: string
-): Promise<MemoryRecall> {
+): Promise<QueryContext> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
-    const result = await actor.memory_recall({
+    const result = await actor.query_context({
       database_id: databaseId,
       task,
       entities: [],
@@ -1279,7 +1291,7 @@ export async function memoryRecall(
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeMemoryRecall(result.Ok);
+    return normalizeQueryContext(result.Ok);
   });
 }
 
@@ -1372,27 +1384,44 @@ function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): CyclesBillin
   };
 }
 
+function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
+  return {
+    databaseId: raw.database_id,
+    name: raw.name,
+    metadata: normalizeDatabaseMetadata(databaseMetadataOrFallback(raw)),
+    role: normalizeDatabaseRole(raw.role),
+    status: normalizeDatabaseStatus(raw.status),
+    logicalSizeBytes: raw.logical_size_bytes.toString(),
+    cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
+    cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
+    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
+  };
+}
+
+function databaseMetadataOrFallback(raw: RawDatabaseSummary): RawDatabaseMetadata {
+  return raw.metadata[0] ?? {
+    name: raw.name,
+    description: "",
+    llm_summary: [],
+    tags_json: "[]"
+  };
+}
+
+function normalizeDatabaseMetadata(raw: RawDatabaseMetadata): DatabaseMetadata {
+  return {
+    name: raw.name,
+    description: raw.description,
+    llmSummary: raw.llm_summary[0] ?? null,
+    tagsJson: raw.tags_json
+  };
+}
+
 function normalizeInitialFreeDatabaseGrantStatus(raw: RawInitialFreeDatabaseGrantStatus): InitialFreeDatabaseGrantStatus {
   return {
     available: raw.available,
     grantCycles: raw.grant_cycles.toString(),
     databaseId: raw.database_id[0] ?? null,
     createdAtMs: raw.created_at_ms[0]?.toString() ?? null
-  };
-}
-
-function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
-  return {
-    databaseId: raw.database_id,
-    name: raw.name,
-    role: normalizeDatabaseRole(raw.role),
-    profile: normalizeDatabaseProfile(raw.profile),
-    status: normalizeDatabaseStatus(raw.status),
-    logicalSizeBytes: raw.logical_size_bytes.toString(),
-    cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
-    cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
-    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
-    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
 }
 
@@ -1465,7 +1494,7 @@ function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPendingPur
 
 function normalizeMarketListingPage(raw: RawMarketListingPage): MarketListingPage {
   return {
-    listings: raw.listings.map(normalizeMarketListing),
+    listings: raw.listings.map(normalizeMarketListingView),
     nextCursor: raw.next_cursor[0] ?? null
   };
 }
@@ -1476,10 +1505,6 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
     sellerPrincipal: raw.seller_principal,
     payoutPrincipal: raw.payout_principal,
     databaseId: raw.database_id,
-    title: raw.title,
-    description: raw.description,
-    llmSummary: raw.llm_summary[0] ?? null,
-    tagsJson: raw.tags_json,
     priceE8s: raw.price_e8s.toString(),
     status: normalizeMarketListingStatus(raw.status),
     revision: raw.revision.toString(),
@@ -1490,9 +1515,16 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
   };
 }
 
-function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListingDetail {
+function normalizeMarketListingView(raw: RawMarketListingView) {
   return {
     listing: normalizeMarketListing(raw.listing),
+    databaseMetadata: normalizeDatabaseMetadata(raw.database_metadata)
+  };
+}
+
+function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListingDetail {
+  return {
+    listing: normalizeMarketListingView(raw.listing),
     verifiedStats: {
       totalNodes: raw.verified_stats.total_nodes.toString(),
       wikiNodes: raw.verified_stats.wiki_nodes.toString(),
@@ -1586,24 +1618,26 @@ function rawMarketCreateListingRequest(request: MarketCreateListingRequest): Raw
   return {
     database_id: request.databaseId,
     payout_principal: request.payoutPrincipal,
-    title: request.title,
-    description: request.description,
-    llm_summary: rawOptionalText(request.llmSummary),
-    tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s)
   };
 }
 
 function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): RawMarketUpdateListingRequest {
   return {
-    title: request.title,
-    description: request.description,
-    llm_summary: rawOptionalText(request.llmSummary),
-    tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s),
     listing_id: request.listingId,
     expected_revision: BigInt(request.expectedRevision),
     payout_principal: request.payoutPrincipal
+  };
+}
+
+function rawUpdateDatabaseMetadataRequest(request: UpdateDatabaseMetadataRequest): RawUpdateDatabaseMetadataRequest {
+  return {
+    database_id: request.databaseId,
+    name: request.name,
+    description: request.description,
+    llm_summary: rawOptionalText(request.llmSummary),
+    tags_json: request.tagsJson
   };
 }
 
@@ -1657,19 +1691,19 @@ function normalizeNodeContext(raw: RawNodeContext): NodeContext {
   };
 }
 
-function normalizeMemoryRecall(raw: RawMemoryRecall): MemoryRecall {
+function normalizeQueryContext(raw: RawQueryContext): QueryContext {
   return {
     namespace: raw.namespace,
     task: raw.task,
     searchHits: raw.search_hits.map(normalizeSearchHit),
     nodes: raw.nodes.map(normalizeNodeContext),
     graphLinks: raw.graph_links.map(normalizeLinkEdge),
-    evidence: raw.evidence.map(normalizeKnowledgeEvidence),
+    evidence: raw.evidence.map(normalizeSourceEvidence),
     truncated: raw.truncated
   };
 }
 
-function normalizeKnowledgeEvidence(raw: RawKnowledgeEvidence): KnowledgeEvidence {
+function normalizeSourceEvidence(raw: RawSourceEvidence): SourceEvidence {
   return {
     nodePath: raw.node_path,
     refs: raw.refs.map((ref) => ({
@@ -1709,21 +1743,7 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
   return "reader";
 }
 
-function normalizeDatabaseProfile(profile: Variant): DatabaseProfile {
-  if ("Memory" in profile) return "memory";
-  if ("Knowledge" in profile) return "knowledge";
-  if ("Skill" in profile) return "skill";
-  if ("Session" in profile) return "session";
-  return "workspace";
-}
 
-function databaseProfileVariant(profile: DatabaseProfile): Variant {
-  if (profile === "memory") return { Memory: null };
-  if (profile === "knowledge") return { Knowledge: null };
-  if (profile === "skill") return { Skill: null };
-  if (profile === "session") return { Session: null };
-  return { Workspace: null };
-}
 
 function databaseRoleVariant(role: DatabaseRole): Variant {
   if (role === "owner") {
@@ -1757,14 +1777,14 @@ function rawOptionalText(value: string | null): [] | [string] {
   return value === null ? [] : [value];
 }
 
-function rawUrlIngestTriggerSessionRequest(request: UrlIngestTriggerSessionRequest): RawUrlIngestTriggerSessionRequest {
+function rawSourceCaptureTriggerSessionRequest(request: SourceCaptureTriggerSessionRequest): RawSourceCaptureTriggerSessionRequest {
   return {
     database_id: request.databaseId,
     session_nonce: request.sessionNonce
   };
 }
 
-function rawUrlIngestTriggerSessionCheckRequest(request: UrlIngestTriggerSessionCheckRequest): RawUrlIngestTriggerSessionCheckRequest {
+function rawSourceCaptureTriggerSessionCheckRequest(request: SourceCaptureTriggerSessionCheckRequest): RawSourceCaptureTriggerSessionCheckRequest {
   return {
     database_id: request.databaseId,
     request_path: request.requestPath,
@@ -1801,15 +1821,6 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   }
   if ("Pending" in status) {
     return "pending";
-  }
-  if ("Restoring" in status) {
-    return "restoring";
-  }
-  if ("Archiving" in status) {
-    return "archiving";
-  }
-  if ("Archived" in status) {
-    return "archived";
   }
   if ("Deleted" in status) {
     return "deleted";

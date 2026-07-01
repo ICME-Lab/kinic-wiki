@@ -1,21 +1,21 @@
 ---
 name: kinic-skill-registry
-description: Kinic Skill Registry workflow skill for managing Agent Skills-compatible packages through kinic-vfs-cli skill commands, including upsert, import, find, inspect, run evidence, proposals, status changes, and lockfile-only install.
+description: Kinic Skill Registry workflow skill for managing Agent Skills-compatible packages through kinic-vfs-cli skill commands, including upsert, import, find, inspect, run evidence, snapshots, rollback, status changes, and lockfile-only install.
 ---
 
 # Kinic Skill Registry
 
 Use this skill when the user wants to:
 
-- manage skill packages stored under `/Wiki/skills` or `/Wiki/public-skills`
+- manage skill packages stored under `/Skills`
 - use `kinic-vfs-cli skill ...` commands
 - find or inspect skills by task context
-- record run evidence, promote, deprecate, or approve proposals
+- record run evidence, promote, deprecate, or rollback snapshots
 - create a lockfile-only install record
 
 Do not use this skill for:
 
-- ordinary wiki query, ingestion, or lint work
+- ordinary knowledge query, ingestion, or lint work
 - browser UI implementation
 - local agent runtime placement
 - permission enforcement beyond database roles
@@ -32,7 +32,7 @@ Core rules:
 - Keep `skill install` lockfile-only; do not copy package files into an agent runtime.
 - Prefer `promoted` or `reviewed` skills and ignore `deprecated` skills unless auditing.
 - Record usage evidence after a skill materially affects a task outcome.
-- Proposal approval marks evidence accepted; it does not apply a diff to `SKILL.md`.
+- `skill upsert` and `skill rollback` snapshot the replaced current version before changing it.
 
 Before substantive registry work:
 
@@ -43,5 +43,5 @@ Before substantive registry work:
    - discovery: `skill find`
    - inspection: `skill inspect`
    - evidence: `skill record-run`
-   - lifecycle: `skill set-status`, `skill propose-improvement`, `skill approve-proposal`
+   - lifecycle: `skill set-status`, `skill rollback`, `skill history`
    - downstream pinning: `skill install --lockfile`

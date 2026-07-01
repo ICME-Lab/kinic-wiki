@@ -17,10 +17,10 @@ use_cases:
 status: reviewed
 replaces: []
 related:
-  - /Wiki/legal/contract-review-playbook.md
+  - /Knowledge/legal/contract-review-playbook.md
   - /Sources/github/acme/legal-review
 knowledge:
-  - /Wiki/legal/contract-review-playbook.md
+  - /Knowledge/legal/contract-review-playbook.md
 permissions:
   file_read: true
   network: false

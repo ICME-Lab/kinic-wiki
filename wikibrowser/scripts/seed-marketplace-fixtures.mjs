@@ -12,26 +12,24 @@ const DEFAULT_ALLOWANCE_E8S = "400_000_000";
 
 const FIXTURES = [
   {
-    name: "Market Seed: AI Research",
     title: "AI Research Notes",
-    description: "Curated wiki notes for model evaluation, retrieval, and prompt ops.",
+    description: "Curated knowledge notes for model evaluation, retrieval, and prompt ops.",
     tags: ["ai", "research", "popular"],
     priceE8s: "25_000_000",
     summary: "Compact research notes with linked evidence and excerpts.",
     excerpt: "Model evaluation notes with retrieval examples",
     nodes: [
       {
-        path: "/Wiki/AI Research.md",
-        content: "# AI Research\n\nModel evaluation notes with retrieval examples and [pricing context](/Wiki/Pricing.md)."
+        path: "/Knowledge/AI Research.md",
+        content: "# AI Research\n\nModel evaluation notes with retrieval examples and [pricing context](/Knowledge/Pricing.md)."
       },
       {
-        path: "/Wiki/Pricing.md",
+        path: "/Knowledge/Pricing.md",
         content: "# Pricing\n\nLow price marketplace fixture for decimal max-price checks."
       }
     ]
   },
   {
-    name: "Market Seed: Product Playbook",
     title: "Product Launch Playbook",
     description: "Operational launch checklist with buyer onboarding and market examples.",
     tags: ["product", "recent", "playbook"],
@@ -40,17 +38,16 @@ const FIXTURES = [
     excerpt: "Operational launch checklist with buyer onboarding",
     nodes: [
       {
-        path: "/Wiki/Launch Checklist.md",
-        content: "# Launch Checklist\n\nOperational launch checklist with buyer onboarding and [risk review](/Wiki/Risk Review.md)."
+        path: "/Knowledge/Launch Checklist.md",
+        content: "# Launch Checklist\n\nOperational launch checklist with buyer onboarding and [risk review](/Knowledge/Risk Review.md)."
       },
       {
-        path: "/Wiki/Risk Review.md",
+        path: "/Knowledge/Risk Review.md",
         content: "# Risk Review\n\nRecent listing fixture for sort and filter checks."
       }
     ]
   },
   {
-    name: "Market Seed: Knowledge Graph",
     title: "Knowledge Graph Template",
     description: "Graph-oriented wiki seed with category edges and sample excerpts.",
     tags: ["graph", "template", "excerpt"],
@@ -59,11 +56,11 @@ const FIXTURES = [
     excerpt: "Graph-oriented wiki seed with category edges",
     nodes: [
       {
-        path: "/Wiki/Graph Template.md",
-        content: "# Graph Template\n\nGraph-oriented wiki seed with category edges and [sample nodes](/Wiki/Sample Nodes.md)."
+        path: "/Knowledge/Graph Template.md",
+        content: "# Graph Template\n\nGraph-oriented wiki seed with category edges and [sample nodes](/Knowledge/Sample Nodes.md)."
       },
       {
-        path: "/Wiki/Sample Nodes.md",
+        path: "/Knowledge/Sample Nodes.md",
         content: "# Sample Nodes\n\nExcerpt fixture for listing detail density checks."
       }
     ]
@@ -82,26 +79,32 @@ approveCyclesAllowance(ledgerCanister);
 for (const fixture of FIXTURES) {
   const created = callOk(
     "create_database",
-    candidRecord({ name: candidText(fixture.name), profile: "variant { Workspace }" })
+    candidRecord({ name: candidText(fixture.title) })
   );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
-  callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Wiki") }));
+  callOk(
+    "update_database_metadata",
+    candidRecord({
+      database_id: candidText(databaseId),
+      name: candidText(fixture.title),
+      description: candidText(fixture.description),
+      llm_summary: `opt ${candidText(fixture.summary)}`,
+      tags_json: candidText(JSON.stringify(fixture.tags))
+    })
+  );
+  callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Knowledge") }));
   writeNodes(databaseId, fixture);
   const listing = callOk(
     "market_create_listing",
     candidRecord({
       database_id: candidText(databaseId),
       payout_principal: candidText(payoutPrincipal),
-      title: candidText(fixture.title),
-      description: candidText(fixture.description),
-      llm_summary: `opt ${candidText(fixture.summary)}`,
-      tags_json: candidText(JSON.stringify(fixture.tags)),
       price_e8s: `${fixture.priceE8s} : nat64`
     })
   );
   const listingId = extractTextField(listing, "listing_id");
-  console.log(`${listingId}\t${databaseId}\t${extractTextField(listing, "title")}\t${extractNat64Field(listing, "price_e8s")}`);
+  console.log(`${listingId}\t${databaseId}\t${fixture.title}\t${extractNat64Field(listing, "price_e8s")}`);
 }
 
 function fundDatabase(databaseId) {

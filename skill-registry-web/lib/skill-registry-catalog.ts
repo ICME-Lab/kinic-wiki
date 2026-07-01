@@ -4,7 +4,7 @@ import type { ChildNode } from "@/lib/types";
 import { listChildren, readNode } from "@/lib/vfs-client";
 
 const REGISTRY_ROOTS = [
-  { label: "Team", path: "/Wiki/skills" }
+  { label: "Team", path: "/Skills" }
 ] as const;
 const MANIFEST_READ_CONCURRENCY = 8;
 
@@ -20,7 +20,6 @@ export type CatalogSkill = {
   versions: SkillVersion[];
   corrections: SkillCorrection[];
   recentRuns: SkillRunEvidence[];
-  proposals: SkillProposal[];
   runSummary: SkillRunSummary;
   trust: SkillRunSummary;
   events: SkillEvent[];
@@ -36,24 +35,6 @@ export type SkillRunEvidence = {
   recordedAt: string;
 };
 
-export type SkillProposal = {
-  proposalRoot: string;
-  candidatePath: string;
-  metricsPath: string;
-  statusPath: string;
-  id: string;
-  title: string;
-  status: ProposalStatus;
-  createdAt: string;
-  sourceRuns: string[];
-  candidatePreview: string;
-  baseEtag: string;
-  appliedAt: string;
-  metricsPreview: string;
-};
-
-export type ProposalStatus = "proposed" | "reviewed" | "auto_applied" | "gate_failed" | "conflict";
-
 export type SkillVersion = {
   path: string;
   updatedAt: string;
@@ -63,17 +44,6 @@ export type SkillCorrection = {
   path: string;
   recordedAt: string;
   preview: string;
-};
-
-export type EvolutionJob = {
-  path: string;
-  jobId: string;
-  skillId: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  proposalId: string | null;
-  error: string | null;
 };
 
 export type SkillEvent = {
@@ -125,7 +95,6 @@ export async function loadSkillCatalog(canisterId: string, databaseId: string, i
       versions: [],
       corrections: [],
       recentRuns: [],
-      proposals: [],
       runSummary: trust,
       trust,
       events: []

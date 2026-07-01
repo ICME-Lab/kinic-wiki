@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
-import type { MarketListing } from "@/lib/types";
+import type { MarketListingView } from "@/lib/types";
 import { marketListSellerListings } from "@/lib/vfs-client";
 import { errorMessage } from "@/lib/wiki-helpers";
 
@@ -19,12 +19,12 @@ type LoadState = "idle" | "loading" | "error";
 const LISTING_PAGE_LIMIT = 24;
 
 export function SellerProfileClient({ canisterId, principal }: SellerProfileClientProps) {
-  const [listings, setListings] = useState<MarketListing[]>([]);
+  const [listings, setListings] = useState<MarketListingView[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
 
-  const purchases = useMemo(() => listings.reduce((total, listing) => total + parseNonNegativeInteger(listing.purchaseCount), 0n), [listings]);
+  const purchases = useMemo(() => listings.reduce((total, view) => total + parseNonNegativeInteger(view.listing.purchaseCount), 0n), [listings]);
 
   const load = useCallback(
     async (nextCursor: string | null, append: boolean) => {
@@ -73,17 +73,17 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {listings.map((listing) => (
-            <Link className="no-underline" href={marketListingPath(listing.listingId)} key={listing.listingId}>
+          {listings.map((view) => (
+            <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
               <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
                 <div className="grid gap-1">
-                  <h2 className="line-clamp-2 text-base font-semibold">{listing.title}</h2>
-                  <p className="line-clamp-3 text-sm text-muted">{listing.description}</p>
-                  <p className="break-all font-mono text-xs text-muted">Payout {listing.payoutPrincipal}</p>
+                  <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.name}</h2>
+                  <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
+                  <p className="break-all font-mono text-xs text-muted">Payout {view.listing.payoutPrincipal}</p>
                 </div>
                 <div className="mt-auto flex items-center justify-between gap-3 text-sm">
-                  <span className="font-mono font-semibold">{formatTokenAmountFromE8s(listing.priceE8s)}</span>
-                  <span className="text-muted">{listing.purchaseCount} sold</span>
+                  <span className="font-mono font-semibold">{formatTokenAmountFromE8s(view.listing.priceE8s)}</span>
+                  <span className="text-muted">{view.listing.purchaseCount} sold</span>
                 </div>
               </AdminPanel>
             </Link>

@@ -881,6 +881,7 @@ where
         database_id: database_id.clone(),
         prefix: list_prefix(&args.prefix, args.directory_shape),
         recursive: false,
+        limit: 100,
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {
@@ -904,6 +905,7 @@ where
         database_id: database_id.clone(),
         prefix: list_prefix(&args.prefix, args.directory_shape),
         recursive: false,
+        limit: 100,
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {
@@ -1615,7 +1617,7 @@ mod tests {
                 .unwrap()
                 .push(format!("search:{}", request.query_text));
             Ok(vec![SearchNodeHit {
-                path: "/Wiki/bench/node-000000.md".to_string(),
+                path: "/Knowledge/bench/node-000000.md".to_string(),
                 kind: NodeKind::File,
                 snippet: Some(request.query_text),
                 preview: None,
@@ -1632,9 +1634,9 @@ mod tests {
                 .unwrap()
                 .push(format!("search_paths:{}", request.query_text));
             Ok(vec![SearchNodeHit {
-                path: "/Wiki/bench/node-000000.md".to_string(),
+                path: "/Knowledge/bench/node-000000.md".to_string(),
                 kind: NodeKind::File,
-                snippet: Some("/Wiki/bench/node-000000.md".to_string()),
+                snippet: Some("/Knowledge/bench/node-000000.md".to_string()),
                 preview: None,
                 score: 1.0,
                 match_reasons: vec!["path_substring".to_string()],
@@ -1660,7 +1662,7 @@ mod tests {
             benchmark_name: "bench".to_string(),
             replica_host: "http://127.0.0.1:8000".to_string(),
             canister_id: "aaaaa-aa".to_string(),
-            prefix: "/Wiki/bench".to_string(),
+            prefix: "/Knowledge/bench".to_string(),
             payload_size_bytes: 1024,
             file_count: 4,
             directory_shape: DirectoryShape::Flat,
@@ -1756,11 +1758,11 @@ mod tests {
         let ops = client.ops.lock().unwrap().clone();
         let warmup_reads = ops
             .iter()
-            .filter(|entry| entry.starts_with("read:/Wiki/bench/__warmup/"))
+            .filter(|entry| entry.starts_with("read:/Knowledge/bench/__warmup/"))
             .count();
         let measured_reads = ops
             .iter()
-            .filter(|entry| entry.starts_with("read:/Wiki/bench/node-"))
+            .filter(|entry| entry.starts_with("read:/Knowledge/bench/node-"))
             .count();
         assert_eq!(result.request_count, 4);
         assert_eq!(warmup_reads, 2);
@@ -1828,7 +1830,7 @@ mod tests {
         assert!(ops.iter().all(|entry| !entry.starts_with("write:")));
         assert_eq!(
             ops.iter()
-                .filter(|entry| entry.starts_with("read:/Wiki/bench/node-"))
+                .filter(|entry| entry.starts_with("read:/Knowledge/bench/node-"))
                 .count(),
             4
         );
@@ -1853,7 +1855,7 @@ mod tests {
         assert!(ops.iter().all(|entry| !entry.starts_with("write:")));
         assert_eq!(
             ops.iter()
-                .filter(|entry| entry == &&"list:/Wiki/bench".to_string())
+                .filter(|entry| entry == &&"list:/Knowledge/bench".to_string())
                 .count(),
             4
         );

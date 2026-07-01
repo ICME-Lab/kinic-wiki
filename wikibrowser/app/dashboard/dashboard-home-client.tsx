@@ -14,7 +14,7 @@ import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { hrefForPath } from "@/lib/paths";
-import type { CyclesBillingConfig, DatabaseProfile, DatabaseSummary, InitialFreeDatabaseGrantStatus } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseSummary, InitialFreeDatabaseGrantStatus } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, getInitialFreeDatabaseGrantStatus, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
 import type { DatabaseRow } from "../home-ui";
 
@@ -52,7 +52,6 @@ export function DashboardHomeClient() {
   const [walletMessage, setWalletMessage] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState("");
-  const [newDatabaseProfile, setNewDatabaseProfile] = useState<DatabaseProfile>("workspace");
   const [creating, setCreating] = useState(false);
 
   const refreshDatabases = useCallback(
@@ -125,11 +124,10 @@ export function DashboardHomeClient() {
     queueMicrotask(() => {
       if (cancelled) return;
       setCyclesBillingConfig(null);
-      setFreeGrantStatus(null);
       setPurchasedDatabaseIds(new Set());
+      setFreeGrantStatus(null);
       setCreateDialogOpen(false);
       setNewDatabaseName("");
-      setNewDatabaseProfile("workspace");
       setWalletMessage(null);
     });
     return () => {
@@ -138,8 +136,8 @@ export function DashboardHomeClient() {
   }, [principal]);
 
   const walletReadyToFundCreate = balanceCanFundCreate(walletBalance, createDatabaseWalletRequiredBalanceE8s());
-  const freeGrantAvailable = freeGrantStatus?.available === true;
   const walletPaymentAvailable = walletReadyToFundCreate;
+  const freeGrantAvailable = freeGrantStatus?.available === true;
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
@@ -156,30 +154,17 @@ export function DashboardHomeClient() {
     setWalletMessage(null);
     let createdDatabaseId: string | null = null;
     try {
-      const selectedProfile = newDatabaseProfile;
-      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput, selectedProfile);
+      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
-      setNewDatabaseProfile("workspace");
       if (freeGrantAvailable) {
-        const latestDatabases = await listDatabasesAuthenticated(canisterId, authClient.getIdentity());
-        const created = latestDatabases.find((database) => database.databaseId === result.database_id);
-        if (created?.status === "active") {
-          await refreshDatabases(authClient);
-          router.push(hrefForPath(canisterId, result.database_id, primaryRootForDatabaseProfile(selectedProfile)));
-          return;
-        }
-        if (!wallet || !walletPaymentAvailable) {
-          await refreshDatabases(authClient);
-          setError(`Database ${result.database_id} was created pending. Fund cycles from Cycles to activate it.`);
-          return;
-        }
+        setWalletMessage(`Database created with ${formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0")}.`);
+        await refreshDatabases(authClient);
+        router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
+        return;
       }
       if (!wallet) return;
-      if (!freeGrantAvailable) {
-        await refreshDatabases(authClient);
-      }
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
@@ -188,7 +173,7 @@ export function DashboardHomeClient() {
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
-      router.push(hrefForPath(canisterId, result.database_id, primaryRootForDatabaseProfile(selectedProfile)));
+      router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
@@ -249,18 +234,15 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          paymentNote={freeGrantAvailable ? "No wallet approval is needed." : "Wallet approval pays directly from ledger balance."}
-          profile={newDatabaseProfile}
-          requiredBalanceLabel={freeGrantAvailable ? `${formatRawCyclesLabel(freeGrantStatus?.grantCycles ?? "0")} free cycles` : formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
+          paymentNote={freeGrantAvailable ? "無料枠あり: wallet approval is not required." : "wallet 支払い必要: wallet approval pays directly from ledger balance."}
+          requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
             setCreateDialogOpen(false);
             setNewDatabaseName("");
-            setNewDatabaseProfile("workspace");
           }}
           onChange={setNewDatabaseName}
-          onProfileChange={setNewDatabaseProfile}
           onSubmit={() => void createDatabase()}
         />
 
@@ -291,12 +273,6 @@ export function DashboardHomeClient() {
   );
 }
 
-function primaryRootForDatabaseProfile(profile: DatabaseProfile): string {
-  if (profile === "memory") return "/Memory";
-  if (profile === "skill") return "/Wiki/skills";
-  if (profile === "session") return "/Sessions";
-  return "/Wiki";
-}
 
 function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseRow[] {
   const publicIds = new Set(publicDatabases.map((database) => database.databaseId));
@@ -338,10 +314,6 @@ function createDatabaseWalletRequiredBalanceE8s(): bigint {
   return createDatabasePurchaseAmountE8s() + KINIC_LEDGER_FEE_E8S * 2n;
 }
 
-function formatRawCyclesLabel(value: string): string {
-  return formatRawCycles(BigInt(value));
-}
-
 function fundingProviderLabel(provider: FundingProvider): string {
   if (provider === "oisy") return "OISY";
   if (provider === "plug") return "Plug";
@@ -358,6 +330,11 @@ function createDatabasePurchaseFailureMessage(databaseId: string, cause: unknown
 function balanceCanFundCreate(balanceE8s: string | null, requiredE8s: bigint): boolean {
   if (!balanceE8s || !/^\d+$/.test(balanceE8s)) return false;
   return BigInt(balanceE8s) >= requiredE8s;
+}
+
+function formatFreeGrantCycles(value: string): string {
+  if (!/^\d+$/.test(value)) return "0 cycles";
+  return `${formatRawCycles(BigInt(value))} cycles`;
 }
 
 function databaseCreateButtonLabel({

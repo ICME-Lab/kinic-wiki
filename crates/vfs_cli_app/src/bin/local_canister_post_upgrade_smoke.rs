@@ -7,8 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseProfile,
-    DatabaseStatus, kinic_base_units_per_token,
+    CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus,
+    MkdirNodeRequest, NodeKind, OutgoingLinksRequest, SearchNodesRequest, WriteNodeRequest,
+    kinic_base_units_per_token,
 };
 
 #[derive(Debug)]
@@ -22,6 +23,7 @@ struct SmokeState {
     canister_id: String,
     database_id: String,
     active_database_id: String,
+    isolation_database_id: String,
     active_balance_cycles: u64,
     active_ledger_entry_count: usize,
     expected_config: CyclesBillingConfig,
@@ -55,6 +57,12 @@ async fn main() -> Result<()> {
         }
         assert_pending_database(&client, &state.database_id).await?;
         assert_active_database(&client, &state).await?;
+        assert_vfs_database_behavior(
+            &client,
+            &state.active_database_id,
+            &state.isolation_database_id,
+        )
+        .await?;
         println!("local_canister_post_upgrade_smoke verify ok");
         println!("canister_id={}", state.canister_id);
         println!("database_id={}", state.database_id);
@@ -63,16 +71,22 @@ async fn main() -> Result<()> {
     }
 
     let database_id = client
-        .create_database("Post-upgrade smoke", DatabaseProfile::Workspace)
+        .create_database("Post-upgrade smoke")
         .await?
         .database_id;
     assert_pending_database(&client, &database_id).await?;
     let active_database_id = client
-        .create_database("Post-upgrade active smoke", DatabaseProfile::Workspace)
+        .create_database("Post-upgrade active smoke")
         .await?
         .database_id;
-    let active_balance_cycles =
-        activate_smoke_database(&client, &active_database_id, smoke_cycle_purchase_e8s()?).await?;
+    activate_smoke_database(&client, &active_database_id, smoke_cycle_purchase_e8s()?).await?;
+    let isolation_database_id = client
+        .create_database("Post-upgrade isolation smoke")
+        .await?
+        .database_id;
+    activate_smoke_database(&client, &isolation_database_id, smoke_cycle_purchase_e8s()?).await?;
+    seed_vfs_database_behavior(&client, &active_database_id, &isolation_database_id).await?;
+    let active_balance_cycles = active_database_balance(&client, &active_database_id).await?;
     let active_ledger_entry_count = client
         .list_database_cycle_entries(&active_database_id, None, 10)
         .await?
@@ -82,17 +96,20 @@ async fn main() -> Result<()> {
         canister_id,
         database_id: database_id.clone(),
         active_database_id: active_database_id.clone(),
+        isolation_database_id: isolation_database_id.clone(),
         active_balance_cycles,
         active_ledger_entry_count,
         expected_config,
     };
     assert_active_database(&client, &state).await?;
+    assert_vfs_database_behavior(&client, &active_database_id, &isolation_database_id).await?;
     if let Some(path) = args.state_output {
         write_state(&path, &state)?;
     }
     println!("local_canister_post_upgrade_smoke ok");
     println!("database_id={database_id}");
     println!("active_database_id={active_database_id}");
+    println!("isolation_database_id={isolation_database_id}");
     Ok(())
 }
 
@@ -243,6 +260,122 @@ async fn activate_smoke_database(
         .await
         .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;
     Ok(result.balance_cycles)
+}
+
+async fn active_database_balance(client: &CanisterVfsClient, database_id: &str) -> Result<u64> {
+    client
+        .list_databases()
+        .await?
+        .into_iter()
+        .find(|database| database.database_id == database_id)
+        .and_then(|database| database.cycles_balance)
+        .ok_or_else(|| anyhow!("active smoke database balance missing: {database_id}"))
+}
+
+async fn seed_vfs_database_behavior(
+    client: &CanisterVfsClient,
+    active_database_id: &str,
+    isolation_database_id: &str,
+) -> Result<()> {
+    write_smoke_node(
+        client,
+        active_database_id,
+        "# Upgrade Smoke\n\nneedle-upgrade-persistence [linked](/Knowledge/linked.md)\n",
+    )
+    .await?;
+    write_smoke_node(
+        client,
+        isolation_database_id,
+        "# Isolation Smoke\n\nneedle-isolation-only\n",
+    )
+    .await?;
+    client
+        .write_node(WriteNodeRequest {
+            database_id: active_database_id.to_string(),
+            path: "/Knowledge/linked.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Linked\n\nlink target\n".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn write_smoke_node(
+    client: &CanisterVfsClient,
+    database_id: &str,
+    content: &str,
+) -> Result<()> {
+    client
+        .mkdir_node(MkdirNodeRequest {
+            database_id: database_id.to_string(),
+            path: "/Knowledge".to_string(),
+        })
+        .await?;
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: "/Knowledge/upgrade-smoke.md".to_string(),
+            kind: NodeKind::File,
+            content: content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn assert_vfs_database_behavior(
+    client: &CanisterVfsClient,
+    active_database_id: &str,
+    isolation_database_id: &str,
+) -> Result<()> {
+    let active = client
+        .read_node(active_database_id, "/Knowledge/upgrade-smoke.md")
+        .await?
+        .ok_or_else(|| anyhow!("active smoke node missing"))?;
+    if !active.content.contains("needle-upgrade-persistence") {
+        return Err(anyhow!("active smoke node content changed"));
+    }
+    let isolation = client
+        .read_node(isolation_database_id, "/Knowledge/upgrade-smoke.md")
+        .await?
+        .ok_or_else(|| anyhow!("isolation smoke node missing"))?;
+    if isolation.content.contains("needle-upgrade-persistence")
+        || !isolation.content.contains("needle-isolation-only")
+    {
+        return Err(anyhow!("database isolation smoke content mismatch"));
+    }
+    let hits = client
+        .search_nodes(SearchNodesRequest {
+            database_id: active_database_id.to_string(),
+            query_text: "needle-upgrade-persistence".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 5,
+            preview_mode: None,
+        })
+        .await?;
+    if !hits
+        .iter()
+        .any(|hit| hit.path == "/Knowledge/upgrade-smoke.md")
+    {
+        return Err(anyhow!("active smoke search hit missing"));
+    }
+    let links = client
+        .outgoing_links(OutgoingLinksRequest {
+            database_id: active_database_id.to_string(),
+            path: "/Knowledge/upgrade-smoke.md".to_string(),
+            limit: 10,
+        })
+        .await?;
+    if !links
+        .iter()
+        .any(|link| link.target_path == "/Knowledge/linked.md")
+    {
+        return Err(anyhow!("active smoke outgoing link missing"));
+    }
+    Ok(())
 }
 
 fn cycles_for_payment_amount_e8s(

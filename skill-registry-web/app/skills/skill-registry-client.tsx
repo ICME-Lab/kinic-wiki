@@ -4,14 +4,13 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-management-ui";
-import { EvolutionJobsPanel, PermissionsPanel, SkillDetailPanel, SkillRegistryHeader, SkillRegistrySearchFilter, SkillRegistryTabs, type DashboardTab } from "@/app/skills/skill-registry-panels";
+import { PermissionsPanel, SkillDetailPanel, SkillRegistryHeader, SkillRegistrySearchFilter, SkillRegistryTabs, type DashboardTab } from "@/app/skills/skill-registry-panels";
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
 import { EmptyState, SkillCard, StatusPanel, SummaryStrip, type SkillActionHandlers } from "@/app/skills/skill-registry-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type EvolutionJob, type StatusFilter } from "@/lib/skill-registry-catalog";
-import { loadEvolutionJobs, loadSkillCatalogDetails } from "@/lib/skill-registry-details";
-import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
-import { approveSkillProposal, recordSkillEvent, recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
+import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
+import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
+import { recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
 import type { DatabaseMember, DatabaseRole } from "@/lib/types";
 import { listDatabaseMembersAuthenticated, listDatabaseMembersPublic, listDatabasesAuthenticated } from "@/lib/vfs-client";
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -19,7 +18,6 @@ type ActionDraft = {
   busy: boolean;
   error: string | null;
   message: string | null;
-  preview: ProposalDiffPreview | null;
   statusReason: string;
   runTask: string;
   runOutcome: RunOutcome;
@@ -31,7 +29,6 @@ const DEFAULT_ACTION: ActionDraft = {
   busy: false,
   error: null,
   message: null,
-  preview: null,
   statusReason: "",
   runTask: "",
   runOutcome: "success",
@@ -53,7 +50,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const [databaseRole, setDatabaseRole] = useState<DatabaseRole | null>(null);
   const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<EvolutionJob[]>([]);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
 
   const loadCatalog = useCallback(
@@ -82,12 +78,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             if (!isCurrentRefresh()) return;
             setSkills(detailedSkills);
             setSelectedSkillId((current) => current ?? detailedSkills[0]?.manifest.id ?? null);
-          })
-          .catch(() => undefined);
-        void loadEvolutionJobs(canisterId, databaseId, identity)
-          .then((nextJobs) => {
-            if (!isCurrentRefresh()) return;
-            setJobs(nextJobs);
           })
           .catch(() => undefined);
       } catch (cause) {
@@ -173,8 +163,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const filteredSkills = useMemo(() => filterSkills(skills, query, statusFilter), [skills, query, statusFilter]);
   const summary = useMemo(() => summarizeSkills(skills), [skills]);
   const selectedSkill = useMemo(() => skills.find((skill) => skill.manifest.id === selectedSkillId) ?? skills[0] ?? null, [selectedSkillId, skills]);
-  const pendingJobs = jobs.filter((job) => job.status === "queued" || job.status === "running").length;
-  const conflictJobs = jobs.filter((job) => job.status === "conflict").length;
   const writable = databaseRole === "writer" || databaseRole === "owner";
   const packageManager = usePackageManager({ canisterId, databaseId, identity: activeIdentity ?? undefined, writable, refresh: loadCatalog, errorMessage });
   function actionFor(skill: CatalogSkill): ActionDraft {
@@ -221,18 +209,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             }),
           true
         ),
-      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
-      previewProposal: (proposal) =>
-        void runSkillAction(skill, async (activeIdentity) => {
-          const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
-          patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
-        }),
-      applyProposal: (proposal) =>
-        void runSkillAction(skill, async (activeIdentity, draft) => {
-          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
-          await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
-          await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
-        })
     };
   }
 
@@ -279,8 +255,6 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             ) : null}
             {activeTab === "detail" && selectedSkill ? <SkillDetailPanel skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} /> : null}
             {activeTab === "runs" && selectedSkill ? <SkillDetailPanel focus="runs" skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} /> : null}
-            {activeTab === "proposals" && selectedSkill ? <SkillDetailPanel focus="proposals" skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} authenticated={Boolean(principal)} writable={writable} busy={actionFor(selectedSkill).busy} preview={actionFor(selectedSkill).preview} handlers={handlersFor(selectedSkill)} /> : null}
-            {activeTab === "jobs" ? <EvolutionJobsPanel jobs={jobs} pendingJobs={pendingJobs} conflictJobs={conflictJobs} /> : null}
             {activeTab === "permissions" ? <PermissionsPanel databaseId={databaseId} members={members} principal={principal} writable={writable} /> : null}
           </div>
           <aside className="space-y-3 lg:sticky lg:top-6">

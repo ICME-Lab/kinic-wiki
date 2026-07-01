@@ -25,6 +25,7 @@ use vfs_client::CanisterVfsClient;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let database_id_arg = cli.connection.database_id.clone();
     if let Command::Database { command } = &cli.command {
         match command {
             DatabaseCommand::Current { json } => {
@@ -32,7 +33,7 @@ async fn main() -> Result<()> {
                     cli.connection.local,
                     cli.connection.replica_host.clone(),
                     cli.connection.canister_id.clone(),
-                    cli.connection.database_id.clone(),
+                    database_id_arg.clone(),
                 )?;
                 print_database_current(&connection, *json)?;
                 return Ok(());
@@ -87,7 +88,7 @@ async fn main() -> Result<()> {
             cli.connection.local,
             cli.connection.replica_host.clone(),
             cli.connection.canister_id.clone(),
-            cli.connection.database_id.clone(),
+            database_id_arg.clone(),
         )?;
         if preview.database_id.is_none() {
             vfs_cli_app::hermes::run_hermes_local_status(*json)?;
@@ -98,7 +99,7 @@ async fn main() -> Result<()> {
         cli.connection.local,
         cli.connection.replica_host.clone(),
         cli.connection.canister_id.clone(),
-        cli.connection.database_id.clone(),
+        database_id_arg,
     )?;
     let auto_probes_database = matches!(cli.connection.identity_mode, IdentityModeArg::Auto)
         && cli.command.probes_anonymous_database_read()

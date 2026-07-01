@@ -95,7 +95,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Enable corepack
-        run: corepack enable
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.8 --activate
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
@@ -127,7 +129,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Enable corepack
-        run: corepack enable
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.8 --activate
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
@@ -153,7 +157,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Enable corepack
-        run: corepack enable
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.8 --activate
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
@@ -188,10 +194,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install stable Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Use stable Rust
-        run: rustup default stable
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run workspace tests
@@ -234,10 +240,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install stable Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Use stable Rust
-        run: rustup default stable
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Build CLI
         run: cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release --locked
       - name: Package CLI artifact
@@ -278,10 +284,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install stable Rust
-        run: rustup toolchain install stable --profile minimal
-      - name: Use stable Rust
-        run: rustup default stable
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustup component add rustfmt clippy
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install WASI sysroot

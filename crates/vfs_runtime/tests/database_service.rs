@@ -4,24 +4,22 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL,
     DEFAULT_CYCLES_TOP_UP_THRESHOLD, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, INITIAL_FREE_DATABASE_GRANT_CYCLES,
-    MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES, MAX_RESTORE_CHUNK_BYTES, VfsService,
+    DatabaseCyclesPurchaseWithLedgerDetails, INITIAL_FREE_DATABASE_GRANT_CYCLES, VfsService,
     cycles_for_payment_amount_e8s,
 };
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseProfile, DatabaseRole,
-    DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
-    KINIC_LEDGER_FEE_E8S, MarketCreateListingRequest, MarketListing, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest,
-    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
+    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
+    SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
 
@@ -42,13 +40,10 @@ fn service_with_root() -> (VfsService, PathBuf) {
     (service, root)
 }
 
-fn activate_pending_database_with_profile(
-    service: &VfsService,
-    profile: DatabaseProfile,
-) -> String {
+fn activate_pending_database(service: &VfsService) -> String {
     let pending = service
-        .reserve_pending_generated_database_with_profile("Profile DB", profile, "owner", 1)
-        .expect("pending profile database should create");
+        .reserve_pending_generated_database("Workspace DB", "owner", 1)
+        .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
         .expect("cycle purchase should begin");
@@ -93,7 +88,7 @@ fn seed_sql_budget_rows(database_path: &Path, count: i64) {
             let name = format!("node-{index:05}.md");
             insert
                 .execute(params![
-                    format!("/Wiki/budget/{name}"),
+                    format!("/Knowledge/budget/{name}"),
                     format!("budget content row {index}"),
                     index,
                     format!("etag-{index}"),
@@ -126,129 +121,10 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     }
 }
 
-#[test]
-fn initial_free_database_grant_creates_active_database_once_per_principal() {
-    let service = service();
-    let first = service
-        .create_generated_database_with_initial_free_grant_or_pending(
-            "Free",
-            DatabaseProfile::Workspace,
-            "owner",
-            10,
-        )
-        .expect("first database should use free grant");
-    let summaries = service
-        .list_database_summaries_for_caller("owner")
-        .expect("summaries should load");
-    let first_summary = summaries
-        .iter()
-        .find(|summary| summary.database_id == first.database_id)
-        .expect("first summary should exist");
-    assert_eq!(first_summary.status, DatabaseStatus::Active);
-    assert_eq!(
-        first_summary.cycles_balance,
-        Some(INITIAL_FREE_DATABASE_GRANT_CYCLES)
-    );
-    let entries = service
-        .list_database_cycle_entries(&first.database_id, "owner", None, 10)
-        .expect("cycles ledger should load")
-        .entries;
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "free_grant");
-    assert_eq!(
-        entries[0].amount_cycles,
-        INITIAL_FREE_DATABASE_GRANT_CYCLES as i64
-    );
-
-    let status = service
-        .initial_free_database_grant_status("owner")
-        .expect("free grant status should load");
-    assert!(!status.available);
-    assert_eq!(
-        status.database_id.as_deref(),
-        Some(first.database_id.as_str())
-    );
-
-    let second = service
-        .create_generated_database_with_initial_free_grant_or_pending(
-            "Paid later",
-            DatabaseProfile::Workspace,
-            "owner",
-            11,
-        )
-        .expect("second database should reserve pending");
-    let second_summary = service
-        .list_database_summaries_for_caller("owner")
-        .expect("summaries should load")
-        .into_iter()
-        .find(|summary| summary.database_id == second.database_id)
-        .expect("second summary should exist");
-    assert_eq!(second_summary.status, DatabaseStatus::Pending);
-    assert_eq!(second_summary.cycles_balance, Some(0));
-}
-
-#[test]
-fn initial_free_database_grant_is_per_principal_and_survives_delete() {
-    let service = service();
-    let owner = service
-        .create_generated_database_with_initial_free_grant_or_pending(
-            "Owner free",
-            DatabaseProfile::Workspace,
-            "owner",
-            10,
-        )
-        .expect("owner free database should create");
-    let other = service
-        .create_generated_database_with_initial_free_grant_or_pending(
-            "Other free",
-            DatabaseProfile::Workspace,
-            "other",
-            11,
-        )
-        .expect("other free database should create");
-    assert_ne!(owner.database_id, other.database_id);
-    assert_eq!(
-        service
-            .list_database_summaries_for_caller("other")
-            .expect("other summaries should load")[0]
-            .cycles_balance,
-        Some(INITIAL_FREE_DATABASE_GRANT_CYCLES)
-    );
-
-    service
-        .delete_database(delete_request(&owner.database_id), "owner", 12)
-        .expect("owner database should delete");
-    assert!(
-        !service
-            .initial_free_database_grant_status("owner")
-            .expect("free grant status should load")
-            .available
-    );
-    let next = service
-        .create_generated_database_with_initial_free_grant_or_pending(
-            "Owner paid later",
-            DatabaseProfile::Workspace,
-            "owner",
-            13,
-        )
-        .expect("post-delete database should reserve pending");
-    let summary = service
-        .list_database_summaries_for_caller("owner")
-        .expect("owner summaries should load")
-        .into_iter()
-        .find(|summary| summary.database_id == next.database_id)
-        .expect("next summary should exist");
-    assert_eq!(summary.status, DatabaseStatus::Pending);
-}
-
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
         payout_principal: "aaaaa-aa".to_string(),
-        title: "Team database".to_string(),
-        description: "Reusable team knowledge base".to_string(),
-        llm_summary: None,
-        tags_json: "[]".to_string(),
         price_e8s,
     }
 }
@@ -300,13 +176,13 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("database status should load");
-    let profile: String = conn
+    let stale_profile_columns: i64 = conn
         .query_row(
-            "SELECT profile FROM databases WHERE database_id = 'db_existing'",
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
             params![],
             |row| row.get(0),
         )
-        .expect("database profile should load");
+        .expect("stale profile column count should load");
     let balance: i64 = conn
         .query_row(
             "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = 'db_existing'",
@@ -372,7 +248,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("usage table count should load");
 
     assert_eq!(status, "active");
-    assert_eq!(profile, "workspace");
+    assert_eq!(stale_profile_columns, 0);
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(storage_columns, 1);
@@ -394,26 +270,126 @@ fn mainnet_011_index_upgrades_to_latest() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:033_database_profile"),
+        schema_migration_count(&root, "database_index:033_store_roots"),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:034_database_profile_roots"),
+        schema_migration_count(&root, "database_index:034_database_metadata"),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:035_initial_free_database_grants"),
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:036_capability_sessions"),
-        0
+        schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
+        1
     );
-    assert!(table_exists(&root, "capability_sessions"));
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
-    assert!(!table_exists(&root, "ops_answer_sessions"));
-    assert!(!table_exists(&root, "source_run_sessions"));
+    assert!(table_exists(&root, "source_capture_trigger_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
+    assert!(!index_exists(
+        &root,
+        "url_ingest_trigger_sessions_expiry_idx"
+    ));
+    assert!(index_exists(
+        &root,
+        "source_capture_trigger_sessions_expiry_idx"
+    ));
+    assert!(!table_exists(&root, "database_restore_chunks"));
+    assert!(!table_exists(&root, "database_restore_sessions"));
+    assert!(!index_exists(
+        &root,
+        "database_restore_chunks_database_id_idx"
+    ));
+    assert!(!column_exists(&root, "databases", "snapshot_hash"));
+    assert!(column_exists(&root, "databases", "archived_at_ms"));
+    assert!(!column_exists(&root, "databases", "restore_size_bytes"));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
+}
+
+#[test]
+fn database_metadata_migration_backfills_listing_title_and_preserves_unlisted_name() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("listed-migration", "seller", 1)
+        .expect("listed database should create");
+    service
+        .create_database("unlisted-migration", "seller", 2)
+        .expect("unlisted database should create");
+    let fixture_conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    fixture_conn
+        .execute_batch(
+            "
+            DELETE FROM schema_migrations
+             WHERE version IN (
+               'database_index:034_database_metadata',
+               'database_index:036_rename_url_ingest_trigger_sessions',
+               'database_index:037_drop_archive_restore_lifecycle',
+               'database_index:038_initial_free_database_grants'
+             );
+            DROP TABLE database_free_cycle_grants;
+            ALTER TABLE market_listings ADD COLUMN title TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN description TEXT NOT NULL DEFAULT '';
+            ALTER TABLE market_listings ADD COLUMN llm_summary TEXT;
+            ALTER TABLE market_listings ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+            UPDATE databases
+               SET name = 'Old DB Name'
+             WHERE database_id = 'listed-migration';
+            UPDATE databases
+               SET name = 'Unlisted DB Name'
+             WHERE database_id = 'unlisted-migration';
+            INSERT INTO market_listings
+              (listing_id, seller_principal, payout_principal, database_id, price_e8s, status,
+               revision, purchase_count, report_count, created_at_ms, updated_at_ms,
+               title, description, llm_summary, tags_json)
+            VALUES
+              ('listing-old', 'seller', 'aaaaa-aa', 'listed-migration', 100, 'active',
+               0, 0, 0, 10, 20,
+               'Published Listing Title', 'Published Description', 'Published Summary',
+               '[\"published\"]');
+            ",
+        )
+        .expect("old listing metadata fixture should insert");
+    drop(fixture_conn);
+
+    service
+        .run_index_migrations()
+        .expect("metadata migration should rerun");
+
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let listed: (String, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT name, description, llm_summary, tags_json
+             FROM databases
+             WHERE database_id = 'listed-migration'",
+            params![],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("listed metadata should load");
+    let unlisted_name: String = conn
+        .query_row(
+            "SELECT name
+             FROM databases
+             WHERE database_id = 'unlisted-migration'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("unlisted name should load");
+
+    assert_eq!(listed.0, "Published Listing Title");
+    assert_eq!(listed.1, "Published Description");
+    assert_eq!(listed.2.as_deref(), Some("Published Summary"));
+    assert_eq!(listed.3, r#"["published"]"#);
+    assert_eq!(unlisted_name, "Unlisted DB Name");
+    assert!(!column_exists(&root, "market_listings", "title"));
 }
 
 fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
@@ -711,40 +687,19 @@ fn cycles_per_cycle_ledger_schema_is_rejected() {
     assert_eq!(ledger_cycles_column_count, 1);
 }
 
-fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let actual: Option<i64> = conn
-        .query_row(
-            "SELECT restore_size_bytes FROM databases WHERE database_id = ?1",
-            params![database_id],
-            |row| row.get(0),
-        )
-        .expect("restore size row should exist");
-    assert_eq!(actual.map(|size| size as u64), expected);
-}
-
-fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
-    Sha256::digest(bytes).to_vec()
-}
-
-fn database_index_row(
-    root: &std::path::Path,
-    database_id: &str,
-) -> (String, Option<u16>, u64, Option<u64>) {
+fn database_index_row(root: &std::path::Path, database_id: &str) -> (String, Option<u16>, u64) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT status, active_mount_id, logical_size_bytes, restore_size_bytes
+        "SELECT status, active_mount_id, logical_size_bytes
          FROM databases WHERE database_id = ?1",
         params![database_id],
         |row| {
             let active_mount_id: Option<i64> = row.get(1)?;
             let logical_size_bytes: i64 = row.get(2)?;
-            let restore_size_bytes: Option<i64> = row.get(3)?;
             Ok((
                 row.get::<_, String>(0)?,
                 active_mount_id.map(|value| value as u16),
                 logical_size_bytes.max(0) as u64,
-                restore_size_bytes.map(|value| value.max(0) as u64),
             ))
         },
     )
@@ -775,6 +730,27 @@ fn pending_database_activation_row(
     .expect("database activation row should exist")
 }
 
+fn assert_all_store_roots_exist(service: &VfsService, database_id: &str) {
+    for path in [
+        "/Memory",
+        "/Knowledge",
+        "/Skills",
+        "/Sessions",
+        "/Sources",
+        "/Sources/sessions",
+        "/Sources/skill-runs",
+        "/Sources/source-capture-requests",
+    ] {
+        assert!(
+            service
+                .read_node(database_id, "owner", path)
+                .expect("store root read should succeed")
+                .is_some(),
+            "{path} should exist"
+        );
+    }
+}
+
 fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -785,28 +761,6 @@ fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool 
     .optional()
     .expect("database row check should load")
     .is_some()
-}
-
-fn database_updated_at_ms(root: &std::path::Path, database_id: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT updated_at_ms FROM databases WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("database updated_at_ms should load")
-}
-
-fn set_database_logical_size(root: &std::path::Path, database_id: &str, size: u64) {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.execute(
-        "UPDATE databases SET logical_size_bytes = ?2 WHERE database_id = ?1",
-        params![
-            database_id,
-            i64::try_from(size).expect("test size fits i64")
-        ],
-    )
-    .expect("database logical size should update");
 }
 
 fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
@@ -892,16 +846,6 @@ fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -
     .expect("pending cycle operation count should load")
 }
 
-fn capability_session_count(root: &std::path::Path, database_id: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT COUNT(*) FROM capability_sessions WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("capability session count should load")
-}
-
 fn cycle_database(
     service: &VfsService,
     database_id: &str,
@@ -958,6 +902,17 @@ fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<Strin
         .expect("database ledger rows should load")
 }
 
+fn free_cycle_grant_database_id(root: &std::path::Path, principal: &str) -> Option<String> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT database_id FROM database_free_cycle_grants WHERE principal = ?1",
+        params![principal],
+        |row| row.get(0),
+    )
+    .optional()
+    .expect("free cycle grant should load")
+}
+
 fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -980,6 +935,27 @@ fn table_exists(root: &std::path::Path, name: &str) -> bool {
     .is_some()
 }
 
+fn index_exists(root: &std::path::Path, name: &str) -> bool {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .expect("index existence should load")
+    .is_some()
+}
+
+fn column_exists(root: &std::path::Path, table_name: &str, column_name: &str) -> bool {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let sql = format!("SELECT 1 FROM pragma_table_info('{table_name}') WHERE name = ?1");
+    conn.query_row(&sql, params![column_name], |row| row.get::<_, i64>(0))
+        .optional()
+        .expect("column existence should load")
+        .is_some()
+}
+
 #[test]
 fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     let (_service, root) = service_with_root();
@@ -991,31 +967,30 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
         schema_migration_count(&root, "database_index:027_marketplace_core"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
     assert!(table_exists(&root, "market_listings"));
     assert!(table_exists(&root, "market_purchase_pending_operations"));
     assert!(table_exists(&root, "market_entitlements"));
-    assert!(table_exists(&root, "capability_sessions"));
-    assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
-    assert!(!table_exists(&root, "ops_answer_sessions"));
-    assert!(!table_exists(&root, "source_run_sessions"));
     assert!(!table_exists(&root, "kinic_accounts"));
     assert!(!table_exists(&root, "kinic_ledger"));
     assert!(!table_exists(&root, "kinic_pending_operations"));
-}
-
-#[test]
-fn latest_marker_without_capability_sessions_is_rejected() {
-    let (service, root) = service_with_root();
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.execute("DROP TABLE capability_sessions", params![])
-        .expect("capability sessions table should drop");
-    drop(conn);
-
-    let error = service
-        .run_index_migrations()
-        .expect_err("partial latest schema should reject");
-
-    assert!(error.contains("missing table capability_sessions"));
+    assert!(!table_exists(&root, "database_restore_chunks"));
+    assert!(!table_exists(&root, "database_restore_sessions"));
+    assert!(table_exists(&root, "database_free_cycle_grants"));
+    assert!(!index_exists(
+        &root,
+        "database_restore_chunks_database_id_idx"
+    ));
+    assert!(!column_exists(&root, "databases", "snapshot_hash"));
+    assert!(!column_exists(&root, "databases", "archived_at_ms"));
+    assert!(!column_exists(&root, "databases", "restore_size_bytes"));
 }
 
 fn mount_history_row(root: &std::path::Path, mount_id: u16) -> (String, String) {
@@ -1038,22 +1013,22 @@ fn mount_history_count(root: &std::path::Path) -> i64 {
     .expect("mount history count should load")
 }
 
-fn url_ingest_session_request(
+fn source_capture_session_request(
     database_id: &str,
     session_nonce: &str,
-) -> UrlIngestTriggerSessionRequest {
-    UrlIngestTriggerSessionRequest {
+) -> SourceCaptureTriggerSessionRequest {
+    SourceCaptureTriggerSessionRequest {
         database_id: database_id.to_string(),
         session_nonce: session_nonce.to_string(),
     }
 }
 
-fn url_ingest_session_check_request(
+fn source_capture_session_check_request(
     database_id: &str,
     request_path: &str,
     session_nonce: &str,
-) -> UrlIngestTriggerSessionCheckRequest {
-    UrlIngestTriggerSessionCheckRequest {
+) -> SourceCaptureTriggerSessionCheckRequest {
+    SourceCaptureTriggerSessionCheckRequest {
         database_id: database_id.to_string(),
         request_path: request_path.to_string(),
         session_nonce: session_nonce.to_string(),
@@ -1106,10 +1081,10 @@ fn write_source_for_generation_request(
     }
 }
 
-fn url_ingest_content(status: &str, requested_by: &str) -> String {
+fn source_capture_content(status: &str, requested_by: &str) -> String {
     [
         "---",
-        "kind: kinic.url_ingest_request",
+        "kind: kinic.source_capture_request",
         "schema_version: 1",
         &format!("status: {status}"),
         "url: \"https://example.com/\"",
@@ -1122,13 +1097,13 @@ fn url_ingest_content(status: &str, requested_by: &str) -> String {
         "error: null",
         "---",
         "",
-        "# URL Ingest Request",
+        "# Source Capture Request",
         "",
     ]
     .join("\n")
 }
 
-fn write_url_ingest_request(
+fn write_source_capture_request(
     service: &VfsService,
     caller: &str,
     database_id: &str,
@@ -1144,13 +1119,13 @@ fn write_url_ingest_request(
                 database_id: database_id.to_string(),
                 path: path.to_string(),
                 kind: NodeKind::File,
-                content: url_ingest_content(status, requested_by),
+                content: source_capture_content(status, requested_by),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
             2,
         )
-        .expect("url ingest request should write");
+        .expect("source capture request should write");
 }
 
 fn ensure_parent_folders(
@@ -1179,72 +1154,6 @@ fn ensure_parent_folders(
             )
             .expect("parent folder should exist or be created");
     }
-}
-
-fn database_restore_chunk_count(root: &std::path::Path, database_id: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT COUNT(*) FROM database_restore_chunks WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("restore chunk count should load")
-}
-
-fn database_restore_session_count(root: &std::path::Path, database_id: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT COUNT(*) FROM database_restore_sessions WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("restore session count should load")
-}
-
-fn database_file_path(root: &std::path::Path, database_id: &str) -> PathBuf {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let db_file_name: String = conn
-        .query_row(
-            "SELECT db_file_name FROM databases WHERE database_id = ?1",
-            params![database_id],
-            |row| row.get(0),
-        )
-        .expect("database file path should load");
-    PathBuf::from(db_file_name)
-}
-
-fn read_archive_in_chunks(
-    service: &VfsService,
-    database_id: &str,
-    size_bytes: u64,
-    chunk_size: u32,
-) -> Vec<u8> {
-    let mut offset = 0_u64;
-    let mut bytes = Vec::new();
-    while offset < size_bytes {
-        let chunk = service
-            .read_database_archive_chunk(database_id, "owner", offset, chunk_size)
-            .expect("archive chunk should read");
-        assert!(chunk.len() <= chunk_size as usize);
-        assert!(!chunk.is_empty());
-        offset += chunk.len() as u64;
-        bytes.extend(chunk);
-    }
-    bytes
-}
-
-fn archive_bytes_for_chunk_size(
-    service: &VfsService,
-    database_id: &str,
-    size_bytes: u64,
-    chunk_size: u32,
-) -> Vec<u8> {
-    if chunk_size >= size_bytes as u32 {
-        return service
-            .read_database_archive_chunk(database_id, "owner", 0, chunk_size)
-            .expect("single archive chunk should read");
-    }
-    read_archive_in_chunks(service, database_id, size_bytes, chunk_size)
 }
 
 #[test]
@@ -1292,6 +1201,13 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:007_ops_answer_sessions"),
         1
     );
@@ -1300,12 +1216,16 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:011_source_run_sessions"),
+        schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:036_capability_sessions"),
-        0
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:011_source_run_sessions"),
+        1
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
@@ -1328,6 +1248,13 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(
+            &root,
+            "database_index:036_rename_url_ingest_trigger_sessions"
+        ),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:007_ops_answer_sessions"),
         1
     );
@@ -1336,12 +1263,16 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:011_source_run_sessions"),
+        schema_migration_count(&root, "database_index:037_drop_archive_restore_lifecycle"),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:036_capability_sessions"),
-        0
+        schema_migration_count(&root, "database_index:038_initial_free_database_grants"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:011_source_run_sessions"),
+        1
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
@@ -1350,89 +1281,49 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
 }
 
 #[test]
-fn url_ingest_trigger_session_requires_writer_and_allows_replay() {
+fn source_capture_trigger_session_requires_writer_and_allows_replay() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("owner should authorize session");
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect("session should check");
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             102,
         )
         .expect("session check should allow replay");
 }
 
 #[test]
-fn capability_sessions_allow_same_nonce_across_kinds() {
+fn source_capture_trigger_session_requires_default_llm_writer() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
-
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "shared-session"),
-            100,
-        )
-        .expect("url ingest session should authorize");
-    service
-        .authorize_ops_answer_session(
-            "owner",
-            ops_answer_session_request("alpha", "shared-session"),
-            101,
-        )
-        .expect("ops answer session should authorize");
-
-    service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "shared-session"),
-            102,
-        )
-        .expect("url ingest session should remain separate");
-    let checked = service
-        .check_ops_answer_session(
-            ops_answer_session_check_request("alpha", "shared-session"),
-            102,
-        )
-        .expect("ops answer session should remain separate");
-    assert_eq!(checked.principal, "owner");
-}
-
-#[test]
-fn url_ingest_trigger_session_requires_default_llm_writer() {
-    let service = service();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
-    service
-        .authorize_url_ingest_trigger_session(
-            "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("default LLM writer should allow session");
@@ -1441,17 +1332,17 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
         .revoke_database_access("alpha", "owner", DEFAULT_LLM_WRITER_PRINCIPAL)
         .expect("owner should revoke LLM writer");
     let check = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect_err("revoked LLM writer should fail session check");
     assert!(check.contains("LLM writer principal lacks writer access"));
 
     let authorize = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-2"),
+            source_capture_session_request("alpha", "session-2"),
             102,
         )
         .expect_err("revoked LLM writer should fail session authorization");
@@ -1459,7 +1350,7 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
 }
 
 #[test]
-fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
+fn source_capture_trigger_session_rejects_invalid_request_nodes() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1468,48 +1359,52 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
     service
         .grant_database_access("alpha", "owner", "other", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     let reader = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "other",
-            url_ingest_session_request("alpha", "session-reader"),
+            source_capture_session_request("alpha", "session-reader"),
             100,
         )
         .expect_err("reader principal should fail");
     assert!(reader.contains("lacks required database role"));
 
     let anonymous = service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "2vxsx-fae",
-            url_ingest_session_request("alpha", "session-anonymous"),
+            source_capture_session_request("alpha", "session-anonymous"),
             100,
         )
         .expect_err("anonymous principal should fail");
     assert!(anonymous.contains("anonymous caller not allowed"));
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-owner"),
+            source_capture_session_request("alpha", "session-owner"),
             100,
         )
         .expect("owner should authorize session");
 
     let invalid_path = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", "/Wiki/not-request.md", "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
+                "alpha",
+                "/Knowledge/not-request.md",
+                "session-owner",
+            ),
             101,
         )
         .expect_err("non request path should fail");
-    assert!(invalid_path.contains("request_path must be a URL ingest request path"));
+    assert!(invalid_path.contains("request_path must be a source capture request path"));
 
     let missing = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request(
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
                 "alpha",
-                "/Sources/ingest-requests/missing.md",
+                "/Sources/source-capture-requests/missing.md",
                 "session-owner",
             ),
             101,
@@ -1517,8 +1412,8 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         .expect_err("missing node should fail");
     assert!(missing.contains("not found"));
 
-    let completed_path = "/Sources/ingest-requests/completed.md";
-    write_url_ingest_request(
+    let completed_path = "/Sources/source-capture-requests/completed.md";
+    write_source_capture_request(
         &service,
         "owner",
         "alpha",
@@ -1527,14 +1422,14 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         "owner",
     );
     let completed = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", completed_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", completed_path, "session-owner"),
             101,
         )
         .expect_err("completed request should fail");
     assert!(completed.contains("not triggerable"));
 
-    let invalid_frontmatter_path = "/Sources/ingest-requests/invalid.md";
+    let invalid_frontmatter_path = "/Sources/source-capture-requests/invalid.md";
     service
         .write_node(
             "owner",
@@ -1550,18 +1445,22 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
         )
         .expect("invalid request node should write");
     let invalid_frontmatter = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", invalid_frontmatter_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request(
+                "alpha",
+                invalid_frontmatter_path,
+                "session-owner",
+            ),
             101,
         )
         .expect_err("invalid frontmatter should fail");
     assert!(invalid_frontmatter.contains("frontmatter"));
 
-    let mismatch_path = "/Sources/ingest-requests/mismatch.md";
-    write_url_ingest_request(&service, "owner", "alpha", mismatch_path, "queued", "other");
+    let mismatch_path = "/Sources/source-capture-requests/mismatch.md";
+    write_source_capture_request(&service, "owner", "alpha", mismatch_path, "queued", "other");
     let caller_mismatch = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", mismatch_path, "session-owner"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", mismatch_path, "session-owner"),
             101,
         )
         .expect_err("requested_by mismatch should fail");
@@ -1569,40 +1468,40 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
 }
 
 #[test]
-fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
+fn source_capture_trigger_session_rejects_expired_and_unknown_nonce() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             0,
         )
         .expect("session should authorize");
     let unknown = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "unknown"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "unknown"),
             1,
         )
         .expect_err("unknown nonce should fail");
     assert!(unknown.contains("missing or expired"));
 
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             1_800_000,
         )
         .expect("session should remain valid at ttl boundary");
 
     let expired = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             1_800_001,
         )
         .expect_err("expired session should fail");
@@ -1610,24 +1509,24 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_requires_write_cycles_database() {
+fn source_capture_trigger_session_check_requires_write_cycles_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("session should authorize before cycles changes");
 
     let error = service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect_err("suspended database should reject session check");
@@ -1636,14 +1535,14 @@ fn url_ingest_trigger_session_check_requires_write_cycles_database() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_allows_generating_status() {
+fn source_capture_trigger_session_check_allows_generating_status() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
-    let request_path = "/Sources/ingest-requests/1.md";
-    write_url_ingest_request(
+    let request_path = "/Sources/source-capture-requests/1.md";
+    write_source_capture_request(
         &service,
         "owner",
         "alpha",
@@ -1652,16 +1551,16 @@ fn url_ingest_trigger_session_check_allows_generating_status() {
         "owner",
     );
     service
-        .authorize_url_ingest_trigger_session(
+        .authorize_source_capture_trigger_session(
             "owner",
-            url_ingest_session_request("alpha", "session-1"),
+            source_capture_session_request("alpha", "session-1"),
             100,
         )
         .expect("session should authorize");
 
     service
-        .check_url_ingest_trigger_session(
-            url_ingest_session_check_request("alpha", request_path, "session-1"),
+        .check_source_capture_trigger_session(
+            source_capture_session_check_request("alpha", request_path, "session-1"),
             101,
         )
         .expect("generating request should remain session-checkable");
@@ -1680,7 +1579,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
         .expect("reader grant should succeed");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/raw/chatgpt/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 4);
 
     let reader = service
@@ -1707,7 +1606,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/raw/other/other.md",
+                "/Sources/other/other.md",
                 &written.write.node.etag,
                 "session-1",
             ),
@@ -1740,7 +1639,11 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     let revoke_session = service
         .write_source_for_generation(
             "writer",
-            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            write_source_for_generation_request(
+                "alpha",
+                "/Sources/raw/chatgpt/def.md",
+                "session-2",
+            ),
             103,
         )
         .expect("writer should authorize second session");
@@ -1751,7 +1654,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/raw/web/def.md",
+                "/Sources/raw/chatgpt/def.md",
                 &revoke_session.write.node.etag,
                 "session-2",
             ),
@@ -1767,7 +1670,7 @@ fn source_run_session_requires_funded_database() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/web/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 2);
     let written = service
         .write_source_for_generation(
@@ -1792,7 +1695,7 @@ fn source_for_generation_requires_default_llm_writer() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/web/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 2);
     let written = service
         .write_source_for_generation(
@@ -1816,7 +1719,7 @@ fn source_for_generation_requires_default_llm_writer() {
     let write = service
         .write_source_for_generation(
             "owner",
-            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            write_source_for_generation_request("alpha", "/Sources/web/def.md", "session-2"),
             102,
         )
         .expect_err("revoked LLM writer should fail source write authorization");
@@ -2026,7 +1929,7 @@ fn database_create_returns_generated_id_and_name() {
 
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
-    assert_eq!(result.name, "Team skills");
+    assert_eq!(result.metadata.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &result.database_id), 0);
     assert_eq!(
@@ -2038,7 +1941,95 @@ fn database_create_returns_generated_id_and_name() {
     assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
     assert!(row.2 > 0);
-    assert_eq!(row.3, None);
+    assert_all_store_roots_exist(&service, &result.database_id);
+}
+
+#[test]
+fn initial_free_database_grant_creates_active_database_once_per_principal() {
+    let (service, root) = service_with_root();
+
+    let first = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("first database should use free grant");
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(first.database_id.as_str())
+    );
+    assert_eq!(status.grant_cycles, INITIAL_FREE_DATABASE_GRANT_CYCLES);
+    assert_eq!(status.created_at_ms, Some(1));
+    assert_eq!(
+        database_cycles_balance(&root, &first.database_id),
+        i64::try_from(INITIAL_FREE_DATABASE_GRANT_CYCLES).expect("grant should fit i64")
+    );
+    assert_eq!(
+        database_cycles_suspended_at(&root, &first.database_id),
+        None
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, &first.database_id),
+        vec!["free_grant"]
+    );
+    assert_eq!(
+        database_index_row(&root, &first.database_id).0,
+        "active".to_string()
+    );
+
+    let second = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner paid", "owner", 2)
+        .expect("second database should reserve pending");
+    assert_eq!(
+        database_index_row(&root, &second.database_id),
+        ("pending".to_string(), None, 0)
+    );
+    assert_eq!(database_cycles_balance(&root, &second.database_id), 0);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(first.database_id.as_str())
+    );
+}
+
+#[test]
+fn initial_free_database_grant_is_per_principal_and_survives_delete() {
+    let (service, root) = service_with_root();
+
+    let owner = service
+        .create_generated_database_with_initial_free_grant_or_pending("Owner free", "owner", 1)
+        .expect("owner free database should create");
+    let other = service
+        .create_generated_database_with_initial_free_grant_or_pending("Other free", "other", 2)
+        .expect("other free database should create");
+
+    assert_ne!(owner.database_id, other.database_id);
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "other").as_deref(),
+        Some(other.database_id.as_str())
+    );
+
+    service
+        .delete_database(delete_request(&owner.database_id), "owner", 3)
+        .expect("owner free database should delete");
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load after delete");
+
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(owner.database_id.as_str())
+    );
+    assert_eq!(
+        free_cycle_grant_database_id(&root, "owner").as_deref(),
+        Some(owner.database_id.as_str())
+    );
 }
 
 #[test]
@@ -2050,7 +2041,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         .expect("pending database should create");
 
     assert!(pending.database_id.starts_with("db_"));
-    assert_eq!(pending.name, "Pending");
+    assert_eq!(pending.metadata.name, "Pending");
     assert_eq!(database_member_count(&root, &pending.database_id), 2);
     assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
     assert_eq!(
@@ -2060,11 +2051,11 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     assert_eq!(mount_history_count(&root), 0);
     assert_eq!(
         database_index_row(&root, &pending.database_id),
-        ("pending".to_string(), None, 0, None)
+        ("pending".to_string(), None, 0)
     );
     assert!(
         service
-            .read_node(&pending.database_id, "owner", "/Wiki/a.md")
+            .read_node(&pending.database_id, "owner", "/Knowledge/a.md")
             .expect_err("pending DB should reject VFS reads")
             .contains("database is pending")
     );
@@ -2078,7 +2069,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     assert_eq!(mount_history_count(&root), 0);
     assert_eq!(
         database_index_row(&root, &pending.database_id),
-        ("pending".to_string(), None, 0, None)
+        ("pending".to_string(), None, 0)
     );
     let meta = service
         .prepare_pending_database_activation(&pending.database_id, 2)
@@ -2130,100 +2121,79 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 }
 
 #[test]
-fn pending_database_creation_stores_profile() {
-    let (service, _root) = service_with_root();
-
+fn pending_database_creation_omits_removed_internal_profile() {
+    let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database_with_profile(
-            " Agent Memory ",
-            DatabaseProfile::Memory,
-            "owner",
-            1,
-        )
-        .expect("pending memory database should create");
-
-    assert_eq!(pending.profile, DatabaseProfile::Memory);
-    assert_eq!(
-        service
-            .database_profile(&pending.database_id, "owner")
-            .expect("owner should read profile"),
-        DatabaseProfile::Memory
-    );
+        .reserve_pending_generated_database(" Agent Memory ", "owner", 1)
+        .expect("pending database should create");
     let summaries = service
         .list_database_summaries_for_caller("owner")
         .expect("owner summaries should load");
-    assert_eq!(summaries[0].profile, DatabaseProfile::Memory);
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let stale_profile_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("stale profile column count should load");
+
+    assert_eq!(pending.metadata.name, "Agent Memory");
+    assert_eq!(summaries[0].database_id, pending.database_id);
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 0, None, false)
+    );
+    assert_eq!(stale_profile_columns, 0);
 }
 
 #[test]
-fn pending_database_activation_seeds_profile_nodes() {
+fn pending_database_activation_seeds_all_store_roots() {
     let (service, _root) = service_with_root();
-    let workspace_id = activate_pending_database_with_profile(&service, DatabaseProfile::Workspace);
-    assert!(
-        service
-            .read_node(&workspace_id, "owner", "/Wiki/skills")
-            .expect("workspace skill root read should succeed")
-            .is_some()
-    );
-
-    let knowledge_id = activate_pending_database_with_profile(&service, DatabaseProfile::Knowledge);
-    assert!(
-        service
-            .read_node(&knowledge_id, "owner", "/Wiki/index.md")
-            .expect("knowledge index read should succeed")
-            .expect("knowledge index seed should exist")
-            .content
-            .contains("# Knowledge Index")
-    );
-
-    let database_id = activate_pending_database_with_profile(&service, DatabaseProfile::Memory);
-
-    let facts = service
-        .read_node(&database_id, "owner", "/Memory/facts.md")
-        .expect("facts read should succeed")
-        .expect("facts seed should exist");
-    assert!(facts.content.contains("# Facts"));
-    assert!(
-        service
-            .read_node(&database_id, "owner", "/Memory/inbox.md")
-            .expect("inbox read should succeed")
-            .is_some()
-    );
-    assert!(
-        service
-            .read_node(&database_id, "owner", "/Wiki/skills/manifest-template.md")
-            .expect("skill seed read should succeed")
-            .is_none()
-    );
-
-    let skill_id = activate_pending_database_with_profile(&service, DatabaseProfile::Skill);
-    assert!(
-        service
-            .read_node(&skill_id, "owner", "/Wiki/skills/manifest-template.md")
-            .expect("skill manifest template read should succeed")
-            .is_some()
-    );
-
-    let session_id = activate_pending_database_with_profile(&service, DatabaseProfile::Session);
-    assert!(
-        service
-            .read_node(&session_id, "owner", "/Sources/raw/codex")
-            .expect("session raw codex root read should succeed")
-            .is_some()
-    );
-}
-
-#[test]
-fn memory_recall_defaults_namespace_from_database_profile() {
-    let (service, _root) = service_with_root();
-    let memory_id = activate_pending_database_with_profile(&service, DatabaseProfile::Memory);
-    let workspace_id = activate_pending_database_with_profile(&service, DatabaseProfile::Workspace);
-
-    let memory = service
-        .memory_recall(
+    let database_id = activate_pending_database(&service);
+    assert_all_store_roots_exist(&service, &database_id);
+    let request_root = service
+        .read_node(&database_id, "owner", "/Sources/source-capture-requests")
+        .expect("request root should read")
+        .expect("request root should exist");
+    let move_error = service
+        .move_node(
             "owner",
-            MemoryRecallRequest {
-                database_id: memory_id,
+            MoveNodeRequest {
+                database_id: database_id.clone(),
+                from_path: "/Sources/source-capture-requests".to_string(),
+                to_path: "/Sources/source-capture-requests-renamed".to_string(),
+                expected_etag: Some(request_root.etag.clone()),
+                overwrite: false,
+            },
+            10,
+        )
+        .expect_err("source capture request root move should fail");
+    assert!(move_error.contains("cannot move protected folder"));
+    let delete_error = service
+        .delete_node(
+            "owner",
+            DeleteNodeRequest {
+                database_id,
+                path: "/Sources/source-capture-requests".to_string(),
+                expected_etag: Some(request_root.etag),
+                expected_folder_index_etag: None,
+            },
+            11,
+        )
+        .expect_err("source capture request root delete should fail");
+    assert!(delete_error.contains("cannot delete protected folder"));
+}
+
+#[test]
+fn query_context_defaults_namespace_to_memory() {
+    let (service, _root) = service_with_root();
+    let database_id = activate_pending_database(&service);
+    let memory = service
+        .query_context(
+            "owner",
+            QueryContextRequest {
+                database_id,
                 task: "remember facts".to_string(),
                 entities: vec![],
                 namespace: None,
@@ -2233,23 +2203,7 @@ fn memory_recall_defaults_namespace_from_database_profile() {
             },
         )
         .expect("memory recall should succeed");
-    let workspace = service
-        .memory_recall(
-            "owner",
-            MemoryRecallRequest {
-                database_id: workspace_id,
-                task: "remember facts".to_string(),
-                entities: vec![],
-                namespace: None,
-                budget_tokens: 100,
-                include_evidence: false,
-                depth: 0,
-            },
-        )
-        .expect("workspace recall should succeed");
-
     assert_eq!(memory.namespace, "/Memory");
-    assert_eq!(workspace.namespace, "/Wiki");
 }
 
 #[test]
@@ -2351,7 +2305,6 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
         pending_database_activation_row(&root, &activated.database_id),
         ("pending".to_string(), 11, None, true)
     );
-    assert_eq!(row.3, None);
 }
 
 #[test]
@@ -2377,7 +2330,7 @@ fn pending_database_cycles_purchase_cancel_does_not_allocate_mount_slot() {
     assert_eq!(mount_history_count(&root), 0);
     assert_eq!(
         database_index_row(&root, &pending.database_id),
-        ("pending".to_string(), None, 0, None)
+        ("pending".to_string(), None, 0)
     );
     let active = service
         .create_database("active", "owner", 5)
@@ -2416,56 +2369,6 @@ fn cleanup_database_cycles_purchase_discards_started_pending_activation() {
     );
     assert_eq!(mount_history_count(&root), 0);
     assert!(!database_index_row_exists(&root, &pending.database_id));
-}
-
-#[test]
-fn cycles_purchase_rejects_archive_restore_statuses() {
-    let service = service();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-
-    let archive_info = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let archiving = service
-        .validate_database_cycles_purchase("alpha", 500)
-        .expect_err("archiving database should reject purchase");
-    assert!(archiving.contains("database is archiving"));
-
-    let archive = read_archive_in_chunks(&service, "alpha", archive_info.size_bytes, 17);
-    let snapshot_hash = sha256_bytes(&archive);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-    let archived = service
-        .validate_database_cycles_purchase("alpha", 500)
-        .expect_err("archived database should reject purchase");
-    assert!(archived.contains("database is archived"));
-
-    service
-        .begin_database_restore("alpha", "owner", snapshot_hash, archive_info.size_bytes, 4)
-        .expect("restore should begin");
-    let restoring = service
-        .validate_database_cycles_purchase("alpha", 500)
-        .expect_err("restoring database should reject purchase");
-    assert!(restoring.contains("database is restoring"));
-}
-
-#[test]
-fn lifecycle_operations_reject_pending_cycle_purchase() {
-    let service = service();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    service
-        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
-        .expect("cycle purchase should begin");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 3)
-        .expect_err("archive should reject pending cycle operation");
-    assert!(archive.contains("pending cycle operation"));
 }
 
 #[test]
@@ -2729,14 +2632,6 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
         .create_database("funded", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "funded", "owner", 100_000_000, 1, 2);
-    service
-        .authorize_ops_answer_session(
-            "owner",
-            ops_answer_session_request("funded", "session-1"),
-            2,
-        )
-        .expect("session should authorize before delete");
-    assert_eq!(capability_session_count(&root, "funded"), 1);
 
     service
         .delete_database(delete_request("funded"), "owner", 3)
@@ -2744,7 +2639,6 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
     assert!(!database_index_row_exists(&root, "funded"));
     assert_eq!(database_member_count(&root, "funded"), 0);
     assert_eq!(database_pending_operation_count(&root, "funded"), 0);
-    assert_eq!(capability_session_count(&root, "funded"), 0);
     assert!(database_ledger_kinds(&root, "funded").is_empty());
 }
 
@@ -2829,7 +2723,7 @@ fn cycles_history_paginates_with_clamped_limits() {
 }
 
 #[test]
-fn database_rename_requires_owner() {
+fn database_metadata_update_requires_owner() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2839,17 +2733,44 @@ fn database_rename_requires_owner() {
         .expect("writer should grant");
 
     let error = service
-        .rename_database("alpha", "writer", "Writer rename", 3)
-        .expect_err("writer should not rename");
+        .update_database_metadata(
+            "writer",
+            UpdateDatabaseMetadataRequest {
+                database_id: "alpha".to_string(),
+                name: "Writer metadata".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            3,
+        )
+        .expect_err("writer should not update metadata");
     assert!(error.contains("required database role"));
 
     service
-        .rename_database("alpha", "owner", " Owner rename ", 4)
-        .expect("owner should rename");
+        .update_database_metadata(
+            "owner",
+            UpdateDatabaseMetadataRequest {
+                database_id: "alpha".to_string(),
+                name: " Owner metadata ".to_string(),
+                description: "Owner description".to_string(),
+                llm_summary: Some("Owner summary".to_string()),
+                tags_json: "[\"owner\"]".to_string(),
+            },
+            4,
+        )
+        .expect("owner should update metadata");
     let summaries = service
         .list_database_summaries_for_caller("owner")
         .expect("summaries should load");
-    assert_eq!(summaries[0].name, "Owner rename");
+    let metadata = summaries[0]
+        .metadata
+        .as_ref()
+        .expect("database summary should include metadata");
+    assert_eq!(metadata.name, "Owner metadata");
+    assert_eq!(metadata.description, "Owner description");
+    assert_eq!(metadata.llm_summary.as_deref(), Some("Owner summary"));
+    assert_eq!(metadata.tags_json, "[\"owner\"]");
     let row = database_index_row(&root, "alpha");
     assert_eq!(row.0, "active");
 }
@@ -3268,7 +3189,7 @@ fn isolates_nodes_between_databases() {
                 "owner",
                 WriteNodeRequest {
                     database_id: database_id.to_string(),
-                    path: "/Wiki/shared.md".to_string(),
+                    path: "/Knowledge/shared.md".to_string(),
                     kind: NodeKind::File,
                     content: format!("{database_id} body"),
                     metadata_json: "{}".to_string(),
@@ -3280,7 +3201,7 @@ fn isolates_nodes_between_databases() {
     }
 
     let alpha = service
-        .read_node("alpha", "owner", "/Wiki/shared.md")
+        .read_node("alpha", "owner", "/Knowledge/shared.md")
         .expect("alpha read should succeed")
         .expect("alpha node should exist");
     let beta_hits = service
@@ -3289,7 +3210,7 @@ fn isolates_nodes_between_databases() {
             SearchNodesRequest {
                 database_id: "beta".to_string(),
                 query_text: "alpha".to_string(),
-                prefix: Some("/Wiki".to_string()),
+                prefix: Some("/Knowledge".to_string()),
                 top_k: 10,
                 preview_mode: Some(SearchPreviewMode::None),
             },
@@ -3298,6 +3219,74 @@ fn isolates_nodes_between_databases() {
 
     assert_eq!(alpha.content, "alpha body");
     assert!(beta_hits.is_empty());
+}
+
+#[test]
+fn write_node_preserves_metadata_json() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("alpha should create");
+    ensure_parent_folders(&service, "owner", "alpha", "/Wiki/project/facts.md", 9);
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/facts.md".to_string(),
+                kind: NodeKind::File,
+                content: "Stable fact from /Sources/raw/web/source.md".to_string(),
+                metadata_json: r#"{"okf_type":"Question","source_refs":[{"path":"/Sources/raw/web/source.md"}]}"#.to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("write should succeed");
+    let node = service
+        .read_node("alpha", "owner", "/Wiki/project/facts.md")
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert!(node.metadata_json.contains(r#""okf_type":"Question""#));
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/manual.md".to_string(),
+                kind: NodeKind::File,
+                content: "Manual decision".to_string(),
+                metadata_json: r#"{"custom":"value"}"#.to_string(),
+                expected_etag: None,
+            },
+            11,
+        )
+        .expect("explicit metadata should be accepted");
+    let manual = service
+        .read_node("alpha", "owner", "/Wiki/project/manual.md")
+        .expect("manual read should succeed")
+        .expect("manual node should exist");
+    assert_eq!(manual.metadata_json, r#"{"custom":"value"}"#);
+    let moved = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Wiki/project/manual.md".to_string(),
+                to_path: "/Wiki/project/moved.md".to_string(),
+                expected_etag: Some(manual.etag),
+                overwrite: false,
+            },
+            12,
+        )
+        .expect("move should preserve metadata");
+    let moved_node = service
+        .read_node("alpha", "owner", "/Wiki/project/moved.md")
+        .expect("moved read should succeed")
+        .expect("moved node should exist");
+    assert_eq!(moved.node.etag, moved_node.etag);
+    assert_eq!(moved_node.metadata_json, r#"{"custom":"value"}"#);
 }
 
 #[test]
@@ -3311,7 +3300,7 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -3335,7 +3324,7 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
         .expect("delete should succeed");
     assert!(!database_index_row_exists(&root, "alpha"));
     service
-        .read_node("alpha", "owner", "/Wiki/a.md")
+        .read_node("alpha", "owner", "/Knowledge/a.md")
         .expect_err("deleted DB should reject reads");
 
     let beta = service
@@ -3364,7 +3353,7 @@ fn logical_size_refreshes_after_node_mutations() {
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -3380,7 +3369,7 @@ fn logical_size_refreshes_after_node_mutations() {
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 content: "beta body".to_string(),
                 expected_etag: Some(written.node.etag),
                 separator: Some("\n".to_string()),
@@ -3397,7 +3386,7 @@ fn logical_size_refreshes_after_node_mutations() {
             "owner",
             EditNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 old_text: "beta body".to_string(),
                 new_text: "gamma body".to_string(),
                 expected_etag: Some(appended.node.etag),
@@ -3413,8 +3402,8 @@ fn logical_size_refreshes_after_node_mutations() {
             "owner",
             MoveNodeRequest {
                 database_id: "alpha".to_string(),
-                from_path: "/Wiki/a.md".to_string(),
-                to_path: "/Wiki/b.md".to_string(),
+                from_path: "/Knowledge/a.md".to_string(),
+                to_path: "/Knowledge/b.md".to_string(),
                 expected_etag: Some(edited.node.etag),
                 overwrite: false,
             },
@@ -3428,7 +3417,7 @@ fn logical_size_refreshes_after_node_mutations() {
             "owner",
             DeleteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/b.md".to_string(),
+                path: "/Knowledge/b.md".to_string(),
                 expected_etag: Some(moved.node.etag),
                 expected_folder_index_etag: None,
             },
@@ -3475,1055 +3464,6 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
 }
 
 #[test]
-fn begin_database_archive_rejects_missing_database_file_without_recreating_it() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    let db_file_name = service
-        .list_databases()
-        .expect("databases should load")
-        .into_iter()
-        .find(|meta| meta.database_id == "alpha")
-        .expect("database meta should exist")
-        .db_file_name;
-    std::fs::remove_file(&db_file_name).expect("database file should delete");
-
-    let error = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect_err("missing database file should fail archive");
-
-    assert!(!error.is_empty());
-    assert_eq!(database_index_row(&root, "alpha").0, "active");
-    assert!(!PathBuf::from(db_file_name).exists());
-}
-
-#[test]
-fn begin_database_archive_updates_updated_at_ms() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    assert_eq!(database_updated_at_ms(&root, "alpha"), 1);
-
-    service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-
-    assert_eq!(database_updated_at_ms(&root, "alpha"), 2);
-}
-
-#[test]
-fn archive_chunks_use_stored_archiving_size() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 3)
-        .expect("archive should begin");
-    assert_eq!(database_index_row(&root, "alpha").2, archive.size_bytes);
-
-    set_database_logical_size(&root, "alpha", 1);
-    assert_eq!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, 17)
-            .expect("stored-size bounded archive chunk should read")
-            .len(),
-        1
-    );
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 1, 17)
-            .expect("stored-size tail should read")
-            .is_empty()
-    );
-}
-
-#[test]
-fn archives_and_restores_database_bytes() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, 17)
-            .expect_err("active DB should reject archive chunk reads")
-            .contains("database")
-    );
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    assert_eq!(database_updated_at_ms(&root, "alpha"), 2);
-    assert!(archive.size_bytes > 0);
-    let archiving = database_index_row(&root, "alpha");
-    let archiving_mount_id = archiving.1;
-    assert_eq!(
-        archiving,
-        (
-            "archiving".to_string(),
-            archiving_mount_id,
-            archive.size_bytes,
-            None
-        )
-    );
-    assert!(
-        service
-            .read_node("alpha", "owner", "/Wiki/a.md")
-            .expect_err("archiving DB should reject reads")
-            .contains("database is archiving")
-    );
-    assert!(
-        service
-            .write_node(
-                "owner",
-                WriteNodeRequest {
-                    database_id: "alpha".to_string(),
-                    path: "/Wiki/b.md".to_string(),
-                    kind: NodeKind::File,
-                    content: "blocked".to_string(),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                },
-                3,
-            )
-            .expect_err("archiving DB should reject writes")
-            .contains("database is archiving")
-    );
-    assert!(
-        service
-            .append_node(
-                "owner",
-                AppendNodeRequest {
-                    database_id: "alpha".to_string(),
-                    path: "/Wiki/a.md".to_string(),
-                    content: "blocked".to_string(),
-                    expected_etag: None,
-                    separator: None,
-                    metadata_json: None,
-                    kind: None,
-                },
-                3,
-            )
-            .expect_err("archiving DB should reject appends")
-            .contains("database is archiving")
-    );
-    assert!(
-        service
-            .delete_node(
-                "owner",
-                DeleteNodeRequest {
-                    database_id: "alpha".to_string(),
-                    path: "/Wiki/a.md".to_string(),
-                    expected_etag: None,
-                    expected_folder_index_etag: None,
-                },
-                3,
-            )
-            .expect_err("archiving DB should reject deletes")
-            .contains("database is archiving")
-    );
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, MAX_ARCHIVE_CHUNK_BYTES + 1)
-            .expect_err("oversized archive chunk should fail")
-            .contains("archive chunk size exceeds limit")
-    );
-    let bytes = read_archive_in_chunks(&service, "alpha", archive.size_bytes, 17);
-    assert_eq!(bytes.len() as u64, archive.size_bytes);
-    assert_eq!(
-        archive_bytes_for_chunk_size(&service, "alpha", archive.size_bytes, 64 * 1024),
-        bytes
-    );
-    assert_eq!(
-        archive_bytes_for_chunk_size(
-            &service,
-            "alpha",
-            archive.size_bytes,
-            archive.size_bytes as u32 + 1
-        ),
-        bytes
-    );
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, 0)
-            .expect("zero-byte archive chunk should read")
-            .is_empty()
-    );
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", archive.size_bytes, 17)
-            .expect("tail archive chunk should read")
-            .is_empty()
-    );
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", archive.size_bytes + 10, 17)
-            .expect("out-of-range archive chunk should read")
-            .is_empty()
-    );
-    let full_chunk = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    assert_eq!(full_chunk, bytes);
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, 17)
-            .expect_err("archived DB should reject archive chunk reads")
-            .contains("database is archived")
-    );
-    assert_eq!(
-        database_index_row(&root, "alpha"),
-        (
-            "archived".to_string(),
-            archiving_mount_id,
-            archive.size_bytes,
-            None,
-        )
-    );
-    assert!(
-        service
-            .read_node("alpha", "owner", "/Wiki/a.md")
-            .expect_err("archived DB should reject reads")
-            .contains("database is archived")
-    );
-
-    service
-        .begin_database_restore(
-            "alpha",
-            "owner",
-            snapshot_hash.clone(),
-            archive.size_bytes,
-            4,
-        )
-        .expect("restore should begin");
-    assert!(
-        service
-            .read_database_archive_chunk("alpha", "owner", 0, 17)
-            .expect_err("restoring DB should reject archive chunk reads")
-            .contains("database is restoring")
-    );
-    let restoring = database_index_row(&root, "alpha");
-    assert_eq!(restoring.0, "restoring");
-    assert!(restoring.1.is_some());
-    assert_eq!(restoring.2, archive.size_bytes);
-    assert_eq!(restoring.3, Some(archive.size_bytes));
-    let error = service
-        .begin_database_restore("alpha", "owner", vec![1, 2, 3], archive.size_bytes, 5)
-        .expect_err("invalid restore hash should fail before state checks");
-    assert!(error.contains("snapshot_hash must be"));
-    assert_eq!(
-        service
-            .list_database_infos()
-            .expect("infos should load")
-            .into_iter()
-            .find(|info| info.database_id == "alpha")
-            .expect("alpha info should exist")
-            .status,
-        DatabaseStatus::Restoring
-    );
-    assert!(
-        service
-            .read_node("alpha", "owner", "/Wiki/a.md")
-            .expect_err("restoring DB should reject reads")
-            .contains("database is restoring")
-    );
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes)
-        .expect("restore chunk should write");
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 1);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 1);
-    service
-        .finalize_database_restore("alpha", "owner", 5)
-        .expect("restore should finalize");
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-
-    let node = service
-        .read_node("alpha", "owner", "/Wiki/a.md")
-        .expect("restored read should succeed")
-        .expect("restored node should exist");
-    assert_eq!(node.content, "alpha body");
-    let info = service
-        .list_database_infos()
-        .expect("infos should load")
-        .into_iter()
-        .find(|info| info.database_id == "alpha")
-        .expect("alpha info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
-    assert_eq!(info.snapshot_hash, Some(snapshot_hash));
-    assert_eq!(info.archived_at_ms, None);
-    assert_restore_size(&root, "alpha", None);
-    assert_eq!(
-        database_index_row(&root, "alpha").1,
-        Some(restoring.1.unwrap())
-    );
-}
-
-#[test]
-fn restore_reuses_archived_mount_id_after_rearchive() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let bytes = archive_bytes_for_chunk_size(&service, "alpha", archive.size_bytes, 17);
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-    let restored = service
-        .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 4)
-        .expect("restore should begin");
-    assert_eq!(restored.mount_id, 11);
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes)
-        .expect("restore chunk should write");
-    service
-        .finalize_database_restore("alpha", "owner", 5)
-        .expect("restore should finalize");
-
-    let second_archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("second archive should begin");
-    let second_bytes =
-        archive_bytes_for_chunk_size(&service, "alpha", second_archive.size_bytes, 17);
-    service
-        .finalize_database_archive("alpha", "owner", sha256_bytes(&second_bytes), 6)
-        .expect("second archive should finalize");
-    let beta = service
-        .create_database("beta", "owner", 7)
-        .expect("beta should create");
-
-    assert_ne!(beta.mount_id, restored.mount_id);
-    assert_eq!(
-        mount_history_row(&root, restored.mount_id),
-        ("alpha".to_string(), "create".to_string())
-    );
-}
-
-#[test]
-fn cancel_database_archive_returns_archiving_database_to_active() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let before = database_index_row(&root, "alpha");
-    service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let archiving = database_index_row(&root, "alpha");
-    assert_eq!(archiving.0, "archiving");
-    assert_eq!(archiving.1, before.1);
-
-    let canceled = service
-        .cancel_database_archive("alpha", "owner", 3)
-        .expect("archive cancel should succeed");
-    assert_eq!(canceled.database_id, "alpha");
-    let after = database_index_row(&root, "alpha");
-    assert_eq!(after.0, "active");
-    assert_eq!(after.1, before.1);
-
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/b.md".to_string(),
-                kind: NodeKind::File,
-                content: "beta body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            4,
-        )
-        .expect("write should succeed after cancel");
-    let node = service
-        .read_node("alpha", "owner", "/Wiki/b.md")
-        .expect("read should succeed after cancel")
-        .expect("node should exist");
-    assert_eq!(node.content, "beta body");
-}
-
-#[test]
-fn cancel_database_archive_after_hash_mismatch_keeps_mount_id() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-    let before = database_index_row(&root, "alpha");
-    service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-
-    assert!(
-        service
-            .finalize_database_archive("alpha", "owner", vec![0; 32], 3)
-            .expect_err("wrong hash should fail")
-            .contains("snapshot_hash does not match")
-    );
-    assert_eq!(database_index_row(&root, "alpha").0, "archiving");
-
-    service
-        .cancel_database_archive("alpha", "owner", 4)
-        .expect("archive cancel should succeed after mismatch");
-    let after = database_index_row(&root, "alpha");
-    assert_eq!(after.0, "active");
-    assert_eq!(after.1, before.1);
-}
-
-#[test]
-fn cancel_database_archive_rejects_invalid_statuses_and_non_owner() {
-    let service = service();
-    service
-        .create_database("active_db", "owner", 1)
-        .expect("active_db should create");
-    assert!(
-        service
-            .cancel_database_archive("active_db", "owner", 2)
-            .expect_err("active cancel should fail")
-            .contains("database is active")
-    );
-
-    service
-        .create_database("archiving_db", "owner", 3)
-        .expect("archiving_db should create");
-    service
-        .begin_database_archive("archiving_db", "owner", 2)
-        .expect("archive should begin");
-    assert!(
-        service
-            .cancel_database_archive("archiving_db", "writer", 4)
-            .expect_err("non-owner cancel should fail")
-            .contains("principal has no access")
-    );
-    service
-        .cancel_database_archive("archiving_db", "owner", 5)
-        .expect("archive cancel should succeed");
-
-    service
-        .create_database("archived_db", "owner", 6)
-        .expect("archived_db should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "archived_db".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            7,
-        )
-        .expect("write should succeed");
-    let archive = service
-        .begin_database_archive("archived_db", "owner", 2)
-        .expect("archive should begin");
-    let bytes = read_archive_in_chunks(&service, "archived_db", archive.size_bytes, 17);
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("archived_db", "owner", snapshot_hash.clone(), 8)
-        .expect("archive should finalize");
-    assert!(
-        service
-            .cancel_database_archive("archived_db", "owner", 9)
-            .expect_err("archived cancel should fail")
-            .contains("database is archived")
-    );
-
-    service
-        .begin_database_restore(
-            "archived_db",
-            "owner",
-            snapshot_hash,
-            archive.size_bytes,
-            10,
-        )
-        .expect("restore should begin");
-    assert!(
-        service
-            .cancel_database_archive("archived_db", "owner", 11)
-            .expect_err("restoring cancel should fail")
-            .contains("database is restoring")
-    );
-
-    service
-        .create_database("deleted_db", "owner", 12)
-        .expect("deleted_db should create");
-    service
-        .delete_database(delete_request("deleted_db"), "owner", 13)
-        .expect("delete should succeed");
-    service
-        .cancel_database_archive("deleted_db", "owner", 14)
-        .expect_err("deleted cancel should fail");
-}
-
-#[test]
-fn restore_finalize_rejects_size_mismatch_until_missing_bytes_arrive() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-    assert_restore_size(&root, "alpha", None);
-
-    service
-        .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 4)
-        .expect("restore should begin");
-    assert_restore_size(&root, "alpha", Some(archive.size_bytes));
-    assert_eq!(database_restore_session_count(&root, "alpha"), 1);
-    let overflow_error = service
-        .write_database_restore_chunk("alpha", "owner", archive.size_bytes, &[0])
-        .expect_err("restore chunk past declared size should fail");
-    assert!(overflow_error.contains("restore chunk exceeds expected size"));
-
-    let split_at = bytes.len() / 2;
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes[..split_at])
-        .expect("first restore chunk should write");
-    let error = service
-        .finalize_database_restore("alpha", "owner", 5)
-        .expect_err("short restore should fail");
-    assert!(error.contains("restore chunks are incomplete"));
-    assert_eq!(
-        service
-            .list_database_infos()
-            .expect("infos should load")
-            .into_iter()
-            .find(|info| info.database_id == "alpha")
-            .expect("alpha info should exist")
-            .status,
-        DatabaseStatus::Restoring
-    );
-
-    service
-        .write_database_restore_chunk("alpha", "owner", split_at as u64, &bytes[split_at..])
-        .expect("second restore chunk should write");
-    service
-        .finalize_database_restore("alpha", "owner", 6)
-        .expect("complete restore should finalize");
-    assert_restore_size(&root, "alpha", None);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-    let node = service
-        .read_node("alpha", "owner", "/Wiki/a.md")
-        .expect("restored read should succeed")
-        .expect("restored node should exist");
-    assert_eq!(node.content, "alpha body");
-}
-
-#[test]
-fn archive_and_restore_reject_snapshot_hash_mismatch() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let mut wrong_hash = sha256_bytes(&bytes);
-    wrong_hash[0] ^= 0xff;
-    let error = service
-        .finalize_database_archive("alpha", "owner", wrong_hash, 3)
-        .expect_err("wrong archive hash should fail");
-    assert!(error.contains("snapshot_hash does not match archived"));
-    assert_eq!(database_index_row(&root, "alpha").0, "archiving");
-
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 4)
-        .expect("archive should finalize");
-    service
-        .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 5)
-        .expect("restore should begin");
-    let mut changed = bytes;
-    let last = changed.len() - 1;
-    changed[last] ^= 0xff;
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &changed)
-        .expect("restore chunk should write");
-    let error = service
-        .finalize_database_restore("alpha", "owner", 6)
-        .expect_err("wrong restored bytes should fail");
-    assert!(error.contains("snapshot_hash does not match restored"));
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 1);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 1);
-}
-
-#[test]
-fn archive_and_restore_enforce_size_limits_without_state_changes() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-
-    let state_before = database_index_row(&root, "alpha");
-    let size_error = service
-        .begin_database_restore(
-            "alpha",
-            "owner",
-            snapshot_hash.clone(),
-            MAX_DATABASE_SIZE_BYTES + 1,
-            4,
-        )
-        .expect_err("oversized restore size should fail");
-    assert!(size_error.contains("database size exceeds limit"));
-    assert_eq!(database_index_row(&root, "alpha"), state_before);
-
-    let oversized_restore_chunk = vec![0; MAX_RESTORE_CHUNK_BYTES + 1];
-    service
-        .begin_database_restore(
-            "alpha",
-            "owner",
-            snapshot_hash.clone(),
-            archive.size_bytes,
-            4,
-        )
-        .expect("restore should begin");
-    let chunk_error = service
-        .write_database_restore_chunk("alpha", "owner", 0, &oversized_restore_chunk)
-        .expect_err("oversized restore chunk should fail");
-    assert!(chunk_error.contains("restore chunk size exceeds limit"));
-}
-
-#[test]
-fn restore_accepts_in_range_chunks_written_out_of_order() {
-    let (service, _root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".repeat(100),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-
-    let archive = service
-        .begin_database_archive("alpha", "owner", 2)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
-        .expect("archive should finalize");
-    service
-        .begin_database_restore(
-            "alpha",
-            "owner",
-            snapshot_hash.clone(),
-            archive.size_bytes,
-            4,
-        )
-        .expect("restore should begin");
-
-    let split_at = bytes.len() / 2;
-    service
-        .write_database_restore_chunk("alpha", "owner", split_at as u64, &bytes[split_at..])
-        .expect("second half should write first");
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes[..split_at])
-        .expect("first half should write second");
-    assert_eq!(database_restore_chunk_count(&_root, "alpha"), 2);
-    assert_eq!(database_restore_session_count(&_root, "alpha"), 1);
-    service
-        .finalize_database_restore("alpha", "owner", 5)
-        .expect("out-of-order restore should finalize");
-    assert_eq!(database_restore_chunk_count(&_root, "alpha"), 0);
-    assert_eq!(database_restore_session_count(&_root, "alpha"), 0);
-
-    let node = service
-        .read_node("alpha", "owner", "/Wiki/a.md")
-        .expect("restored read should succeed")
-        .expect("restored node should exist");
-    assert_eq!(node.content, "alpha body".repeat(100));
-    let info = service
-        .list_database_infos()
-        .expect("infos should load")
-        .into_iter()
-        .find(|info| info.database_id == "alpha")
-        .expect("alpha info should exist");
-    assert_eq!(info.snapshot_hash, Some(snapshot_hash));
-}
-
-#[test]
-fn cancel_database_restore_returns_archived_database_and_removes_partial_state() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".repeat(20),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-    let archive = service
-        .begin_database_archive("alpha", "owner", 3)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 4)
-        .expect("archive should finalize");
-
-    let restore = service
-        .begin_database_restore_session("alpha", "owner", snapshot_hash, archive.size_bytes, 5)
-        .expect("restore should begin");
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes[..bytes.len() / 2])
-        .expect("partial restore should write");
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 1);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 1);
-    let restoring_file = database_file_path(&root, "alpha");
-    assert!(!restoring_file.exists());
-
-    service
-        .cancel_database_restore("alpha", "owner", 6)
-        .expect("restore cancel should succeed");
-
-    assert_eq!(
-        database_index_row(&root, "alpha"),
-        (
-            "archived".to_string(),
-            Some(restore.meta.mount_id),
-            archive.size_bytes,
-            None,
-        )
-    );
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-    assert!(!restoring_file.exists());
-    assert_eq!(
-        mount_history_row(&root, restore.meta.mount_id),
-        ("alpha".to_string(), "create".to_string())
-    );
-}
-
-#[test]
-fn deleted_database_cannot_begin_restore() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("alpha should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-    let archive = service
-        .begin_database_archive("alpha", "owner", 3)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .cancel_database_archive("alpha", "owner", 4)
-        .expect("archive should cancel");
-    service
-        .delete_database(delete_request("alpha"), "owner", 5)
-        .expect("delete should succeed");
-
-    service
-        .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 6)
-        .expect_err("deleted database should not restore");
-    assert!(!database_index_row_exists(&root, "alpha"));
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-}
-
-#[test]
-fn cancel_database_restore_rejects_invalid_statuses_and_non_owner() {
-    let service = service();
-    service
-        .create_database("active_db", "owner", 1)
-        .expect("active database should create");
-    let active = service
-        .cancel_database_restore("active_db", "owner", 2)
-        .expect_err("active database should reject restore cancel");
-    assert!(active.contains("database is active"));
-
-    service
-        .create_database("archived_db", "owner", 3)
-        .expect("archived database should create");
-    let archive = service
-        .begin_database_archive("archived_db", "owner", 4)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("archived_db", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("archived_db", "owner", snapshot_hash.clone(), 5)
-        .expect("archive should finalize");
-    let archived = service
-        .cancel_database_restore("archived_db", "owner", 6)
-        .expect_err("archived database should reject restore cancel");
-    assert!(archived.contains("database is archived"));
-
-    service
-        .begin_database_restore("archived_db", "owner", snapshot_hash, archive.size_bytes, 7)
-        .expect("restore should begin");
-    service
-        .grant_database_access("archived_db", "owner", "writer", DatabaseRole::Writer, 8)
-        .expect("writer grant should succeed");
-    let writer = service
-        .cancel_database_restore("archived_db", "writer", 9)
-        .expect_err("writer should not cancel restore");
-    assert!(writer.contains("principal lacks required database role"));
-}
-
-#[test]
-fn rollback_database_restore_begin_restores_archived_state() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Wiki/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "alpha body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("write should succeed");
-    let archive = service
-        .begin_database_archive("alpha", "owner", 3)
-        .expect("archive should begin");
-    let bytes = service
-        .read_database_archive_chunk("alpha", "owner", 0, archive.size_bytes as u32)
-        .expect("archive chunk should read");
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 4)
-        .expect("archive should finalize");
-
-    let restore = service
-        .begin_database_restore_session(
-            "alpha",
-            "owner",
-            snapshot_hash.clone(),
-            archive.size_bytes,
-            5,
-        )
-        .expect("restore should begin");
-    let failed_mount_id = restore.meta.mount_id;
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes)
-        .expect("restore chunk should write");
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 1);
-
-    service
-        .rollback_database_restore_begin(restore.rollback, 6)
-        .expect("restore begin should rollback");
-    assert_eq!(
-        database_index_row(&root, "alpha"),
-        (
-            "archived".to_string(),
-            Some(failed_mount_id),
-            archive.size_bytes,
-            None,
-        )
-    );
-    assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
-    assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-    assert_eq!(
-        mount_history_row(&root, failed_mount_id),
-        ("alpha".to_string(), "create".to_string())
-    );
-
-    let retry = service
-        .begin_database_restore_session("alpha", "owner", snapshot_hash, archive.size_bytes, 7)
-        .expect("restore should retry");
-    assert_eq!(retry.meta.mount_id, failed_mount_id);
-}
-
-#[test]
 fn enforces_reader_writer_owner_roles() {
     let service = service();
     service
@@ -4538,7 +3478,7 @@ fn enforces_reader_writer_owner_roles() {
 
     assert!(
         service
-            .read_node("shared", "reader", "/Wiki/missing.md")
+            .read_node("shared", "reader", "/Knowledge/missing.md")
             .expect("reader read should be authorized")
             .is_none()
     );
@@ -4548,7 +3488,7 @@ fn enforces_reader_writer_owner_roles() {
                 "reader",
                 WriteNodeRequest {
                     database_id: "shared".to_string(),
-                    path: "/Wiki/nope.md".to_string(),
+                    path: "/Knowledge/nope.md".to_string(),
                     kind: NodeKind::File,
                     content: "nope".to_string(),
                     metadata_json: "{}".to_string(),
@@ -4563,7 +3503,7 @@ fn enforces_reader_writer_owner_roles() {
             "writer",
             WriteNodeRequest {
                 database_id: "shared".to_string(),
-                path: "/Wiki/ok.md".to_string(),
+                path: "/Knowledge/ok.md".to_string(),
                 kind: NodeKind::File,
                 content: "ok".to_string(),
                 metadata_json: "{}".to_string(),
@@ -4611,7 +3551,7 @@ fn enforces_reader_writer_owner_roles() {
         .expect("owner should revoke reader");
     assert!(
         service
-            .read_node("shared", "reader", "/Wiki/missing.md")
+            .read_node("shared", "reader", "/Knowledge/missing.md")
             .expect_err("revoked reader should lose access")
             .contains("no access")
     );
@@ -4624,18 +3564,18 @@ fn enforces_reader_writer_owner_roles() {
 }
 
 #[test]
-fn append_node_validates_effective_kind_paths() {
+fn source_paths_are_not_schema_validated_on_write_and_append() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let error = service
+    let appended = service
         .append_node(
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/bad.md".to_string(),
+                path: "/Sources/bad.md".to_string(),
                 content: "bad".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -4644,25 +3584,8 @@ fn append_node_validates_effective_kind_paths() {
             },
             2,
         )
-        .expect_err("non-canonical source append should fail");
-    assert!(error.contains("canonical form"));
-
-    let error = service
-        .append_node(
-            "owner",
-            AppendNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Sources/raw/bad/bad.md".to_string(),
-                content: "bad".to_string(),
-                expected_etag: None,
-                separator: None,
-                metadata_json: None,
-                kind: None,
-            },
-            3,
-        )
-        .expect_err("kind=None under sources should be treated as file");
-    assert!(error.contains("source path must use source kind"));
+        .expect("source append should not enforce source path schema");
+    assert_eq!(appended.node.kind, NodeKind::Source);
 
     ensure_parent_folders(
         &service,
@@ -4671,7 +3594,7 @@ fn append_node_validates_effective_kind_paths() {
         "/Sources/skill-runs/review/1700000000000.md",
         3,
     );
-    let error = service
+    let file = service
         .write_node(
             "owner",
             WriteNodeRequest {
@@ -4684,30 +3607,16 @@ fn append_node_validates_effective_kind_paths() {
             },
             4,
         )
-        .expect_err("skill run source path should reject file kind");
-    assert!(error.contains("source path must use source kind"));
-    service
-        .write_node(
-            "owner",
-            WriteNodeRequest {
-                database_id: "alpha".to_string(),
-                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
-                kind: NodeKind::Source,
-                content: "source".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            5,
-        )
-        .expect("skill run source path should accept source kind");
+        .expect("file under source-like path should not be rejected by schema");
+    assert_eq!(file.node.kind, NodeKind::File);
 
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/good/good.md", 3);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/good/good.md", 3);
     let source = service
         .write_node(
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/good/good.md".to_string(),
+                path: "/Sources/good/good.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),
@@ -4715,13 +3624,13 @@ fn append_node_validates_effective_kind_paths() {
             },
             4,
         )
-        .expect("canonical source should write");
+        .expect("safe source should write");
     let appended = service
         .append_node(
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/good/good.md".to_string(),
+                path: "/Sources/good/good.md".to_string(),
                 content: " body".to_string(),
                 expected_etag: Some(source.node.etag),
                 separator: None,
@@ -4738,7 +3647,7 @@ fn append_node_validates_effective_kind_paths() {
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Wiki/new.md".to_string(),
+                path: "/Knowledge/new.md".to_string(),
                 content: "wiki".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -4752,20 +3661,20 @@ fn append_node_validates_effective_kind_paths() {
 }
 
 #[test]
-fn move_node_validates_source_target_path() {
+fn move_node_keeps_source_kind_without_schema_validation() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/abc.md", 2);
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/wrong.md", 2);
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/chatgpt/def.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/web/abc.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/web/wrong.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/chatgpt/def.md", 2);
     let source = service
         .write_node(
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/web/abc.md".to_string(),
+                path: "/Sources/web/abc.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),
@@ -4775,34 +3684,21 @@ fn move_node_validates_source_target_path() {
         )
         .expect("source should write");
 
-    let error = service
+    let moved = service
         .move_node(
             "owner",
             MoveNodeRequest {
                 database_id: "alpha".to_string(),
-                from_path: "/Sources/raw/web/abc.md".to_string(),
-                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                from_path: "/Sources/web/abc.md".to_string(),
+                to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some(source.node.etag.clone()),
                 overwrite: false,
             },
             4,
         )
-        .expect_err("non-canonical source target should fail");
-    assert!(error.contains("canonical form"));
-
-    service
-        .move_node(
-            "owner",
-            MoveNodeRequest {
-                database_id: "alpha".to_string(),
-                from_path: "/Sources/raw/web/abc.md".to_string(),
-                to_path: "/Sources/raw/chatgpt/def.md".to_string(),
-                expected_etag: Some(source.node.etag),
-                overwrite: false,
-            },
-            5,
-        )
-        .expect("canonical source target should pass");
+        .expect("move should not enforce source path schema");
+    assert_eq!(moved.node.path, "/Sources/web/wrong.txt");
+    assert_eq!(moved.node.kind, NodeKind::Source);
 }
 
 #[test]
@@ -4888,10 +3784,6 @@ fn market_listing_payout_principal_is_saved_updated_and_validated() {
                 listing_id: listing.listing_id.clone(),
                 expected_revision: listing.revision,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: listing.title,
-                description: listing.description,
-                llm_summary: listing.llm_summary,
-                tags_json: listing.tags_json,
                 price_e8s: listing.price_e8s,
             },
             3,
@@ -5040,7 +3932,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let row_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1",
+            "SELECT json_object('content', printf('%270000s', 'x')) LIMIT 1",
             1,
         )
         .expect_err("oversized index SQL row should reject");
@@ -5048,7 +3940,7 @@ fn index_sql_json_rejects_oversized_row_and_response() {
 
     let response_error = service
         .query_index_sql_json(
-            "SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) LIMIT 5",
+            "SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) UNION ALL SELECT json_object('content', printf('%220000s', 'x')) LIMIT 5",
             5,
         )
         .expect_err("oversized index SQL response should reject");
@@ -5088,7 +3980,7 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
             "owner",
             WriteNodeRequest {
                 database_id: "sql-db".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha".to_string(),
                 metadata_json: "{}".to_string(),
@@ -5108,7 +4000,7 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
         .query_database_sql_json(
             "sql-db",
             "reader",
-            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Knowledge/a.md' LIMIT 1",
             10,
         )
         .expect("reader should query database SQL");
@@ -5116,7 +4008,7 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
         .query_database_sql_json(
             "sql-db",
             "2vxsx-fae",
-            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Knowledge/a.md' LIMIT 1",
             10,
         )
         .expect("public reader should query database SQL");
@@ -5124,9 +4016,9 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
     assert_eq!(reader_result.row_count, 1);
     assert_eq!(
         reader_result.rows,
-        vec![r#"{"path":"/Wiki/a.md","content":"alpha"}"#]
+        vec![r#"{"path":"/Knowledge/a.md","content":"alpha"}"#]
     );
-    assert_eq!(public_result.rows, vec![r#"{"path":"/Wiki/a.md"}"#]);
+    assert_eq!(public_result.rows, vec![r#"{"path":"/Knowledge/a.md"}"#]);
 }
 
 #[test]
@@ -5204,9 +4096,9 @@ fn database_sql_json_returns_rows_from_links_table() {
             "owner",
             WriteNodeRequest {
                 database_id: "sql-links-db".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
-                content: "[b](/Wiki/b.md)".to_string(),
+                content: "[b](/Knowledge/b.md)".to_string(),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -5225,7 +4117,7 @@ fn database_sql_json_returns_rows_from_links_table() {
 
     assert_eq!(
         result.rows,
-        vec![r#"{"source":"/Wiki/a.md","target":"/Wiki/b.md"}"#]
+        vec![r#"{"source":"/Knowledge/a.md","target":"/Knowledge/b.md"}"#]
     );
 }
 
@@ -5258,7 +4150,7 @@ fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
     for sql in [
         "UPDATE fs_nodes SET content = ''",
         "DELETE FROM fs_nodes",
-        "INSERT INTO fs_nodes (path) VALUES ('/Wiki/x.md')",
+        "INSERT INTO fs_nodes (path) VALUES ('/Knowledge/x.md')",
         "CREATE TABLE x (id INTEGER)",
         "DROP TABLE fs_nodes",
         "PRAGMA table_info(fs_nodes)",
@@ -5336,7 +4228,7 @@ fn database_sql_json_api_limit_stops_reading_before_sql_limit() {
     service
         .create_database("limited-sql-db", "owner", 1)
         .expect("database should create");
-    for (index, (path, content)) in [("/Wiki/a.md", "alpha"), ("/Wiki/b.md", "beta")]
+    for (index, (path, content)) in [("/Knowledge/a.md", "alpha"), ("/Knowledge/b.md", "beta")]
         .into_iter()
         .enumerate()
     {
@@ -5367,7 +4259,10 @@ fn database_sql_json_api_limit_stops_reading_before_sql_limit() {
 
     assert_eq!(result.limit, 1);
     assert_eq!(result.row_count, 1);
-    assert_eq!(result.rows, vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]);
+    assert_eq!(
+        result.rows,
+        vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()]
+    );
 
     let recent = service
         .query_database_sql_json(
@@ -5379,7 +4274,7 @@ fn database_sql_json_api_limit_stops_reading_before_sql_limit() {
         .expect("updated_at DESC should be allowed");
 
     assert_eq!(recent.row_count, 2);
-    assert_eq!(recent.rows[0], r#"{"path":"/Wiki/b.md"}"#);
+    assert_eq!(recent.rows[0], r#"{"path":"/Knowledge/b.md"}"#);
 }
 
 #[test]
@@ -5439,7 +4334,7 @@ fn database_sql_json_requires_json_object_text_first_column() {
             "owner",
             WriteNodeRequest {
                 database_id: "typed-sql-db".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha".to_string(),
                 metadata_json: "{}".to_string(),
@@ -5480,7 +4375,7 @@ fn database_sql_json_rejects_extra_result_columns() {
             "owner",
             WriteNodeRequest {
                 database_id: "typed-sql-db".to_string(),
-                path: "/Wiki/sql.md".to_string(),
+                path: "/Knowledge/sql.md".to_string(),
                 kind: NodeKind::File,
                 content: "database sql".to_string(),
                 metadata_json: "{}".to_string(),
@@ -5513,7 +4408,7 @@ fn database_sql_json_accepts_valid_json_object_values() {
             "owner",
             WriteNodeRequest {
                 database_id: "json-sql-db".to_string(),
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKind::File,
                 content: "alpha".to_string(),
                 metadata_json: "{}".to_string(),
@@ -5527,12 +4422,15 @@ fn database_sql_json_accepts_valid_json_object_values() {
         .query_database_sql_json(
             "json-sql-db",
             "owner",
-            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Knowledge/a.md' LIMIT 1",
             10,
         )
         .expect("JSON object should be accepted");
 
-    assert_eq!(result.rows, vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]);
+    assert_eq!(
+        result.rows,
+        vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()]
+    );
 }
 
 #[test]
@@ -5546,9 +4444,9 @@ fn database_sql_json_rejects_oversized_row_and_response() {
             "owner",
             WriteNodeRequest {
                 database_id: "size-sql-db".to_string(),
-                path: "/Wiki/too-large.md".to_string(),
+                path: "/Knowledge/too-large.md".to_string(),
                 kind: NodeKind::File,
-                content: "x".repeat(66 * 1024),
+                content: "x".repeat(270 * 1024),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -5560,7 +4458,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
         .query_database_sql_json(
             "size-sql-db",
             "owner",
-            "SELECT json_object('content', content) FROM fs_nodes WHERE path = '/Wiki/too-large.md' LIMIT 1",
+            "SELECT json_object('content', content) FROM fs_nodes WHERE path = '/Knowledge/too-large.md' LIMIT 1",
             1,
         )
         .expect_err("oversized row should reject");
@@ -5571,7 +4469,7 @@ fn database_sql_json_rejects_oversized_row_and_response() {
             "owner",
             DeleteNodeRequest {
                 database_id: "size-sql-db".to_string(),
-                path: "/Wiki/too-large.md".to_string(),
+                path: "/Knowledge/too-large.md".to_string(),
                 expected_etag: Some(large_write.node.etag),
                 expected_folder_index_etag: None,
             },
@@ -5584,9 +4482,9 @@ fn database_sql_json_rejects_oversized_row_and_response() {
                 "owner",
                 WriteNodeRequest {
                     database_id: "size-sql-db".to_string(),
-                    path: format!("/Wiki/large-{index}.md"),
+                    path: format!("/Knowledge/large-{index}.md"),
                     kind: NodeKind::File,
-                    content: "x".repeat(60 * 1024),
+                    content: "x".repeat(220 * 1024),
                     metadata_json: "{}".to_string(),
                     expected_etag: None,
                 },
@@ -5604,6 +4502,41 @@ fn database_sql_json_rejects_oversized_row_and_response() {
         )
         .expect_err("oversized response should reject");
     assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn database_sql_json_accepts_mcp_sized_multibyte_content() {
+    let service = service();
+    service
+        .create_database("multibyte-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "multibyte-sql-db".to_string(),
+                path: "/Knowledge/japanese.md".to_string(),
+                kind: NodeKind::File,
+                content: "あ".repeat(40_000),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("multibyte node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "multibyte-sql-db",
+            "owner",
+            "SELECT json_object('content', substr(content, 1, 40000), 'content_truncated', length(content) > 40000) FROM fs_nodes WHERE path = '/Knowledge/japanese.md' LIMIT 1",
+            1,
+        )
+        .expect("MCP-sized multibyte row should fit SQL JSON row limit");
+
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows.len(), 1);
+    assert!(result.rows[0].contains("\"content_truncated\":0"));
 }
 
 #[test]
@@ -6041,76 +4974,128 @@ fn market_purchase_applies_from_snapshot_when_listing_row_disappears_during_ledg
 }
 
 #[test]
-fn market_listing_description_allows_newlines() {
+fn database_metadata_description_allows_newlines() {
     let service = service();
     service
-        .create_database("multiline-market", "seller", 1)
+        .create_database("multiline-metadata", "seller", 1)
         .expect("database should create");
 
-    let mut create = market_listing_request("multiline-market", 250);
-    create.description = "Line one\nLine two\r\n\tIndented".to_string();
-    create.llm_summary = Some("Summary one\nSummary two".to_string());
-    let listing = service
-        .market_create_listing("seller", create, 2)
-        .expect("multiline description should create");
-    assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
-    assert_eq!(
-        listing.llm_summary,
-        Some("Summary one\nSummary two".to_string())
-    );
-
-    let updated = service
-        .market_update_listing(
+    let metadata = service
+        .update_database_metadata(
             "seller",
-            MarketUpdateListingRequest {
-                listing_id: listing.listing_id,
-                expected_revision: listing.revision,
-                payout_principal: "aaaaa-aa".to_string(),
-                title: "Updated market DB".to_string(),
-                description: "Updated one\nUpdated two".to_string(),
-                llm_summary: Some("Updated summary\nSecond line".to_string()),
+            UpdateDatabaseMetadataRequest {
+                database_id: "multiline-metadata".to_string(),
+                name: "Multiline metadata".to_string(),
+                description: "Line one\nLine two\r\n\tIndented".to_string(),
+                llm_summary: Some("Summary one\nSummary two".to_string()),
                 tags_json: "[]".to_string(),
-                price_e8s: 300,
             },
-            3,
+            2,
         )
-        .expect("multiline description should update");
-    assert_eq!(updated.description, "Updated one\nUpdated two");
+        .expect("multiline metadata should update");
+    assert_eq!(metadata.description, "Line one\nLine two\r\n\tIndented");
     assert_eq!(
-        updated.llm_summary,
-        Some("Updated summary\nSecond line".to_string())
+        metadata.llm_summary,
+        Some("Summary one\nSummary two".to_string())
     );
 }
 
 #[test]
-fn market_listing_description_rejects_non_whitespace_control_characters() {
+fn database_metadata_rejects_non_whitespace_control_characters() {
     let service = service();
     service
-        .create_database("control-market", "seller", 1)
+        .create_database("control-metadata", "seller", 1)
         .expect("database should create");
 
-    let mut bad_description = market_listing_request("control-market", 250);
-    bad_description.description = "bad\0description".to_string();
     let description_error = service
-        .market_create_listing("seller", bad_description, 2)
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "Control metadata".to_string(),
+                description: "bad\0description".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            2,
+        )
         .expect_err("NUL in description should be rejected");
-    assert!(
-        description_error.contains("market listing description may not contain control characters")
-    );
+    assert!(description_error.contains("database description may only contain newline"));
 
-    let mut bad_title = market_listing_request("control-market", 250);
-    bad_title.title = "bad\ntitle".to_string();
-    let title_error = service
-        .market_create_listing("seller", bad_title, 3)
-        .expect_err("title newline should be rejected");
-    assert!(title_error.contains("market listing title may not contain control characters"));
+    let name_error = service
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "bad\nname".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+            },
+            3,
+        )
+        .expect_err("name newline should be rejected");
+    assert!(name_error.contains("database name may not contain control characters"));
 
-    let mut bad_tags = market_listing_request("control-market", 250);
-    bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
     let tags_error = service
-        .market_create_listing("seller", bad_tags, 4)
+        .update_database_metadata(
+            "seller",
+            UpdateDatabaseMetadataRequest {
+                database_id: "control-metadata".to_string(),
+                name: "Control metadata".to_string(),
+                description: String::new(),
+                llm_summary: None,
+                tags_json: "[\"bad\ntag\"]".to_string(),
+            },
+            4,
+        )
         .expect_err("tags newline should be rejected");
-    assert!(tags_error.contains("market listing tags may not contain control characters"));
+    assert!(tags_error.contains("database tags may not contain control characters"));
+}
+
+#[test]
+fn database_metadata_rejects_invalid_tags_json() {
+    let service = service();
+    service
+        .create_database("tags-metadata", "seller", 1)
+        .expect("database should create");
+
+    for (tags_json, expected) in [
+        (
+            "{\"tag\":\"not-array\"}",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", 1]",
+            "database tags_json must be a JSON string array",
+        ),
+        (
+            "[\"valid\", \" \"]",
+            "database tags_json must not contain empty tags",
+        ),
+        (
+            "[\"bad\\ntag\"]",
+            "database tags_json must not contain control characters",
+        ),
+    ] {
+        let error = service
+            .update_database_metadata(
+                "seller",
+                UpdateDatabaseMetadataRequest {
+                    database_id: "tags-metadata".to_string(),
+                    name: "Tags metadata".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: tags_json.to_string(),
+                },
+                2,
+            )
+            .expect_err("invalid tags_json should be rejected");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?} in {error:?}"
+        );
+    }
 }
 
 #[test]
@@ -6280,10 +5265,6 @@ fn market_listing_owner_policy_and_database_listing_query() {
                 listing_id: listing.listing_id.clone(),
                 expected_revision: listing.revision,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: "Updated team database".to_string(),
-                description: "Updated reusable team knowledge base".to_string(),
-                llm_summary: None,
-                tags_json: "[]".to_string(),
                 price_e8s: 150,
             },
             5,
@@ -6297,10 +5278,6 @@ fn market_listing_owner_policy_and_database_listing_query() {
                 listing_id: listing.listing_id,
                 expected_revision: 0,
                 payout_principal: "aaaaa-aa".to_string(),
-                title: "Stale team database".to_string(),
-                description: "Stale reusable team knowledge base".to_string(),
-                llm_summary: None,
-                tags_json: "[]".to_string(),
                 price_e8s: 200,
             },
             6,
@@ -6395,38 +5372,38 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
         .market_list_seller_listings("seller-a", None, 1)
         .expect("seller listings should load");
     assert_eq!(first.listings.len(), 1);
-    assert_eq!(first.listings[0].seller_principal, "seller-a");
+    assert_eq!(first.listings[0].listing.seller_principal, "seller-a");
     assert!(first.next_cursor.is_some());
 
     let second = service
         .market_list_seller_listings("seller-a", first.next_cursor, 10)
         .expect("second seller page should load");
     assert_eq!(second.listings.len(), 1);
-    assert_eq!(second.listings[0].seller_principal, "seller-a");
-    assert_ne!(second.listings[0].listing_id, stale.listing_id);
+    assert_eq!(second.listings[0].listing.seller_principal, "seller-a");
+    assert_ne!(second.listings[0].listing.listing_id, stale.listing_id);
     assert!(second.next_cursor.is_none());
 
     let all = [first.listings, second.listings].concat();
     assert_eq!(all.len(), 2);
     assert!(
         all.iter()
-            .all(|listing| listing.seller_principal == "seller-a")
+            .all(|view| view.listing.seller_principal == "seller-a")
     );
     assert!(
         all.iter()
-            .all(|listing| listing.status == MarketListingStatus::Active)
+            .all(|view| view.listing.status == MarketListingStatus::Active)
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-b-one")
+            .any(|view| view.listing.database_id == "seller-b-one")
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-a-paused")
+            .any(|view| view.listing.database_id == "seller-a-paused")
     );
     assert!(
         !all.iter()
-            .any(|listing| listing.database_id == "seller-a-stale-owner")
+            .any(|view| view.listing.database_id == "seller-a-stale-owner")
     );
 }
 
@@ -6436,13 +5413,25 @@ fn market_listing_detail_returns_verified_preview() {
     service
         .create_database("preview-market", "seller", 1)
         .expect("database should create");
-    ensure_parent_folders(&service, "seller", "preview-market", "/Wiki/alpha/a.md", 2);
-    ensure_parent_folders(&service, "seller", "preview-market", "/Wiki/beta/b.md", 2);
     ensure_parent_folders(
         &service,
         "seller",
         "preview-market",
-        "/Sources/raw/web/source.md",
+        "/Knowledge/alpha/a.md",
+        2,
+    );
+    ensure_parent_folders(
+        &service,
+        "seller",
+        "preview-market",
+        "/Knowledge/beta/b.md",
+        2,
+    );
+    ensure_parent_folders(
+        &service,
+        "seller",
+        "preview-market",
+        "/Sources/web/source.md",
         2,
     );
     service
@@ -6450,9 +5439,9 @@ fn market_listing_detail_returns_verified_preview() {
             "seller",
             WriteNodeRequest {
                 database_id: "preview-market".to_string(),
-                path: "/Wiki/alpha/a.md".to_string(),
+                path: "/Knowledge/alpha/a.md".to_string(),
                 kind: NodeKind::File,
-                content: "Alpha paid insight links to [beta](/Wiki/beta/b.md).".to_string(),
+                content: "Alpha paid insight links to [beta](/Knowledge/beta/b.md).".to_string(),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -6464,7 +5453,7 @@ fn market_listing_detail_returns_verified_preview() {
             "seller",
             WriteNodeRequest {
                 database_id: "preview-market".to_string(),
-                path: "/Wiki/beta/b.md".to_string(),
+                path: "/Knowledge/beta/b.md".to_string(),
                 kind: NodeKind::File,
                 content: "Beta paid body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -6478,7 +5467,7 @@ fn market_listing_detail_returns_verified_preview() {
             "seller",
             WriteNodeRequest {
                 database_id: "preview-market".to_string(),
-                path: "/Sources/raw/web/source.md".to_string(),
+                path: "/Sources/web/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "raw source body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -6495,7 +5484,8 @@ fn market_listing_detail_returns_verified_preview() {
         .market_get_listing("2vxsx-fae", &listing.listing_id)
         .expect("anonymous should read public listing preview");
 
-    assert_eq!(detail.listing.listing_id, listing.listing_id);
+    assert_eq!(detail.listing.listing.listing_id, listing.listing_id);
+    assert_eq!(detail.listing.database_metadata.name, "preview-market");
     assert!(detail.verified_stats.total_nodes >= 5);
     assert!(detail.verified_stats.wiki_nodes >= 4);
     assert_eq!(detail.verified_stats.source_nodes, 1);
@@ -6508,14 +5498,12 @@ fn market_listing_detail_returns_verified_preview() {
             .preview
             .excerpts
             .iter()
-            .any(|excerpt| excerpt.path == "/Wiki/alpha/a.md"
-                && excerpt.excerpt == "Alpha paid insight links to [beta](/Wiki/beta/b.md).")
+            .any(|excerpt| excerpt.path == "/Knowledge/alpha/a.md"
+                && excerpt.excerpt == "Alpha paid insight links to [beta](/Knowledge/beta/b.md).")
     );
-    assert!(detail
-        .preview
-        .excerpts
-        .iter()
-        .any(|excerpt| excerpt.path == "/Wiki/beta/b.md" && excerpt.excerpt == "Beta paid body"));
+    assert!(detail.preview.excerpts.iter().any(
+        |excerpt| excerpt.path == "/Knowledge/beta/b.md" && excerpt.excerpt == "Beta paid body"
+    ));
     assert!(
         detail
             .preview
@@ -6528,13 +5516,13 @@ fn market_listing_detail_returns_verified_preview() {
         detail
             .preview
             .top_level_paths
-            .contains(&"/Wiki/alpha".to_string())
+            .contains(&"/Knowledge/alpha".to_string())
     );
     assert!(
         detail
             .preview
             .top_level_paths
-            .contains(&"/Wiki/beta".to_string())
+            .contains(&"/Knowledge/beta".to_string())
     );
     assert!(
         detail
@@ -6542,7 +5530,7 @@ fn market_listing_detail_returns_verified_preview() {
             .category_graph
             .nodes
             .iter()
-            .any(|node| node.category == "/Wiki/alpha")
+            .any(|node| node.category == "/Knowledge/alpha")
     );
     assert!(
         detail
@@ -6550,13 +5538,73 @@ fn market_listing_detail_returns_verified_preview() {
             .category_graph
             .edges
             .iter()
-            .any(|edge| edge.source_category == "/Wiki/alpha"
-                && edge.target_category == "/Wiki/beta"
+            .any(|edge| edge.source_category == "/Knowledge/alpha"
+                && edge.target_category == "/Knowledge/beta"
                 && edge.link_count == 1)
     );
-    assert!(detail.preview.graph_links.iter().any(
-        |edge| edge.source_path == "/Wiki/alpha/a.md" && edge.target_path == "/Wiki/beta/b.md"
-    ));
+    assert!(
+        detail
+            .preview
+            .graph_links
+            .iter()
+            .any(|edge| edge.source_path == "/Knowledge/alpha/a.md"
+                && edge.target_path == "/Knowledge/beta/b.md")
+    );
+}
+
+#[test]
+fn market_listing_detail_rejects_unavailable_database_metadata() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("archived-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("archived-market", 100), 2)
+        .expect("listing should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET status = 'archived' WHERE database_id = 'archived-market'",
+        [],
+    )
+    .expect("database should archive");
+
+    let error = service
+        .market_get_listing("seller", &listing.listing_id)
+        .expect_err("archived database metadata should not be synthesized");
+
+    assert!(error.contains("database is archived"));
+}
+
+#[test]
+fn market_listing_database_name_for_consent_does_not_open_preview_store() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("consent-title-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("consent-title-market", 100),
+            2,
+        )
+        .expect("listing should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET db_file_name = ?2 WHERE database_id = ?1",
+        params!["consent-title-market", root.to_string_lossy().as_ref()],
+    )
+    .expect("db file path should update");
+    drop(conn);
+
+    let title = service
+        .market_listing_database_name_for_consent(&listing.listing_id)
+        .expect("consent title should load from index metadata only");
+    assert_eq!(title, "consent-title-market");
+
+    let detail_error = service
+        .market_get_listing("2vxsx-fae", &listing.listing_id)
+        .expect_err("listing detail should still require preview store access");
+    assert!(!detail_error.is_empty());
 }
 
 #[test]
@@ -6640,10 +5688,10 @@ fn market_listing_requires_active_database() {
     assert!(pending_error.contains("database is pending"));
 
     service
-        .create_database("archive-market", "owner", 3)
+        .create_database("market-active", "owner", 3)
         .expect("database should create");
     let listing = service
-        .market_create_listing("owner", market_listing_request("archive-market", 100), 4)
+        .market_create_listing("owner", market_listing_request("market-active", 100), 4)
         .expect("active database listing should create");
     assert_eq!(
         service
@@ -6654,82 +5702,29 @@ fn market_listing_requires_active_database() {
         1
     );
 
-    let archive = service
-        .begin_database_archive("archive-market", "owner", 6)
-        .expect("archive should begin");
-    assert!(
-        service
-            .market_list_listings(None, 10)
-            .expect("archiving listings should load")
-            .listings
-            .is_empty(),
-        "archiving database listing must leave public marketplace"
-    );
-    assert!(
-        service
-            .market_get_listing("buyer", &listing.listing_id)
-            .expect_err("buyer should not read non-active database listing")
-            .contains("seller or admin required")
-    );
     service
-        .market_get_listing("owner", &listing.listing_id)
-        .expect("owner should still manage archived listing");
-
-    let bytes = read_archive_in_chunks(&service, "archive-market", archive.size_bytes, 17);
-    let snapshot_hash = sha256_bytes(&bytes);
-    service
-        .finalize_database_archive("archive-market", "owner", snapshot_hash.clone(), 7)
-        .expect("archive should finalize");
+        .delete_database(delete_request("market-active"), "owner", 6)
+        .expect("database should delete");
     let preview_error = service
         .market_preview_purchase("buyer", &listing.listing_id)
-        .expect_err("archived database preview should reject");
-    assert!(preview_error.contains("database is archived"));
+        .expect_err("deleted database preview should reject");
+    assert!(preview_error.contains("market listing not found"));
     let purchase_error = service
         .market_purchase_access(
             "buyer",
             market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
-            9,
+            7,
         )
-        .expect_err("archived database purchase should reject");
-    assert!(purchase_error.contains("database is archived"));
-    service
-        .begin_database_restore(
-            "archive-market",
-            "owner",
-            snapshot_hash,
-            archive.size_bytes,
-            10,
-        )
-        .expect("restore should begin");
+        .expect_err("deleted database purchase should reject");
+    assert!(purchase_error.contains("market listing not found"));
     assert!(
         service
             .market_list_listings(None, 10)
-            .expect("restoring listings should load")
+            .expect("deleted database listings should load")
             .listings
             .is_empty(),
-        "restoring database listing must stay hidden"
+        "deleted database listing must leave public marketplace"
     );
-    service
-        .write_database_restore_chunk("archive-market", "owner", 0, &bytes)
-        .expect("restore chunk should write");
-    service
-        .finalize_database_restore("archive-market", "owner", 11)
-        .expect("restore should finalize");
-    assert_eq!(
-        service
-            .market_list_listings(None, 10)
-            .expect("restored listings should load")
-            .listings
-            .len(),
-        1
-    );
-    service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
-            12,
-        )
-        .expect("restored active database purchase should succeed");
 }
 
 #[test]
@@ -6743,7 +5738,7 @@ fn delete_database_removes_marketplace_rows() {
             "seller",
             WriteNodeRequest {
                 database_id: "market-delete".to_string(),
-                path: "/Wiki/private.md".to_string(),
+                path: "/Knowledge/private.md".to_string(),
                 kind: NodeKind::File,
                 content: "paid body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -6763,7 +5758,11 @@ fn delete_database_removes_marketplace_rows() {
         )
         .expect("purchase should succeed");
     service
-        .read_node("market-delete", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
+        .read_node(
+            "market-delete",
+            MARKET_BUYER_PRINCIPAL,
+            "/Knowledge/private.md",
+        )
         .expect("entitled buyer should read before delete");
     assert_eq!(
         market_row_count(&root, "market_listings", "market-delete"),
@@ -6796,7 +5795,11 @@ fn delete_database_removes_marketplace_rows() {
         1
     );
     let deleted_read = service
-        .read_node("market-delete", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
+        .read_node(
+            "market-delete",
+            MARKET_BUYER_PRINCIPAL,
+            "/Knowledge/private.md",
+        )
         .expect_err("deleted database should not remain readable");
     assert!(deleted_read.contains("database not found"));
 }
@@ -6812,7 +5815,7 @@ fn market_entitlement_allows_read_surface_but_not_export() {
             "seller",
             WriteNodeRequest {
                 database_id: "read-market".to_string(),
-                path: "/Wiki/private.md".to_string(),
+                path: "/Knowledge/private.md".to_string(),
                 kind: NodeKind::File,
                 content: "paid body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -6833,7 +5836,11 @@ fn market_entitlement_allows_read_surface_but_not_export() {
         .expect("purchase should succeed");
 
     let node = service
-        .read_node("read-market", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
+        .read_node(
+            "read-market",
+            MARKET_BUYER_PRINCIPAL,
+            "/Knowledge/private.md",
+        )
         .expect("entitled buyer should read")
         .expect("node should exist");
     assert_eq!(node.content, "paid body");
@@ -6841,13 +5848,13 @@ fn market_entitlement_allows_read_surface_but_not_export() {
         .query_database_sql_json(
             "read-market",
             MARKET_BUYER_PRINCIPAL,
-            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/private.md' LIMIT 1",
+            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Knowledge/private.md' LIMIT 1",
             10,
         )
         .expect("entitled buyer should query database SQL");
     assert_eq!(
         sql_result.rows,
-        vec![r#"{"path":"/Wiki/private.md","content":"paid body"}"#]
+        vec![r#"{"path":"/Knowledge/private.md","content":"paid body"}"#]
     );
     assert!(
         service

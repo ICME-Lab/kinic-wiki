@@ -11,7 +11,7 @@ import {
   startCurrentTabExport
 } from "./current-tab-export.js";
 import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
-import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./url-ingest-request.js";
+import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./source-capture-request.js";
 import { databaseOptionLabel, isSelectedWritableDatabase } from "../popup/popup-state.js";
 
 const ROOT_ID = "kinic-wiki-clipper-root";
@@ -77,7 +77,7 @@ function Modal() {
           <img class="kinic-logo" src={logoUrl} alt="" />
           <div>
             <strong>Kinic Wiki Clipper</strong>
-            <p>Export {exportProviderLabel.value} conversations into your wiki</p>
+            <p>Export {exportProviderLabel.value} conversations into your knowledge store</p>
           </div>
           <span class="pill">{exportProviderLabel.value} export</span>
         </div>

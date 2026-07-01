@@ -1,8 +1,13 @@
 # Release
 
-`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, archive/restore, and Skill Registry maintenance. The Browser remains the primary public UI.
+`kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, and Skill Registry maintenance. The Browser remains the primary public UI.
 
 Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Cargo install is a Rust-user fallback; crates.io publication is deferred.
+
+## Breaking Changes
+
+- Archive/restore APIs and CLI commands remain removed.
+- Source nodes no longer require canonical `/Sources/<provider>/<id>.md` paths. Safe `/Sources/...` paths are accepted, and URL capture writes immutable suffixed paths on collision.
 
 ## npm
 
@@ -40,7 +45,7 @@ target/release/kinic-vfs-cli --help
 Use the binary with the same flags documented in [`CLI.md`](CLI.md):
 
 ```bash
-target/release/kinic-vfs-cli --canister-id <canister-id> database current
+target/release/kinic-vfs-cli database current
 ```
 
 ## GitHub Release
@@ -48,16 +53,16 @@ target/release/kinic-vfs-cli --canister-id <canister-id> database current
 Tag a release with a `v*` version:
 
 ```bash
-git tag v0.1.4
-git push origin v0.1.4
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 The `Release CLI` workflow builds and uploads:
 
-- `kinic-vfs-cli-v0.1.4-linux-x86_64.tar.gz`
-- `kinic-vfs-cli-v0.1.4-linux-x86_64.sha256`
-- `kinic-vfs-cli-v0.1.4-macos-arm64.tar.gz`
-- `kinic-vfs-cli-v0.1.4-macos-arm64.sha256`
+- `kinic-vfs-cli-v2.0.0-linux-x86_64.tar.gz`
+- `kinic-vfs-cli-v2.0.0-linux-x86_64.sha256`
+- `kinic-vfs-cli-v2.0.0-macos-arm64.tar.gz`
+- `kinic-vfs-cli-v2.0.0-macos-arm64.sha256`
 
 Each tarball contains only:
 
@@ -68,8 +73,8 @@ Each tarball contains only:
 Verify after download:
 
 ```bash
-shasum -a 256 -c kinic-vfs-cli-v0.1.4-macos-arm64.sha256
-tar -xzf kinic-vfs-cli-v0.1.4-macos-arm64.tar.gz
+shasum -a 256 -c kinic-vfs-cli-v2.0.0-macos-arm64.sha256
+tar -xzf kinic-vfs-cli-v2.0.0-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
 ```

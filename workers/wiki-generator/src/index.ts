@@ -1,16 +1,16 @@
 // Where: workers/wiki-generator/src/index.ts
-// What: Cloudflare Worker entrypoints for manual, URL ingest, and queue triggers.
+// What: Cloudflare Worker entrypoints for manual, source capture, and queue triggers.
 // Why: Generation should run outside the wiki browser UI server.
 import { isAuthorized } from "./auth.js";
 import { parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, runManual } from "./processing.js";
-import { parseUrlIngestTriggerInput, UrlIngestTriggerError, validateUrlIngestTriggerInput } from "./url-ingest.js";
+import { parseSourceCaptureTriggerInput, SourceCaptureTriggerError, validateSourceCaptureTriggerInput } from "./source-capture.js";
 import type { QueueMessage } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export default {
   async fetch(request, env, _ctx): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "POST" && url.pathname === "/url-ingest") {
+    if (request.method === "POST" && url.pathname === "/source-capture") {
       const authError = await workerAuthError(request, env);
       if (authError) return authError;
       let body: unknown;
@@ -19,17 +19,23 @@ export default {
       } catch {
         return jsonResponse({ error: "invalid JSON body" }, 400);
       }
-      const input = parseUrlIngestTriggerInput(body);
+      const input = parseSourceCaptureTriggerInput(body);
       if (typeof input === "string") {
         return jsonResponse({ error: input }, 400);
       }
       try {
-        validateUrlIngestTriggerInput(env, input);
+        validateSourceCaptureTriggerInput(env, input);
       } catch (error) {
-        const status = error instanceof UrlIngestTriggerError ? error.status : 500;
+        const status = error instanceof SourceCaptureTriggerError ? error.status : 500;
         return jsonResponse({ error: errorMessage(error) }, status);
       }
-      await env.WIKI_GENERATION_QUEUE.send({ kind: "url_ingest", ...input });
+      await env.WIKI_GENERATION_QUEUE.send({
+        kind: "source_capture",
+        canisterId: input.canisterId,
+        databaseId: input.databaseId,
+        requestPath: input.requestPath,
+        sessionNonce: input.sessionNonce
+      });
       return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath }, 202);
     }
     if (request.method !== "POST" || url.pathname !== "/run") {

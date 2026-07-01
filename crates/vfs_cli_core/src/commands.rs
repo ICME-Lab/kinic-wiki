@@ -2,34 +2,31 @@
 // What: Generic VFS command execution helpers.
 // Why: The app-facing CLI package should delegate shared VFS command behavior instead of owning it.
 use std::borrow::Cow;
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
 use std::process::Command as ProcessCommand;
-
-use anyhow::{Result, anyhow};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use vfs_client::VfsApi;
-use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
-    DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
-};
-use wiki_domain::validate_source_path_for_kind;
 
 use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
 };
+use anyhow::{Result, anyhow};
+use serde::Deserialize;
+use vfs_client::VfsApi;
+use vfs_types::{
+    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest,
+    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidenceRequest, UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest, kinic_base_units_per_token,
+};
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
+const DELETE_TREE_LIST_LIMIT: u32 = 100;
 
 pub async fn run_vfs_command(
     client: &impl VfsApi,
@@ -94,6 +91,7 @@ pub async fn run_vfs_command(
         VfsCommand::ListNodes {
             prefix,
             recursive,
+            limit,
             json,
         } => {
             let entries = client
@@ -101,6 +99,7 @@ pub async fn run_vfs_command(
                     database_id: database_id.to_string(),
                     prefix,
                     recursive,
+                    limit,
                 })
                 .await?;
             if json {
@@ -140,7 +139,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            validate_source_path_for_write(&path, kind.to_node_kind())?;
             let result = client
                 .write_node(WriteNodeRequest {
                     database_id: database_id.to_string(),
@@ -159,9 +157,6 @@ pub async fn run_vfs_command(
         }
         VfsCommand::WriteNodes { input, json } => {
             let nodes = read_write_nodes_file(&input)?;
-            for node in &nodes {
-                validate_source_path_for_write(&node.path, node.kind.clone())?;
-            }
             let results = client
                 .write_nodes(WriteNodesRequest {
                     database_id: database_id.to_string(),
@@ -189,9 +184,6 @@ pub async fn run_vfs_command(
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            if let Some(kind_arg) = kind {
-                validate_source_path_for_write(&path, kind_arg.to_node_kind())?;
-            }
             let result = client
                 .append_node(AppendNodeRequest {
                     database_id: database_id.to_string(),
@@ -290,10 +282,6 @@ pub async fn run_vfs_command(
             overwrite,
             json,
         } => {
-            if let Some(current) = client.read_node(database_id, &from_path).await? {
-                validate_source_path_for_kind(&to_path, &current.kind)
-                    .map_err(anyhow::Error::msg)?;
-            }
             let result = client
                 .move_node(MoveNodeRequest {
                     database_id: database_id.to_string(),
@@ -485,6 +473,139 @@ pub async fn run_vfs_command(
                 println!("{line}");
             }
         }
+        VfsCommand::MemoryManifest { json } => {
+            let manifest = client.memory_manifest(database_id).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&manifest)?);
+            } else {
+                println!("api_version\t{}", manifest.api_version);
+                println!(
+                    "recommended_entrypoint\t{}",
+                    manifest.recommended_entrypoint
+                );
+                println!("write_policy\t{}", manifest.write_policy);
+                for root in manifest.roots {
+                    println!("root\t{}\t{}", root.kind, root.path);
+                }
+            }
+        }
+        VfsCommand::QueryContext {
+            task,
+            entities,
+            namespace,
+            budget_tokens,
+            depth,
+            no_evidence,
+            json,
+        } => {
+            let context = client
+                .query_context(QueryContextRequest {
+                    database_id: database_id.to_string(),
+                    task,
+                    entities,
+                    namespace,
+                    budget_tokens,
+                    include_evidence: !no_evidence,
+                    depth,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&context)?);
+            } else {
+                println!("namespace\t{}", context.namespace);
+                println!("truncated\t{}", context.truncated);
+                for node_context in context.nodes {
+                    println!("node\t{}", node_context.node.path);
+                }
+                for evidence in context.evidence {
+                    println!("evidence\t{}\t{}", evidence.node_path, evidence.refs.len());
+                }
+                for hit in context.search_hits {
+                    println!("search_hit\t{}", hit.path);
+                }
+            }
+        }
+        VfsCommand::SourceEvidence { node_path, json } => {
+            let evidence = client
+                .source_evidence(SourceEvidenceRequest {
+                    database_id: database_id.to_string(),
+                    node_path,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&evidence)?);
+            } else {
+                println!("node_path\t{}", evidence.node_path);
+                for reference in evidence.refs {
+                    println!(
+                        "ref\t{}\t{}\t{}",
+                        reference.source_path, reference.via_path, reference.raw_href
+                    );
+                }
+            }
+        }
+        VfsCommand::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            json,
+        } => {
+            let snapshot = client
+                .export_snapshot(ExportSnapshotRequest {
+                    database_id: database_id.to_string(),
+                    prefix,
+                    limit,
+                    cursor,
+                    snapshot_revision,
+                    snapshot_session_id: None,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&snapshot)?);
+            } else {
+                println!("snapshot_revision\t{}", snapshot.snapshot_revision);
+                if let Some(next_cursor) = snapshot.next_cursor {
+                    println!("next_cursor\t{next_cursor}");
+                }
+                for node in snapshot.nodes {
+                    println!("node\t{}", node.path);
+                }
+            }
+        }
+        VfsCommand::FetchUpdates {
+            known_snapshot_revision,
+            prefix,
+            limit,
+            cursor,
+            target_snapshot_revision,
+            json,
+        } => {
+            let updates = client
+                .fetch_updates(FetchUpdatesRequest {
+                    database_id: database_id.to_string(),
+                    known_snapshot_revision,
+                    prefix,
+                    limit,
+                    cursor,
+                    target_snapshot_revision,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&updates)?);
+            } else {
+                println!("snapshot_revision\t{}", updates.snapshot_revision);
+                if let Some(next_cursor) = updates.next_cursor {
+                    println!("next_cursor\t{next_cursor}");
+                }
+                for node in updates.changed_nodes {
+                    println!("changed\t{}", node.path);
+                }
+                for path in updates.removed_paths {
+                    println!("removed\t{path}");
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -670,14 +791,20 @@ async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
-        DatabaseCommand::Create { name, profile } => {
-            let result = client
-                .create_database(&name, profile.to_database_profile())
-                .await?;
+        DatabaseCommand::Create { name } => {
+            let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
         }
-        DatabaseCommand::Rename { database_id, name } => {
-            client.rename_database(&database_id, &name).await?;
+        DatabaseCommand::Metadata {
+            database_id,
+            input,
+            json,
+        } => {
+            let request = read_database_metadata_input(&database_id, &input)?;
+            let metadata = client.update_database_metadata(request).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&metadata)?);
+            }
         }
         DatabaseCommand::List { json } => {
             let databases = client.list_databases().await?;
@@ -685,10 +812,16 @@ async fn run_database_command(
                 println!("{}", serde_json::to_string_pretty(&databases)?);
             } else {
                 for database in databases {
+                    let name = database
+                        .metadata
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("database metadata is required"))?
+                        .name
+                        .as_str();
                     println!(
                         "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
-                        database.name,
+                        name,
                         database.role,
                         database.status,
                         database.logical_size_bytes,
@@ -822,32 +955,6 @@ async fn run_database_command(
                     );
                 }
             }
-        }
-        DatabaseCommand::ArchiveExport {
-            database_id,
-            output,
-            chunk_size,
-            json,
-        } => {
-            let result = archive_export(client, &database_id, &output, chunk_size).await?;
-            print_archive_result(result, json)?;
-        }
-        DatabaseCommand::ArchiveRestore {
-            database_id,
-            input,
-            chunk_size,
-            json,
-        } => {
-            let result = archive_restore(client, &database_id, &input, chunk_size).await?;
-            print_archive_result(result, json)?;
-        }
-        DatabaseCommand::ArchiveCancel { database_id } => {
-            client.cancel_database_archive(&database_id).await?;
-            println!("{database_id}");
-        }
-        DatabaseCommand::RestoreCancel { database_id } => {
-            client.cancel_database_restore(&database_id).await?;
-            println!("{database_id}");
         }
     }
     Ok(())
@@ -1061,232 +1168,6 @@ fn cycles_for_payment_amount_e8s(
     Ok(cycles)
 }
 
-#[derive(Debug, serde::Serialize)]
-struct ArchiveCommandResult {
-    database_id: String,
-    path: String,
-    size_bytes: u64,
-    snapshot_hash: String,
-    chunk_size: u32,
-    chunk_count: u64,
-}
-
-async fn archive_export(
-    client: &impl VfsApi,
-    database_id: &str,
-    output: &Path,
-    chunk_size: u32,
-) -> Result<ArchiveCommandResult> {
-    validate_archive_chunk_size(chunk_size)?;
-    let archive = client.begin_database_archive(database_id).await?;
-    let tmp_output = archive_tmp_path(output)?;
-    let mut file = match File::create(&tmp_output) {
-        Ok(file) => file,
-        Err(error) => {
-            let _ = client.cancel_database_archive(database_id).await;
-            return Err(error.into());
-        }
-    };
-    let (snapshot_hash, chunk_count) = archive_export_chunks(
-        client,
-        database_id,
-        archive.size_bytes,
-        &mut file,
-        &tmp_output,
-        chunk_size,
-    )
-    .await?;
-    if let Err(error) = client
-        .finalize_database_archive(database_id, snapshot_hash.clone())
-        .await
-    {
-        cleanup_archive_export(client, database_id, &tmp_output).await;
-        return Err(error);
-    }
-    fs::rename(&tmp_output, output).map_err(|error| {
-        anyhow!(
-            "failed to move archive tmp file {} to {}: {error}",
-            tmp_output.display(),
-            output.display()
-        )
-    })?;
-    Ok(ArchiveCommandResult {
-        database_id: database_id.to_string(),
-        path: output.display().to_string(),
-        size_bytes: archive.size_bytes,
-        snapshot_hash: hex_string(&snapshot_hash),
-        chunk_size,
-        chunk_count,
-    })
-}
-
-async fn archive_restore(
-    client: &impl VfsApi,
-    database_id: &str,
-    input: &Path,
-    chunk_size: u32,
-) -> Result<ArchiveCommandResult> {
-    validate_archive_chunk_size(chunk_size)?;
-    let mut file = File::open(input)?;
-    let size_bytes = file.metadata()?.len();
-    let snapshot_hash = archive_file_hash(&mut file)?;
-    file.seek(SeekFrom::Start(0))?;
-    client
-        .begin_database_restore(database_id, snapshot_hash.clone(), size_bytes)
-        .await?;
-    let chunk_count = match archive_restore_chunks(client, database_id, &mut file, chunk_size).await
-    {
-        Ok(chunk_count) => chunk_count,
-        Err(error) => {
-            return Err(cleanup_archive_restore(client, database_id, error).await);
-        }
-    };
-    if let Err(error) = client.finalize_database_restore(database_id).await {
-        return Err(cleanup_archive_restore(client, database_id, error).await);
-    }
-    Ok(ArchiveCommandResult {
-        database_id: database_id.to_string(),
-        path: input.display().to_string(),
-        size_bytes,
-        snapshot_hash: hex_string(&snapshot_hash),
-        chunk_size,
-        chunk_count,
-    })
-}
-
-async fn archive_restore_chunks(
-    client: &impl VfsApi,
-    database_id: &str,
-    file: &mut File,
-    chunk_size: u32,
-) -> Result<u64> {
-    let mut buffer = vec![0_u8; chunk_size as usize];
-    let mut offset = 0_u64;
-    let mut chunk_count = 0_u64;
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        client
-            .write_database_restore_chunk(DatabaseRestoreChunkRequest {
-                database_id: database_id.to_string(),
-                offset,
-                bytes: buffer[..read].to_vec(),
-            })
-            .await?;
-        offset += read as u64;
-        chunk_count += 1;
-    }
-    Ok(chunk_count)
-}
-
-async fn cleanup_archive_restore(
-    client: &impl VfsApi,
-    database_id: &str,
-    error: anyhow::Error,
-) -> anyhow::Error {
-    match client.cancel_database_restore(database_id).await {
-        Ok(()) => error,
-        Err(cancel_error) => anyhow!("{error}; restore cancel failed: {cancel_error}"),
-    }
-}
-
-async fn archive_export_chunks(
-    client: &impl VfsApi,
-    database_id: &str,
-    archive_size_bytes: u64,
-    writer: &mut impl Write,
-    tmp_output: &Path,
-    chunk_size: u32,
-) -> Result<(Vec<u8>, u64)> {
-    let mut hasher = Sha256::new();
-    let mut offset = 0_u64;
-    let mut chunk_count = 0_u64;
-    while offset < archive_size_bytes {
-        let chunk = match client
-            .read_database_archive_chunk(database_id, offset, chunk_size)
-            .await
-        {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                cleanup_archive_export(client, database_id, tmp_output).await;
-                return Err(error);
-            }
-        };
-        if chunk.bytes.is_empty() {
-            cleanup_archive_export(client, database_id, tmp_output).await;
-            return Err(anyhow!("archive chunk must not be empty before EOF"));
-        }
-        if let Err(error) = writer.write_all(&chunk.bytes) {
-            cleanup_archive_export(client, database_id, tmp_output).await;
-            return Err(error.into());
-        }
-        hasher.update(&chunk.bytes);
-        offset += chunk.bytes.len() as u64;
-        chunk_count += 1;
-    }
-    if let Err(error) = writer.flush() {
-        cleanup_archive_export(client, database_id, tmp_output).await;
-        return Err(error.into());
-    }
-    if offset != archive_size_bytes {
-        cleanup_archive_export(client, database_id, tmp_output).await;
-        return Err(anyhow!("archive byte length mismatch"));
-    }
-    Ok((hasher.finalize().to_vec(), chunk_count))
-}
-
-async fn cleanup_archive_export(client: &impl VfsApi, database_id: &str, tmp_output: &Path) {
-    let _ = client.cancel_database_archive(database_id).await;
-    let _ = fs::remove_file(tmp_output);
-}
-
-fn archive_file_hash(file: &mut File) -> Result<Vec<u8>> {
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hasher.finalize().to_vec())
-}
-
-fn validate_archive_chunk_size(chunk_size: u32) -> Result<()> {
-    if (1..=1_048_576).contains(&chunk_size) {
-        Ok(())
-    } else {
-        Err(anyhow!("chunk-size must be between 1 and 1048576 bytes"))
-    }
-}
-
-fn archive_tmp_path(output: &Path) -> Result<PathBuf> {
-    let name = output
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| anyhow!("output path must include a file name"))?;
-    Ok(output.with_file_name(format!(".{name}.tmp")))
-}
-
-fn print_archive_result(result: ArchiveCommandResult, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!(
-            "{}\t{}\t{}\t{}",
-            result.database_id, result.path, result.size_bytes, result.snapshot_hash
-        );
-    }
-    Ok(())
-}
-
-fn hex_string(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub fn print_database_current(connection: &ResolvedConnectionPreview, json: bool) -> Result<()> {
     if json {
         println!(
@@ -1363,8 +1244,14 @@ async fn delete_tree(client: &impl VfsApi, database_id: &str, path: &str) -> Res
             database_id: database_id.to_string(),
             prefix: path.to_string(),
             recursive: true,
+            limit: DELETE_TREE_LIST_LIMIT,
         })
         .await?;
+    if entries.len() >= DELETE_TREE_LIST_LIMIT as usize {
+        return Err(anyhow!(
+            "delete-tree target exceeds the list limit; narrow the prefix or add list_nodes paging before deleting"
+        ));
+    }
     entries.sort_by(|left, right| {
         right
             .path
@@ -1388,10 +1275,6 @@ async fn delete_tree(client: &impl VfsApi, database_id: &str, path: &str) -> Res
     Ok(deleted_paths)
 }
 
-fn validate_source_path_for_write(path: &str, kind: vfs_types::NodeKind) -> Result<()> {
-    validate_source_path_for_kind(path, &kind).map_err(anyhow::Error::msg)
-}
-
 fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
     let content = fs::read_to_string(path)?;
     serde_json::from_str(&content).map_err(Into::into)
@@ -1407,6 +1290,63 @@ fn read_write_nodes_file(path: &std::path::Path) -> Result<Vec<WriteNodeItem>> {
         .into_iter()
         .map(WriteNodeInputItem::into_item)
         .collect())
+}
+
+fn read_database_metadata_input(
+    database_id: &str,
+    path: &std::path::Path,
+) -> Result<UpdateDatabaseMetadataRequest> {
+    let content = fs::read_to_string(path)?;
+    let input: DatabaseMetadataInput = serde_json::from_str(&content)?;
+    input.into_request(database_id)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatabaseMetadataInput {
+    name: String,
+    description: String,
+    llm_summary: Option<String>,
+    tags_json: String,
+}
+
+impl DatabaseMetadataInput {
+    fn into_request(self, database_id: &str) -> Result<UpdateDatabaseMetadataRequest> {
+        let name = self.name.trim().to_string();
+        if name.is_empty() {
+            return Err(anyhow!("database metadata name must not be empty"));
+        }
+        let tags_json = self.tags_json.trim().to_string();
+        validate_tags_json(&tags_json)?;
+        Ok(UpdateDatabaseMetadataRequest {
+            database_id: database_id.to_string(),
+            name,
+            description: self.description.trim().to_string(),
+            llm_summary: self.llm_summary.and_then(non_empty_trimmed),
+            tags_json,
+        })
+    }
+}
+
+fn validate_tags_json(tags_json: &str) -> Result<()> {
+    let tags: Vec<String> = serde_json::from_str(tags_json).map_err(|error| {
+        anyhow!("database metadata tags_json must be a JSON string array: {error}")
+    })?;
+    if tags.iter().any(|tag| tag.trim().is_empty()) {
+        return Err(anyhow!(
+            "database metadata tags_json must not contain empty tags"
+        ));
+    }
+    Ok(())
+}
+
+fn non_empty_trimmed(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[derive(Deserialize)]
@@ -1455,10 +1395,11 @@ fn default_metadata_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::{command_requires_write_cycles_available, run_vfs_command};
-    use crate::cli::{CyclesCommand, DatabaseProfileArg, NodeKindArg, VfsCommand};
+    use crate::cli::{CyclesCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -1486,6 +1427,7 @@ mod tests {
         database_cycles_pending: Mutex<Vec<String>>,
         market_entitlements: Mutex<Vec<(Option<String>, u32)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
+        metadata_updates: Mutex<Vec<UpdateDatabaseMetadataRequest>>,
         sql_queries: Mutex<Vec<(String, String, u32)>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1494,32 +1436,15 @@ mod tests {
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
+        node_lists: Mutex<Vec<ListNodesRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
+        memory_manifests: Mutex<Vec<String>>,
+        query_contexts: Mutex<Vec<QueryContextRequest>>,
+        source_evidence_requests: Mutex<Vec<SourceEvidenceRequest>>,
+        export_snapshots: Mutex<Vec<ExportSnapshotRequest>>,
+        fetch_updates_requests: Mutex<Vec<FetchUpdatesRequest>>,
         neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
-        archive_begun: Mutex<Vec<String>>,
-        archive_chunks: Mutex<Vec<(u64, u32)>>,
-        archive_finalized: Mutex<Vec<Vec<u8>>>,
-        archive_cancelled: Mutex<Vec<String>>,
-        restore_begun: Mutex<Vec<(String, Vec<u8>, u64)>>,
-        restore_chunks: Mutex<Vec<DatabaseRestoreChunkRequest>>,
-        restore_finalized: Mutex<Vec<String>>,
-        restore_cancelled: Mutex<Vec<String>>,
-        fail_restore_chunk: Mutex<Option<anyhow::Error>>,
-        fail_restore_finalize: Mutex<Option<anyhow::Error>>,
-        fail_restore_cancel: Mutex<Option<anyhow::Error>>,
-    }
-
-    struct FailingWriter;
-
-    impl std::io::Write for FailingWriter {
-        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::other("disk full"))
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
     }
 
     fn test_connection() -> ResolvedConnection {
@@ -1561,17 +1486,12 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(
-            &self,
-            name: &str,
-            profile: vfs_types::DatabaseProfile,
-        ) -> Result<CreateDatabaseResult> {
+        async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
                 name: name.to_string(),
-                profile,
             })
         }
         async fn purchase_database_cycles(
@@ -1677,8 +1597,17 @@ mod tests {
             }
             Ok(())
         }
-        async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
-            Ok(())
+        async fn update_database_metadata(
+            &self,
+            request: UpdateDatabaseMetadataRequest,
+        ) -> Result<vfs_types::DatabaseMetadata> {
+            self.metadata_updates.lock().unwrap().push(request.clone());
+            Ok(vfs_types::DatabaseMetadata {
+                name: request.name,
+                description: request.description,
+                llm_summary: request.llm_summary,
+                tags_json: request.tags_json,
+            })
         }
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
@@ -1690,100 +1619,19 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
-                profile: DatabaseProfile::Workspace,
+                metadata: Some(vfs_types::DatabaseMetadata {
+                    name: "Alpha".to_string(),
+                    description: String::new(),
+                    llm_summary: None,
+                    tags_json: "[]".to_string(),
+                }),
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
                 cycles_balance: Some(1_000_000),
                 cycles_suspended_at_ms: None,
-                archived_at_ms: None,
                 deleted_at_ms: None,
             }])
-        }
-        async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
-            self.archive_begun
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(DatabaseArchiveInfo {
-                database_id: database_id.to_string(),
-                size_bytes: b"archive bytes".len() as u64,
-            })
-        }
-        async fn read_database_archive_chunk(
-            &self,
-            _database_id: &str,
-            offset: u64,
-            max_bytes: u32,
-        ) -> Result<DatabaseArchiveChunk> {
-            self.archive_chunks
-                .lock()
-                .unwrap()
-                .push((offset, max_bytes));
-            let bytes = b"archive bytes";
-            let start = offset as usize;
-            let end = (start + max_bytes as usize).min(bytes.len());
-            Ok(DatabaseArchiveChunk {
-                bytes: bytes[start..end].to_vec(),
-            })
-        }
-        async fn finalize_database_archive(
-            &self,
-            _database_id: &str,
-            snapshot_hash: Vec<u8>,
-        ) -> Result<()> {
-            self.archive_finalized.lock().unwrap().push(snapshot_hash);
-            Ok(())
-        }
-        async fn cancel_database_archive(&self, database_id: &str) -> Result<()> {
-            self.archive_cancelled
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
-        }
-        async fn begin_database_restore(
-            &self,
-            database_id: &str,
-            snapshot_hash: Vec<u8>,
-            size_bytes: u64,
-        ) -> Result<()> {
-            self.restore_begun.lock().unwrap().push((
-                database_id.to_string(),
-                snapshot_hash,
-                size_bytes,
-            ));
-            Ok(())
-        }
-        async fn write_database_restore_chunk(
-            &self,
-            request: DatabaseRestoreChunkRequest,
-        ) -> Result<()> {
-            if let Some(error) = self.fail_restore_chunk.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_chunks.lock().unwrap().push(request);
-            Ok(())
-        }
-        async fn finalize_database_restore(&self, database_id: &str) -> Result<()> {
-            if let Some(error) = self.fail_restore_finalize.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_finalized
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
-        }
-        async fn cancel_database_restore(&self, database_id: &str) -> Result<()> {
-            if let Some(error) = self.fail_restore_cancel.lock().unwrap().take() {
-                return Err(error);
-            }
-            self.restore_cancelled
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(())
         }
         async fn read_node(&self, _database_id: &str, path: &str) -> Result<Option<Node>> {
             Ok(self.nodes.iter().find(|node| node.path == path).cloned())
@@ -1824,13 +1672,67 @@ mod tests {
                 outgoing_links: Vec::new(),
             }))
         }
-        async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+        async fn memory_manifest(&self, database_id: &str) -> Result<MemoryManifest> {
+            self.memory_manifests
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(MemoryManifest {
+                api_version: "kinic-stores-v1".to_string(),
+                purpose: "test".to_string(),
+                enabled_stores: vec!["knowledge".to_string()],
+                roots: vec![MemoryRoot {
+                    path: "/Knowledge".to_string(),
+                    kind: "knowledge".to_string(),
+                }],
+                entry_roots: Vec::new(),
+                capabilities: Vec::new(),
+                canonical_roles: Vec::new(),
+                write_policy: "stores_read_only".to_string(),
+                recommended_entrypoint: "query_context".to_string(),
+                max_depth: 2,
+                max_query_limit: 100,
+                budget_unit: "approx_chars_from_tokens".to_string(),
+            })
+        }
+        async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+            self.query_contexts.lock().unwrap().push(request.clone());
+            Ok(QueryContext {
+                namespace: request.namespace.unwrap_or_else(|| "/Memory".to_string()),
+                task: request.task,
+                search_hits: Vec::new(),
+                nodes: Vec::new(),
+                graph_links: Vec::new(),
+                evidence: Vec::new(),
+                truncated: false,
+            })
+        }
+        async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+            self.source_evidence_requests
+                .lock()
+                .unwrap()
+                .push(request.clone());
+            Ok(SourceEvidence {
+                node_path: request.node_path,
+                refs: vec![SourceEvidenceRef {
+                    source_path: "/Sources/web/a.md".to_string(),
+                    via_path: "/Knowledge/a.md".to_string(),
+                    raw_href: "https://example.com".to_string(),
+                    link_text: "Source".to_string(),
+                    source_etag: Some("source-etag".to_string()),
+                    source_updated_at: Some(2),
+                    source_content_hash: Some("sha256:test".to_string()),
+                }],
+            })
+        }
+        async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+            self.node_lists.lock().unwrap().push(request);
             Ok(self.entries.clone())
         }
         async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
             self.child_lists.lock().unwrap().push(request);
             Ok(vec![ChildNode {
-                path: "/Wiki/alpha.md".to_string(),
+                path: "/Knowledge/alpha.md".to_string(),
                 name: "alpha.md".to_string(),
                 kind: NodeEntryKind::File,
                 updated_at: Some(10),
@@ -1911,15 +1813,27 @@ mod tests {
         }
         async fn export_snapshot(
             &self,
-            _request: ExportSnapshotRequest,
+            request: ExportSnapshotRequest,
         ) -> Result<ExportSnapshotResponse> {
-            unreachable!()
+            self.export_snapshots.lock().unwrap().push(request);
+            Ok(ExportSnapshotResponse {
+                snapshot_revision: "rev-2".to_string(),
+                snapshot_session_id: None,
+                nodes: vec![node("/Knowledge/a.md", NodeKind::File, "etag")],
+                next_cursor: Some("cursor-2".to_string()),
+            })
         }
         async fn fetch_updates(
             &self,
-            _request: FetchUpdatesRequest,
+            request: FetchUpdatesRequest,
         ) -> Result<FetchUpdatesResponse> {
-            unreachable!()
+            self.fetch_updates_requests.lock().unwrap().push(request);
+            Ok(FetchUpdatesResponse {
+                snapshot_revision: "rev-3".to_string(),
+                changed_nodes: vec![node("/Knowledge/b.md", NodeKind::File, "etag")],
+                removed_paths: vec!["/Knowledge/old.md".to_string()],
+                next_cursor: None,
+            })
         }
     }
 
@@ -1933,7 +1847,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -1957,7 +1871,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -1986,7 +1900,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::MkdirNode {
-                path: "/Wiki/new".to_string(),
+                path: "/Knowledge/new".to_string(),
                 json: false,
             },
         )
@@ -2005,7 +1919,7 @@ mod tests {
     fn cycles_gate_covers_content_mutation_commands_only() {
         assert!(command_requires_write_cycles_available(
             &VfsCommand::WriteNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 kind: NodeKindArg::File,
                 input: PathBuf::from("a.md"),
                 metadata_json: "{}".to_string(),
@@ -2015,7 +1929,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::AppendNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 input: PathBuf::from("a.md"),
                 kind: None,
                 metadata_json: None,
@@ -2026,7 +1940,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::EditNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 old_text: "a".to_string(),
                 new_text: "b".to_string(),
                 expected_etag: None,
@@ -2036,7 +1950,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::DeleteNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 expected_etag: None,
                 expected_folder_index_etag: None,
                 json: false,
@@ -2044,20 +1958,20 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::DeleteTree {
-                path: "/Wiki/a".to_string(),
+                path: "/Knowledge/a".to_string(),
                 json: false,
             }
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MkdirNode {
-                path: "/Wiki/a".to_string(),
+                path: "/Knowledge/a".to_string(),
                 json: false,
             }
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MoveNode {
-                from_path: "/Wiki/a.md".to_string(),
-                to_path: "/Wiki/b.md".to_string(),
+                from_path: "/Knowledge/a.md".to_string(),
+                to_path: "/Knowledge/b.md".to_string(),
                 expected_etag: None,
                 overwrite: false,
                 json: false,
@@ -2065,7 +1979,7 @@ mod tests {
         ));
         assert!(command_requires_write_cycles_available(
             &VfsCommand::MultiEditNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 edits_file: PathBuf::from("edits.json"),
                 expected_etag: None,
                 json: false,
@@ -2073,7 +1987,7 @@ mod tests {
         ));
         assert!(!command_requires_write_cycles_available(
             &VfsCommand::ReadNode {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 metadata_only: false,
                 fields: None,
                 json: false,
@@ -2096,8 +2010,8 @@ mod tests {
         std::fs::write(
             &input,
             r#"[
-  {"path": "/Wiki/a.md", "kind": "file", "content": "alpha"},
-  {"path": "/Sources/raw/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
+  {"path": "/Knowledge/a.md", "kind": "file", "content": "alpha"},
+  {"path": "/Sources/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
 ]"#,
         )
         .expect("input should write");
@@ -2123,25 +2037,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_nodes_rejects_invalid_source_path() {
+    async fn write_nodes_allows_source_kind_without_path_schema() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/source.md", "kind": "source", "content": "source"}]"#,
+            r#"[{"path": "/Knowledge/source.md", "kind": "source", "content": "source"}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
-        let error = run_vfs_command(
+        run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::WriteNodes { input, json: true },
         )
         .await
-        .expect_err("invalid source path should fail");
+        .expect("source kind should not be schema-gated by CLI");
 
-        assert!(error.to_string().contains("source path must stay under"));
-        assert!(client.write_batches.lock().unwrap().is_empty());
+        let batches = client.write_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].nodes[0].path, "/Knowledge/source.md");
+        assert_eq!(batches[0].nodes[0].kind, NodeKind::Source);
     }
 
     #[tokio::test]
@@ -2186,7 +2102,7 @@ mod tests {
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/a.md", "kind": "file", "content": "alpha", "expected_etga": "etag"}]"#,
+            r#"[{"path": "/Knowledge/a.md", "kind": "file", "content": "alpha", "expected_etga": "etag"}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
@@ -2208,7 +2124,7 @@ mod tests {
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
             &input,
-            r#"[{"path": "/Wiki/folder", "kind": "folder", "content": ""}]"#,
+            r#"[{"path": "/Knowledge/folder", "kind": "folder", "content": ""}]"#,
         )
         .expect("input should write");
         let client = MockClient::default();
@@ -2231,21 +2147,21 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::ListChildren {
-                path: "/Wiki".to_string(),
+                path: "/Knowledge".to_string(),
                 json: true,
             },
         )
         .await
         .expect("list children should succeed");
-        assert_eq!(client.child_lists.lock().unwrap()[0].path, "/Wiki");
+        assert_eq!(client.child_lists.lock().unwrap()[0].path, "/Knowledge");
     }
 
     #[tokio::test]
     async fn delete_node_autofills_folder_index_etag() {
         let client = MockClient {
             nodes: vec![
-                node("/Wiki/topic", NodeKind::Folder, "etag-folder"),
-                node("/Wiki/topic/index.md", NodeKind::File, "etag-index"),
+                node("/Knowledge/topic", NodeKind::Folder, "etag-folder"),
+                node("/Knowledge/topic/index.md", NodeKind::File, "etag-index"),
             ],
             ..MockClient::default()
         };
@@ -2253,7 +2169,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteNode {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 expected_etag: Some("etag-folder".to_string()),
                 expected_folder_index_etag: None,
                 json: true,
@@ -2263,7 +2179,7 @@ mod tests {
         .expect("folder delete should succeed");
 
         let deletes = client.deletes.lock().unwrap();
-        assert_eq!(deletes[0].path, "/Wiki/topic");
+        assert_eq!(deletes[0].path, "/Knowledge/topic");
         assert_eq!(deletes[0].expected_etag.as_deref(), Some("etag-folder"));
         assert_eq!(
             deletes[0].expected_folder_index_etag.as_deref(),
@@ -2275,8 +2191,8 @@ mod tests {
     async fn delete_node_keeps_explicit_folder_index_etag() {
         let client = MockClient {
             nodes: vec![
-                node("/Wiki/topic", NodeKind::Folder, "etag-folder"),
-                node("/Wiki/topic/index.md", NodeKind::File, "etag-index"),
+                node("/Knowledge/topic", NodeKind::Folder, "etag-folder"),
+                node("/Knowledge/topic/index.md", NodeKind::File, "etag-index"),
             ],
             ..MockClient::default()
         };
@@ -2284,7 +2200,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteNode {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 expected_etag: Some("etag-folder".to_string()),
                 expected_folder_index_etag: Some("stale".to_string()),
                 json: true,
@@ -2303,10 +2219,18 @@ mod tests {
     #[tokio::test]
     async fn delete_tree_autofills_folder_index_etag_for_folder_entries() {
         let client = MockClient {
-            nodes: vec![node("/Wiki/topic/index.md", NodeKind::File, "etag-index")],
+            nodes: vec![node(
+                "/Knowledge/topic/index.md",
+                NodeKind::File,
+                "etag-index",
+            )],
             entries: vec![
-                entry("/Wiki/topic/index.md", NodeEntryKind::File, "etag-index"),
-                entry("/Wiki/topic", NodeEntryKind::Folder, "etag-folder"),
+                entry(
+                    "/Knowledge/topic/index.md",
+                    NodeEntryKind::File,
+                    "etag-index",
+                ),
+                entry("/Knowledge/topic", NodeEntryKind::Folder, "etag-folder"),
             ],
             ..MockClient::default()
         };
@@ -2314,7 +2238,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::DeleteTree {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 json: true,
             },
         )
@@ -2324,17 +2248,51 @@ mod tests {
         let deletes = client.deletes.lock().unwrap();
         let index_delete = deletes
             .iter()
-            .find(|request| request.path == "/Wiki/topic/index.md")
+            .find(|request| request.path == "/Knowledge/topic/index.md")
             .expect("index delete should dispatch");
         assert!(index_delete.expected_folder_index_etag.is_none());
         let folder_delete = deletes
             .iter()
-            .find(|request| request.path == "/Wiki/topic")
+            .find(|request| request.path == "/Knowledge/topic")
             .expect("folder delete should dispatch");
         assert_eq!(
             folder_delete.expected_folder_index_etag.as_deref(),
             Some("etag-index")
         );
+    }
+
+    #[tokio::test]
+    async fn delete_tree_rejects_limit_sized_listing_before_deleting() {
+        let entries = (0..super::DELETE_TREE_LIST_LIMIT)
+            .map(|index| {
+                entry(
+                    &format!("/Knowledge/topic/{index:03}.md"),
+                    NodeEntryKind::File,
+                    &format!("etag-{index}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let client = MockClient {
+            entries,
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::DeleteTree {
+                path: "/Knowledge/topic".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect_err("limit-sized tree listing should reject before delete");
+
+        assert!(error.to_string().contains("delete-tree target exceeds"));
+        assert!(client.deletes.lock().unwrap().is_empty());
+        let lists = client.node_lists.lock().unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].limit, super::DELETE_TREE_LIST_LIMIT);
     }
 
     #[tokio::test]
@@ -2345,7 +2303,6 @@ mod tests {
             &test_connection(),
             VfsCommand::Database {
                 command: super::DatabaseCommand::Create {
-                    profile: DatabaseProfileArg::Workspace,
                     name: "Team skills".to_string(),
                 },
             },
@@ -2562,20 +2519,117 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_rename_parses_and_calls_client() {
+    async fn database_metadata_reads_input_and_calls_client() {
         let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": " Alpha metadata ",
+              "description": " Public wiki retrieval metadata. ",
+              "llm_summary": " Search terms and retrieval scope. ",
+              "tags_json": "[\"kinic-wiki\",\"clipper\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::Rename {
+                command: super::DatabaseCommand::Metadata {
                     database_id: "db_alpha".to_string(),
-                    name: "Alpha renamed".to_string(),
+                    input,
+                    json: false,
                 },
             },
         )
         .await
-        .expect("database rename should succeed");
+        .expect("database metadata update should succeed");
+        let updates = client.metadata_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].database_id, "db_alpha");
+        assert_eq!(updates[0].name, "Alpha metadata");
+        assert_eq!(updates[0].description, "Public wiki retrieval metadata.");
+        assert_eq!(
+            updates[0].llm_summary.as_deref(),
+            Some("Search terms and retrieval scope.")
+        );
+        assert_eq!(updates[0].tags_json, r#"["kinic-wiki","clipper"]"#);
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_invalid_tags_json() {
+        let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": "Alpha",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "{\"tag\":\"not-array\"}"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect_err("invalid tags_json should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database metadata tags_json must be a JSON string array")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn database_metadata_rejects_empty_name() {
+        let client = MockClient::default();
+        let dir = tempdir().expect("tempdir should be created");
+        let input = dir.path().join("metadata.json");
+        fs::write(
+            &input,
+            r#"{
+              "name": " ",
+              "description": "Description",
+              "llm_summary": "Summary",
+              "tags_json": "[\"alpha\"]"
+            }"#,
+        )
+        .expect("metadata fixture should be written");
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Metadata {
+                    database_id: "db_alpha".to_string(),
+                    input,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect_err("empty name should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("database metadata name must not be empty")
+        );
+        assert!(client.metadata_updates.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2591,200 +2645,6 @@ mod tests {
         .await
         .expect("database list should succeed");
         assert_eq!(*client.database_lists.lock().unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn database_archive_export_writes_file_and_finalizes_hash() {
-        let dir = tempdir().expect("temp dir should exist");
-        let output = dir.path().join("archive.sqlite");
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveExport {
-                    database_id: "alpha".to_string(),
-                    output: output.clone(),
-                    chunk_size: 5,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect("archive export should succeed");
-        assert_eq!(
-            std::fs::read(&output).expect("archive file"),
-            b"archive bytes"
-        );
-        assert_eq!(
-            client.archive_chunks.lock().unwrap().as_slice(),
-            &[(0, 5), (5, 5), (10, 5)]
-        );
-        assert_eq!(client.archive_finalized.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn database_archive_export_cleans_up_when_local_write_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let tmp_output = dir.path().join(".archive.sqlite.tmp");
-        std::fs::write(&tmp_output, b"partial").expect("tmp file should write");
-        let client = MockClient::default();
-        let mut writer = FailingWriter;
-
-        let error = super::archive_export_chunks(
-            &client,
-            "alpha",
-            b"archive bytes".len() as u64,
-            &mut writer,
-            &tmp_output,
-            5,
-        )
-        .await
-        .expect_err("local write should fail");
-
-        assert!(error.to_string().contains("disk full"));
-        assert_eq!(
-            client.archive_cancelled.lock().unwrap().as_slice(),
-            &["alpha".to_string()]
-        );
-        assert!(!tmp_output.exists());
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_writes_chunks_and_finalizes() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect("archive restore should succeed");
-        let begun = client.restore_begun.lock().unwrap();
-        assert_eq!(begun[0].0, "alpha");
-        assert_eq!(begun[0].2, b"restore bytes".len() as u64);
-        let chunks = client.restore_chunks.lock().unwrap();
-        assert_eq!(chunks[0].offset, 0);
-        assert_eq!(chunks[0].bytes, b"rest");
-        assert_eq!(chunks[1].offset, 4);
-        assert_eq!(chunks[1].bytes, b"ore ");
-        assert_eq!(chunks[2].offset, 8);
-        assert_eq!(chunks[2].bytes, b"byte");
-        assert_eq!(chunks[3].offset, 12);
-        assert_eq!(chunks[3].bytes, b"s");
-        assert_eq!(client.restore_finalized.lock().unwrap()[0], "alpha");
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_cancels_when_chunk_write_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_chunk.lock().unwrap() = Some(anyhow::anyhow!("chunk failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("chunk failure should fail restore");
-
-        assert!(error.to_string().contains("chunk failed"));
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-        assert!(client.restore_finalized.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_cancels_when_finalize_fails() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_finalize.lock().unwrap() = Some(anyhow::anyhow!("finalize failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("finalize failure should fail restore");
-
-        assert!(error.to_string().contains("finalize failed"));
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-        assert_eq!(client.restore_chunks.lock().unwrap().len(), 4);
-    }
-
-    #[tokio::test]
-    async fn database_archive_restore_reports_cancel_failure_with_original_error() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = dir.path().join("archive.sqlite");
-        std::fs::write(&input, b"restore bytes").expect("archive file should write");
-        let client = MockClient::default();
-        *client.fail_restore_finalize.lock().unwrap() = Some(anyhow::anyhow!("finalize failed"));
-        *client.fail_restore_cancel.lock().unwrap() = Some(anyhow::anyhow!("cancel failed"));
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveRestore {
-                    database_id: "alpha".to_string(),
-                    input,
-                    chunk_size: 4,
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect_err("cancel failure should be reported");
-
-        let message = error.to_string();
-        assert!(message.contains("finalize failed"));
-        assert!(message.contains("restore cancel failed: cancel failed"));
-    }
-
-    #[tokio::test]
-    async fn database_archive_cancel_dispatches() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::ArchiveCancel {
-                    database_id: "alpha".to_string(),
-                },
-            },
-        )
-        .await
-        .expect("archive cancel should succeed");
-        assert_eq!(client.archive_cancelled.lock().unwrap()[0], "alpha");
     }
 
     #[tokio::test]
@@ -2813,47 +2673,152 @@ mod tests {
         assert!(client.write_cycle_checks.lock().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn memory_manifest_sends_database_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::MemoryManifest { json: true },
+        )
+        .await
+        .expect("memory-manifest should succeed");
+
+        assert_eq!(
+            client.memory_manifests.lock().unwrap().as_slice(),
+            &["alpha".to_string()]
+        );
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_context_sends_store_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::QueryContext {
+                task: "answer auth question".to_string(),
+                entities: vec!["auth".to_string(), "ii".to_string()],
+                namespace: Some("/Knowledge/auth".to_string()),
+                budget_tokens: 12_000,
+                depth: 2,
+                no_evidence: true,
+                json: true,
+            },
+        )
+        .await
+        .expect("query-context should succeed");
+
+        let requests = client.query_contexts.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].task, "answer auth question");
+        assert_eq!(requests[0].entities, vec!["auth", "ii"]);
+        assert_eq!(requests[0].namespace.as_deref(), Some("/Knowledge/auth"));
+        assert_eq!(requests[0].budget_tokens, 12_000);
+        assert_eq!(requests[0].depth, 2);
+        assert!(!requests[0].include_evidence);
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn source_evidence_sends_node_path_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::SourceEvidence {
+                node_path: "/Knowledge/a.md".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect("source-evidence should succeed");
+
+        let requests = client.source_evidence_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].node_path, "/Knowledge/a.md");
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn export_snapshot_sends_scope_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::ExportSnapshot {
+                prefix: Some("/Knowledge".to_string()),
+                limit: 25,
+                cursor: Some("cursor-1".to_string()),
+                snapshot_revision: Some("rev-1".to_string()),
+                json: true,
+            },
+        )
+        .await
+        .expect("export-snapshot should succeed");
+
+        let requests = client.export_snapshots.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(requests[0].limit, 25);
+        assert_eq!(requests[0].cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(requests[0].snapshot_revision.as_deref(), Some("rev-1"));
+        assert_eq!(requests[0].snapshot_session_id, None);
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_updates_sends_delta_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::FetchUpdates {
+                known_snapshot_revision: "rev-1".to_string(),
+                prefix: Some("/Knowledge".to_string()),
+                limit: 25,
+                cursor: Some("cursor-1".to_string()),
+                target_snapshot_revision: Some("rev-2".to_string()),
+                json: true,
+            },
+        )
+        .await
+        .expect("fetch-updates should succeed");
+
+        let requests = client.fetch_updates_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].known_snapshot_revision, "rev-1");
+        assert_eq!(requests[0].prefix.as_deref(), Some("/Knowledge"));
+        assert_eq!(requests[0].limit, 25);
+        assert_eq!(requests[0].cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(
+            requests[0].target_snapshot_revision.as_deref(),
+            Some("rev-2")
+        );
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn sql_json_query_output_formats_rows_and_envelope() {
         let result = IndexSqlJsonQueryResult {
-            rows: vec![r#"{"path":"/Wiki/a.md"}"#.to_string()],
+            rows: vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()],
             row_count: 1,
             limit: 20,
         };
 
         assert_eq!(
             super::sql_json_query_output_lines(&result, false).expect("text output"),
-            vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]
+            vec![r#"{"path":"/Knowledge/a.md"}"#.to_string()]
         );
         let json = super::sql_json_query_output_lines(&result, true).expect("json output");
         assert_eq!(json.len(), 1);
         assert!(json[0].contains("\"row_count\": 1"));
         assert!(json[0].contains("\"limit\": 20"));
-    }
-
-    #[tokio::test]
-    async fn database_restore_cancel_dispatches() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RestoreCancel {
-                    database_id: "alpha".to_string(),
-                },
-            },
-        )
-        .await
-        .expect("restore cancel should succeed");
-        assert_eq!(client.restore_cancelled.lock().unwrap()[0], "alpha");
-    }
-
-    #[test]
-    fn archive_chunk_size_is_capped() {
-        assert!(super::validate_archive_chunk_size(1).is_ok());
-        assert!(super::validate_archive_chunk_size(1_048_576).is_ok());
-        assert!(super::validate_archive_chunk_size(0).is_err());
-        assert!(super::validate_archive_chunk_size(1_048_577).is_err());
     }
 
     #[test]
@@ -2876,7 +2841,7 @@ mod tests {
     #[test]
     fn node_field_view_can_omit_content() {
         let node = vfs_types::Node {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             kind: vfs_types::NodeKind::File,
             content: "large body".to_string(),
             created_at: 1,
@@ -2886,7 +2851,7 @@ mod tests {
         };
         let metadata = super::node_field_view(&node, true, None).expect("metadata view");
         assert!(metadata.get("content").is_none());
-        assert_eq!(metadata["path"], "/Wiki/index.md");
+        assert_eq!(metadata["path"], "/Knowledge/index.md");
 
         let fields =
             super::node_field_view(&node, false, Some("path,kind,etag")).expect("field view");
@@ -2919,7 +2884,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::ReadNodeContext {
-                path: "/Wiki/a.md".to_string(),
+                path: "/Knowledge/a.md".to_string(),
                 link_limit: 7,
                 json: true,
             },
@@ -2927,7 +2892,7 @@ mod tests {
         .await
         .expect("read context should succeed");
         let contexts = client.contexts.lock().unwrap();
-        assert_eq!(contexts[0].path, "/Wiki/a.md");
+        assert_eq!(contexts[0].path, "/Knowledge/a.md");
         assert_eq!(contexts[0].link_limit, 7);
     }
 
@@ -2938,7 +2903,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::GraphNeighborhood {
-                center_path: "/Wiki/a.md".to_string(),
+                center_path: "/Knowledge/a.md".to_string(),
                 depth: 2,
                 limit: 9,
                 json: true,
@@ -2947,7 +2912,7 @@ mod tests {
         .await
         .expect("graph neighborhood should succeed");
         let neighborhoods = client.neighborhoods.lock().unwrap();
-        assert_eq!(neighborhoods[0].center_path, "/Wiki/a.md");
+        assert_eq!(neighborhoods[0].center_path, "/Knowledge/a.md");
         assert_eq!(neighborhoods[0].depth, 2);
         assert_eq!(neighborhoods[0].limit, 9);
     }

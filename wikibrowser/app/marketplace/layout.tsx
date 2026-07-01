@@ -3,8 +3,13 @@
 // Why: marketplace-specific filters now live with the listing content.
 
 import type { ReactNode } from "react";
+import { AdminRouteShell } from "@/app/admin-route-shell";
 import { AdminContent } from "@/components/admin-shell";
 
 export default function MarketplaceLayout({ children }: { children: ReactNode }) {
-  return <AdminContent>{children}</AdminContent>;
+  return (
+    <AdminRouteShell>
+      <AdminContent>{children}</AdminContent>
+    </AdminRouteShell>
+  );
 }

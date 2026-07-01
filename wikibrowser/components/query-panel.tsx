@@ -4,7 +4,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { AlertTriangle, Database, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
-import { createUrlIngestRequest } from "@/lib/url-ingest";
+import { createSourceCaptureRequest } from "@/lib/source-capture";
 import { collectLintHints, type LintHint } from "@/lib/lint-hints";
 import { classifyQueryInput, type QueryAction } from "@/lib/query-actions";
 import { collectQueryAnswerContext } from "@/lib/query-context";
@@ -99,7 +99,7 @@ export function QueryPanel({
   async function searchWiki(action: Extract<QueryAction, { kind: "search" }>) {
     setBusy(true);
     try {
-      const hits = await searchNodes(canisterId, databaseId, action.query, 10, action.targetPath, "light", readIdentity ?? undefined);
+      const hits = await searchNodes(canisterId, databaseId, action.query, 10, null, "light", readIdentity ?? undefined);
       setResult({ kind: "search", query: action.query, hits });
     } catch (cause) {
       setResult({ kind: "message", tone: "error", text: errorMessage(cause) });
@@ -147,7 +147,7 @@ export function QueryPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question: action.question, databaseId, selectedPath, sessionNonce, context })
       });
-      const body: unknown = await response.json();
+      const body = await readAnswerResponseBody(response);
       if (!response.ok) {
         const message = isRecord(body) && typeof body.error === "string" ? body.error : `answer failed: HTTP ${response.status}`;
         throw new Error(message);
@@ -164,7 +164,7 @@ export function QueryPanel({
   async function confirmQueueUrl(action: QueryAction) {
     if (action.kind !== "queue_url") return;
     if (!writeIdentity) {
-      setResult({ kind: "message", tone: "error", text: "Login with Internet Identity to queue URL ingest." });
+      setResult({ kind: "message", tone: "error", text: "Login with Internet Identity to queue source capture." });
       return;
     }
     if (databaseCyclesError) {
@@ -173,7 +173,7 @@ export function QueryPanel({
     }
     setBusy(true);
     try {
-      const created = await createUrlIngestRequest(canisterId, databaseId, writeIdentity, action.url);
+      const created = await createSourceCaptureRequest(canisterId, databaseId, writeIdentity, action.url);
       setPendingAction(null);
       setResult({
         kind: "message",
@@ -337,6 +337,25 @@ function resultExcerpt(hit: SearchNodeHit): string | null {
 
 function isAnswerBody(value: unknown): value is { answer: string; citations: string[]; abstained: boolean } {
   return isRecord(value) && typeof value.answer === "string" && Array.isArray(value.citations) && value.citations.every((item) => typeof item === "string") && typeof value.abstained === "boolean";
+}
+
+async function readAnswerResponseBody(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.toLowerCase().includes("application/json")) {
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(`answer failed: HTTP ${response.status} returned invalid JSON`);
+    }
+  }
+  let preview = "";
+  try {
+    preview = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 180);
+  } catch {
+    preview = "";
+  }
+  const responseKind = contentType.trim() || "non-JSON response";
+  throw new Error(`answer failed: HTTP ${response.status} returned ${responseKind}${preview ? `: ${preview}` : ""}`);
 }
 
 function formatSqlJsonRows(rows: string[]): string[] {

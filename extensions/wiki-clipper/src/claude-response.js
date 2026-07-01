@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/src/claude-response.js
-// What: Read Claude sidebar/API data and convert it into raw-source captures.
+// What: Read Claude sidebar/API data and convert it into evidence-source captures.
 // Why: Claude does not expose a public history export API, so export uses the signed-in claude.ai session.
 import { appendLimitedMessage } from "./conversation-limits.js";
 

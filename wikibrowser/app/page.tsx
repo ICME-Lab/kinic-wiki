@@ -29,7 +29,7 @@ const workflowSteps = [
   },
   {
     title: "Browse and edit",
-    body: "Inspect public databases, browse wiki paths, and make manual Markdown edits when operators need a visual surface."
+    body: "Inspect public databases, browse knowledge paths, and make manual Markdown edits when operators need a visual surface."
   }
 ];
 
@@ -41,15 +41,15 @@ const companionSurfaces = [
   },
   {
     title: "Official wiki",
-    body: "Open the public Kinic Wiki example in the wiki browser to inspect how /Wiki and /Sources are organized.",
+    body: "Open the public Kinic Wiki example in the wiki browser to inspect how /Knowledge and /Sources are organized.",
     href: publicDatabasePath("db_kva4v2twg6jv"),
     label: "Open Official Wiki",
     icon: BookOpen
   },
   {
     title: "Capture tools",
-    body: "Save ChatGPT/Claude conversations as raw sources and queue active web pages as URL ingest requests. The extension requires Internet Identity writer access; use the CLI to turn raw chats into organized /Wiki pages.",
-    details: ["Web pages -> /Sources/ingest-requests/...", "AI chats -> /Sources/raw/..."],
+    body: "Save ChatGPT/Claude conversations and active web page snapshots as raw evidence. The extension requires Internet Identity writer access; use the CLI to turn raw captures into organized /Knowledge pages.",
+    details: ["Web pages -> /Sources/web/...", "AI chats -> /Sources/..."],
     href: "https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi",
     label: "Chrome Extension",
     icon: Wrench
@@ -59,7 +59,7 @@ const companionSurfaces = [
 const commandLines = [
   "npm install -g kinic-vfs-cli",
   "kinic-vfs-cli database link <database-id>",
-  'kinic-vfs-cli search-remote "query" --prefix /Wiki --json'
+  'kinic-vfs-cli search-remote "query" --prefix /Knowledge --json'
 ];
 
 export default function HomePage() {
@@ -206,7 +206,7 @@ export default function HomePage() {
                 <h3 className="text-xl font-semibold text-ink">Memory shape</h3>
               </div>
               <p className="mt-3 text-sm leading-6 text-muted">
-                Structured notes live under <code>/Wiki/...</code>. Raw evidence lives under <code>/Sources/raw/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
+                Structured notes live under <code>/Knowledge/...</code>. Raw evidence lives under <code>/Sources/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
               </p>
             </article>
             <article className="rounded-2xl bg-paper p-6">

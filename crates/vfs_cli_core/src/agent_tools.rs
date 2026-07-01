@@ -173,9 +173,14 @@ async fn dispatch_tool_call_impl(
         }
         "ls" => {
             let args: ListArgs = serde_json::from_value(input)?;
-            tool_ok(
-                json!({ "entries": client.list_nodes(ListNodesRequest { database_id: database_id(args.database_id)?, prefix: args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()), recursive: args.recursive.unwrap_or(false) }).await? }),
-            )
+            tool_ok(json!({
+                "entries": client.list_nodes(ListNodesRequest {
+                    database_id: database_id(args.database_id)?,
+                    prefix: args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()),
+                    recursive: args.recursive.unwrap_or(false),
+                    limit: 100,
+                }).await?
+            }))
         }
         "mkdir" => {
             let args: MkdirArgs = serde_json::from_value(input)?;
@@ -262,15 +267,37 @@ async fn dispatch_tool_call_impl(
         }
         "search" => {
             let args: SearchArgs = serde_json::from_value(input)?;
-            tool_ok(
-                json!({ "hits": client.search_nodes(SearchNodesRequest { database_id: database_id(args.database_id)?, query_text: args.query_text, prefix: Some(args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string())), top_k: args.top_k.unwrap_or(10), preview_mode: args.preview_mode }).await? }),
-            )
+            let rank_sources_last = args.prefix.is_none();
+            let hits = client
+                .search_nodes(SearchNodesRequest {
+                    database_id: database_id(args.database_id)?,
+                    query_text: args.query_text,
+                    prefix: Some(
+                        args.prefix
+                            .unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()),
+                    ),
+                    top_k: args.top_k.unwrap_or(10),
+                    preview_mode: args.preview_mode,
+                })
+                .await?;
+            tool_ok(json!({ "hits": rank_search_hits_for_agent(hits, rank_sources_last) }))
         }
         "search_paths" => {
             let args: SearchArgs = serde_json::from_value(input)?;
-            tool_ok(
-                json!({ "hits": client.search_node_paths(SearchNodePathsRequest { database_id: database_id(args.database_id)?, query_text: args.query_text, prefix: Some(args.prefix.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string())), top_k: args.top_k.unwrap_or(10), preview_mode: args.preview_mode }).await? }),
-            )
+            let rank_sources_last = args.prefix.is_none();
+            let hits = client
+                .search_node_paths(SearchNodePathsRequest {
+                    database_id: database_id(args.database_id)?,
+                    query_text: args.query_text,
+                    prefix: Some(
+                        args.prefix
+                            .unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string()),
+                    ),
+                    top_k: args.top_k.unwrap_or(10),
+                    preview_mode: args.preview_mode,
+                })
+                .await?;
+            tool_ok(json!({ "hits": rank_search_hits_for_agent(hits, rank_sources_last) }))
         }
         "skill_find" => {
             let args: SkillFindArgs = serde_json::from_value(input)?;
@@ -365,6 +392,30 @@ fn tool_error(message: String) -> ToolResult {
     }
 }
 
+fn rank_search_hits_for_agent(
+    hits: Vec<vfs_types::SearchNodeHit>,
+    rank_sources_last: bool,
+) -> Vec<vfs_types::SearchNodeHit> {
+    if !rank_sources_last {
+        return hits;
+    }
+    let mut primary = Vec::new();
+    let mut sources = Vec::new();
+    for hit in hits {
+        if is_raw_source_path(&hit.path) {
+            sources.push(hit);
+        } else {
+            primary.push(hit);
+        }
+    }
+    primary.extend(sources);
+    primary
+}
+
+fn is_raw_source_path(path: &str) -> bool {
+    path == "/Sources" || path.starts_with("/Sources/")
+}
+
 fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec::new("read", "Read a node by path.", read_schema()),
@@ -416,12 +467,12 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec::new("rm", "Delete a node by path.", delete_schema()),
         ToolSpec::new(
             "search",
-            "Search current node contents with FTS recall. Unspecified preview mode defaults to light.",
+            "Search database node contents with FTS recall. Prefix omitted searches the database and ranks /Sources last. Unspecified preview mode defaults to light.",
             search_schema(),
         ),
         ToolSpec::new(
             "search_paths",
-            "Search node paths and basenames by case-insensitive substring recall.",
+            "Search node paths and basenames by case-insensitive substring recall. Prefix omitted searches the database and ranks /Sources last.",
             search_schema(),
         ),
         ToolSpec::new(

@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/tests/settings.test.mjs
 // What: Settings UI and database-list filtering tests.
-// Why: URL ingest setup should expose only writable DB choices and no fixed runtime URLs.
+// Why: source capture setup should expose only writable DB choices and no fixed runtime URLs.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -31,6 +31,7 @@ test("settings popup omits fixed runtime inputs", () => {
   assert.match(html, /id="create-database"/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
+  assert.doesNotMatch(html, /Database title/);
   assert.doesNotMatch(html, /refresh-databases/);
   assert.doesNotMatch(html, /save-settings/);
   assert.doesNotMatch(html, /settings-actions/);
@@ -92,12 +93,18 @@ test("settings popup clears database on logout and fails closed on auth reset er
   const popupJs = readFileSync(new URL("../popup/popup.js", import.meta.url), "utf8");
   const logoutHandler = eventHandlerFunction(popupJs, "logoutButton");
   const notifyAuthSessionChanged = namedFunction(popupJs, "notifyAuthSessionChanged");
+  const refreshLatestStatus = namedFunction(popupJs, "refreshLatestStatus");
   assert.match(logoutHandler, /await logoutInternetIdentity\(\)/);
   assert.match(logoutHandler, /await saveDatabaseSelection\(""\)/);
   assert.match(logoutHandler, /await notifyAuthSessionChanged\(\)/);
   assert.match(logoutHandler, /await refreshAuthAndDatabases\(\)/);
   assert.doesNotMatch(notifyAuthSessionChanged, /catch/);
   assert.match(notifyAuthSessionChanged, /await send\(\{ type: "auth-session-changed" \}\)/);
+  assert.match(refreshLatestStatus, /type: "latest-source-capture-status"/);
+  assert.doesNotMatch(refreshLatestStatus, new RegExp("latest-" + "url-" + "ingest-status"));
+  assert.match(popupJs, /function latestStatusLabel\(value\)/);
+  assert.match(popupJs, /value\.status === "error"[\s\S]*value\.url/);
+  assert.match(popupJs, /value\.sourcePath/);
 });
 
 test("manifest exposes settings as options page without popup", () => {
@@ -132,14 +139,14 @@ test("database creation delegates create_database and normalizes result", async 
     {
       async create_database(request) {
         calls.push(request);
-        return { Ok: { database_id: "db_created", name: request.name, profile: request.profile } };
+        return { Ok: { database_id: "db_created", name: request.name } };
       }
     },
     "My Team Wiki"
   );
 
-  assert.deepEqual(calls, [{ name: "My Team Wiki", profile: { Workspace: null } }]);
-  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki", profile: "Workspace" });
+  assert.deepEqual(calls, [{ name: "My Team Wiki" }]);
+  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki" });
 });
 
 test("database creation surfaces canister errors", async () => {
@@ -174,7 +181,7 @@ test("database dropdown options include only active owner and writer databases",
     rawDatabase("owner-db", "Owner", "Active", 20_000n),
     rawDatabase("writer-db", "Writer", "Active", 20_000n),
     rawDatabase("reader-db", "Reader", "Active", 20_000n),
-    rawDatabase("archived-db", "Owner", "Archived", 20_000n)
+    rawDatabase("deleted-db", "Owner", "Deleted", 20_000n)
   ], { minUpdateCycles: "10000" });
   assert.deepEqual(
     databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCyclesAvailable]),
@@ -212,12 +219,13 @@ test("database dropdown disables writer databases when cycles config is unavaila
 });
 
 test("database dropdown labels prefer names and disambiguate duplicates", () => {
-  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
+  assert.equal(databaseOptionLabel(normalizedDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
   assert.equal(
-    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
+    databaseOptionLabel(normalizedDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
     "Team Wiki (Owner, team-db-2-...)"
   );
-  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel(normalizedDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel({ databaseId: "title-only-db", title: "Legacy Wiki", role: "Writer" }), "title-only-db (Writer, title-only-db)");
 });
 
 test("export requires the selected database to be verified writable", () => {
@@ -229,9 +237,10 @@ test("export requires the selected database to be verified writable", () => {
 
 test("preferred created database is kept only when it is active and writable", () => {
   assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
-  assert.deepEqual(mergePreferredDatabase([], rawDatabase("db_created", "Owner", "Active", "Created Wiki")), [
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], { databaseId: "legacy-title-db", title: "Legacy Wiki", role: "Owner", status: "Active" }), []);
+  assert.deepEqual(mergePreferredDatabase([], normalizedDatabase("db_created", "Owner", "Active", "Created Wiki")), [
     {
       databaseId: "db_created",
       name: "Created Wiki",
@@ -308,13 +317,28 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSu
   return {
     database_id: databaseId,
     name,
+    metadata: [{
+      name,
+      description: "",
+      llm_summary: [],
+      tags_json: "[]"
+    }],
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
     cycles_balance: [cyclesBalance],
     cycles_suspended_at_ms: cyclesSuspendedAtMs === null ? [] : [cyclesSuspendedAtMs],
-    archived_at_ms: [],
     deleted_at_ms: []
+  };
+}
+
+function normalizedDatabase(databaseId, role, status, name) {
+  return normalizeWritableDatabases([rawDatabase(databaseId, role, status, name)])[0] ?? {
+    databaseId,
+    name,
+    role,
+    status,
+    logicalSizeBytes: "0"
   };
 }
 

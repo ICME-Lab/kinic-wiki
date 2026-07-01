@@ -123,7 +123,7 @@ fn upsert_marketplace_entry(path: &Path) -> Result<()> {
     let entry = json!({
         "name": PLUGIN_NAME,
         "display_name": "Kinic Skill Recorder",
-        "description": "Record Kinic Skill Registry run evidence and process skill evolution jobs from Codex.",
+        "description": "Record Kinic Skill Registry run evidence from Codex.",
         "source": {
             "source": "local",
             "path": MARKETPLACE_PLUGIN_PATH

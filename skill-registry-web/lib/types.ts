@@ -67,12 +67,12 @@ export type MoveNodeResult = {
   overwrote: boolean;
 };
 
-export type UrlIngestTriggerSessionRequest = {
+export type SourceCaptureTriggerSessionRequest = {
   databaseId: string;
   sessionNonce: string;
 };
 
-export type UrlIngestTriggerSessionCheckRequest = {
+export type SourceCaptureTriggerSessionCheckRequest = {
   databaseId: string;
   requestPath: string;
   sessionNonce: string;
@@ -97,19 +97,24 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseProfile = "workspace" | "memory" | "knowledge" | "skill" | "session";
-export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "deleted";
+
+export type DatabaseMetadata = {
+  name: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+};
 
 export type DatabaseSummary = {
   databaseId: string;
+  metadata: DatabaseMetadata;
   name: string;
   role: DatabaseRole;
-  profile: DatabaseProfile;
   status: DatabaseStatus;
   logicalSizeBytes: string;
   cyclesBalance: string | null;
   cyclesSuspendedAtMs: string | null;
-  archivedAtMs: string | null;
   deletedAtMs: string | null;
 };
 
@@ -146,7 +151,7 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
-export type MemoryRecall = {
+export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];

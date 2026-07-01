@@ -13,4 +13,6 @@ categories = ["data-structures"]
 name = "wiki_domain"
 
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }

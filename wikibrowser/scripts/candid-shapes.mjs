@@ -1,7 +1,16 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Active: "null", Pending: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Active: "null", Deleted: "null", Pending: "null" } },
+  DatabaseMetadata: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text"
+    }
+  },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -10,10 +19,9 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
-      profile: "DatabaseProfile",
+      metadata: "opt DatabaseMetadata",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
     }
   },
@@ -97,13 +105,9 @@ export const expectedTypes = {
   MarketCreateListingRequest: {
     kind: "record",
     fields: {
-      llm_summary: "opt text",
-      title: "text",
-      description: "text",
       database_id: "text",
       payout_principal: "text",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
     }
   },
   MarketEntitlement: {
@@ -125,10 +129,7 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       status: "MarketListingStatus",
-      llm_summary: "opt text",
-      title: "text",
       report_count: "nat64",
-      description: "text",
       updated_at_ms: "int64",
       created_at_ms: "int64",
       seller_principal: "text",
@@ -137,8 +138,14 @@ export const expectedTypes = {
       database_id: "text",
       listing_id: "text",
       revision: "nat64",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
+    }
+  },
+  MarketListingView: {
+    kind: "record",
+    fields: {
+      listing: "MarketListing",
+      database_metadata: "DatabaseMetadata"
     }
   },
   MarketCategoryGraph: {
@@ -156,14 +163,14 @@ export const expectedTypes = {
   MarketListingDetail: {
     kind: "record",
     fields: {
-      listing: "MarketListing",
+      listing: "MarketListingView",
       preview: "MarketListingPreview",
       verified_stats: "MarketListingVerifiedStats"
     }
   },
   MarketListingPage: {
     kind: "record",
-    fields: { listings: "vec MarketListing", next_cursor: "opt text" }
+    fields: { listings: "vec MarketListingView", next_cursor: "opt text" }
   },
   MarketListingPreview: {
     kind: "record",
@@ -231,14 +238,10 @@ export const expectedTypes = {
   MarketUpdateListingRequest: {
     kind: "record",
     fields: {
-      llm_summary: "opt text",
-      title: "text",
-      description: "text",
       listing_id: "text",
       expected_revision: "nat64",
       payout_principal: "text",
-      price_e8s: "nat64",
-      tags_json: "text"
+      price_e8s: "nat64"
     }
   },
   Icrc21ConsentMessageMetadata: {
@@ -291,20 +294,29 @@ export const expectedTypes = {
     kind: "record",
     fields: { url: "text", name: "text" }
   },
-  DatabaseProfile: { kind: "variant", cases: { Skill: "null", Memory: "null", Workspace: "null", Session: "null", Knowledge: "null" } },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text", profile: "DatabaseProfile" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text", profile: "DatabaseProfile" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   InitialFreeDatabaseGrantStatus: {
     kind: "record",
     fields: {
-      available: "bool",
-      grant_cycles: "nat64",
       database_id: "opt text",
-      created_at_ms: "opt int64"
+      created_at_ms: "opt int64",
+      grant_cycles: "nat64",
+      available: "bool"
     }
   },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
-  DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
+  UpdateDatabaseMetadataRequest: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text",
+      database_id: "text"
+    }
+  },
+  DatabaseIdRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -430,11 +442,11 @@ export const expectedTypes = {
     kind: "record",
     fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
   },
-  UrlIngestTriggerSessionRequest: {
+  SourceCaptureTriggerSessionRequest: {
     kind: "record",
     fields: { database_id: "text", session_nonce: "text" }
   },
-  UrlIngestTriggerSessionCheckRequest: {
+  SourceCaptureTriggerSessionCheckRequest: {
     kind: "record",
     fields: { database_id: "text", request_path: "text", session_nonce: "text" }
   },
@@ -459,40 +471,38 @@ export const expectedTypes = {
       database_id: "text"
     }
   },
-  StoreCapability: { kind: "record", fields: { name: "text", description: "text" } },
-  StoreManifest: {
+  MemoryCapability: { kind: "record", fields: { name: "text", description: "text" } },
+  MemoryManifest: {
     kind: "record",
     fields: {
       api_version: "text",
       budget_unit: "text",
-      capabilities: "vec StoreCapability",
+      capabilities: "vec MemoryCapability",
       enabled_stores: "vec text",
-      entry_roots: "vec StoreRoot",
+      entry_roots: "vec MemoryRoot",
       max_depth: "nat32",
       max_query_limit: "nat32",
-      profile: "DatabaseProfile",
       recommended_entrypoint: "text",
       write_policy: "text",
       canonical_roles: "vec CanonicalRole",
       purpose: "text",
-      roots: "vec StoreRoot"
+      roots: "vec MemoryRoot"
     }
   },
-  StoreManifestRequest: { kind: "record", fields: { database_id: "text" } },
-  StoreRoot: { kind: "record", fields: { kind: "text", path: "text" } },
-  MemoryRecall: {
+  MemoryRoot: { kind: "record", fields: { kind: "text", path: "text" } },
+  QueryContext: {
     kind: "record",
     fields: {
       truncated: "bool",
       task: "text",
-      evidence: "vec KnowledgeEvidence",
+      evidence: "vec SourceEvidence",
       nodes: "vec NodeContext",
       graph_links: "vec LinkEdge",
       search_hits: "vec SearchNodeHit",
       namespace: "text"
     }
   },
-  MemoryRecallRequest: {
+  QueryContextRequest: {
     kind: "record",
     fields: {
       task: "text",
@@ -553,10 +563,6 @@ export const expectedTypes = {
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
   ResultCyclesTopUpCheck: { kind: "variant", cases: { Ok: "CyclesTopUpCheckResult", Err: "text" } },
   ResultCyclesBillingConfig: { kind: "variant", cases: { Ok: "CyclesBillingConfig", Err: "text" } },
-  ResultInitialFreeDatabaseGrantStatus: {
-    kind: "variant",
-    cases: { Ok: "InitialFreeDatabaseGrantStatus", Err: "text" }
-  },
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
   ResultCyclesPendingPurchases: { kind: "variant", cases: { Ok: "vec DatabaseCyclesPendingPurchase", Err: "text" } },
@@ -568,7 +574,9 @@ export const expectedTypes = {
   ResultMarketOrder: { kind: "variant", cases: { Ok: "MarketOrder", Err: "text" } },
   ResultMarketOrderPage: { kind: "variant", cases: { Ok: "MarketOrderPage", Err: "text" } },
   ResultMarketPurchasePreview: { kind: "variant", cases: { Ok: "MarketPurchasePreview", Err: "text" } },
+  ResultDatabaseMetadata: { kind: "variant", cases: { Ok: "DatabaseMetadata", Err: "text" } },
   ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
+  ResultInitialFreeDatabaseGrantStatus: { kind: "variant", cases: { Ok: "InitialFreeDatabaseGrantStatus", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
@@ -580,7 +588,7 @@ export const expectedTypes = {
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
-  ResultMemoryRecall: { kind: "variant", cases: { Ok: "MemoryRecall", Err: "text" } },
+  ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
   ResultIndexSqlJsonQuery: { kind: "variant", cases: { Ok: "IndexSqlJsonQueryResult", Err: "text" } },
   ResultWikiMetrics: { kind: "variant", cases: { Ok: "WikiMetrics", Err: "text" } },
   ResultWikiMetricsSeries: { kind: "variant", cases: { Ok: "vec WikiMetricsPoint", Err: "text" } },
@@ -589,8 +597,8 @@ export const expectedTypes = {
     kind: "variant",
     cases: { Ok: "StorageBillingBatchResult", Err: "text" }
   },
-  ResultStoreManifest: { kind: "variant", cases: { Ok: "StoreManifest", Err: "text" } },
-  ResultKnowledgeEvidence: { kind: "variant", cases: { Ok: "KnowledgeEvidence", Err: "text" } },
+  ResultMemoryManifest: { kind: "variant", cases: { Ok: "MemoryManifest", Err: "text" } },
+  ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultOpsAnswerSessionCheck: {
     kind: "variant",
     cases: { Ok: "OpsAnswerSessionCheckResult", Err: "text" }
@@ -641,11 +649,11 @@ export const expectedTypes = {
   },
   SearchPreviewField: { kind: "variant", cases: { Path: "null", Content: "null" } },
   SearchPreviewMode: { kind: "variant", cases: { Light: "null", ContentStart: "null", None: "null" } },
-  KnowledgeEvidence: {
+  SourceEvidence: {
     kind: "record",
-    fields: { node_path: "text", refs: "vec KnowledgeEvidenceRef" }
+    fields: { node_path: "text", refs: "vec SourceEvidenceRef" }
   },
-  KnowledgeEvidenceRef: {
+  SourceEvidenceRef: {
     kind: "record",
     fields: {
       link_text: "text",
@@ -657,7 +665,7 @@ export const expectedTypes = {
       raw_href: "text"
     }
   },
-  KnowledgeEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } },
+  SourceEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } },
   StorageBillingBatchRequest: {
     kind: "record",
     fields: { limit: "opt nat32", cursor_mount_id: "opt nat16" }
@@ -676,62 +684,64 @@ export const expectedTypes = {
 
 export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
-  UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  ResultCyclesTopUpCheck: "Result_3",
-  ResultOpsAnswerSessionCheck: "Result_4",
-  ResultCreateDatabase: "Result_5",
-  ResultDeleteNode: "Result_6",
-  ResultCyclesBillingConfig: "Result_10",
-  ResultInitialFreeDatabaseGrantStatus: "Result_11",
-  ResultLinks: "Result_13",
-  ResultKnowledgeEvidence: "Result_14",
-  ResultChildren: "Result_15",
-  ResultCyclesEntries: "Result_16",
-  ResultCyclesPendingPurchases: "Result_17",
-  ResultMembers: "Result_18",
-  ResultDatabases: "Result_19",
-  ResultNat64: "Result_21",
-  ResultMarketListing: "Result_22",
-  ResultMarketListingDetail: "Result_23",
-  ResultMarketEntitlementPage: "Result_24",
-  ResultMarketListings: "Result_25",
-  ResultMarketListingPage: "Result_26",
-  ResultMarketOrderPage: "Result_27",
-  ResultMarketPurchasePreview: "Result_28",
-  ResultMarketOrder: "Result_29",
-  ResultMemoryRecall: "Result_30",
-  ResultMkdirNode: "Result_31",
-  ResultMoveNode: "Result_32",
-  ResultCyclesPurchase: "Result_33",
-  ResultIndexSqlJsonQuery: "Result_34",
-  ResultNode: "Result_36",
-  ResultNodeContext: "Result_37",
-  ResultSearch: "Result_38",
-  ResultStorageBillingBatch: "Result_39",
-  ResultStoreManifest: "Result_40",
+  SourceCaptureTriggerSessionRequest: "OpsAnswerSessionRequest",
+  ResultCyclesTopUpCheck: "Result_2",
+  ResultOpsAnswerSessionCheck: "Result_3",
+  ResultCreateDatabase: "Result_4",
+  ResultDeleteNode: "Result_5",
+  ResultCyclesBillingConfig: "Result_9",
+  ResultInitialFreeDatabaseGrantStatus: "Result_10",
+  ResultLinks: "Result_12",
+  ResultChildren: "Result_13",
+  ResultCyclesEntries: "Result_14",
+  ResultCyclesPendingPurchases: "Result_15",
+  ResultMembers: "Result_16",
+  ResultDatabases: "Result_17",
+  ResultNat64: "Result_19",
+  ResultMarketListing: "Result_20",
+  ResultMarketListingDetail: "Result_21",
+  ResultMarketEntitlementPage: "Result_22",
+  ResultMarketListings: "Result_23",
+  ResultMarketListingPage: "Result_24",
+  ResultMarketOrderPage: "Result_25",
+  ResultMarketPurchasePreview: "Result_26",
+  ResultMarketOrder: "Result_27",
+  ResultMemoryManifest: "Result_28",
+  ResultMkdirNode: "Result_29",
+  ResultMoveNode: "Result_30",
+  ResultCyclesPurchase: "Result_31",
+  ResultQueryContext: "Result_32",
+  ResultIndexSqlJsonQuery: "Result_33",
+  ResultNode: "Result_34",
+  ResultNodeContext: "Result_35",
+  ResultSearch: "Result_36",
+  ResultStorageBillingBatch: "Result_37",
+  ResultSourceEvidence: "Result_38",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteSourceForGeneration: "Result_44",
-  ResultWikiMetrics: "Result_41",
-  ResultWikiMetricsSeries: "Result_42"
+  ResultDatabaseMetadata: "Result_39",
+  ResultWikiMetrics: "Result_40",
+  ResultWikiMetricsSeries: "Result_41",
+  ResultWriteSourceForGeneration: "Result_43"
 };
 
 export const expectedMethods = {
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
-  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
   check_cycles_top_up: { input: [], output: "ResultCyclesTopUpCheck", mode: "update" },
   check_database_write_cycles: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
-  check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
+  check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   get_initial_free_database_grant_status: { input: [], output: "ResultInitialFreeDatabaseGrantStatus", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
-  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  update_database_metadata: { input: ["UpdateDatabaseMetadataRequest"], output: "ResultDatabaseMetadata", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
   icrc10_supported_standards: { input: [], output: "vec Icrc10SupportedStandard", mode: "query" },
@@ -756,11 +766,11 @@ export const expectedMethods = {
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_purchase_access: { input: ["MarketPurchaseRequest"], output: "ResultMarketOrder", mode: "update" },
   market_update_listing: { input: ["MarketUpdateListingRequest"], output: "ResultMarketListing", mode: "update" },
-  store_manifest: { input: ["StoreManifestRequest"], output: "ResultStoreManifest", mode: "query" },
+  memory_manifest: { input: ["DatabaseIdRequest"], output: "ResultMemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
-  memory_recall: { input: ["MemoryRecallRequest"], output: "ResultMemoryRecall", mode: "query" },
+  query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   query_database_sql_json: { input: ["text", "text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   query_index_sql_json: { input: ["text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   wiki_metrics: { input: [], output: "ResultWikiMetrics", mode: "query" },
@@ -770,7 +780,7 @@ export const expectedMethods = {
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
-  knowledge_evidence: { input: ["KnowledgeEvidenceRequest"], output: "ResultKnowledgeEvidence", mode: "query" },
+  source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
   settle_database_storage_charges_batch: { input: ["StorageBillingBatchRequest"], output: "ResultStorageBillingBatch", mode: "update" },
   update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },
