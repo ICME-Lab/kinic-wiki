@@ -2,15 +2,43 @@
 set -euo pipefail
 
 # Where: scripts/mainnet/deploy_wiki.sh
-# What: Deploy the wiki canister to mainnet with cycles billing init args.
-# Why: Cycles ledger and billing authority principals are immutable after init, so init values must be concrete deploy-time principals.
+# What: Deploy the wiki canister to a mainnet environment with cycles billing init args.
+# Why: Fresh SEV installs require explicit billing principals, while explicit production upgrades preserve current immutable values.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ANONYMOUS_PRINCIPAL="2vxsx-fae"
 KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
+DEPLOY_ENVIRONMENT="${ICP_ENVIRONMENT:-mainnet-sev}"
 CURRENT_CYCLES_BILLING_CONFIG=""
+DRY_RUN=0
+DEPLOY_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --environment|-e)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "$1 requires an environment name" >&2
+        exit 1
+      fi
+      DEPLOY_ENVIRONMENT="$2"
+      shift 2
+      ;;
+    --environment=*)
+      DEPLOY_ENVIRONMENT="${1#--environment=}"
+      shift
+      ;;
+    *)
+      DEPLOY_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
 
 load_current_cycles_billing_config() {
   if [[ -n "${CURRENT_CYCLES_BILLING_CONFIG}" ]]; then
@@ -42,6 +70,10 @@ resolve_principal_env() {
   local value
   if [[ -n "${!name:-}" ]]; then
     return 0
+  fi
+  if [[ "${DEPLOY_ENVIRONMENT}" != "ic" ]]; then
+    echo "${name} is required for ${DEPLOY_ENVIRONMENT} fresh deploy" >&2
+    return 1
   fi
   if ! value="$(extract_current_config_text "${field}")" || [[ -z "${value}" ]]; then
     echo "${name} is required and could not be resolved from the current mainnet cycles billing config" >&2
@@ -90,8 +122,9 @@ cat >"${ARGS_FILE}" <<EOF
 })
 EOF
 
-if [[ "${1:-}" == "--dry-run" ]]; then
-  echo "mainnet wiki cycles init args validated" >&2
+if [[ "${DRY_RUN}" == "1" ]]; then
+  echo "${DEPLOY_ENVIRONMENT} wiki cycles init args validated" >&2
+  echo "ICP_ENVIRONMENT=${DEPLOY_ENVIRONMENT}" >&2
   echo "KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID}" >&2
   echo "BILLING_AUTHORITY_ID=${BILLING_AUTHORITY_ID}" >&2
   exit 0
@@ -99,4 +132,4 @@ fi
 
 cd "${REPO_ROOT}"
 unset KINIC_VFS_LOCAL_II_ORIGINS
-icp deploy wiki -e ic --args-file "${ARGS_FILE}" "$@"
+icp deploy wiki -e "${DEPLOY_ENVIRONMENT}" --args-file "${ARGS_FILE}" "${DEPLOY_ARGS[@]}"

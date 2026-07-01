@@ -1480,14 +1480,12 @@ dependencies = [
 
 [[package]]
 name = "ic-sqlite-vfs"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b4de5a269e1427303cb762fa53db0c954cf82cd318051e531220d3380865156"
+version = "2.0.0"
+source = "git+https://github.com/humandebri/ic-sqlite-vfs?rev=a3a454ff749c5be59b00725ced7ede5ac200496f#a3a454ff749c5be59b00725ced7ede5ac200496f"
 dependencies = [
  "candid",
  "cc",
  "ic-cdk 0.20.1",
- "ic-stable-structures",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -1499,16 +1497,7 @@ dependencies = [
  "candid",
  "ic-cdk 0.20.1",
  "ic-sqlite-vfs",
- "ic-stable-structures",
  "proptest",
-]
-
-[[package]]
-name = "ic-stable-structures"
-version = "0.7.2"
-source = "git+https://github.com/humandebri/stable-structures?rev=a24a7d7572e36eda104abd8280946aeb7ac4e060#a24a7d7572e36eda104abd8280946aeb7ac4e060"
-dependencies = [
- "ic_principal",
 ]
 
 [[package]]
@@ -3504,7 +3493,6 @@ dependencies = [
  "ic-cdk-timers",
  "ic-http-certification",
  "ic-sqlite-vfs",
- "ic-stable-structures",
  "kinic-vfs-types",
  "kinic-wiki-domain",
  "serde",

@@ -1,2 +1,0 @@
-ALTER TABLE fs_nodes ADD COLUMN parent_id INTEGER;
-ALTER TABLE fs_nodes ADD COLUMN name TEXT;

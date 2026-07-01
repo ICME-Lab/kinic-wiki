@@ -62,54 +62,6 @@ fn logical_size_bytes_uses_sqlite_page_size() {
     );
 }
 
-fn old_fs_schema_store() -> (tempfile::TempDir, FsStore) {
-    let dir = tempdir().expect("temp dir should exist");
-    let database_path = dir.path().join("wiki.sqlite3");
-    let conn = Connection::open(&database_path).expect("db should open");
-    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
-        .expect("schema migrations table should create");
-    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
-        .expect("base schema should create");
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 1)",
-        ["wiki_store:000_fs_schema"],
-    )
-    .expect("base migration version should insert");
-    drop(conn);
-    (dir, FsStore::new(database_path))
-}
-
-fn insert_legacy_node(
-    conn: &Connection,
-    path: &str,
-    kind: &str,
-    content: &str,
-    metadata_json: &str,
-) {
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json)
-         VALUES (?1, ?2, ?3, 10, 20, ?4, ?5)",
-        params![path, kind, content, format!("etag-{path}"), metadata_json],
-    )
-    .expect("legacy node should insert");
-}
-
-fn record_legacy_change(conn: &Connection, path: &str) -> i64 {
-    conn.execute(
-        "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, 'upsert')",
-        [path],
-    )
-    .expect("legacy change should insert");
-    let revision = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO fs_path_state (path, last_change_revision) VALUES (?1, ?2)",
-        params![path, revision],
-    )
-    .expect("legacy path state should insert");
-    revision
-}
-
 fn write_file(store: &FsStore, path: &str, expected_etag: Option<&str>, now: i64) -> String {
     ensure_parent_folders(store, path, now - 1);
     store
@@ -238,17 +190,7 @@ fn fs_migrations_create_tables() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(
-        versions,
-        vec![
-            "wiki_store:000_fs_schema".to_string(),
-            "wiki_store:001_fs_links".to_string(),
-            "wiki_store:002_fs_folders".to_string(),
-            "wiki_store:003_wikilink_alias_links".to_string(),
-            "wiki_store:004_rebuild_links_after_code_filter".to_string(),
-            "wiki_store:005_seed_raw_sources_root".to_string()
-        ]
-    );
+    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
 
     {
         let table = "fs_links";
@@ -277,6 +219,76 @@ fn fs_migrations_create_tables() {
             .expect("index lookup should succeed");
         assert_eq!(exists, 1);
     }
+}
+
+#[test]
+fn current_fs_schema_missing_links_column_is_rejected() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_links;
+         CREATE TABLE fs_links (
+             source_path TEXT NOT NULL,
+             target_path TEXT NOT NULL,
+             raw_href TEXT NOT NULL,
+             link_text TEXT NOT NULL,
+             link_kind TEXT NOT NULL,
+             PRIMARY KEY (source_path, target_path, raw_href)
+         );
+         CREATE INDEX fs_links_target_path_idx
+             ON fs_links (target_path, source_path);
+         CREATE INDEX fs_links_source_path_idx
+             ON fs_links (source_path, target_path);",
+    )
+    .expect("malformed links table should create");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("missing links column should reject");
+
+    assert!(error.contains("missing column fs_links.updated_at"));
+}
+
+#[test]
+fn current_fs_schema_missing_change_log_column_is_rejected() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_change_log;
+         CREATE TABLE fs_change_log (
+             revision INTEGER PRIMARY KEY AUTOINCREMENT,
+             path TEXT NOT NULL
+         );",
+    )
+    .expect("malformed change log table should create");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("missing change log column should reject");
+
+    assert!(error.contains("missing column fs_change_log.change_kind"));
+}
+
+#[test]
+fn current_fs_schema_missing_path_state_column_is_rejected() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_path_state;
+         CREATE TABLE fs_path_state (
+             path TEXT PRIMARY KEY
+         );",
+    )
+    .expect("malformed path state table should create");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("missing path state column should reject");
+
+    assert!(error.contains("missing column fs_path_state.last_change_revision"));
 }
 
 #[test]
@@ -1027,17 +1039,7 @@ fn fs_migrations_are_idempotent() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(
-        versions,
-        vec![
-            "wiki_store:000_fs_schema".to_string(),
-            "wiki_store:001_fs_links".to_string(),
-            "wiki_store:002_fs_folders".to_string(),
-            "wiki_store:003_wikilink_alias_links".to_string(),
-            "wiki_store:004_rebuild_links_after_code_filter".to_string(),
-            "wiki_store:005_seed_raw_sources_root".to_string()
-        ]
-    );
+    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
 
     let tracked_paths = conn
         .query_row("SELECT COUNT(*) FROM fs_path_state", [], |row| {
@@ -1045,558 +1047,6 @@ fn fs_migrations_are_idempotent() {
         })
         .expect("path state count should succeed");
     assert_eq!(tracked_paths, 10);
-}
-
-#[test]
-fn fs_links_migration_backfills_existing_nodes() {
-    let dir = tempdir().expect("temp dir should exist");
-    let database_path = dir.path().join("wiki.sqlite3");
-    let conn = Connection::open(&database_path).expect("db should open");
-    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
-        .expect("schema migrations table should create");
-    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
-        .expect("base schema should create");
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 1)",
-        ["wiki_store:000_fs_schema"],
-    )
-    .expect("base migration version should insert");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json)
-         VALUES (?1, 'file', ?2, 10, 20, 'etag-source', '{}')",
-        params![
-            "/Knowledge/source.md",
-            "[Target](/Knowledge/target.md) and [[/Knowledge/other.md]]",
-        ],
-    )
-    .expect("first existing node should insert");
-    let large_content = format!(
-        "{}\n[Large Target](/Knowledge/large-target.md)",
-        "large body ".repeat(20_000)
-    );
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json)
-         VALUES (?1, 'file', ?2, 11, 21, 'etag-large', '{}')",
-        params!["/Knowledge/large.md", large_content],
-    )
-    .expect("large existing node should insert");
-    let dense_links = (0..50)
-        .map(|index| format!("[Node {index}](/Knowledge/dense/{index}.md)"))
-        .chain([
-            "[Dup](/Knowledge/dup.md)".to_string(),
-            "[Dup again](/Knowledge/dup.md)".to_string(),
-        ])
-        .collect::<Vec<_>>()
-        .join("\n");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json)
-         VALUES (?1, 'file', ?2, 12, 22, 'etag-dense', '{}')",
-        params!["/Knowledge/dense.md", dense_links],
-    )
-    .expect("dense existing node should insert");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json)
-         VALUES (?1, 'file', ?2, 13, 23, 'etag-plain', '{}')",
-        params!["/Knowledge/plain.md", "plain body without links"],
-    )
-    .expect("plain existing node should insert");
-    drop(conn);
-
-    let store = FsStore::new(database_path.clone());
-    store
-        .run_fs_migrations()
-        .expect("fs links migration should succeed");
-    let conn = Connection::open(database_path).expect("db should reopen");
-    let link_count = conn
-        .query_row("SELECT COUNT(*) FROM fs_links", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .expect("link count should load");
-    assert_eq!(link_count, 54);
-    let duplicate_count = conn
-        .query_row(
-            "SELECT COUNT(*) FROM fs_links
-             WHERE source_path = '/Knowledge/dense.md'
-               AND target_path = '/Knowledge/dup.md'
-               AND raw_href = '/Knowledge/dup.md'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .expect("duplicate link count should load");
-    assert_eq!(duplicate_count, 1);
-
-    let outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/source.md".to_string(),
-            limit: 10,
-        })
-        .expect("outgoing links should load");
-    let targets = outgoing
-        .into_iter()
-        .map(|edge| edge.target_path)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        targets,
-        vec![
-            "/Knowledge/other.md".to_string(),
-            "/Knowledge/target.md".to_string()
-        ]
-    );
-    let large_outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/large.md".to_string(),
-            limit: 10,
-        })
-        .expect("large outgoing links should load");
-    assert_eq!(large_outgoing[0].target_path, "/Knowledge/large-target.md");
-    let dense_outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/dense.md".to_string(),
-            limit: 100,
-        })
-        .expect("dense outgoing links should load");
-    assert_eq!(dense_outgoing.len(), 51);
-    let plain_outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/plain.md".to_string(),
-            limit: 100,
-        })
-        .expect("plain outgoing links should load");
-    assert!(plain_outgoing.is_empty());
-}
-
-#[test]
-fn wikilink_alias_migration_rebuilds_existing_links() {
-    let dir = tempdir().expect("temp dir should exist");
-    let database_path = dir.path().join("wiki.sqlite3");
-    let conn = Connection::open(&database_path).expect("db should open");
-    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
-        .expect("schema migrations table should create");
-    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
-        .expect("base schema should create");
-    conn.execute_batch(include_str!("../migrations/001_fs_links.sql"))
-        .expect("links schema should create");
-    conn.execute_batch(include_str!("../migrations/002_fs_folders.sql"))
-        .expect("folder schema should create");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
-         VALUES ('/Knowledge', 'folder', '', 0, 0, 'etag-/Knowledge', '{}', NULL, 'Wiki')",
-        [],
-    )
-    .expect("wiki folder should insert");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
-         VALUES (?1, 'file', ?2, 10, 20, 'etag-source', '{}', NULL, 'source.md')",
-        params![
-            "/Knowledge/source.md",
-            "[[/Sources/a/a.md|opencode.ai/DESIGN.md]]",
-        ],
-    )
-    .expect("existing node should insert");
-    conn.execute(
-        "INSERT INTO fs_links
-         (source_path, target_path, raw_href, link_text, link_kind, updated_at)
-         VALUES (?1, ?2, ?2, ?2, 'wikilink', 20)",
-        params![
-            "/Knowledge/source.md",
-            "/Sources/a/a.md|opencode.ai/DESIGN.md",
-        ],
-    )
-    .expect("old link row should insert");
-    for version in [
-        "wiki_store:000_fs_schema",
-        "wiki_store:001_fs_links",
-        "wiki_store:002_fs_folders",
-    ] {
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-            [version],
-        )
-        .expect("version should insert");
-    }
-    drop(conn);
-
-    let store = FsStore::new(database_path.clone());
-    store
-        .run_fs_migrations()
-        .expect("wikilink alias migration should succeed");
-
-    let outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/source.md".to_string(),
-            limit: 10,
-        })
-        .expect("outgoing links should load");
-    assert_eq!(outgoing.len(), 1);
-    assert_eq!(outgoing[0].target_path, "/Sources/a/a.md");
-    assert_eq!(
-        outgoing[0].raw_href,
-        "/Sources/a/a.md|opencode.ai/DESIGN.md"
-    );
-    assert_eq!(outgoing[0].link_text, "opencode.ai/DESIGN.md");
-}
-
-#[test]
-fn code_filter_migration_rebuilds_existing_links() {
-    let dir = tempdir().expect("temp dir should exist");
-    let database_path = dir.path().join("wiki.sqlite3");
-    let conn = Connection::open(&database_path).expect("db should open");
-    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
-        .expect("schema migrations table should create");
-    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
-        .expect("base schema should create");
-    conn.execute_batch(include_str!("../migrations/001_fs_links.sql"))
-        .expect("links schema should create");
-    conn.execute_batch(include_str!("../migrations/002_fs_folders.sql"))
-        .expect("folder schema should create");
-    conn.execute_batch(include_str!("../migrations/003_wikilink_alias_links.sql"))
-        .expect("alias migration should apply");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
-         VALUES ('/Knowledge', 'folder', '', 0, 0, 'etag-/Knowledge', '{}', NULL, 'Wiki')",
-        [],
-    )
-    .expect("wiki folder should insert");
-    conn.execute(
-        "INSERT INTO fs_nodes
-         (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
-         VALUES (?1, 'file', ?2, 10, 20, 'etag-source', '{}', NULL, 'source.md')",
-        params![
-            "/Knowledge/source.md",
-            "```md\n[[alpha.md|Alpha]]\n[Alpha](alpha.md)\n```\n[[beta.md|Beta]]",
-        ],
-    )
-    .expect("existing node should insert");
-    conn.execute(
-        "INSERT INTO fs_links
-         (source_path, target_path, raw_href, link_text, link_kind, updated_at)
-         VALUES (?1, ?2, 'alpha.md|Alpha', 'Alpha', 'wikilink', 20)",
-        params!["/Knowledge/source.md", "/Knowledge/alpha.md"],
-    )
-    .expect("old code link row should insert");
-    for version in [
-        "wiki_store:000_fs_schema",
-        "wiki_store:001_fs_links",
-        "wiki_store:002_fs_folders",
-        "wiki_store:003_wikilink_alias_links",
-    ] {
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-            [version],
-        )
-        .expect("version should insert");
-    }
-    drop(conn);
-
-    let store = FsStore::new(database_path.clone());
-    store
-        .run_fs_migrations()
-        .expect("code filter migration should succeed");
-
-    let outgoing = store
-        .outgoing_links(OutgoingLinksRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/source.md".to_string(),
-            limit: 10,
-        })
-        .expect("outgoing links should load");
-    assert_eq!(outgoing.len(), 1);
-    assert_eq!(outgoing[0].target_path, "/Knowledge/beta.md");
-    assert_eq!(outgoing[0].raw_href, "beta.md|Beta");
-    assert_eq!(outgoing[0].link_text, "Beta");
-}
-
-#[test]
-fn fs_folder_migration_promotes_empty_file_parent_to_folder() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/foo", "file", "", "{}");
-    insert_legacy_node(&conn, "/Knowledge/foo/bar.md", "file", "bar", "{}");
-    drop(conn);
-
-    store
-        .run_fs_migrations()
-        .expect("folder migration should promote empty parent");
-
-    let folder = store
-        .read_node("/Knowledge/foo")
-        .expect("folder should read")
-        .expect("folder should exist");
-    assert_eq!(folder.kind, NodeKind::Folder);
-    assert_eq!(folder.content, "");
-    assert_eq!(folder.metadata_json, "{}");
-
-    let children = store
-        .list_children(ListChildrenRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/foo".to_string(),
-        })
-        .expect("promoted folder should list children");
-    assert_eq!(children.len(), 1);
-    assert_eq!(children[0].path, "/Knowledge/foo/bar.md");
-    assert_eq!(children[0].kind, NodeEntryKind::File);
-}
-
-#[test]
-fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/existing.md", "file", "existing", "{}");
-    insert_legacy_node(&conn, "/Sources/source.md", "source", "raw", "{}");
-    let wiki_revision = record_legacy_change(&conn, "/Knowledge/existing.md");
-    record_legacy_change(&conn, "/Sources/source.md");
-    drop(conn);
-
-    store
-        .run_fs_migrations()
-        .expect("folder migration should succeed");
-
-    let file = store
-        .read_node("/Knowledge/existing.md")
-        .expect("file should read")
-        .expect("file should exist");
-    let source = store
-        .read_node("/Sources/source.md")
-        .expect("source should read")
-        .expect("source should exist");
-    assert_eq!(file.etag, "etag-/Knowledge/existing.md");
-    assert_eq!(source.etag, "etag-/Sources/source.md");
-
-    let updates = store
-        .fetch_updates(FetchUpdatesRequest {
-            database_id: "default".to_string(),
-            known_snapshot_revision: format!("v5:{wiki_revision}:2f4b6e6f776c65646765"),
-            prefix: Some("/Knowledge".to_string()),
-            limit: 100,
-            cursor: None,
-            target_snapshot_revision: None,
-        })
-        .expect("updates should succeed");
-    assert!(
-        updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Knowledge" && node.kind == NodeKind::Folder)
-    );
-    assert!(
-        !updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Knowledge/existing.md")
-    );
-}
-
-#[test]
-fn fs_folder_migration_seeds_sources_reserved_folders_from_current_schema() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute_batch(
-        "ALTER TABLE fs_nodes ADD COLUMN parent_id INTEGER;
-         ALTER TABLE fs_nodes ADD COLUMN name TEXT;
-         CREATE UNIQUE INDEX fs_nodes_parent_name_idx
-           ON fs_nodes (COALESCE(parent_id, 0), name);
-         CREATE INDEX fs_nodes_parent_idx ON fs_nodes(parent_id);",
-    )
-    .expect("folder schema should exist");
-    for version in [
-        "wiki_store:001_fs_links",
-        "wiki_store:002_fs_folders",
-        "wiki_store:003_wikilink_alias_links",
-        "wiki_store:004_rebuild_links_after_code_filter",
-    ] {
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-            [version],
-        )
-        .expect("version should insert");
-    }
-    drop(conn);
-
-    store
-        .run_fs_migrations()
-        .expect("sources root migration should succeed");
-
-    let sources_root = store
-        .read_node("/Sources")
-        .expect("sources root should read")
-        .expect("sources root should exist");
-    assert_eq!(sources_root.kind, NodeKind::Folder);
-    assert_eq!(sources_root.content, "");
-    assert_eq!(sources_root.metadata_json, "{}");
-    for path in [
-        "/Sources/sessions",
-        "/Sources/skill-runs",
-        "/Sources/source-capture-requests",
-    ] {
-        let node = store
-            .read_node(path)
-            .expect("sources reserved folder should read")
-            .expect("sources reserved folder should exist");
-        assert_eq!(node.kind, NodeKind::Folder);
-        assert_eq!(node.content, "");
-        assert_eq!(node.metadata_json, "{}");
-    }
-}
-
-#[test]
-fn fs_folder_migration_reports_promoted_folder_in_sync_delta() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/foo", "file", "", "{}");
-    insert_legacy_node(&conn, "/Knowledge/foo/bar.md", "file", "bar", "{}");
-    record_legacy_change(&conn, "/Knowledge/foo");
-    let child_revision = record_legacy_change(&conn, "/Knowledge/foo/bar.md");
-    drop(conn);
-
-    store
-        .run_fs_migrations()
-        .expect("folder migration should promote empty parent");
-
-    let updates = store
-        .fetch_updates(FetchUpdatesRequest {
-            database_id: "default".to_string(),
-            known_snapshot_revision: format!("v5:{child_revision}:2f4b6e6f776c65646765"),
-            prefix: Some("/Knowledge".to_string()),
-            limit: 100,
-            cursor: None,
-            target_snapshot_revision: None,
-        })
-        .expect("updates should succeed");
-    assert!(
-        updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Knowledge/foo" && node.kind == NodeKind::Folder)
-    );
-    assert!(
-        !updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Knowledge/foo/bar.md")
-    );
-}
-
-#[test]
-fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/foo/bar.md", "file", "bar", "{}");
-    insert_legacy_node(
-        &conn,
-        "/Sources/web/web.md",
-        "source",
-        "raw",
-        r#"{"source_type":"url"}"#,
-    );
-    drop(conn);
-
-    store
-        .run_fs_migrations()
-        .expect("folder migration should succeed");
-
-    let file = store
-        .read_node("/Knowledge/foo/bar.md")
-        .expect("legacy file should read")
-        .expect("legacy file should exist");
-    assert_eq!(file.kind, NodeKind::File);
-    assert_eq!(file.content, "bar");
-    let source = store
-        .read_node("/Sources/web/web.md")
-        .expect("legacy source should read")
-        .expect("legacy source should exist");
-    assert_eq!(source.kind, NodeKind::Source);
-    assert_eq!(source.metadata_json, r#"{"source_type":"url"}"#);
-
-    for path in [
-        "/Memory",
-        "/Sessions",
-        "/Knowledge",
-        "/Skills",
-        "/Knowledge/foo",
-        "/Sources",
-        "/Sources/web",
-        "/Sources/sessions",
-        "/Sources/skill-runs",
-        "/Sources/source-capture-requests",
-    ] {
-        let node = store
-            .read_node(path)
-            .expect("store root should read after migration")
-            .expect("store root should exist after migration");
-        assert_eq!(node.kind, NodeKind::Folder);
-    }
-
-    let root_children = store
-        .list_children(ListChildrenRequest {
-            database_id: "default".to_string(),
-            path: "/".to_string(),
-        })
-        .expect("store roots should list after migration");
-    assert_eq!(
-        root_children
-            .iter()
-            .map(|child| child.path.as_str())
-            .collect::<Vec<_>>(),
-        vec!["/Knowledge", "/Memory", "/Sessions", "/Skills", "/Sources"]
-    );
-
-    let children = store
-        .list_children(ListChildrenRequest {
-            database_id: "default".to_string(),
-            path: "/Knowledge/foo".to_string(),
-        })
-        .expect("backfilled folder should list children");
-    assert_eq!(children.len(), 1);
-    assert_eq!(children[0].path, "/Knowledge/foo/bar.md");
-
-    let updated = store
-        .write_node(
-            WriteNodeRequest {
-                database_id: "default".to_string(),
-                path: "/Knowledge/foo/bar.md".to_string(),
-                kind: NodeKind::File,
-                content: "bar updated".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: Some(file.etag),
-            },
-            30,
-        )
-        .expect("legacy file update with migrated etag should succeed");
-    store
-        .move_node(
-            MoveNodeRequest {
-                database_id: "default".to_string(),
-                from_path: "/Knowledge/foo/bar.md".to_string(),
-                to_path: "/Knowledge/foo/baz.md".to_string(),
-                expected_etag: Some(updated.node.etag),
-                overwrite: false,
-            },
-            31,
-        )
-        .expect("legacy file move with updated etag should succeed");
-    store
-        .delete_node(
-            DeleteNodeRequest {
-                database_id: "default".to_string(),
-                path: "/Sources/web/web.md".to_string(),
-                expected_etag: Some(source.etag),
-                expected_folder_index_etag: None,
-            },
-            32,
-        )
-        .expect("legacy source delete with migrated etag should succeed");
 }
 
 #[test]
@@ -1707,155 +1157,6 @@ fn move_node_creates_missing_store_root_on_current_schema() {
         .expect("root should read")
         .expect("root should exist");
     assert_eq!(root.kind, NodeKind::Folder);
-}
-
-#[test]
-fn fs_folder_migration_rejects_content_file_parent_conflict() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/foo", "file", " ", "{}");
-    insert_legacy_node(&conn, "/Knowledge/foo/bar.md", "file", "bar", "{}");
-    drop(conn);
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("non-empty parent conflict should fail migration");
-    assert!(error.contains("folder path conflicts with non-empty node: /Knowledge/foo"));
-}
-
-#[test]
-fn fs_folder_migration_rejects_metadata_file_parent_conflict() {
-    let (_dir, store) = old_fs_schema_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    insert_legacy_node(&conn, "/Knowledge/foo", "file", "", r#"{"note":true}"#);
-    insert_legacy_node(&conn, "/Knowledge/foo/bar.md", "file", "bar", "{}");
-    drop(conn);
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("metadata parent conflict should fail migration");
-    assert!(error.contains("folder path conflicts with non-empty node: /Knowledge/foo"));
-}
-
-#[test]
-fn fs_migrations_reject_legacy_schema_history() {
-    let (_dir, store) = new_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-        ["wiki_store:legacy_schema"],
-    )
-    .expect("legacy version should insert");
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("legacy schema should be rejected");
-    assert!(!error.is_empty());
-}
-
-#[test]
-fn fs_migrations_reject_old_fs_schema_shape_even_with_current_version() {
-    let dir = tempdir().expect("temp dir should exist");
-    let store = FsStore::new(dir.path().join("wiki.sqlite3"));
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute_batch(
-        "
-        CREATE TABLE schema_migrations (
-            version TEXT PRIMARY KEY,
-            applied_at INTEGER NOT NULL
-        );
-        CREATE TABLE fs_nodes (
-            id INTEGER PRIMARY KEY,
-            path TEXT NOT NULL UNIQUE,
-            kind TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            etag TEXT NOT NULL,
-            metadata_json TEXT NOT NULL DEFAULT '{}'
-        );
-        CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
-            content,
-            content='fs_nodes',
-            content_rowid='id'
-        );
-        CREATE TABLE fs_change_log (
-            revision INTEGER PRIMARY KEY AUTOINCREMENT,
-            path TEXT NOT NULL,
-            change_kind TEXT NOT NULL
-                CHECK (change_kind IN ('upsert', 'path_removal'))
-        );
-        CREATE INDEX fs_nodes_path_covering_idx
-        ON fs_nodes (path, kind, updated_at, etag);
-        CREATE INDEX fs_nodes_recent_covering_idx
-        ON fs_nodes (updated_at DESC, path ASC, kind, etag);
-        ",
-    )
-    .expect("legacy schema should create");
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-        ["wiki_store:000_fs_schema"],
-    )
-    .expect("current version stamp should insert");
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("old 000 schema shape should be rejected");
-    assert!(
-        error.contains("legacy wiki_store schema is unsupported")
-            || error.contains("no column named name")
-    );
-}
-
-#[test]
-fn fs_migrations_reject_current_schema_missing_parent_index() {
-    let (_dir, store) = new_store();
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute("DROP INDEX fs_nodes_parent_idx", [])
-        .expect("parent index should drop");
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("current schema missing parent index should be rejected");
-    assert!(!error.is_empty());
-}
-
-#[test]
-fn fs_migrations_reject_current_schema_missing_parent_columns() {
-    let dir = tempdir().expect("temp dir should exist");
-    let store = FsStore::new(dir.path().join("wiki.sqlite3"));
-    let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
-        .expect("schema migrations table should create");
-    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
-        .expect("base schema should create");
-    conn.execute_batch(include_str!("../migrations/001_fs_links.sql"))
-        .expect("links schema should create");
-    conn.execute_batch(
-        "ALTER TABLE fs_nodes ADD COLUMN parent_id INTEGER;
-         CREATE UNIQUE INDEX fs_nodes_parent_name_idx
-         ON fs_nodes (COALESCE(parent_id, 0), path);
-         CREATE INDEX fs_nodes_parent_idx ON fs_nodes(parent_id);",
-    )
-    .expect("partial parent schema should create");
-    for version in [
-        "wiki_store:000_fs_schema",
-        "wiki_store:001_fs_links",
-        "wiki_store:002_fs_folders",
-        "wiki_store:003_wikilink_alias_links",
-        "wiki_store:004_rebuild_links_after_code_filter",
-    ] {
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-            [version],
-        )
-        .expect("version should insert");
-    }
-
-    let error = store
-        .run_fs_migrations()
-        .expect_err("current schema missing name column should be rejected");
-    assert!(!error.is_empty());
 }
 
 #[test]
