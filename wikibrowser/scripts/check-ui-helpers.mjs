@@ -28,6 +28,7 @@ const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const homePageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const adminRouteShellSource = readFileSync(new URL("../app/admin-route-shell.tsx", import.meta.url), "utf8");
 const marketplaceLayoutSource = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
@@ -120,6 +121,11 @@ assert.match(layoutSource, /metadataBase: new URL\("https:\/\/wiki\.kinic\.xyz"\
 assert.match(layoutSource, /openGraph:/);
 assert.match(layoutSource, /twitter:/);
 assert.match(layoutSource, /card: "summary_large_image"/);
+assert.match(homePageSource, /url: "\/opengraph-image"/);
+assert.match(homePageSource, /width: 1200/);
+assert.match(homePageSource, /height: 630/);
+assert.match(homePageSource, /card: "summary_large_image"/);
+assert.match(homePageSource, /url: "\/twitter-image"/);
 assert.doesNotMatch(layoutSource, /Read-only browser|Wiki Canister Browser/);
 assert.doesNotMatch(layoutSource, /AppSessionProvider|AppHeader|AdminShell/);
 assert.match(adminRouteShellSource, /AppSessionProvider/);

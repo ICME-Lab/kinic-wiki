@@ -4,22 +4,34 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { publicDatabasePath } from "@/lib/share-links";
+
+const linkPreviewImage = {
+  url: "/opengraph-image",
+  width: 1200,
+  height: 630,
+  alt: "Kinic Wiki Database Dashboard"
+};
 
 export const metadata: Metadata = {
   title: "Kinic Wiki AI Memory",
   description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
   openGraph: {
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
+    images: [linkPreviewImage]
   },
   twitter: {
+    card: "summary_large_image",
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
+    images: [
+      {
+        url: "/twitter-image",
+        alt: linkPreviewImage.alt
+      }
+    ]
   }
 };
-
-const officialDatabaseHref = publicDatabasePath("db_kva4v2twg6jv");
 
 const workflowSteps = [
   "Capture raw evidence under /Sources.",
@@ -52,7 +64,7 @@ export default function HomePage() {
             <span>Kinic Wiki</span>
           </Link>
           <div className="flex flex-wrap gap-2">
-            <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent" href="/cli">
+            <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/cli">
               CLI
             </Link>
             <Link className="rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent" href="/dashboard">
@@ -76,11 +88,8 @@ export default function HomePage() {
               <code className="rounded-md bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">/Knowledge</code>, and CLI-first workflows for search, citation, and safe edits.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <Link className="rounded-lg border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="/cli">
+              <Link className="rounded-lg border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="/docs/cli">
                 Install CLI
-              </Link>
-              <Link className="rounded-lg border border-line bg-white px-5 py-3 text-sm font-bold text-ink no-underline hover:border-accent hover:text-accent" href={officialDatabaseHref}>
-                Open Official Wiki
               </Link>
             </div>
           </div>

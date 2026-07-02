@@ -1,0 +1,200 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Kinic Wiki",
+    "subtitle": "Search public wiki memory",
+    "description": "Kinic Wiki helps users discover public wiki databases, search public knowledge nodes, read task-focused context, and inspect source evidence from ChatGPT.",
+    "category": "PRODUCTIVITY"
+  },
+  "tools": {
+    "find_databases": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only lists and ranks public database metadata without modifying any database.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "search": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only searches public wiki node indexes and returns matching result metadata.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "fetch": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reads one public wiki node identified by an opaque search result id.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "fetch_many": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reads public wiki nodes identified by opaque search result ids and returns item-level errors.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "read_path": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reads one public wiki node at a known VFS path.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "read_paths": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only reads up to ten public wiki nodes at known VFS paths and returns item-level errors.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "list": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only lists public wiki node inventory under a prefix without returning node content.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "memory_manifest": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves public Store API roots, capabilities, roles, and limits for one database.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "context": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves task-scoped public wiki context, graph links, search hits, and source evidence.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    },
+    "source_evidence": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Only retrieves source reference metadata for one known public knowledge node path.",
+        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
+        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Discover the public wiki database relevant to a knowledge task.",
+      "user_prompt": "Find a public Kinic Wiki database about agent memory workflows.",
+      "file_attachment_urls": null,
+      "tools_triggered": "find_databases",
+      "expected_output": "Returns matching public database metadata with names, descriptions, tags, URLs, and ranking scores.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Answer a normal question from task-scoped wiki context.",
+      "user_prompt": "Using the Kinic Wiki database I selected, summarize what the project says about source evidence.",
+      "file_attachment_urls": null,
+      "tools_triggered": "context",
+      "expected_output": "Returns an answer grounded in public context nodes and notes whether the returned context was truncated.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Search broadly and fetch multiple candidate nodes for evidence review.",
+      "user_prompt": "Search this public wiki for clipper usage notes and read the strongest candidates.",
+      "file_attachment_urls": null,
+      "tools_triggered": "search, fetch_many",
+      "expected_output": "Returns search candidates, reads selected public nodes, and reports any item-level errors or truncation.",
+      "expected_output_url": null
+    },
+    {
+      "description": "List a database prefix and batch-read known paths.",
+      "user_prompt": "List the top-level public wiki inventory, then read these two known Knowledge paths together.",
+      "file_attachment_urls": null,
+      "tools_triggered": "list, read_paths",
+      "expected_output": "Returns node inventory without content, then returns public node bodies for known paths with batch metadata.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Inspect source evidence for a known knowledge node.",
+      "user_prompt": "For this known Knowledge node path, show the source evidence references and read the node text.",
+      "file_attachment_urls": null,
+      "tools_triggered": "source_evidence, read_path",
+      "expected_output": "Returns source reference metadata and the requested public node text for the known path.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger for write or delete requests.",
+      "user_prompt": "Delete this wiki node and replace it with my edited version.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it only supports anonymous read-only public wiki access.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for private database or credential requests.",
+      "user_prompt": "Use my private credentials to open a non-public Kinic Wiki database.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because private access and credentials are outside its supported workflows.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for unrelated personal productivity data.",
+      "user_prompt": "What meetings do I have tomorrow and who should I email afterward?",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because calendar and email workflows are outside its scope.",
+      "expected_output_url": null
+    }
+  ]
+}

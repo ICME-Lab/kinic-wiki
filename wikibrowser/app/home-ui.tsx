@@ -210,7 +210,7 @@ export function OfficialKinicWikiPanel() {
             <BookOpen aria-hidden size={15} />
             <span>Open</span>
           </Link>
-          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href="/cli">
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href="/docs/cli">
             <TerminalSquare aria-hidden size={15} />
             <span>CLI</span>
           </Link>

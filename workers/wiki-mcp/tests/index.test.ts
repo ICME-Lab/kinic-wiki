@@ -49,6 +49,17 @@ const env = {
   KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test"
 };
 
+type ToolErrorLike = {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+};
+
+function expectToolErrorResult(value: unknown): asserts value is ToolErrorLike {
+  expect(value).toMatchObject({ isError: true });
+  expect(value).not.toHaveProperty("structuredContent");
+  expect(value).toHaveProperty("content");
+}
+
 describe("wiki mcp worker", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -257,7 +268,7 @@ describe("wiki mcp worker", () => {
 
   it("advertises the public read-only tools", async () => {
     const response = await postMcp({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
-    const tools = response.result.tools as Array<{ name: string; annotations: Record<string, boolean> }>;
+    const tools = response.result.tools as Array<{ name: string; annotations: Record<string, boolean>; outputSchema?: unknown }>;
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "context",
       "fetch",
@@ -274,8 +285,10 @@ describe("wiki mcp worker", () => {
       expect(tool.annotations).toMatchObject({
         readOnlyHint: true,
         idempotentHint: true,
+        openWorldHint: false,
         destructiveHint: false
       });
+      expect(tool.outputSchema).toMatchObject({ type: "object" });
     }
   });
 
@@ -748,10 +761,9 @@ describe("wiki mcp worker", () => {
   });
 
   it("rejects invalid and stale fetch ids as tool errors", async () => {
-    await expect(fetchSearchResult(env, { id: "bad" })).resolves.toMatchObject({
-      isError: true,
-      structuredContent: { error: "invalid search result id", id: "bad" }
-    });
+    const invalidIdResult = await fetchSearchResult(env, { id: "bad" });
+    expectToolErrorResult(invalidIdResult);
+    expect(JSON.parse(invalidIdResult.content[0].text)).toEqual({ error: "invalid search result id", id: "bad" });
 
     const id = encodeSearchResultId({
       version: 1,
@@ -759,10 +771,9 @@ describe("wiki mcp worker", () => {
       database_id: "db_alpha",
       path: "/Knowledge/index.md"
     });
-    await expect(fetchSearchResult(env, { id })).resolves.toMatchObject({
-      isError: true,
-      structuredContent: { error: "search result id is for another canister", id }
-    });
+    const staleIdResult = await fetchSearchResult(env, { id });
+    expectToolErrorResult(staleIdResult);
+    expect(JSON.parse(staleIdResult.content[0].text)).toEqual({ error: "search result id is for another canister", id });
   });
 
   it("roundtrips unicode search result ids", () => {
@@ -783,8 +794,10 @@ describe("wiki mcp worker", () => {
       params: { name: "find_databases", arguments: { query: "agent", limit: 1 } }
     });
     const text = response.result.content[0].text as string;
-    expect(JSON.parse(text).databases).toHaveLength(1);
-    expect(JSON.parse(text).databases[0].database_id).toBe("db_alpha");
+    const parsed = JSON.parse(text);
+    expect(parsed.databases).toHaveLength(1);
+    expect(parsed.databases[0].database_id).toBe("db_alpha");
+    expect(response.result.structuredContent).toEqual(parsed);
   });
 
   it("calls source_evidence through MCP JSON-RPC", async () => {
@@ -795,7 +808,21 @@ describe("wiki mcp worker", () => {
       params: { name: "source_evidence", arguments: { database_id: "db_alpha", node_path: "/Knowledge/index.md" } }
     });
     const text = response.result.content[0].text as string;
-    expect(JSON.parse(text).evidence.node_path).toBe("/Knowledge/index.md");
+    const parsed = JSON.parse(text);
+    expect(parsed.evidence.node_path).toBe("/Knowledge/index.md");
+    expect(response.result.structuredContent).toEqual(parsed);
+  });
+
+  it("returns MCP tool errors without output schema validation failure", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "fetch", arguments: { id: "bad" } }
+    });
+
+    expectToolErrorResult(response.result);
+    expect(JSON.parse(response.result.content[0].text)).toEqual({ error: "invalid search result id", id: "bad" });
   });
 
   it("returns http 400 for non-json MCP requests", async () => {
