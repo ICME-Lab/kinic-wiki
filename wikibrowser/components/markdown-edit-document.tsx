@@ -2,6 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import type { WikiNode } from "@/lib/types";
 import { errorMessage } from "@/lib/wiki-helpers";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";
@@ -85,15 +86,20 @@ export function MarkdownEditDocument({
       try {
         savedNode = await onNodeSaved();
       } catch (refreshError) {
+        const warning = `Saved, but refresh failed: ${errorMessage(refreshError)}`;
+        toast.error(warning);
         setStoredEditor({
           ...savedEditor,
-          saveWarning: `Saved, but refresh failed: ${errorMessage(refreshError)}`
+          saveWarning: warning
         });
         return;
       }
       setStoredEditor(newSavedEditorState(`${savedNode.path}\n${savedNode.etag}`, savedNode.path, savedNode.etag, savedNode.content));
+      toast.success("Saved");
     } catch (cause) {
-      setStoredEditor({ ...editor, saveState: "error", saveError: errorMessage(cause), saveWarning: null });
+      const message = errorMessage(cause);
+      toast.error(message);
+      setStoredEditor({ ...editor, saveState: "error", saveError: message, saveWarning: null });
     }
   }
 

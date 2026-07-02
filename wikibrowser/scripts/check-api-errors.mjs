@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 
-const { classifyApiError, invalidCanisterIdError } = await importTs("../lib/api-errors.ts");
+const { classifyApiError, classifyCanisterError, invalidCanisterIdError } = await importTs("../lib/api-errors.ts");
 
 assert.equal(
   classifyApiError(new Error("Canister t63gs-up777-77776-aaaba-cai not found"), "http://127.0.0.1:8000").code,
@@ -18,6 +18,14 @@ assert.equal(
 );
 assert.equal(classifyApiError(new Error("replica rejected request"), "https://icp0.io").error, "Wiki request failed");
 assert.equal(invalidCanisterIdError("invalid principal").error, "Invalid canister ID");
+assert.equal(classifyCanisterError("database not found: testdb").code, "database_not_found");
+assert.equal(classifyCanisterError("database not found: testdb").status, 404);
+assert.equal(classifyCanisterError("sqlite error 1: database not found: testdb").code, "database_not_found");
+assert.equal(classifyCanisterError("sqlite error 1: database not found: testdb").error, "Database not found");
+assert.equal(classifyCanisterError("node not found: /Knowledge/missing.md").code, "node_not_found");
+assert.equal(classifyCanisterError("node not found: /Knowledge/missing.md").status, 404);
+assert.equal(classifyCanisterError("path not found: /Knowledge/missing").code, "path_not_found");
+assert.equal(classifyCanisterError("path not found: /Knowledge/missing").status, 404);
 
 console.log("API error checks OK");
 

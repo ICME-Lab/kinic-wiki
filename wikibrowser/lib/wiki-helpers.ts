@@ -1,4 +1,5 @@
 import type { ChildNode } from "@/lib/types";
+import { visibleChildren } from "@/lib/folder-index";
 
 export type ViewMode = "preview" | "raw" | "edit";
 export type ModeTab = "explorer" | "query" | "source-capture";
@@ -11,6 +12,7 @@ export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
 export type LoadState<T> = {
   data: T | null;
   error: string | null;
+  code?: string | null;
   hint?: string | null;
   loading: boolean;
 };
@@ -38,6 +40,14 @@ export function rootChild(path: StoreRootPath): ChildNode {
 
 export function canExpandChildNode(node: ChildNode): boolean {
   return node.kind === "directory" || node.kind === "folder" || node.hasChildren;
+}
+
+export function isStoreRootPath(path: string): path is StoreRootPath {
+  return STORE_ROOT_PATHS.some((root) => root === path);
+}
+
+export function isEmptyStoreRootPath(path: string, children: ChildNode[] | null): boolean {
+  return isStoreRootPath(path) && children !== null && visibleChildren(children, path).length === 0;
 }
 
 export function parseModeTab(value: string | null): ModeTab {
@@ -75,6 +85,10 @@ export function errorHint(error: unknown): string | null {
 
 export function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
+}
+
+export function isDatabaseNotFoundErrorCode(code: string | null | undefined): boolean {
+  return code === "database_not_found";
 }
 
 export function loadingState<T>(path: string): PathLoadState<T> {

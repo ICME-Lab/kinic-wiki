@@ -15,7 +15,7 @@ const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("..
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
 const { parseSearchOptions, prefixForSearchScope } = await importTs("../lib/search-options.ts");
 const { isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
-const { canExpandChildNode, inferNoteRole, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
+const { canExpandChildNode, inferNoteRole, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
 const { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } = await importTs("../lib/database-preview.ts");
 const {
@@ -28,8 +28,11 @@ const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const homePageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const adminRouteShellSource = readFileSync(new URL("../app/admin-route-shell.tsx", import.meta.url), "utf8");
 const marketplaceLayoutSource = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
+const marketplaceListingDetailSource = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
+const dashboardClientSource = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
 const linkPreviewRegenerateRouteSource = readFileSync(new URL("../app/api/link-preview/regenerate/route.ts", import.meta.url), "utf8");
 const linkPreviewImageSource = readFileSync(new URL("../app/link-preview-image.tsx", import.meta.url), "utf8");
@@ -37,6 +40,7 @@ const openGraphImageSource = readFileSync(new URL("../app/opengraph-image.tsx", 
 const twitterImageSource = readFileSync(new URL("../app/twitter-image.tsx", import.meta.url), "utf8");
 const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image/route.ts", import.meta.url), "utf8");
 const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image/route.ts", import.meta.url), "utf8");
+const sourceCapturePanelSource = readFileSync(new URL("../components/source-capture-panel.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
 const markdownEditorSource = readFileSync(new URL("../components/markdown-editor.tsx", import.meta.url), "utf8");
 const markdownPreviewSource = readFileSync(new URL("../components/markdown-preview.tsx", import.meta.url), "utf8");
@@ -53,10 +57,12 @@ const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta
 
 assert.match(explorerTreeSource, /childNodesCache\.current\.get\(requestKey\)/);
 assert.match(explorerTreeSource, /childNodesCache\.current\.set\(requestKey, data\)/);
+assert.match(explorerTreeSource, /childNodesCache\.current\.set\(rootRequestKey, data\)/);
+assert.match(explorerTreeSource, /if \(emptyStoreRoot\) return null;/);
 assert.match(explorerTreeSource, /visibleChildren\(childrenState\.data\)/);
 assert.match(explorerTreeSource, /DEFAULT_STORE_ROOT_PATHS\.map/);
 assert.match(explorerTreeSource, /listChildren\(canisterId, databaseId, "\/"/);
-assert.match(explorerTreeSource, /STORE_ROOT_PATH_SET\.has\(child\.path\)/);
+assert.doesNotMatch(explorerTreeSource, /filterStoreRoots|STORE_ROOT_PATH_SET/);
 assert.match(explorerTreeSource, /onSelectedNode/);
 assert.doesNotMatch(explorerTreeSource, /onCreateMarkdownFile/);
 assert.doesNotMatch(explorerTreeSource, /onDeleteMarkdownNode/);
@@ -77,11 +83,13 @@ assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items
 assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
 assert.match(wikiBrowserSource, /hrefForCanonicalDatabaseRoute\(pathname, searchParams\.toString\(\)\)/);
 assert.match(wikiBrowserSource, /router\.replace\(canonicalRouteHref\)/);
-assert.match(wikiBrowserSource, /publicDatabaseIds\.has\(databaseId\) \|\| memberDatabases\.some/);
-assert.match(wikiBrowserSource, /publicDatabasesLoaded && Boolean\(readIdentity\) && memberDatabasesLoaded/);
-assert.match(wikiBrowserSource, /router\.replace\("\/dashboard"\)/);
+assert.doesNotMatch(wikiBrowserSource, /publicDatabasesLoaded && Boolean\(readIdentity\) && memberDatabasesLoaded/);
+assert.doesNotMatch(wikiBrowserSource, /router\.replace\("\/dashboard"\)/);
 assert.match(wikiBrowserSource, /<Network size=\{18\} aria-hidden \/>/);
 assert.match(wikiBrowserSource, /<Share2 aria-hidden size=\{18\} \/>/);
+assert.match(wikiBrowserSource, /Settings/);
+assert.match(wikiBrowserSource, /href=\{`\/dashboard\/project\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
+assert.match(wikiBrowserSource, /aria-label="Manage database settings"/);
 assert.match(wikiBrowserSource, /sr-only sm:not-sr-only/);
 assert.match(wikiBrowserSource, /Share2/);
 assert.match(wikiBrowserSource, /xShareDatabaseHref/);
@@ -120,6 +128,11 @@ assert.match(layoutSource, /metadataBase: new URL\("https:\/\/wiki\.kinic\.xyz"\
 assert.match(layoutSource, /openGraph:/);
 assert.match(layoutSource, /twitter:/);
 assert.match(layoutSource, /card: "summary_large_image"/);
+assert.match(homePageSource, /url: "\/opengraph-image"/);
+assert.match(homePageSource, /width: 1200/);
+assert.match(homePageSource, /height: 630/);
+assert.match(homePageSource, /card: "summary_large_image"/);
+assert.match(homePageSource, /url: "\/twitter-image"/);
 assert.doesNotMatch(layoutSource, /Read-only browser|Wiki Canister Browser/);
 assert.doesNotMatch(layoutSource, /AppSessionProvider|AppHeader|AdminShell/);
 assert.match(adminRouteShellSource, /AppSessionProvider/);
@@ -255,16 +268,46 @@ assert.match(wikiBrowserSource, /: !node\.hasChildren/);
 assert.doesNotMatch(wikiBrowserSource, /DocumentBreadcrumbs/);
 assert.doesNotMatch(wikiBrowserSource, /readMode/);
 assert.match(documentPaneSource, /DocumentHeaderPath/);
+assert.match(documentPaneSource, /DatabaseNotFoundState/);
+assert.match(documentPaneSource, /Database not found/);
+assert.match(documentPaneSource, /Open dashboard/);
+assert.match(documentPaneSource, /href="\/dashboard"/);
+assert.match(documentPaneSource, /isDatabaseNotFoundErrorCode\(node\.code\) \|\| isDatabaseNotFoundErrorCode\(childrenState\.code\)/);
+assert.doesNotMatch(documentPaneSource, /sqlite error/);
+assert.match(explorerTreeSource, /isDatabaseNotFoundErrorCode\(code\) \? null : message/);
+assert.match(explorerTreeSource, /rootDatabaseNotFound \? \[\] : rootNodeData/);
+assert.match(vfsClientSource, /classifyCanisterError\(message\)/);
 assert.match(documentPaneSource, /Current knowledge path/);
 assert.match(documentPaneSource, /h-9 w-fit min-w-0 max-w-full/);
 assert.match(documentPaneSource, /sm:h-10/);
 assert.match(documentPaneSource, /hrefForPath\(canisterId, databaseId, crumbPath/);
 assert.match(documentPaneSource, /label="Edit"/);
+assert.match(documentPaneSource, /MobileCopyPathButton/);
+assert.match(documentPaneSource, /sm:hidden/);
 assert.match(documentPaneSource, /Copy path/);
 assert.match(documentPaneSource, /Copy raw/);
 assert.doesNotMatch(documentPaneSource, /isDirectory \? "directory" : "node"/);
 assert.doesNotMatch(documentPaneSource, /displayPath/);
 assert.match(documentPaneSource, /navigator\.clipboard\.writeText/);
+assert.match(documentPaneSource, /toast\.success\(`\$\{label\} copied`\)/);
+assert.match(documentPaneSource, /toast\.error\(`\$\{label\} copy failed`\)/);
+assert.doesNotMatch(documentPaneSource, /copyStatus/);
+assert.doesNotMatch(documentPaneSource, /setCopyStatus/);
+assert.doesNotMatch(documentPaneSource, /label="Saved"/);
+assert.match(layoutSource, /import \{ Toaster \} from "sonner"/);
+assert.match(layoutSource, /<Toaster richColors position="bottom-right" \/>/);
+assert.match(sourceCapturePanelSource, /toast\.success\(`Queued and accepted \$\{created\.requestPath\}`\)/);
+assert.match(sourceCapturePanelSource, /toast\.error\(`Queued \$\{created\.requestPath\}\. \$\{created\.triggerError\}`\)/);
+assert.match(markdownEditDocumentSource, /toast\.success\("Saved"\)/);
+assert.match(markdownEditDocumentSource, /toast\.error\(message\)/);
+assert.match(dashboardClientSource, /toast\.success\("Access updated\."\)/);
+assert.match(dashboardClientSource, /toast\.success\("Listing published\."\)/);
+assert.match(dashboardClientSource, /toast\.error\(errorMessage\(cause\)\)/);
+assert.doesNotMatch(dashboardClientSource, /actionMessage/);
+assert.doesNotMatch(dashboardClientSource, /actionTone/);
+assert.match(marketplaceListingDetailSource, /toast\.success\(`Purchase complete\. Ledger block \$\{order\.ledgerBlockIndex\}\.`\)/);
+assert.match(marketplaceListingDetailSource, /toast\.info\("Access is already active\."\)/);
+assert.match(marketplaceListingDetailSource, /toast\.error\(message\)/);
 assert.match(documentPaneSource, /node\.data\?\.kind === "folder"/);
 assert.match(documentPaneSource, /FolderIndexSection/);
 assert.match(documentPaneSource, /emptyFolderIndexNode/);
@@ -403,6 +446,16 @@ assert.deepEqual(
 assert.equal(canExpandChildNode(child("/Knowledge/file-parent", "file-parent", "file", true)), true);
 assert.equal(canExpandChildNode(child("/Knowledge/file-leaf.md", "file-leaf.md", "file", false)), false);
 assert.equal(canExpandChildNode(child("/Knowledge/folder", "folder", "folder", false)), true);
+assert.equal(isStoreRootPath("/Knowledge"), true);
+assert.equal(isStoreRootPath("/Knowledge/demo"), false);
+assert.equal(isDatabaseNotFoundErrorCode("database_not_found"), true);
+assert.equal(isDatabaseNotFoundErrorCode("node_not_found"), false);
+assert.equal(isDatabaseNotFoundErrorCode(null), false);
+assert.equal(isEmptyStoreRootPath("/Knowledge", []), true);
+assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/index.md", "index.md", "file")]), true);
+assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/demo.md", "demo.md", "file")]), false);
+assert.equal(isEmptyStoreRootPath("/Knowledge/demo", []), false);
+assert.equal(isEmptyStoreRootPath("/Project", []), false);
 assert.equal(parseModeTab("query"), "query");
 assert.equal(parseModeTab("clipper"), "explorer");
 assert.equal(parseModeTab("sources"), "explorer");
@@ -652,9 +705,12 @@ async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const rawSource = readFileSync(sourcePath, "utf8");
   const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
+  const folderIndexSource = readFileSync(new URL("../lib/folder-index.ts", import.meta.url), "utf8");
   const pathsSource = readFileSync(new URL("../lib/paths.ts", import.meta.url), "utf8").replace('import { databaseRouteBase } from "./share-links";', "");
   const source = relativePath === "../lib/paths.ts"
     ? `${shareLinksSource}\n${pathsSource}`
+    : relativePath === "../lib/wiki-helpers.ts"
+      ? `${folderIndexSource}\n${rawSource.replace('import { visibleChildren } from "@/lib/folder-index";', "")}`
     : relativePath === "../lib/database-preview.ts"
       ? `${shareLinksSource}\n${pathsSource}\n${rawSource.replace('import { canonicalDatabaseId } from "@/lib/paths";', "")}`
       : rawSource;

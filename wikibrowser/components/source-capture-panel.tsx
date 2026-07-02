@@ -3,6 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { createSourceCaptureRequest } from "@/lib/source-capture";
 
 export function SourceCapturePanel({
@@ -18,27 +19,25 @@ export function SourceCapturePanel({
 }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [tone, setTone] = useState<"error" | "info">("info");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!readIdentity || !url.trim()) return;
     if (databaseCyclesError) {
-      setTone("error");
-      setMessage(databaseCyclesError);
+      toast.error(databaseCyclesError);
       return;
     }
     setBusy(true);
-    setMessage(null);
     try {
       const created = await createSourceCaptureRequest(canisterId, databaseId, readIdentity, url);
-      setTone(created.triggered ? "info" : "error");
-      setMessage(created.triggered ? `Queued and accepted ${created.requestPath}` : `Queued ${created.requestPath}. ${created.triggerError}`);
+      if (created.triggered) {
+        toast.success(`Queued and accepted ${created.requestPath}`);
+      } else {
+        toast.error(`Queued ${created.requestPath}. ${created.triggerError}`);
+      }
       setUrl("");
     } catch (cause) {
-      setTone("error");
-      setMessage(cause instanceof Error ? cause.message : "source capture failed.");
+      toast.error(cause instanceof Error ? cause.message : "source capture failed.");
     } finally {
       setBusy(false);
     }
@@ -82,7 +81,6 @@ export function SourceCapturePanel({
       </form>
       <div className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{databaseId}</div>
       {databaseCyclesError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">{databaseCyclesError}</div> : null}
-      {message ? <div className={`rounded-lg border px-3 py-2 text-xs ${tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-white text-ink"}`}>{message}</div> : null}
     </div>
   );
 }

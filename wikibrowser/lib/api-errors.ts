@@ -1,15 +1,19 @@
 export type ApiErrorCode =
   | "canister_not_found"
+  | "database_not_found"
   | "ic_host_unreachable"
   | "wiki_api_version_mismatch"
   | "wiki_api_missing"
   | "invalid_canister_id"
+  | "node_not_found"
+  | "path_not_found"
   | "wiki_request_failed";
 
 export type PublicApiError = {
   error: string;
   hint: string;
   code: ApiErrorCode;
+  status?: number;
 };
 
 export function invalidCanisterIdError(reason: string): PublicApiError {
@@ -61,6 +65,39 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
       ? "Check the local replica logs and confirm the wiki canister is healthy."
       : "Check the canister ID, gateway host, and public Wiki VFS API availability.",
     code: "wiki_request_failed"
+  };
+}
+
+export function classifyCanisterError(message: string): PublicApiError {
+  if (/\bdatabase not found:/i.test(message)) {
+    return {
+      error: "Database not found",
+      hint: "Open the dashboard and select a readable database.",
+      code: "database_not_found",
+      status: 404
+    };
+  }
+  if (/^node not found:/i.test(message)) {
+    return {
+      error: message,
+      hint: "Check the wiki path or search for the node.",
+      code: "node_not_found",
+      status: 404
+    };
+  }
+  if (/^path not found:/i.test(message)) {
+    return {
+      error: message,
+      hint: "Check the folder path or open a parent folder.",
+      code: "path_not_found",
+      status: 404
+    };
+  }
+  return {
+    error: message,
+    hint: "The wiki canister rejected this request.",
+    code: "wiki_request_failed",
+    status: 400
   };
 }
 

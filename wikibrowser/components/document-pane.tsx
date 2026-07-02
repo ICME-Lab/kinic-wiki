@@ -6,10 +6,11 @@ import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { FileCode, FileText, Folder, Loader2, Route } from "lucide-react";
+import { toast } from "sonner";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
-import { isKnowledgeSourcePath, type LoadState, type ModeTab, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
+import { isDatabaseNotFoundErrorCode, isKnowledgeSourcePath, type LoadState, type ModeTab, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
 import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
 import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
@@ -49,36 +50,25 @@ export function DocumentHeader({
   editState: DocumentEditState;
   rawContent: string | null;
 }) {
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   async function copyText(label: string, value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setCopyStatus(`${label} copied`);
+      toast.success(`${label} copied`);
     } catch {
-      setCopyStatus(`${label} copy failed`);
+      toast.error(`${label} copy failed`);
     }
   }
-  const hasStatusBadges = view === "edit" || copyStatus !== null;
+  const hasStatusBadges = view === "edit";
   return (
     <div className="border-b border-line bg-white px-2 py-3 sm:px-5">
       <div className="flex min-h-9 items-center gap-1 overflow-x-auto whitespace-nowrap sm:min-h-10 sm:gap-2 lg:justify-between lg:overflow-visible">
         <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
           <div className="hidden min-w-[88px] max-w-[34vw] shrink-0 sm:block sm:max-w-[52vw] lg:max-w-full">
-            <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
-          </div>
-          <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10">
-            <button
-              aria-label="Copy path"
-              className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink sm:size-8"
-              title="Copy path"
-              type="button"
-              onClick={() => void copyText("Path", path)}
-            >
-              <Route aria-hidden="true" size={15} />
-            </button>
+            <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} onCopyPath={() => void copyText("Path", path)} />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          <MobileCopyPathButton onCopyPath={() => void copyText("Path", path)} />
           <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
             <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
             <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
@@ -104,10 +94,24 @@ export function DocumentHeader({
           {view === "edit" ? <HeaderBadge label="Editing" tone="blue" /> : null}
           {view === "edit" && editState.dirty ? <HeaderBadge label="Unsaved" tone="yellow" /> : null}
           {view === "edit" && editState.saveState === "saving" ? <HeaderBadge label="Saving" tone="blue" /> : null}
-          {view === "edit" && editState.saveState === "saved" ? <HeaderBadge label="Saved" tone="green" /> : null}
-          {copyStatus ? <HeaderBadge label={copyStatus} tone={copyStatus.endsWith("failed") ? "yellow" : "green"} /> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function MobileCopyPathButton({ onCopyPath }: { onCopyPath: () => void }) {
+  return (
+    <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:hidden">
+      <button
+        aria-label="Copy path"
+        className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
+        title="Copy path"
+        type="button"
+        onClick={onCopyPath}
+      >
+        <Route aria-hidden="true" size={15} />
+      </button>
     </div>
   );
 }
@@ -115,15 +119,22 @@ export function DocumentHeader({
 function DocumentHeaderPath({
   canisterId,
   databaseId,
-  path
+  path,
+  onCopyPath
 }: {
   canisterId: string;
   databaseId: string;
   path: string;
+  onCopyPath: () => void;
 }) {
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
-    return <div className="flex h-9 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-2 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3">/</div>;
+    return (
+      <div className="flex h-9 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-2 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3">
+        <span>/</span>
+        <CopyPathButton onCopyPath={onCopyPath} />
+      </div>
+    );
   }
   return (
     <nav className="flex h-9 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-2 font-mono text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3" aria-label="Current knowledge path">
@@ -146,7 +157,24 @@ function DocumentHeaderPath({
           </Fragment>
         );
       })}
+      <CopyPathButton onCopyPath={onCopyPath} />
     </nav>
+  );
+}
+
+function CopyPathButton({ onCopyPath }: { onCopyPath: () => void }) {
+  return (
+    <span className="ml-1 flex shrink-0 items-center border-l border-line pl-1">
+      <button
+        aria-label="Copy path"
+        className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink sm:size-8"
+        title="Copy path"
+        type="button"
+        onClick={onCopyPath}
+      >
+        <Route aria-hidden="true" size={15} />
+      </button>
+    </span>
   );
 }
 
@@ -242,6 +270,9 @@ export function DocumentPane({
       </PaneBody>
     );
   }
+  if (isDatabaseNotFoundErrorCode(node.code) || isDatabaseNotFoundErrorCode(childrenState.code)) {
+    return <PaneBody><DatabaseNotFoundState databaseId={databaseId} /></PaneBody>;
+  }
   if (isVfsNotFound(node.error, childrenState.error)) {
     return <PaneBody><NotFoundState path={node.path} canisterId={canisterId} databaseId={databaseId} /></PaneBody>;
   }
@@ -278,6 +309,24 @@ function AuthRequiredState({ authReady, onLogin }: { authReady: boolean; mode: "
 
 function PaneBody({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`min-h-0 flex-1 ${className}`}>{children}</div>;
+}
+
+function DatabaseNotFoundState({ databaseId }: { databaseId: string }) {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
+        <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Database not found</p>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">Database not found</h3>
+        <p className="mt-3 text-sm leading-6 text-muted">No readable wiki database exists for this database ID.</p>
+        <p className="mt-3 break-all font-mono text-xs text-muted">{databaseId}</p>
+        <div className="mt-5 flex flex-wrap gap-2 text-sm">
+          <Link className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent" href="/dashboard">
+            Open dashboard
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function NotFoundState({

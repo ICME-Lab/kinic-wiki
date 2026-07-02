@@ -137,7 +137,7 @@ export default function CliPage() {
             <p className="mt-2 text-sm leading-6 text-muted">
               Use raw calls for endpoint debugging and database SQL without installing <code>kinic-vfs-cli</code>. Use <code>kinic-vfs-cli</code> for scripted reads and safe writes.
             </p>
-            <Link className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink no-underline hover:border-accent hover:bg-accentSoft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/canister-api">
+            <Link className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink no-underline hover:border-accent hover:bg-accentSoft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/docs/canister-api">
               Open Canister API
             </Link>
           </AdminPanel>

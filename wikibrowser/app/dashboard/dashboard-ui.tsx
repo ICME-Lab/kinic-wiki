@@ -587,11 +587,15 @@ export function CyclesHistoryPanel(props: {
   entries: DatabaseCycleEntry[];
   entriesError: string | null;
   entriesLoading: boolean;
+  hasPreviousPage: boolean;
   nextCursor: string | null;
+  pageIndex: number;
+  pageSize: number;
   pendingError: string | null;
   pendingLoading: boolean;
   pendingPurchases: DatabaseCyclesPendingPurchase[];
-  onLoadMore: () => void;
+  onNextPage: () => void;
+  onPreviousPage: () => void;
   onRefresh: () => void;
 }) {
   return (
@@ -614,19 +618,28 @@ export function CyclesHistoryPanel(props: {
       </section>
 
       <section className="rounded-lg border border-line bg-paper shadow-sm">
-        <div className="grid gap-2 border-b border-line px-4 py-4">
-          <h2 className="text-lg font-semibold text-ink">Ledger entries</h2>
-          <p className="text-sm leading-6 text-muted">Entries are shown in entry ID order. Reader and writer caller values come from the canister redaction policy.</p>
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">Ledger entries</h2>
+            <p className="mt-1 text-sm leading-6 text-muted">Entries are shown in entry ID order. Reader and writer caller values come from the canister redaction policy.</p>
+          </div>
+          <p className="shrink-0 font-mono text-xs text-muted">Page {props.pageIndex + 1} / {props.pageSize} per page</p>
         </div>
         {props.entriesError ? <PanelNotice tone="error" message={props.entriesError} /> : null}
         {props.entriesLoading && props.entries.length === 0 ? <PanelNotice tone="info" message="Loading ledger entries..." /> : null}
         {!props.entriesLoading && !props.entriesError && props.entries.length === 0 ? <PanelNotice tone="info" message="No ledger entries." /> : null}
         {props.entries.length > 0 ? <LedgerEntriesTable entries={props.entries} /> : null}
-        {props.nextCursor ? (
-          <div className="border-t border-line px-4 py-3">
-            <ActionButton disabled={props.entriesLoading} loading={props.entriesLoading} loadingLabel="Loading..." onClick={props.onLoadMore} size="compact" variant="secondary">
-              Load more
-            </ActionButton>
+        {props.entries.length > 0 || props.hasPreviousPage || props.nextCursor ? (
+          <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted">{props.nextCursor ? "More ledger entries are available." : "End of ledger entries."}</p>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton disabled={props.entriesLoading || !props.hasPreviousPage} loading={false} loadingLabel="Loading..." onClick={props.onPreviousPage} size="compact" variant="secondary">
+                Previous page
+              </ActionButton>
+              <ActionButton disabled={props.entriesLoading || !props.nextCursor} loading={props.entriesLoading} loadingLabel="Loading..." onClick={props.onNextPage} size="compact" variant="secondary">
+                Next page
+              </ActionButton>
+            </div>
           </div>
         ) : null}
       </section>
