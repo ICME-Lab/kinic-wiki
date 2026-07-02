@@ -25,9 +25,8 @@ export function AppHeader() {
   const isMarketplace = pathname === "/marketplace" || pathname.startsWith("/marketplace/");
   const isCycles = pathname === "/cycles";
   const isProfile = pathname === "/profile";
-  const isCanisterApi = pathname === "/canister-api";
-  const isCli = pathname === "/cli";
-  if (!isDashboard && !isCycles && !isMarketplace && !isProfile && !isCanisterApi && !isCli) return null;
+  const isDocs = pathname === "/docs" || pathname.startsWith("/docs/");
+  if (!isDashboard && !isCycles && !isMarketplace && !isProfile && !isDocs) return null;
 
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;

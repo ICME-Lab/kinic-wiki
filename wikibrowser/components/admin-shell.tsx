@@ -6,25 +6,45 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode } from "react";
-import { BookOpen, LayoutDashboard, PanelLeft, PowerOff, Store, Unplug, UserRound, Wallet } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import * as Collapsible from "@radix-ui/react-collapsible";
+import { BookOpen, ChevronDown, FileText, LayoutDashboard, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
 import { useAppSession } from "@/app/app-session-provider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
-const ADMIN_NAV_ITEMS = [
+type AdminNavChild = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+};
+
+type AdminNavItem = AdminNavChild & {
+  children?: readonly AdminNavChild[];
+};
+
+const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },
-  { href: "/canister-api", label: "Canister API", icon: Unplug },
-  { href: "/cli", label: "CLI Guide", icon: BookOpen }
-] as const;
+  {
+    href: "/docs",
+    label: "Docs",
+    icon: BookOpen,
+    children: [
+      { href: "/docs", label: "Overview", icon: FileText },
+      { href: "/docs/cli", label: "CLI Guide", icon: FileText },
+      { href: "/docs/canister-api", label: "Canister API", icon: FileText },
+      { href: "/docs/skills", label: "Skills", icon: FileText }
+    ]
+  }
+];
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   if (!isAdminShellPath(pathname)) return <>{children}</>;
 
-  const sidebar = <AdminSidebar pathname={pathname} />;
+  const sidebar = <AdminSidebar key={pathname} pathname={pathname} />;
   return (
     <>
       <a className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-ink focus:ring-2 focus:ring-accent focus:ring-offset-2" href="#admin-main">
@@ -65,24 +85,67 @@ export function AdminContent({ children }: { children: ReactNode }) {
 }
 
 function AdminSidebar({ pathname }: { pathname: string }) {
+  const [docsOpen, setDocsOpen] = useState(() => isDocsPath(pathname));
+
   return (
     <div className="flex min-h-0 flex-col gap-4 p-3">
       <nav className="flex flex-col gap-2" aria-label="Admin navigation">
         {ADMIN_NAV_ITEMS.map((item) => {
           const Icon = item.icon;
+          if (item.children) {
+            const active = isDocsPath(pathname);
+            return (
+              <Collapsible.Root className="grid gap-1" key={item.href} open={docsOpen} onOpenChange={setDocsOpen}>
+                <Collapsible.Trigger asChild>
+                  <button
+                    className={`flex min-h-10 min-w-0 items-center justify-between gap-3 rounded-lg px-3 text-left text-sm font-semibold no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
+                      active ? "bg-accentSoft text-ink" : "text-muted hover:bg-accentSoft hover:text-accentText"
+                    }`}
+                    type="button"
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <Icon aria-hidden className="shrink-0" size={17} />
+                      <span className="min-w-0 truncate">{item.label}</span>
+                    </span>
+                    <ChevronDown aria-hidden className={`shrink-0 transition-transform ${docsOpen ? "rotate-180" : ""}`} size={15} />
+                  </button>
+                </Collapsible.Trigger>
+                <Collapsible.Content className="grid gap-1 pl-6">
+                  {item.children.map((child) => {
+                    const ChildIcon = child.icon;
+                    const childActive = isActiveAdminPath(pathname, child.href);
+                    return (
+                      <Link
+                        aria-current={childActive ? "page" : undefined}
+                        className={`flex min-h-9 min-w-0 items-center gap-2 rounded-lg px-3 text-sm no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
+                          childActive ? "bg-white text-ink shadow-sm" : "text-muted hover:bg-white hover:text-accentText"
+                        }`}
+                        href={child.href}
+                        key={child.href}
+                      >
+                        <ChildIcon aria-hidden className="shrink-0" size={15} />
+                        <span className="min-w-0 truncate">{child.label}</span>
+                      </Link>
+                    );
+                  })}
+                </Collapsible.Content>
+              </Collapsible.Root>
+            );
+          }
           const active = isActiveAdminPath(pathname, item.href);
           return (
-            <Link
-              aria-current={active ? "page" : undefined}
-              className={`flex min-h-10 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-semibold no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
-                active ? "bg-accentSoft text-ink" : "text-muted hover:bg-accentSoft hover:text-accentText"
-              }`}
-              href={item.href}
-              key={item.href}
-            >
-              <Icon aria-hidden className="shrink-0" size={17} />
-              <span className="min-w-0 truncate">{item.label}</span>
-            </Link>
+            <div className="grid gap-1" key={item.href}>
+              <Link
+                aria-current={active && pathname === item.href ? "page" : undefined}
+                className={`flex min-h-10 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-semibold no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${
+                  active ? "bg-accentSoft text-ink" : "text-muted hover:bg-accentSoft hover:text-accentText"
+                }`}
+                href={item.href}
+              >
+                <Icon aria-hidden className="shrink-0" size={17} />
+                <span className="min-w-0 truncate">{item.label}</span>
+              </Link>
+            </div>
           );
         })}
       </nav>
@@ -129,14 +192,19 @@ function AdminAccountControls() {
 }
 
 function isAdminShellPath(pathname: string): boolean {
-  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/metrics" || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/canister-api" || pathname === "/cli";
+  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/metrics" || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/docs" || pathname.startsWith("/docs/");
+}
+
+function isDocsPath(pathname: string): boolean {
+  return pathname === "/docs" || pathname.startsWith("/docs/");
 }
 
 function isActiveAdminPath(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
   if (href === "/metrics") return pathname === "/metrics";
   if (href === "/marketplace") return pathname === "/marketplace" || pathname.startsWith("/marketplace/");
-  if (href === "/canister-api") return pathname === "/canister-api";
+  if (href === "/docs") return pathname === "/docs";
+  if (href === "/docs/skills") return pathname === "/docs/skills" || pathname.startsWith("/docs/skills/");
   return pathname === href;
 }
 

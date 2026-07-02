@@ -46,7 +46,7 @@ db_kva4v2twg6jv
 
 The canonical CLI guide is:
 
-https://wiki.kinic.xyz/cli
+https://wiki.kinic.xyz/docs/cli
 
 ## Install The CLI
 
@@ -117,4 +117,4 @@ Developer and operator guides:
 - Canister Store API: [docs/STORE_API.md](docs/STORE_API.md)
 - Shared Rust library tool calling: [docs/AGENT_TOOL_CALLING.md](docs/AGENT_TOOL_CALLING.md)
 - VFS validation and benchmarks: [docs/validation/VFS_VALIDATION_PLAN.md](docs/validation/VFS_VALIDATION_PLAN.md)
-- Public CLI guide: https://wiki.kinic.xyz/cli
+- Public CLI guide: https://wiki.kinic.xyz/docs/cli
