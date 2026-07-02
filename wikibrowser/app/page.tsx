@@ -6,16 +6,31 @@ import Image from "next/image";
 import Link from "next/link";
 import { publicDatabasePath } from "@/lib/share-links";
 
+const linkPreviewImage = {
+  url: "/opengraph-image",
+  width: 1200,
+  height: 630,
+  alt: "Kinic Wiki Database Dashboard"
+};
+
 export const metadata: Metadata = {
   title: "Kinic Wiki AI Memory",
   description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
   openGraph: {
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
+    images: [linkPreviewImage]
   },
   twitter: {
+    card: "summary_large_image",
     title: "Kinic Wiki AI Memory",
-    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows."
+    description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
+    images: [
+      {
+        url: "/twitter-image",
+        alt: linkPreviewImage.alt
+      }
+    ]
   }
 };
 
