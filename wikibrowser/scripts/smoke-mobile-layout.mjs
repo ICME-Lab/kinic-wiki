@@ -27,6 +27,8 @@ for (const [width, height] of viewports) {
     run("goto", [`${baseUrl}/db/${encodeURIComponent(databaseId)}${route}`]);
     run("eval", [wikiLayoutProbe(route)]);
   }
+  run("goto", [`${baseUrl}/db/__missing_database_for_mobile_smoke__/Knowledge`]);
+  run("eval", [missingDatabaseLayoutProbe()]);
   run("goto", [`${baseUrl}/dashboard`]);
   run("eval", [dashboardLayoutProbe()]);
   run("goto", [`${baseUrl}/dashboard/project/${encodeURIComponent(databaseId)}`]);
@@ -61,6 +63,9 @@ function wikiLayoutProbe(route) {
     const brandLink = document.querySelector('[aria-label="Back to database dashboard"]');
     const graphLink = document.querySelector('a[aria-label="Graph"]');
     const graphLabel = graphLink?.querySelector("span");
+    const manageLink = document.querySelector('[data-tid="header-manage-link"]');
+    const manageLabel = manageLink?.querySelector("span");
+    const copyPathButtons = Array.from(document.querySelectorAll('button[aria-label="Copy path"]'));
     const searchForm = document.querySelector('form[aria-label], form');
     if (!documentPanel) failures.push("missing document panel");
     if (${JSON.stringify(expectsTallDocument)} && /node|directory|\\/Knowledge|skill-categories/i.test(documentHeader?.textContent ?? "")) failures.push("document header shows node path metadata");
@@ -69,6 +74,11 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link is not visible before mobile menu opens");
     if (!graphLink) failures.push("missing graph link");
     if (isVisible(graphLabel)) failures.push("graph text is visible on mobile");
+    if (!manageLink) failures.push("missing manage link");
+    if (!manageLink?.getAttribute("href")?.includes("/dashboard/project/")) failures.push("manage link does not point to project dashboard");
+    if (isVisible(manageLabel)) failures.push("manage text is visible on mobile");
+    if (!copyPathButtons.some((button) => isVisible(button))) failures.push("copy path button is not visible on mobile");
+    if (copyPathButtons.some((button) => isVisible(button) && button.textContent?.trim())) failures.push("copy path text is visible on mobile");
     if (mobileMenuButton?.querySelector("svg")?.getAttribute("width") !== graphLink?.querySelector("svg")?.getAttribute("width")) {
       failures.push("menu and graph icon sizes differ");
     }
@@ -109,8 +119,8 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link disappears after mobile menu opens");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button is not expanded after click");
     const visibleTabs = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).filter((link) => isVisible(link)).map((link) => link.textContent?.trim()).join(",");
-    if (visibleTabs !== "explorer,query,source-capture") failures.push("mobile sidebar tabs are not visible");
-    const sourceCaptureLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "source-capture");
+    if (visibleTabs !== "explorer,query,capture") failures.push("mobile sidebar tabs are not visible");
+    const sourceCaptureLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "capture");
     sourceCaptureLink?.click();
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (!isVisible(explorerPanel)) failures.push("explorer panel closes after mobile sidebar navigation");
@@ -148,6 +158,26 @@ function dashboardLayoutProbe() {
     }
     if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
       failures.push("dashboard overflows horizontally");
+    }
+    if (failures.length > 0) throw new Error(failures.join("; "));
+    return true;
+  }`;
+}
+
+function missingDatabaseLayoutProbe() {
+  return `async () => {
+    const failures = [];
+    for (let attempt = 0; attempt < 20 && !document.body.innerText.includes("Database not found"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const bodyText = document.body.innerText;
+    if (!bodyText.includes("Database not found")) failures.push("missing database state is not visible");
+    if (/sqlite error|database not found: __missing_database_for_mobile_smoke__/i.test(bodyText)) failures.push("raw database error is visible");
+    if (!document.querySelector('a[href="/dashboard"]')) failures.push("missing dashboard link");
+    const explorerPanel = document.querySelector('[data-tid="wiki-explorer-panel"]');
+    if (/Knowledge|Memory|Skills|Sessions|Sources/.test(explorerPanel?.textContent ?? "")) failures.push("missing database explorer shows root paths");
+    if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
+      failures.push("missing database page overflows horizontally");
     }
     if (failures.length > 0) throw new Error(failures.join("; "));
     return true;

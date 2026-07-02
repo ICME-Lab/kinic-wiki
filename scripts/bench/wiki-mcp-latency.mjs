@@ -174,15 +174,14 @@ function buildScenarios(databaseId, setup, capabilities) {
     ) : null,
     capabilities.tools.has("list") ? scenario("list_root_shallow", () => callTool("list", { database_id: databaseId, prefix: "/", recursive: false, limit: 100 })) : null,
     capabilities.tools.has("list") ? scenario("list_prefix_recursive", () => callTool("list", { database_id: databaseId, prefix: args.prefix, recursive: true, limit: 100 })) : null,
-    scenario("fetch_one", () => callTool("fetch", { id: setup.primary_id })),
     capabilities.tools.has("fetch_many") ? scenario("fetch_many", () => callTool("fetch_many", { ids: setup.fetch_ids })) : null,
     capabilities.tools.has("read_path") ? scenario("read_path", () => callTool("read_path", { database_id: databaseId, path: setup.primary_path })) : null,
-    capabilities.tools.has("read_paths") ? scenario("read_paths", () => callTool("read_paths", { database_id: databaseId, paths: setup.paths })) : null,
-    scenario("fetch_one_sequential_same_count", async () => {
+    capabilities.tools.has("read_paths") && setup.paths.length >= 2 ? scenario("read_paths", () => callTool("read_paths", { database_id: databaseId, paths: setup.paths })) : null,
+    capabilities.tools.has("read_path") ? scenario("read_path_sequential_same_count", async () => {
       const started = performance.now();
       const calls = [];
-      for (const id of setup.fetch_ids) {
-        calls.push(await callTool("fetch", { id }));
+      for (const path of setup.paths) {
+        calls.push(await callTool("read_path", { database_id: databaseId, path }));
       }
       const elapsedMs = performance.now() - started;
       return {
@@ -192,7 +191,7 @@ function buildScenarios(databaseId, setup, capabilities) {
         elapsed_ms_override: elapsedMs,
         payload: { calls: calls.length }
       };
-    })
+    }) : null
   ];
   return scenarios.filter(Boolean);
 }
@@ -328,11 +327,11 @@ function percentile(sorted, p) {
 function compareResults(results) {
   const byName = Object.fromEntries(results.map((result) => [result.name, result]));
   return {
-    fetch_many_vs_sequential_fetch_avg_ratio: ratio(byName.fetch_many, byName.fetch_one_sequential_same_count),
+    fetch_many_vs_sequential_read_path_avg_ratio: ratio(byName.fetch_many, byName.read_path_sequential_same_count),
     read_paths_vs_fetch_many_avg_ratio: ratio(byName.read_paths, byName.fetch_many),
-    read_paths_vs_sequential_fetch_avg_ratio: ratio(byName.read_paths, byName.fetch_one_sequential_same_count),
+    read_paths_vs_sequential_read_path_avg_ratio: ratio(byName.read_paths, byName.read_path_sequential_same_count),
     context_vs_search_content_start_avg_ratio: ratio(byName.context, byName.search_content_start),
-    read_path_vs_fetch_one_avg_ratio: ratio(byName.read_path, byName.fetch_one)
+    read_path_vs_fetch_many_avg_ratio: ratio(byName.read_path, byName.fetch_many)
   };
 }
 

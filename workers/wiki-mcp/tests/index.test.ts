@@ -12,8 +12,7 @@ const mocks = vi.hoisted(() => ({
   queryDatabaseSqlJson: vi.fn(),
   readNode: vi.fn(),
   resolveCanisterId: vi.fn(),
-  searchNodes: vi.fn(),
-  sourceEvidence: vi.fn()
+  searchNodes: vi.fn()
 }));
 
 vi.mock("../src/vfs.js", () => ({
@@ -24,14 +23,12 @@ vi.mock("../src/vfs.js", () => ({
   queryDatabaseSqlJson: mocks.queryDatabaseSqlJson,
   readNode: mocks.readNode,
   resolveCanisterId: mocks.resolveCanisterId,
-  searchNodes: mocks.searchNodes,
-  sourceEvidence: mocks.sourceEvidence
+  searchNodes: mocks.searchNodes
 }));
 
 import worker, {
   decodeSearchResultId,
   encodeSearchResultId,
-  fetchSearchResult,
   fetchManySearchResults,
   findDatabases,
   listDatabaseNodes,
@@ -39,7 +36,6 @@ import worker, {
   readMemoryManifest,
   readPath,
   readPaths,
-  readSourceEvidenceRefs,
   searchDatabase
 } from "../src/index.js";
 
@@ -48,17 +44,6 @@ const env = {
   KINIC_WIKI_IC_HOST: "https://icp0.io",
   KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test"
 };
-
-type ToolErrorLike = {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-};
-
-function expectToolErrorResult(value: unknown): asserts value is ToolErrorLike {
-  expect(value).toMatchObject({ isError: true });
-  expect(value).not.toHaveProperty("structuredContent");
-  expect(value).toHaveProperty("content");
-}
 
 describe("wiki mcp worker", () => {
   beforeEach(() => {
@@ -186,20 +171,6 @@ describe("wiki mcp worker", () => {
         }
       ]
     });
-    mocks.sourceEvidence.mockResolvedValue({
-      nodePath: "/Knowledge/index.md",
-      refs: [
-        {
-          linkText: "Source",
-          viaPath: "/Knowledge/index.md",
-          sourceContentHash: "sha256:abc",
-          sourcePath: "/Sources/raw/source.md",
-          sourceUpdatedAt: "3",
-          sourceEtag: "source-etag",
-          rawHref: "/Sources/raw/source.md"
-        }
-      ]
-    });
     mocks.queryDatabaseSqlJson.mockResolvedValue({
       rows: [
         JSON.stringify({
@@ -243,14 +214,12 @@ describe("wiki mcp worker", () => {
       tools: [
         "find_databases",
         "search",
-        "fetch",
         "fetch_many",
         "read_path",
         "read_paths",
         "list",
         "memory_manifest",
-        "context",
-        "source_evidence"
+        "context"
       ]
     });
 
@@ -271,15 +240,13 @@ describe("wiki mcp worker", () => {
     const tools = response.result.tools as Array<{ name: string; annotations: Record<string, boolean>; outputSchema?: unknown }>;
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "context",
-      "fetch",
       "fetch_many",
       "find_databases",
       "list",
       "memory_manifest",
       "read_path",
       "read_paths",
-      "search",
-      "source_evidence"
+      "search"
     ]);
     for (const tool of tools) {
       expect(tool.annotations).toMatchObject({
@@ -384,32 +351,6 @@ describe("wiki mcp worker", () => {
         preview: "Build the wiki clipper extension"
       }
     });
-  });
-
-  it("fetches one node by opaque search id", async () => {
-    const id = encodeSearchResultId({
-      version: 1,
-      canister_id: "canister-a",
-      database_id: "db_alpha",
-      path: "/Knowledge/index.md"
-    });
-    await expect(fetchSearchResult(env, { id })).resolves.toEqual({
-      id,
-      title: "index",
-      text: "Agent memory body",
-      url: "https://wiki.kinic.test/db/db_alpha/Knowledge/index.md",
-      metadata: {
-        database_id: "db_alpha",
-        path: "/Knowledge/index.md",
-        kind: "file",
-        etag: "etag-1",
-        created_at: "1",
-        updated_at: "2",
-        metadata_json: "{}",
-        truncated: false
-      }
-    });
-    expect(mocks.readNode).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
   });
 
   it("reads one node by known path", async () => {
@@ -740,42 +681,6 @@ describe("wiki mcp worker", () => {
     expect(mocks.memoryManifest).toHaveBeenCalledWith(env, "db_alpha");
   });
 
-  it("returns source evidence for a known path", async () => {
-    await expect(readSourceEvidenceRefs(env, { database_id: "db_alpha", node_path: "Knowledge/index.md" })).resolves.toEqual({
-      evidence: {
-        node_path: "/Knowledge/index.md",
-        refs: [
-          {
-            link_text: "Source",
-            via_path: "/Knowledge/index.md",
-            source_content_hash: "sha256:abc",
-            source_path: "/Sources/raw/source.md",
-            source_updated_at: "3",
-            source_etag: "source-etag",
-            raw_href: "/Sources/raw/source.md"
-          }
-        ]
-      }
-    });
-    expect(mocks.sourceEvidence).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
-  });
-
-  it("rejects invalid and stale fetch ids as tool errors", async () => {
-    const invalidIdResult = await fetchSearchResult(env, { id: "bad" });
-    expectToolErrorResult(invalidIdResult);
-    expect(JSON.parse(invalidIdResult.content[0].text)).toEqual({ error: "invalid search result id", id: "bad" });
-
-    const id = encodeSearchResultId({
-      version: 1,
-      canister_id: "other-canister",
-      database_id: "db_alpha",
-      path: "/Knowledge/index.md"
-    });
-    const staleIdResult = await fetchSearchResult(env, { id });
-    expectToolErrorResult(staleIdResult);
-    expect(JSON.parse(staleIdResult.content[0].text)).toEqual({ error: "search result id is for another canister", id });
-  });
-
   it("roundtrips unicode search result ids", () => {
     const payload = {
       version: 1 as const,
@@ -800,29 +705,18 @@ describe("wiki mcp worker", () => {
     expect(response.result.structuredContent).toEqual(parsed);
   });
 
-  it("calls source_evidence through MCP JSON-RPC", async () => {
-    const response = await postMcp({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "source_evidence", arguments: { database_id: "db_alpha", node_path: "/Knowledge/index.md" } }
-    });
-    const text = response.result.content[0].text as string;
-    const parsed = JSON.parse(text);
-    expect(parsed.evidence.node_path).toBe("/Knowledge/index.md");
-    expect(response.result.structuredContent).toEqual(parsed);
-  });
-
-  it("returns MCP tool errors without output schema validation failure", async () => {
+  it("returns fetch_many item errors without output schema validation failure", async () => {
     const response = await postMcp({
       jsonrpc: "2.0",
       id: 4,
       method: "tools/call",
-      params: { name: "fetch", arguments: { id: "bad" } }
+      params: { name: "fetch_many", arguments: { ids: ["bad"] } }
     });
 
-    expectToolErrorResult(response.result);
-    expect(JSON.parse(response.result.content[0].text)).toEqual({ error: "invalid search result id", id: "bad" });
+    const text = response.result.content[0].text as string;
+    const parsed = JSON.parse(text);
+    expect(parsed).toEqual({ results: [{ id: "bad", error: "invalid search result id", is_error: true }] });
+    expect(response.result.structuredContent).toEqual(parsed);
   });
 
   it("returns http 400 for non-json MCP requests", async () => {

@@ -8,7 +8,7 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
-import { canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isEmptyStoreRootPath, isStoreRootPath, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
+import { ApiError, canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
 
 const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
 const STORE_ROOT_PATH_SET = new Set<string>(STORE_ROOT_PATHS);
@@ -40,7 +40,8 @@ export function ExplorerTree({
   const cachedRootNodes = childNodesCache.current.get(rootRequestKey);
   const rootNodeData = cachedRootNodes ? filterStoreRoots(cachedRootNodes) : rootNodes.data;
   const rootError = cachedRootNodes ? null : rootNodes.error;
-  const visibleRootNodes = rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
+  const rootDatabaseNotFound = !cachedRootNodes && isDatabaseNotFoundErrorCode(rootNodes.code);
+  const visibleRootNodes = rootDatabaseNotFound ? [] : rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
 
   useEffect(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
@@ -66,7 +67,9 @@ export function ExplorerTree({
       })
       .catch((error: Error) => {
         if (cancelled) return;
-        setRootNodes({ data: null, error: errorMessage(error), loading: false });
+        const message = errorMessage(error);
+        const code = errorCode(error);
+        setRootNodes({ data: null, error: isDatabaseNotFoundErrorCode(code) ? null : message, code, loading: false });
         requestedRootKey.current = null;
       });
     return () => {
@@ -195,7 +198,9 @@ function TreeNode({
       })
       .catch((error: Error) => {
         if (!cancelled) {
-          setChildren({ data: null, error: errorMessage(error), loading: false });
+          const message = errorMessage(error);
+          const code = errorCode(error);
+          setChildren({ data: null, error: isDatabaseNotFoundErrorCode(code) ? null : message, code, loading: false });
           requestedKey.current = null;
         }
       });
@@ -247,6 +252,10 @@ function TreeNode({
       ) : null}
     </div>
   );
+}
+
+function errorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.code : null;
 }
 
 function Toggle({ expanded, setExpanded }: { expanded: boolean; setExpanded: (value: boolean) => void }) {

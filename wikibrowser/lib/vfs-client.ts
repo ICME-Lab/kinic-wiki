@@ -1,6 +1,6 @@
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
-import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
+import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import type { SearchPreviewMode } from "@/lib/search-options";
@@ -638,7 +638,8 @@ async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function throwCanisterError(message: string): never {
-  throw new ApiError(message, 400);
+  const error = classifyCanisterError(message);
+  throw new ApiError(error.error, error.status ?? 400, error.hint, error.code);
 }
 
 export async function readNode(canisterId: string, databaseId: string, path: string, identity?: Identity): Promise<WikiNode | null> {

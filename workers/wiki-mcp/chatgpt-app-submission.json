@@ -4,7 +4,7 @@
   "app_info": {
     "display_name": "Kinic Wiki",
     "subtitle": "Search public wiki memory",
-    "description": "Kinic Wiki helps users discover public wiki databases, search public knowledge nodes, read task-focused context, and inspect source evidence from ChatGPT.",
+    "description": "Kinic Wiki helps users discover public wiki databases, search public knowledge nodes, read task-focused context, and inspect public wiki evidence from ChatGPT.",
     "category": "PRODUCTIVITY"
   },
   "tools": {
@@ -28,18 +28,6 @@
       },
       "justifications": {
         "read_only_justification": "Only searches public wiki node indexes and returns matching result metadata.",
-        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
-      }
-    },
-    "fetch": {
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false,
-        "destructiveHint": false
-      },
-      "justifications": {
-        "read_only_justification": "Only reads one public wiki node identified by an opaque search result id.",
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
       }
@@ -115,18 +103,6 @@
         "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
         "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
       }
-    },
-    "source_evidence": {
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false,
-        "destructiveHint": false
-      },
-      "justifications": {
-        "read_only_justification": "Only retrieves source reference metadata for one known public knowledge node path.",
-        "open_world_justification": "Does not publish, submit, or change public internet state or third-party systems.",
-        "destructive_justification": "Does not delete, overwrite, revoke access, or perform irreversible actions."
-      }
     }
   },
   "test_cases": [
@@ -163,11 +139,11 @@
       "expected_output_url": null
     },
     {
-      "description": "Inspect source evidence for a known knowledge node.",
-      "user_prompt": "For this known Knowledge node path, show the source evidence references and read the node text.",
+      "description": "Inspect database capabilities and read one known path.",
+      "user_prompt": "Show the public wiki database manifest, then read this known Knowledge node path.",
       "file_attachment_urls": null,
-      "tools_triggered": "source_evidence, read_path",
-      "expected_output": "Returns source reference metadata and the requested public node text for the known path.",
+      "tools_triggered": "memory_manifest, read_path",
+      "expected_output": "Returns public database roots, capabilities, limits, write policy, and the requested public node text.",
       "expected_output_url": null
     }
   ],

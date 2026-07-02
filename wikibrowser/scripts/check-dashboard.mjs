@@ -13,6 +13,11 @@ const metrics = readProjectFile("../app/metrics/metrics-client.tsx");
 assert.match(dashboardClient, /const canViewCyclesHistory = \(database\?\.role === "writer" \|\| database\?\.role === "owner"\) && isActiveDatabase/);
 assert.match(dashboardUi, /canViewCyclesHistory/);
 assert.match(dashboardClient, /setActiveTab\("access"\)/);
+assert.match(dashboardClient, /cyclePageCursors/);
+assert.match(dashboardClient, /loadCyclesHistory\(cyclePageIndex \+ 1, cycleNextCursor, false\)/);
+assert.match(dashboardUi, /Previous page/);
+assert.match(dashboardUi, /Next page/);
+assert.doesNotMatch(dashboardUi.match(/export function CyclesHistoryPanel[\s\S]*?function DashboardTabButton/)?.[0] ?? "", /onLoadMore|Load more/);
 
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);

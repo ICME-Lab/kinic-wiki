@@ -12,6 +12,7 @@ export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
 export type LoadState<T> = {
   data: T | null;
   error: string | null;
+  code?: string | null;
   hint?: string | null;
   loading: boolean;
 };
@@ -84,6 +85,10 @@ export function errorHint(error: unknown): string | null {
 
 export function isNotFoundError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
+}
+
+export function isDatabaseNotFoundErrorCode(code: string | null | undefined): boolean {
+  return code === "database_not_found";
 }
 
 export function loadingState<T>(path: string): PathLoadState<T> {

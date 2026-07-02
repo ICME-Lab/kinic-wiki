@@ -1,5 +1,5 @@
 // Where: workers/wiki-mcp/src/index.ts
-// What: Remote MCP entrypoint exposing public Kinic Wiki database discovery, search, and fetch.
+// What: Remote MCP entrypoint exposing public Kinic Wiki database discovery, search, and read tools.
 // Why: ChatGPT should read public wiki memory through anonymous canister queries without write access.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,7 +14,6 @@ import {
   readNode,
   resolveCanisterId,
   searchNodes,
-  sourceEvidence as readSourceEvidence,
   type DatabaseSummary,
   type LinkEdge,
   type MemoryManifest,
@@ -57,14 +56,12 @@ const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
 const MCP_TOOL_NAMES = [
   "find_databases",
   "search",
-  "fetch",
   "fetch_many",
   "read_path",
   "read_paths",
   "list",
   "memory_manifest",
-  "context",
-  "source_evidence"
+  "context"
 ] as const;
 
 const databaseResultOutputSchema = z.object({
@@ -259,10 +256,6 @@ const contextOutputSchema = z.object({
   search_hits: z.array(contextSearchHitOutputSchema)
 });
 
-const sourceEvidenceRefsOutputSchema = z.object({
-  evidence: sourceEvidenceOutputSchema
-});
-
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -314,7 +307,7 @@ export function createServer(env: RuntimeEnv): McpServer {
     },
     {
       instructions:
-        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, do not stop at the first search result or a single fetch: build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch enough evidence with fetch_many for result ids or read_paths for known paths, and report coverage limits, excluded candidates, fetched count, and truncated results."
+        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, do not stop at the first search result: build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch evidence with fetch_many for result ids or read_paths for known paths, use read_path for a single known path, and report coverage limits, excluded candidates, fetched count, and truncated results."
     }
   );
 
@@ -349,20 +342,6 @@ export function createServer(env: RuntimeEnv): McpServer {
     },
     async ({ database_id, query, prefix, limit, preview_mode }) =>
       toToolResult(await searchDatabase(env, { database_id, query, prefix, limit, preview_mode }))
-  );
-
-  server.registerTool(
-    "fetch",
-    {
-      description:
-        "Fetch full text for one Kinic Wiki search result id returned by search. Use for final evidence checks; for several result ids use fetch_many and report truncation.",
-      inputSchema: {
-        id: z.string().min(1)
-      },
-      outputSchema: fetchedNodeOutputSchema,
-      annotations: TOOL_ANNOTATIONS
-    },
-    async ({ id }) => toToolResult(await fetchSearchResult(env, { id }))
   );
 
   server.registerTool(
@@ -470,20 +449,6 @@ export function createServer(env: RuntimeEnv): McpServer {
     )
   );
 
-  server.registerTool(
-    "source_evidence",
-    {
-      description: "Read source evidence references for one known Kinic Wiki knowledge node path.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        node_path: z.string().min(1)
-      },
-      outputSchema: sourceEvidenceRefsOutputSchema,
-      annotations: TOOL_ANNOTATIONS
-    },
-    async ({ database_id, node_path }) => toToolResult(await readSourceEvidenceRefs(env, { database_id, node_path }))
-  );
-
   return server;
 }
 
@@ -498,10 +463,6 @@ export type SearchInput = {
   prefix?: string;
   limit?: number;
   preview_mode?: SearchPreviewMode;
-};
-
-export type FetchInput = {
-  id: string;
 };
 
 export type FetchManyInput = {
@@ -537,11 +498,6 @@ export type ContextInput = {
 
 export type MemoryManifestInput = {
   database_id: string;
-};
-
-export type SourceEvidenceInput = {
-  database_id: string;
-  node_path: string;
 };
 
 export type SearchResultId = {
@@ -607,25 +563,6 @@ export async function searchDatabase(env: RuntimeEnv, input: SearchInput) {
   return {
     results: orderSearchHitsForRetrieval(hits).map((hit) => searchResult(env, canisterId, databaseId, hit))
   };
-}
-
-export async function fetchSearchResult(env: RuntimeEnv, input: FetchInput) {
-  const decoded = decodeSearchResultId(input.id);
-  if (!decoded) {
-    return toolError("invalid search result id", { error: "invalid search result id", id: input.id });
-  }
-  const canisterId = resolveCanisterId(env);
-  if (decoded.canister_id !== canisterId) {
-    return toolError("search result id is for another canister", {
-      error: "search result id is for another canister",
-      id: input.id
-    });
-  }
-  const node = await readNode(env, decoded.database_id, decoded.path);
-  if (!node) {
-    return toolError("node not found", { error: "node not found", id: input.id });
-  }
-  return fetchedNode(env, input.id, decoded.database_id, node);
 }
 
 export async function fetchManySearchResults(env: RuntimeEnv, input: FetchManyInput) {
@@ -756,17 +693,6 @@ export async function readMemoryManifest(env: RuntimeEnv, input: MemoryManifestI
     return toolError("database_id is required", { error: "database_id is required" });
   }
   return manifestResult(await memoryManifest(env, databaseId));
-}
-
-export async function readSourceEvidenceRefs(env: RuntimeEnv, input: SourceEvidenceInput) {
-  const databaseId = input.database_id.trim();
-  if (!databaseId) {
-    return toolError("database_id is required", { error: "database_id is required" });
-  }
-  const nodePath = normalizePrefix(input.node_path);
-  return {
-    evidence: sourceEvidence(await readSourceEvidence(env, databaseId, nodePath))
-  };
 }
 
 export function encodeSearchResultId(payload: SearchResultId): string {
