@@ -1,4 +1,5 @@
 import type { ChildNode } from "@/lib/types";
+import { visibleChildren } from "@/lib/folder-index";
 
 export type ViewMode = "preview" | "raw" | "edit";
 export type ModeTab = "explorer" | "query" | "source-capture";
@@ -38,6 +39,14 @@ export function rootChild(path: StoreRootPath): ChildNode {
 
 export function canExpandChildNode(node: ChildNode): boolean {
   return node.kind === "directory" || node.kind === "folder" || node.hasChildren;
+}
+
+export function isStoreRootPath(path: string): path is StoreRootPath {
+  return STORE_ROOT_PATHS.some((root) => root === path);
+}
+
+export function isEmptyStoreRootPath(path: string, children: ChildNode[] | null): boolean {
+  return isStoreRootPath(path) && children !== null && visibleChildren(children, path).length === 0;
 }
 
 export function parseModeTab(value: string | null): ModeTab {

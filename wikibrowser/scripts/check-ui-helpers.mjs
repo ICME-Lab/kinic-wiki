@@ -15,7 +15,7 @@ const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("..
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
 const { parseSearchOptions, prefixForSearchScope } = await importTs("../lib/search-options.ts");
 const { isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
-const { canExpandChildNode, inferNoteRole, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
+const { canExpandChildNode, inferNoteRole, isEmptyStoreRootPath, isStoreRootPath, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
 const { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } = await importTs("../lib/database-preview.ts");
 const {
@@ -409,6 +409,12 @@ assert.deepEqual(
 assert.equal(canExpandChildNode(child("/Knowledge/file-parent", "file-parent", "file", true)), true);
 assert.equal(canExpandChildNode(child("/Knowledge/file-leaf.md", "file-leaf.md", "file", false)), false);
 assert.equal(canExpandChildNode(child("/Knowledge/folder", "folder", "folder", false)), true);
+assert.equal(isStoreRootPath("/Knowledge"), true);
+assert.equal(isStoreRootPath("/Knowledge/demo"), false);
+assert.equal(isEmptyStoreRootPath("/Knowledge", []), true);
+assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/index.md", "index.md", "file")]), true);
+assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/demo.md", "demo.md", "file")]), false);
+assert.equal(isEmptyStoreRootPath("/Knowledge/demo", []), false);
 assert.equal(parseModeTab("query"), "query");
 assert.equal(parseModeTab("clipper"), "explorer");
 assert.equal(parseModeTab("sources"), "explorer");
@@ -658,9 +664,12 @@ async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const rawSource = readFileSync(sourcePath, "utf8");
   const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
+  const folderIndexSource = readFileSync(new URL("../lib/folder-index.ts", import.meta.url), "utf8");
   const pathsSource = readFileSync(new URL("../lib/paths.ts", import.meta.url), "utf8").replace('import { databaseRouteBase } from "./share-links";', "");
   const source = relativePath === "../lib/paths.ts"
     ? `${shareLinksSource}\n${pathsSource}`
+    : relativePath === "../lib/wiki-helpers.ts"
+      ? `${folderIndexSource}\n${rawSource.replace('import { visibleChildren } from "@/lib/folder-index";', "")}`
     : relativePath === "../lib/database-preview.ts"
       ? `${shareLinksSource}\n${pathsSource}\n${rawSource.replace('import { canonicalDatabaseId } from "@/lib/paths";', "")}`
       : rawSource;

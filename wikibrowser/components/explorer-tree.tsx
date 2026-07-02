@@ -8,7 +8,7 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
-import { canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
+import { canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isEmptyStoreRootPath, isStoreRootPath, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
 
 const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
 const STORE_ROOT_PATH_SET = new Set<string>(STORE_ROOT_PATHS);
@@ -129,7 +129,11 @@ function TreeNode({
   });
   const autoExpandedKey = useRef<string | null>(expanded ? selectedPath : null);
   const requestedKey = useRef<string | null>(null);
-  const canExpand = canExpandChildNode(node);
+  const isStoreRoot = depth === 0 && isStoreRootPath(nodePath);
+  const emptyStoreRoot = isEmptyStoreRootPath(nodePath, children.data);
+  const nodeCanExpand = canExpandChildNode(node);
+  const canExpand = nodeCanExpand && !emptyStoreRoot;
+  const canNavigate = !emptyStoreRoot;
   const selected = selectedPath === nodePath;
   const selectedAncestor = nodePath === selectedPath || selectedPath.startsWith(`${nodePath}/`);
 
@@ -158,7 +162,7 @@ function TreeNode({
   }, [nodeEtag, nodeHasChildren, nodeIsVirtual, nodeKind, nodeName, nodePath, nodeSizeBytes, nodeUpdatedAt, onSelectedNode, selected]);
 
   useEffect(() => {
-    if (!expanded || !canExpand || children.data || children.error || requestedKey.current === requestKey) return;
+    if ((!expanded && !isStoreRoot) || !nodeCanExpand || children.data || children.error || requestedKey.current === requestKey) return;
     const cached = childNodesCache.current.get(requestKey);
     if (cached) {
       let cancelled = false;
@@ -181,7 +185,7 @@ function TreeNode({
       })
       .then((module) => {
         if (!module) return [];
-        return module.listChildren(canisterId, databaseId, node.path, readIdentity ?? undefined);
+        return module.listChildren(canisterId, databaseId, nodePath, readIdentity ?? undefined);
       })
       .then((data) => {
         if (!cancelled) {
@@ -199,25 +203,34 @@ function TreeNode({
       cancelled = true;
       if (requestedKey.current === requestKey) requestedKey.current = null;
     };
-  }, [canisterId, databaseId, canExpand, childNodesCache, children.data, children.error, expanded, node.path, readIdentity, requestKey]);
+  }, [canisterId, databaseId, childNodesCache, children.data, children.error, expanded, isStoreRoot, nodeCanExpand, nodePath, readIdentity, requestKey]);
 
   return (
     <div>
       <div
         className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${
-          selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"
+          emptyStoreRoot
+            ? "cursor-not-allowed text-muted"
+            : selected
+              ? "bg-accentSoft font-semibold text-accentText"
+              : "text-ink hover:bg-paper hover:text-accentText"
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
+        aria-disabled={emptyStoreRoot ? true : undefined}
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
         {directoryIcon(canExpand, expanded)}
-        <Link
-          className="min-w-0 flex-1 truncate no-underline"
-          href={hrefForPath(canisterId, databaseId, node.path)}
-          aria-current={selected ? "page" : undefined}
-        >
-          {node.name}
-        </Link>
+        {canNavigate ? (
+          <Link
+            className="min-w-0 flex-1 truncate no-underline"
+            href={hrefForPath(canisterId, databaseId, node.path)}
+            aria-current={selected ? "page" : undefined}
+          >
+            {node.name}
+          </Link>
+        ) : (
+          <span className="min-w-0 flex-1 truncate">{node.name}</span>
+        )}
       </div>
       {expanded && canExpand ? (
         <ChildrenList
