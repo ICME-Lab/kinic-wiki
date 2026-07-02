@@ -8,10 +8,9 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
-import { ApiError, canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
+import { ApiError, canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, rootChild, type LoadState } from "@/lib/wiki-helpers";
 
 const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
-const STORE_ROOT_PATH_SET = new Set<string>(STORE_ROOT_PATHS);
 
 export function ExplorerTree({
   canisterId,
@@ -34,11 +33,11 @@ export function ExplorerTree({
   const rootRequestKey = nodeRequestKey(canisterId, databaseId, "/", readPrincipal);
   const [rootNodes, setRootNodes] = useState<LoadState<ChildNode[]>>(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
-    return cached ? { data: filterStoreRoots(cached), error: null, loading: false } : { data: null, error: null, loading: true };
+    return cached ? { data: cached, error: null, loading: false } : { data: null, error: null, loading: true };
   });
   const requestedRootKey = useRef<string | null>(null);
   const cachedRootNodes = childNodesCache.current.get(rootRequestKey);
-  const rootNodeData = cachedRootNodes ? filterStoreRoots(cachedRootNodes) : rootNodes.data;
+  const rootNodeData = cachedRootNodes ?? rootNodes.data;
   const rootError = cachedRootNodes ? null : rootNodes.error;
   const rootDatabaseNotFound = !cachedRootNodes && isDatabaseNotFoundErrorCode(rootNodes.code);
   const visibleRootNodes = rootDatabaseNotFound ? [] : rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
@@ -61,9 +60,8 @@ export function ExplorerTree({
       })
       .then((data) => {
         if (cancelled) return;
-        const roots = filterStoreRoots(data);
-        childNodesCache.current.set(rootRequestKey, roots);
-        setRootNodes({ data: roots, error: null, loading: false });
+        childNodesCache.current.set(rootRequestKey, data);
+        setRootNodes({ data, error: null, loading: false });
       })
       .catch((error: Error) => {
         if (cancelled) return;
@@ -86,10 +84,6 @@ export function ExplorerTree({
       {rootError ? <TreeStatus depth={0} label={rootError} /> : null}
     </div>
   );
-}
-
-function filterStoreRoots(children: ChildNode[]): ChildNode[] {
-  return children.filter((child) => STORE_ROOT_PATH_SET.has(child.path));
 }
 
 function TreeNode({
@@ -135,8 +129,7 @@ function TreeNode({
   const isStoreRoot = depth === 0 && isStoreRootPath(nodePath);
   const emptyStoreRoot = isEmptyStoreRootPath(nodePath, children.data);
   const nodeCanExpand = canExpandChildNode(node);
-  const canExpand = nodeCanExpand && !emptyStoreRoot;
-  const canNavigate = !emptyStoreRoot;
+  const canExpand = nodeCanExpand;
   const selected = selectedPath === nodePath;
   const selectedAncestor = nodePath === selectedPath || selectedPath.startsWith(`${nodePath}/`);
 
@@ -210,32 +203,23 @@ function TreeNode({
     };
   }, [canisterId, databaseId, childNodesCache, children.data, children.error, expanded, isStoreRoot, nodeCanExpand, nodePath, readIdentity, requestKey]);
 
+  if (emptyStoreRoot) return null;
+
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${
-          emptyStoreRoot
-            ? "cursor-not-allowed text-muted"
-            : selected
-              ? "bg-accentSoft font-semibold text-accentText"
-              : "text-ink hover:bg-paper hover:text-accentText"
-        }`}
+        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
-        aria-disabled={emptyStoreRoot ? true : undefined}
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
         {directoryIcon(canExpand, expanded)}
-        {canNavigate ? (
-          <Link
-            className="min-w-0 flex-1 truncate no-underline"
-            href={hrefForPath(canisterId, databaseId, node.path)}
-            aria-current={selected ? "page" : undefined}
-          >
-            {node.name}
-          </Link>
-        ) : (
-          <span className="min-w-0 flex-1 truncate">{node.name}</span>
-        )}
+        <Link
+          className="min-w-0 flex-1 truncate no-underline"
+          href={hrefForPath(canisterId, databaseId, node.path)}
+          aria-current={selected ? "page" : undefined}
+        >
+          {node.name}
+        </Link>
       </div>
       {expanded && canExpand ? (
         <ChildrenList

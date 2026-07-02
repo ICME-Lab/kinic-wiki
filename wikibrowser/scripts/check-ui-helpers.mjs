@@ -57,10 +57,12 @@ const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta
 
 assert.match(explorerTreeSource, /childNodesCache\.current\.get\(requestKey\)/);
 assert.match(explorerTreeSource, /childNodesCache\.current\.set\(requestKey, data\)/);
+assert.match(explorerTreeSource, /childNodesCache\.current\.set\(rootRequestKey, data\)/);
+assert.match(explorerTreeSource, /if \(emptyStoreRoot\) return null;/);
 assert.match(explorerTreeSource, /visibleChildren\(childrenState\.data\)/);
 assert.match(explorerTreeSource, /DEFAULT_STORE_ROOT_PATHS\.map/);
 assert.match(explorerTreeSource, /listChildren\(canisterId, databaseId, "\/"/);
-assert.match(explorerTreeSource, /STORE_ROOT_PATH_SET\.has\(child\.path\)/);
+assert.doesNotMatch(explorerTreeSource, /filterStoreRoots|STORE_ROOT_PATH_SET/);
 assert.match(explorerTreeSource, /onSelectedNode/);
 assert.doesNotMatch(explorerTreeSource, /onCreateMarkdownFile/);
 assert.doesNotMatch(explorerTreeSource, /onDeleteMarkdownNode/);
@@ -453,6 +455,7 @@ assert.equal(isEmptyStoreRootPath("/Knowledge", []), true);
 assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/index.md", "index.md", "file")]), true);
 assert.equal(isEmptyStoreRootPath("/Knowledge", [child("/Knowledge/demo.md", "demo.md", "file")]), false);
 assert.equal(isEmptyStoreRootPath("/Knowledge/demo", []), false);
+assert.equal(isEmptyStoreRootPath("/Project", []), false);
 assert.equal(parseModeTab("query"), "query");
 assert.equal(parseModeTab("clipper"), "explorer");
 assert.equal(parseModeTab("sources"), "explorer");
