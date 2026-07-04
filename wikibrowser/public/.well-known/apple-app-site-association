@@ -5,7 +5,8 @@
       {
         "appID": "AKN976G7AK.xyz.kinic.ios.KinicWiki",
         "paths": [
-          "/*"
+          "/ios-auth-callback*",
+          "/ios-share*"
         ]
       }
     ]

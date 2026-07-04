@@ -36,6 +36,24 @@ enum VFSCandidEncoder {
         )
     }
 
+    static func readNode(databaseId: String, path: String) -> Data {
+        textArgs([databaseId, path])
+    }
+
+    static func createDatabase(name: String) -> Data {
+        oneRecord(
+            tableEntries: [
+                record([
+                    field("name", primitive(typeText))
+                ])
+            ],
+            argType: table(0),
+            values: [
+                .text(name)
+            ]
+        )
+    }
+
     static func authorizeSourceCaptureTriggerSession(databaseId: String, sessionNonce: String) -> Data {
         oneRecord(
             tableEntries: [
@@ -91,6 +109,21 @@ enum VFSCandidEncoder {
         encode(argType, to: &data)
         for value in values {
             encode(value, to: &data)
+        }
+        return data
+    }
+
+    private static func textArgs(_ texts: [String]) -> Data {
+        var data = magic
+        appendUnsigned(0, to: &data)
+        appendUnsigned(UInt64(texts.count), to: &data)
+        for _ in texts {
+            appendSigned(typeText, to: &data)
+        }
+        for text in texts {
+            let bytes = Data(text.utf8)
+            appendUnsigned(UInt64(bytes.count), to: &data)
+            data.append(bytes)
         }
         return data
     }

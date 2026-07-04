@@ -40,6 +40,26 @@ enum VFSCandidDecoder {
         }
     }
 
+    static func decodeReadNodeResult(_ data: Data) throws -> VFSNode? {
+        let ok = try decodeResult(data)
+        guard case .opt(let value) = ok else {
+            throw VFSCandidError.invalidPayload("expected read_node optional result")
+        }
+        guard let value else {
+            return nil
+        }
+        guard case .record(let fields) = value else {
+            throw VFSCandidError.invalidPayload("read_node node is not a record")
+        }
+        return VFSNode(
+            path: try text(fields, "path"),
+            kind: try nodeKind(from: variant(fields, "kind")),
+            content: try text(fields, "content"),
+            metadataJson: try text(fields, "metadata_json"),
+            etag: try text(fields, "etag")
+        )
+    }
+
     static func decodeDatabaseSummaries(_ data: Data) throws -> [DatabaseSummary] {
         let ok = try decodeResult(data)
         guard case .vector(let values) = ok else {
@@ -48,6 +68,19 @@ enum VFSCandidDecoder {
         return try values.map { value in
             try databaseSummary(from: value)
         }
+    }
+
+    static func decodeCreateDatabaseResult(_ data: Data) throws -> CreatedDatabase {
+        let ok = try decodeResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("expected create_database result")
+        }
+        return CreatedDatabase(
+            databaseId: try text(fields, "database_id"),
+            name: try text(fields, "name"),
+            status: try databaseStatus(from: variant(fields, "status")),
+            initialFreeGrantApplied: try bool(fields, "initial_free_grant_applied")
+        )
     }
 
     private static func decodeResult(_ data: Data) throws -> Value {
@@ -73,11 +106,29 @@ enum VFSCandidDecoder {
         guard case .record(let fields) = value else {
             throw VFSCandidError.invalidPayload("database summary is not a record")
         }
-        let metadata = try record(fields, "metadata")
+        let topLevelName = try text(fields, "name")
+        var title = topLevelName
+        var description = ""
+        guard let metadataValue = fields[label("metadata")] else {
+            throw VFSCandidError.invalidPayload("missing metadata field")
+        }
+        switch metadataValue {
+        case .opt(let child):
+            guard let child else {
+                break
+            }
+            guard case .record(let metadata) = child else {
+                throw VFSCandidError.invalidPayload("metadata is not a record")
+            }
+            title = try text(metadata, "name")
+            description = try text(metadata, "description")
+        default:
+            throw VFSCandidError.invalidPayload("metadata is not optional")
+        }
         return DatabaseSummary(
             databaseId: try text(fields, "database_id"),
-            title: try text(metadata, "title"),
-            description: try text(metadata, "description"),
+            title: title,
+            description: description,
             role: try databaseRole(from: variant(fields, "role")),
             status: try databaseStatus(from: variant(fields, "status"))
         )
@@ -109,12 +160,17 @@ enum VFSCandidDecoder {
         throw VFSCandidError.invalidPayload("unknown database status")
     }
 
-    private static func record(_ fields: [UInt32: Value], _ name: String) throws -> [UInt32: Value] {
-        guard let value = fields[label(name)],
-              case .record(let child) = value else {
-            throw VFSCandidError.invalidPayload("missing record field \(name)")
+    private static func nodeKind(from variantLabel: UInt32) throws -> VFSNodeKind {
+        if variantLabel == label("File") {
+            return .file
         }
-        return child
+        if variantLabel == label("Folder") {
+            return .folder
+        }
+        if variantLabel == label("Source") {
+            return .source
+        }
+        throw VFSCandidError.invalidPayload("unknown node kind")
     }
 
     private static func text(_ fields: [UInt32: Value], _ name: String) throws -> String {
@@ -123,6 +179,14 @@ enum VFSCandidDecoder {
             throw VFSCandidError.invalidPayload("missing text field \(name)")
         }
         return text
+    }
+
+    private static func bool(_ fields: [UInt32: Value], _ name: String) throws -> Bool {
+        guard let value = fields[label(name)],
+              case .bool(let bool) = value else {
+            throw VFSCandidError.invalidPayload("missing bool field \(name)")
+        }
+        return bool
     }
 
     private static func variant(_ fields: [UInt32: Value], _ name: String) throws -> UInt32 {
@@ -346,4 +410,18 @@ enum VFSCandidDecoder {
         case record([UInt32: Value])
         case variant(UInt32, Value)
     }
+}
+
+enum VFSNodeKind: Equatable, Sendable {
+    case folder
+    case file
+    case source
+}
+
+struct VFSNode: Equatable, Sendable {
+    let path: String
+    let kind: VFSNodeKind
+    let content: String
+    let metadataJson: String
+    let etag: String
 }

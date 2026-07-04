@@ -10,30 +10,39 @@ struct ShareCaptureSubmitter: Sendable {
     private let timeoutNanoseconds: UInt64?
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
-    private let enqueueURL: @Sendable (URL) throws -> Void
-    private let submitRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
+    private let enqueueURL: @Sendable (URL, Date, String?) throws -> Void
+    private let enqueueTrigger: @Sendable (SourceCaptureRequest, Date) throws -> Void
+    private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
 
     init(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) {
         let sessionStore = KinicAuthSessionStore(configuration: configuration)
-        let settingsStore = SharedDefaultsStore(appGroupId: configuration.appGroupId)
-        let client = KinicICClient(configuration: configuration)
-        self.init(
-            configuration: configuration,
-            timeoutNanoseconds: timeoutNanoseconds,
-            restoreSession: {
-                sessionStore.restore()
-            },
-            selectedDatabaseId: {
-                settingsStore.databaseId
-            },
-            enqueueURL: { url in
-                let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
-                try inbox.enqueue(url)
-            },
-            submitRequest: { request, session in
-                try await client.submit(request, session: session)
-            }
-        )
+        do {
+            let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
+            let triggerQueue = try SourceCaptureTriggerQueue(strictAppGroupId: configuration.appGroupId)
+            let client = KinicICClient(configuration: configuration)
+            self.init(
+                configuration: configuration,
+                timeoutNanoseconds: timeoutNanoseconds,
+                restoreSession: {
+                    sessionStore.restore()
+                },
+                selectedDatabaseId: {
+                    settingsStore.databaseId
+                },
+                enqueueURL: { url, receivedAt, requestId in
+                    let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
+                    try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
+                },
+                enqueueTrigger: { request, createdAt in
+                    try triggerQueue.enqueue(request, createdAt: createdAt)
+                },
+                saveRequest: { request, session in
+                    try await client.saveSourceCaptureRequest(request, session: session)
+                }
+            )
+        } catch {
+            fatalError(error.localizedDescription)
+        }
     }
 
     init(
@@ -41,15 +50,17 @@ struct ShareCaptureSubmitter: Sendable {
         timeoutNanoseconds: UInt64?,
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
-        enqueueURL: @escaping @Sendable (URL) throws -> Void,
-        submitRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
+        enqueueURL: @escaping @Sendable (URL, Date, String?) throws -> Void,
+        enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void,
+        saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     ) {
         self.configuration = configuration
         self.timeoutNanoseconds = timeoutNanoseconds
         self.restoreSession = restoreSession
         self.selectedDatabaseId = selectedDatabaseId
         self.enqueueURL = enqueueURL
-        self.submitRequest = submitRequest
+        self.enqueueTrigger = enqueueTrigger
+        self.saveRequest = saveRequest
     }
 
     func submitSharedURL(_ url: URL) async -> ShareCaptureResult {
@@ -66,24 +77,42 @@ struct ShareCaptureSubmitter: Sendable {
         guard !databaseId.isEmpty else {
             return queue(normalizedURL, reason: "Select a writable database in KinicWikiApp to send this URL later.")
         }
+        let receivedAt = Date.now
+        let request: SourceCaptureRequest
+        do {
+            request = try SourceCaptureRequestBuilder.request(
+                url: normalizedURL,
+                databaseId: databaseId,
+                requestedBy: session.principal,
+                now: receivedAt
+            )
+        } catch {
+            return .failed(message: error.localizedDescription)
+        }
         do {
             let submission = try await withTimeout {
-                let request = try SourceCaptureRequestBuilder.request(
-                    url: normalizedURL,
-                    databaseId: databaseId,
-                    requestedBy: session.principal
-                )
-                return try await submitRequest(request, session)
+                return try await saveRequest(request, session)
             }
-            return .saved(requestPath: submission.requestPath, triggerError: submission.triggerError)
+            try enqueueTrigger(request, receivedAt)
+            return .saved(requestPath: submission.requestPath)
         } catch {
-            return queue(normalizedURL, reason: "Saved for later because immediate submission failed.")
+            return queue(
+                normalizedURL,
+                receivedAt: receivedAt,
+                requestId: request.requestId,
+                reason: "Saved for later because immediate submission failed."
+            )
         }
     }
 
-    private func queue(_ url: URL, reason: String) -> ShareCaptureResult {
+    private func queue(
+        _ url: URL,
+        receivedAt: Date = .now,
+        requestId: String? = nil,
+        reason: String
+    ) -> ShareCaptureResult {
         do {
-            try enqueueURL(url)
+            try enqueueURL(url, receivedAt, requestId)
             return .queued(reason: reason)
         } catch {
             return .failed(message: error.localizedDescription)

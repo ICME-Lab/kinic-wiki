@@ -20,7 +20,15 @@ actor KinicICClient {
         try await vfsClient.listWritableDatabases(session: session)
     }
 
-    func submit(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
-        try await vfsClient.submit(request, session: session)
+    func createDatabase(name: String, session: ICAuthSession) async throws -> CreatedDatabase {
+        try await vfsClient.createDatabase(name: name, session: session)
+    }
+
+    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
+        try await vfsClient.saveSourceCaptureRequest(request, session: session)
+    }
+
+    func triggerSourceCapture(databaseId: String, requestPath: String, session: ICAuthSession) async throws {
+        try await vfsClient.triggerSourceCapture(databaseId: databaseId, requestPath: requestPath, session: session)
     }
 }

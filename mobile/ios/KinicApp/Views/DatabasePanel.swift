@@ -6,6 +6,8 @@ import SwiftUI
 
 struct DatabasePanel: View {
     @Bindable var model: AppModel
+    @State private var isCreateSheetPresented = false
+    @State private var newDatabaseName = ""
 
     var body: some View {
         KinicPanel(title: "Database", systemImage: "externaldrive") {
@@ -14,7 +16,7 @@ struct DatabasePanel: View {
                     ContentUnavailableView(
                         model.isSignedIn ? "No writable databases" : "Sign in to load databases",
                         systemImage: "externaldrive",
-                        description: Text(model.isSignedIn ? "Owner and Writer databases appear here." : "Internet Identity unlocks your writable databases.")
+                        description: Text(model.isSignedIn ? "Create a database or refresh existing Owner and Writer databases." : "Internet Identity unlocks your writable databases.")
                     )
                     .frame(maxWidth: .infinity)
                 } else {
@@ -38,9 +40,95 @@ struct DatabasePanel: View {
                     }
                 }
 
+                Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
+                    .buttonStyle(KinicSecondaryButtonStyle())
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+
                 Button(model.isLoadingDatabases ? "Refreshing databases" : "Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
                     .buttonStyle(KinicSecondaryButtonStyle())
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases)
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+            }
+        }
+        .sheet(isPresented: $isCreateSheetPresented) {
+            CreateDatabaseSheet(
+                databaseName: $newDatabaseName,
+                creating: model.isCreatingDatabase,
+                onCancel: dismissCreateSheet,
+                onCreate: createDatabase
+            )
+            .presentationDetents([.medium])
+        }
+    }
+
+    private func presentCreateSheet() {
+        newDatabaseName = ""
+        isCreateSheetPresented = true
+    }
+
+    private func dismissCreateSheet() {
+        guard !model.isCreatingDatabase else {
+            return
+        }
+        isCreateSheetPresented = false
+    }
+
+    private func createDatabase() {
+        let trimmedName = newDatabaseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AppModel.databaseNameError(trimmedName) == nil else {
+            model.startCreateDatabase(name: newDatabaseName)
+            return
+        }
+        isCreateSheetPresented = false
+        model.startCreateDatabase(name: newDatabaseName)
+    }
+}
+
+private struct CreateDatabaseSheet: View {
+    @Binding var databaseName: String
+    let creating: Bool
+    let onCancel: () -> Void
+    let onCreate: () -> Void
+
+    private var trimmedName: String {
+        databaseName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var validationError: String? {
+        AppModel.databaseNameError(trimmedName)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Team skills", text: $databaseName)
+                        .textInputAutocapitalization(.words)
+                        .disabled(creating)
+                } header: {
+                    Text("Database name")
+                } footer: {
+                    Text("Use 1..80 characters. The name can be changed later.")
+                }
+
+                if !trimmedName.isEmpty,
+                   let validationError {
+                    Section {
+                        Text(validationError)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Create database")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                        .disabled(creating)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(creating ? "Creating..." : "Create", action: onCreate)
+                        .disabled(creating || validationError != nil)
+                }
             }
         }
     }

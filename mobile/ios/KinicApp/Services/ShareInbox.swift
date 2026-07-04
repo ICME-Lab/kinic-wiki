@@ -1,60 +1,102 @@
 // Where: mobile/ios/KinicApp/Services/ShareInbox.swift
-// What: Reader and writer for URLs queued by the Share Extension or manual entry.
-// Why: The app owns authenticated canister writes, regardless of capture source.
+// What: File-backed queue for URLs captured by the Share Extension or manual entry.
+// Why: App and extension processes need append/remove operations that do not overwrite each other.
 
 import Foundation
 
 struct ShareInbox: @unchecked Sendable {
-    private static let key = "kinic.pending-shared-urls.v1"
-    private let defaults: UserDefaults
+    private static let queueDirectoryName = "pending-shared-urls.v2"
+    private let queueDirectory: URL
+    private let fileManager: FileManager
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
-    init(appGroupId: String?) {
-        defaults = SharedDefaultsStore.defaults(appGroupId: appGroupId)
+    init(appGroupId: String?, strict: Bool = false, fileManager: FileManager = .default) throws {
+        self.fileManager = fileManager
+        queueDirectory = try Self.queueDirectory(appGroupId: appGroupId, strict: strict, fileManager: fileManager)
+        try fileManager.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
     }
 
     init(strictAppGroupId appGroupId: String?) throws {
-        guard let appGroupId,
-              !appGroupId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ShareInboxError.missingAppGroupId
-        }
-        guard let defaults = UserDefaults(suiteName: appGroupId) else {
-            throw ShareInboxError.unavailableAppGroup(appGroupId)
-        }
-        self.defaults = defaults
+        try self.init(appGroupId: appGroupId, strict: true)
+    }
+
+    init(testQueueDirectory: URL, fileManager: FileManager = .default) throws {
+        self.fileManager = fileManager
+        queueDirectory = testQueueDirectory
+        try fileManager.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
     }
 
     func loadPendingURLs() -> [PendingSharedURL] {
-        let records: [SharedURLRecord]
-        if let data = defaults.data(forKey: Self.key),
-           let decoded = try? decoder.decode([SharedURLRecord].self, from: data) {
-            records = decoded
-        } else {
-            records = []
-        }
-        return records.compactMap { record in
-            guard let url = URL(string: record.url) else {
-                return nil
+        let files = (try? fileManager.contentsOfDirectory(
+            at: queueDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        return files
+            .filter { $0.pathExtension == "json" }
+            .compactMap { fileURL -> PendingSharedURL? in
+                guard let data = try? Data(contentsOf: fileURL),
+                      let record = try? decoder.decode(SharedURLRecord.self, from: data),
+                      let url = URL(string: record.url) else {
+                    return nil
+                }
+                return PendingSharedURL(
+                    id: record.id,
+                    url: url,
+                    receivedAt: record.receivedAt,
+                    requestId: record.requestId
+                )
             }
-            return PendingSharedURL(url: url, receivedAt: record.receivedAt)
-        }
+            .sorted { left, right in
+                if left.receivedAt == right.receivedAt {
+                    left.id < right.id
+                } else {
+                    left.receivedAt < right.receivedAt
+                }
+            }
     }
 
-    func enqueue(_ url: URL, receivedAt: Date = .now) throws {
-        var records = loadPendingURLs().map { SharedURLRecord(url: $0.url.absoluteString, receivedAt: $0.receivedAt) }
-        records.append(SharedURLRecord(url: url.absoluteString, receivedAt: receivedAt))
-        defaults.set(try encoder.encode(records), forKey: Self.key)
+    func enqueue(_ url: URL, receivedAt: Date = .now, requestId: String? = nil) throws {
+        let id = UUID().uuidString.lowercased()
+        let record = SharedURLRecord(
+            id: id,
+            url: url.absoluteString,
+            receivedAt: receivedAt,
+            requestId: try requestId ?? SourceCaptureRequestBuilder.makeRequestId(now: receivedAt)
+        )
+        let data = try encoder.encode(record)
+        let temporaryURL = queueDirectory.appending(path: "\(id).tmp")
+        let finalURL = queueDirectory.appending(path: "\(id).json")
+        try data.write(to: temporaryURL, options: .atomic)
+        try fileManager.moveItem(at: temporaryURL, to: finalURL)
     }
 
     func remove(_ item: PendingSharedURL) {
-        let remaining = loadPendingURLs().filter { $0 != item }
-        let records = remaining.map { SharedURLRecord(url: $0.url.absoluteString, receivedAt: $0.receivedAt) }
-        defaults.set(try? encoder.encode(records), forKey: Self.key)
+        let fileURL = queueDirectory.appending(path: "\(item.id).json")
+        try? fileManager.removeItem(at: fileURL)
+    }
+
+    private static func queueDirectory(appGroupId: String?, strict: Bool, fileManager: FileManager) throws -> URL {
+        guard let appGroupId,
+              !appGroupId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            if strict {
+                throw ShareInboxError.missingAppGroupId
+            }
+            return fileManager.temporaryDirectory.appending(path: "kinic-share-inbox-preview").appending(path: queueDirectoryName)
+        }
+        guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+            if strict {
+                throw ShareInboxError.unavailableAppGroup(appGroupId)
+            }
+            return fileManager.temporaryDirectory
+                .appending(path: "kinic-share-inbox-\(appGroupId)")
+                .appending(path: queueDirectoryName)
+        }
+        return containerURL.appending(path: queueDirectoryName)
     }
 }
 
-enum ShareInboxError: LocalizedError {
+enum ShareInboxError: LocalizedError, Equatable {
     case missingAppGroupId
     case unavailableAppGroup(String)
 
@@ -63,7 +105,7 @@ enum ShareInboxError: LocalizedError {
         case .missingAppGroupId:
             "APP_GROUP_ID is missing."
         case let .unavailableAppGroup(appGroupId):
-            "App Group is unavailable: \(appGroupId)"
+            "App Group container is unavailable: \(appGroupId)"
         }
     }
 }

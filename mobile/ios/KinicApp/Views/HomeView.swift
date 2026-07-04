@@ -10,25 +10,30 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    SessionPanel(model: model)
-                    DatabasePanel(model: model)
-                    ManualURLPanel(model: model, isURLFocused: $isManualURLFocused)
-
-                    if let message = model.statusMessage {
-                        StatusPanel(message: message)
-                    }
-                }
-                .padding(KinicDesign.screenPadding)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .background {
+            ZStack {
                 Color.white
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        isManualURLFocused = false
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        SessionPanel(model: model)
+                        DatabasePanel(model: model)
+                        ManualURLPanel(model: model, isURLFocused: $isManualURLFocused)
+
+                        if let message = model.statusMessage {
+                            StatusPanel(message: message)
+                        }
                     }
+                    .padding(KinicDesign.screenPadding)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .background {
+                    Color.white
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isManualURLFocused = false
+                        }
+                }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.white, for: .navigationBar)

@@ -20,8 +20,7 @@ export function GET(): Response {
   <body>
     <main>
       <h1>Open KinicWikiApp</h1>
-      <p>If KinicWikiApp did not open automatically, open it here to send the shared URL.</p>
-      <a href="kinicwiki://share">Open KinicWikiApp</a>
+      <p>If KinicWikiApp did not open automatically, open the app manually to send the shared URL.</p>
     </main>
   </body>
 </html>`,

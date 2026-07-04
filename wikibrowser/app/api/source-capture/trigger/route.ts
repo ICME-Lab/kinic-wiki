@@ -14,6 +14,7 @@ type CheckSession = (canisterId: string, input: TriggerRequest) => Promise<void>
 const ALLOWED_ORIGINS = new Set([
   "https://wiki.kinic.xyz",
   "https://kinic.xyz",
+  "https://ios-local.kinic.xyz",
   "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj",
   "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
   "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"

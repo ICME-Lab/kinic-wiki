@@ -13,6 +13,7 @@ export type RuntimeEnv = {
   KINIC_WIKI_CANISTER_ID?: string;
   KINIC_WIKI_IC_HOST?: string;
   KINIC_WIKI_PUBLIC_ORIGIN?: string;
+  OPENAI_APPS_CHALLENGE_TOKEN?: string;
 };
 
 export type DatabaseSummary = {

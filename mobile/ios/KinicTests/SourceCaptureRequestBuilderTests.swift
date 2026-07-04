@@ -18,6 +18,7 @@ struct SourceCaptureRequestBuilderTests {
         )
 
         #expect(request.databaseId == "db_demo")
+        #expect(request.requestId == "1700000000000-00000000-0000-4000-8000-000000000000")
         #expect(request.normalizedURL.absoluteString == "https://example.com/page")
         #expect(request.requestPath == "/Sources/source-capture-requests/1700000000000-00000000-0000-4000-8000-000000000000.md")
         #expect(request.content.contains("kind: kinic.source_capture_request"))
@@ -39,4 +40,3 @@ struct SourceCaptureRequestBuilderTests {
         }
     }
 }
-

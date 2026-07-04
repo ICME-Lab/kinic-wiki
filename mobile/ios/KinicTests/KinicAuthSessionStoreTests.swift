@@ -13,12 +13,12 @@ struct KinicAuthSessionStoreTests {
         let configuration = AppConfiguration(
             canisterId: "xis3j-paaaa-aaaai-axumq-cai",
             apiBaseURL: URL(string: "https://icp0.io")!,
+            identityProvider: URL(string: "https://id.ai/#authorize")!,
             derivationOrigin: "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io",
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
-            keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-            openURL: URL(string: "kinicwiki://share")!
+            keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki"
         )
 
         let store = KinicAuthSessionStore(configuration: configuration, service: "test.service")

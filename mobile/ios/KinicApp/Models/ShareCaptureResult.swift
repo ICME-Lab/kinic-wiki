@@ -5,7 +5,7 @@
 import Foundation
 
 enum ShareCaptureResult: Equatable, Sendable {
-    case saved(requestPath: String, triggerError: String?)
+    case saved(requestPath: String)
     case queued(reason: String)
     case failed(message: String)
 }

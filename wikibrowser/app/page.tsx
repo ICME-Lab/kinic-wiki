@@ -63,9 +63,24 @@ const commandLines = [
   'kinic-vfs-cli search-remote "query" --prefix /Knowledge --json'
 ];
 
+const nativeAuthHashRedirectScript = `
+(() => {
+  const marker = "#/native-auth";
+  if (!location.hash.startsWith(marker)) return;
+  const queryStart = location.hash.indexOf("?");
+  if (queryStart < 0) return;
+  const query = location.hash.slice(queryStart + 1);
+  try {
+    sessionStorage.setItem("kinicNativeAuthQuery", query);
+  } catch {}
+  location.replace("/native-auth?" + query);
+})();
+`;
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-white text-ink">
+      <script dangerouslySetInnerHTML={{ __html: nativeAuthHashRedirectScript }} />
       <NativeAuthBridge />
       <section className="relative isolate min-h-[100svh] overflow-hidden bg-white px-4 py-7 sm:px-6">
         <Image className="absolute inset-0 -z-20 h-full w-full object-cover object-[84%_42%] sm:object-[70%_50%]" src={heroImage} alt="" fill priority sizes="100vw" />

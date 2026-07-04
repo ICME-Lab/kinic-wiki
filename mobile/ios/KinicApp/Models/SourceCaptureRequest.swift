@@ -6,9 +6,9 @@ import Foundation
 
 struct SourceCaptureRequest: Equatable, Sendable {
     let databaseId: String
+    let requestId: String
     let requestPath: String
     let content: String
     let metadataJson: String
     let normalizedURL: URL
 }
-

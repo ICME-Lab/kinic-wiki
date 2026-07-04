@@ -8,18 +8,18 @@ import ICNativeClient
 struct AppConfiguration: Equatable, Sendable {
     let canisterId: String
     let apiBaseURL: URL
+    let identityProvider: URL
     let derivationOrigin: String
     let authOrigin: URL
     let callbackDomain: String
     let appGroupId: String?
     let keychainAccessGroup: String?
-    let openURL: URL
 
     var icClientConfiguration: ICClientConfiguration {
         ICClientConfiguration(
             canisterId: canisterId,
             apiBaseURL: apiBaseURL,
-            identityProvider: URL(string: "https://id.ai/#authorize")!,
+            identityProvider: identityProvider,
             derivationOrigin: derivationOrigin
         )
     }
@@ -31,24 +31,24 @@ struct AppConfiguration: Equatable, Sendable {
     static let preview = AppConfiguration(
         canisterId: "xis3j-paaaa-aaaai-axumq-cai",
         apiBaseURL: URL(string: "https://icp0.io")!,
+        identityProvider: URL(string: "https://id.ai/#authorize")!,
         derivationOrigin: "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io",
         authOrigin: URL(string: "https://wiki.kinic.xyz")!,
         callbackDomain: "wiki.kinic.xyz",
         appGroupId: nil,
-        keychainAccessGroup: nil,
-        openURL: URL(string: "kinicwiki://share")!
+        keychainAccessGroup: nil
     )
 
     static func liveFromBundle(_ bundle: Bundle = .main) -> AppConfiguration {
         AppConfiguration(
             canisterId: bundle.requiredString("KINIC_CANISTER_ID"),
             apiBaseURL: bundle.requiredURL("KINIC_API_BASE_URL"),
+            identityProvider: bundle.requiredURL("KINIC_IDENTITY_PROVIDER"),
             derivationOrigin: bundle.requiredString("KINIC_DERIVATION_ORIGIN"),
             authOrigin: bundle.requiredURL("KINIC_AUTH_ORIGIN"),
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
-            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
-            openURL: bundle.requiredURL("KINIC_OPEN_URL")
+            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP")
         )
     }
 }

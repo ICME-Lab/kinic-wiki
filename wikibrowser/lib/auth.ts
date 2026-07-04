@@ -1,6 +1,6 @@
 const HOURS_PER_DAY = BigInt(24);
 const NANOSECONDS_PER_HOUR = BigInt(3_600_000_000_000);
-const DELEGATION_DAYS = 29;
+const DELEGATION_DAYS = 30;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const DEFAULT_LOCAL_WIKI_IC_HOST = "http://127.0.0.1:8011";
 const CANISTER_ID_PATTERN = /^[a-z0-9-]+$/;
@@ -56,7 +56,23 @@ export function identityProviderUrl(): string {
 }
 
 export function derivationOriginUrl(locationLike: LocationLike | null = currentLocation()): string {
-  if (!localIiE2eEnabled() || !locationLike || !isLocalHostname(locationLike.hostname)) {
+  if (!localIiE2eEnabled()) {
+    return DERIVATION_ORIGIN;
+  }
+  const iosNativeDerivationOrigin = process.env.NEXT_PUBLIC_IOS_NATIVE_DERIVATION_ORIGIN;
+  if (iosNativeDerivationOrigin) {
+    let url: URL;
+    try {
+      url = new URL(iosNativeDerivationOrigin);
+    } catch {
+      return DERIVATION_ORIGIN;
+    }
+    if (url.protocol === "https:" && url.username === "" && url.password === "" && url.hash === "") {
+      return url.toString().replace(/\/$/, "");
+    }
+    return DERIVATION_ORIGIN;
+  }
+  if (!locationLike || !isLocalHostname(locationLike.hostname)) {
     return DERIVATION_ORIGIN;
   }
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";

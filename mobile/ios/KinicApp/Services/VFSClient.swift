@@ -30,21 +30,35 @@ struct VFSClient: @unchecked Sendable {
             }
     }
 
-    func submit(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
+    func createDatabase(name: String, session: ICAuthSession) async throws -> CreatedDatabase {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        try await ensureParentFolders(databaseId: request.databaseId, path: request.requestPath, session: session)
-        let writeData = try await client.callRaw(
-            method: "write_node",
-            arg: VFSCandidEncoder.writeNode(request),
+        let data = try await client.callRaw(
+            method: "create_database",
+            arg: VFSCandidEncoder.createDatabase(name: name),
             identity: session
         )
-        try VFSCandidDecoder.decodeWriteNodeResult(writeData)
+        return try VFSCandidDecoder.decodeCreateDatabaseResult(data)
+    }
 
+    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        try await ensureParentFolders(databaseId: request.databaseId, path: request.requestPath, session: session)
+        try await ensureSourceCaptureRequest(request, session: session)
+        return CaptureSubmission(
+            databaseId: request.databaseId,
+            requestPath: request.requestPath,
+            requestId: request.requestId,
+            url: request.normalizedURL
+        )
+    }
+
+    func triggerSourceCapture(databaseId: String, requestPath: String, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
         let sessionNonce = UUID().uuidString.lowercased()
         let authorizeData = try await client.callRaw(
             method: "authorize_source_capture_trigger_session",
             arg: VFSCandidEncoder.authorizeSourceCaptureTriggerSession(
-                databaseId: request.databaseId,
+                databaseId: databaseId,
                 sessionNonce: sessionNonce
             ),
             identity: session
@@ -52,17 +66,63 @@ struct VFSClient: @unchecked Sendable {
         try VFSCandidDecoder.decodeUnitResult(authorizeData)
 
         let trigger = await triggerWorker(
-            databaseId: request.databaseId,
-            requestPath: request.requestPath,
+            databaseId: databaseId,
+            requestPath: requestPath,
             sessionNonce: sessionNonce
         )
-        return CaptureSubmission(
-            requestPath: request.requestPath,
-            triggered: trigger.accepted,
-            triggerError: trigger.error
-        )
+        guard trigger.accepted else {
+            throw VFSClientError.workerTriggerFailed(trigger.error ?? "worker trigger failed")
+        }
     }
 
+    private func ensureSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws {
+        let readData = try await client.queryRaw(
+            method: "read_node",
+            arg: VFSCandidEncoder.readNode(databaseId: request.databaseId, path: request.requestPath),
+            identity: session
+        )
+        if let existing = try VFSCandidDecoder.decodeReadNodeResult(readData) {
+            guard isSameSourceCaptureRequest(existing, request) else {
+                throw VFSClientError.conflictingSourceCaptureRequest(request.requestPath)
+            }
+            return
+        }
+        let writeData = try await client.callRaw(
+            method: "write_node",
+            arg: VFSCandidEncoder.writeNode(request),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeWriteNodeResult(writeData)
+    }
+
+    private func isSameSourceCaptureRequest(_ node: VFSNode, _ request: SourceCaptureRequest) -> Bool {
+        guard node.path == request.requestPath,
+              node.kind == .file,
+              node.content.contains("kind: kinic.source_capture_request") else {
+            return false
+        }
+        guard let metadata = try? JSONDecoder().decode(
+            SourceCaptureRequestMetadata.self,
+            from: Data(node.metadataJson.utf8)
+        ) else {
+            return false
+        }
+        return metadata.requestType == "source_capture"
+            && metadata.url == request.normalizedURL.absoluteString
+    }
+}
+
+private struct SourceCaptureRequestMetadata: Decodable {
+    let requestType: String
+    let url: String
+
+    enum CodingKeys: String, CodingKey {
+        case requestType = "request_type"
+        case url
+    }
+}
+
+private extension VFSClient {
     private func ensureParentFolders(databaseId: String, path: String, session: ICAuthSession) async throws {
         let segments = path.split(separator: "/").map(String.init)
         var current = ""
@@ -102,6 +162,20 @@ struct VFSClient: @unchecked Sendable {
             return TriggerResult(accepted: true, error: nil)
         } catch {
             return TriggerResult(accepted: false, error: error.localizedDescription)
+        }
+    }
+}
+
+private enum VFSClientError: Error, LocalizedError, Equatable {
+    case conflictingSourceCaptureRequest(String)
+    case workerTriggerFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .conflictingSourceCaptureRequest(let path):
+            "Source capture request already exists with different content: \(path)."
+        case .workerTriggerFailed(let message):
+            message
         }
     }
 }

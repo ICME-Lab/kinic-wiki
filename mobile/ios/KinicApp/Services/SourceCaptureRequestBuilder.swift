@@ -9,11 +9,12 @@ enum SourceCaptureRequestBuilder {
         url: URL,
         databaseId: String,
         requestedBy: String,
+        requestId: String? = nil,
         now: Date = .now,
         uuid: UUID = UUID()
     ) throws -> SourceCaptureRequest {
         let normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
-        let requestId = try safeRequestId(timeMs: milliseconds(now), uuid: uuid.uuidString.lowercased())
+        let requestId = try requestId ?? makeRequestId(now: now, uuid: uuid)
         let requestPath = "/Sources/source-capture-requests/\(requestId).md"
         let requestedAt = now.formatted(.iso8601)
         let urlText = normalizedURL.absoluteString
@@ -42,11 +43,16 @@ enum SourceCaptureRequestBuilder {
         let metadataJson = String(data: metadata, encoding: .utf8) ?? "{}"
         return SourceCaptureRequest(
             databaseId: databaseId,
+            requestId: requestId,
             requestPath: requestPath,
             content: content,
             metadataJson: metadataJson,
             normalizedURL: normalizedURL
         )
+    }
+
+    static func makeRequestId(now: Date = .now, uuid: UUID = UUID()) throws -> String {
+        try safeRequestId(timeMs: milliseconds(now), uuid: uuid.uuidString.lowercased())
     }
 
     static func safeRequestId(timeMs: Int64, uuid: String) throws -> String {

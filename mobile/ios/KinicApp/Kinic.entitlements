@@ -12,8 +12,8 @@
 	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>applinks:$(KINIC_CALLBACK_DOMAIN)</string>
-		<string>webcredentials:$(KINIC_CALLBACK_DOMAIN)</string>
+		<string>applinks:$(KINIC_ASSOCIATED_DOMAIN)</string>
+		<string>webcredentials:$(KINIC_ASSOCIATED_DOMAIN)</string>
 	</array>
 </dict>
 </plist>

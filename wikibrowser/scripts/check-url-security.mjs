@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
 
 if (!crypto.subtle.timingSafeEqual) {
@@ -23,10 +23,11 @@ const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts"
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
-const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
-const staticAppleAppSiteAssociation = JSON.parse(
-  readFileSync(new URL("../public/.well-known/apple-app-site-association", import.meta.url), "utf8")
-);
+const nativeAuthPayloadModule = await importTs("../lib/native-auth-payload.ts");
+const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
+const staticAppleAppSiteAssociationURL = new URL("../public/.well-known/apple-app-site-association", import.meta.url);
+const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
 const nativeAuthBridge = readFileSync(new URL("../components/native-auth-bridge.tsx", import.meta.url), "utf8");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
@@ -38,30 +39,105 @@ assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.
 assert.match(sourceCapture, /function isSafeRequestSegment/);
 assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
 assert.match(nativeAuthBridge, /#\/native-auth/);
+assert.match(homePage, /location\.hash\.startsWith\(marker\)/);
+assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)/);
+assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
+assert.match(nativeAuthRoute, /"content-type": "text\/html; charset=utf-8"/);
+assert.match(nativeAuthRoute, /id="native-auth-message"/);
+assert.match(nativeAuthRoute, /id="native-auth-continue"/);
+assert.match(nativeAuthRoute, /window\.kinicNativeAuthStart/);
+assert.match(nativeAuthRoute, /function nativeAuthScript/);
+assert.match(nativeAuthRoute, /html, body \{ width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; \}/);
+assert.match(nativeAuthRoute, /height: 100dvh/);
+assert.match(nativeAuthRoute, /function nativeAuthParams/);
+assert.match(nativeAuthRoute, /currentLocation\.hash\.startsWith\(marker\)/);
+assert.match(nativeAuthRoute, /function storedNativeAuthQuery/);
+assert.match(nativeAuthRoute, /sessionPublicKey: new Uint8Array\(requestParams\.sessionPublicKey\)/);
+assert.match(nativeAuthRoute, /idpWindow\.location\.href = callback\.toString\(\)/);
+assert.match(nativeAuthRoute, /normalizeInternetIdentityResponseForNative/);
+assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
+assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
+assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
+assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
+assert.match(nativeAuthBridge, /location\.pathname === "\/native-auth" \|\| location\.pathname === "\/native-auth\/"/);
+assert.match(nativeAuthBridge, /function nativeAuthParams/);
+assert.match(nativeAuthBridge, /location\.hash\.startsWith\(marker\)/);
+assert.match(nativeAuthBridge, /function storedNativeAuthQuery/);
 assert.match(nativeAuthBridge, /authorize-client/);
+assert.match(nativeAuthBridge, /normalizeInternetIdentityResponseForNative/);
+assert.match(nativeAuthBridge, /onClick=\{startAuthorization\}/);
+assert.match(nativeAuthBridge, /sessionPublicKey: new Uint8Array\(parsed\.sessionPublicKey\)/);
 assert.match(nativeAuthBridge, /idpWindow\.location\.href = callback\.toString\(\)/);
+assert.match(nativeAuthBridge, /url\.protocol !== configured\.protocol/);
+assert.match(nativeAuthBridge, /url\.host !== configured\.host/);
+assert.match(nativeAuthBridge, /url\.pathname !== configured\.pathname/);
+assert.match(nativeAuthBridge, /url\.search !== configured\.search/);
+assert.doesNotMatch(nativeAuthBridge, /useEffect\(\(\) => \{\s*if \(bridgeState\.status !== "ready"\)/);
 
-await withEnv({}, async () => {
-  const response = appleAppSiteAssociationRouteModule.GET();
-  assert.equal(response.status, 503);
-});
-
-await withEnv({ KINIC_IOS_APP_ID: "ABCDE12345.xyz.kinic.ios.KinicWiki" }, async () => {
-  const response = appleAppSiteAssociationRouteModule.GET();
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.deepEqual(body.applinks.details[0], {
-    appID: "ABCDE12345.xyz.kinic.ios.KinicWiki",
-    paths: ["/*"]
+{
+  const normalized = nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
+    kind: "authorize-client-success",
+    userPublicKey: new Uint8Array([1, 2, 255]),
+    delegations: [
+      {
+        delegation: {
+          pubkey: [3, 4, 5],
+          expiration: 12_345n,
+          targets: [new Uint8Array([6, 7])]
+        },
+        signature: "0A0b"
+      }
+    ]
   });
-  assert.deepEqual(body.webcredentials.apps, ["ABCDE12345.xyz.kinic.ios.KinicWiki"]);
-});
+  assert.deepEqual(normalized, {
+    kind: "authorize-client-success",
+    userPublicKey: "0102ff",
+    delegations: [
+      {
+        delegation: {
+          pubkey: "030405",
+          expiration: "12345",
+          targets: ["0607"]
+        },
+        signature: "0a0b"
+      }
+    ]
+  });
+  assert.deepEqual(
+    nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
+      kind: "authorize-client-success",
+      delegation: {
+        publicKey: "0102",
+        delegations: [{ delegation: { pubkey: "0304", expiration: "0x10" }, signature: [5, 6] }]
+      }
+    }),
+    {
+      kind: "authorize-client-success",
+      userPublicKey: "0102",
+      delegations: [{ delegation: { pubkey: "0304", expiration: "16" }, signature: "0506" }]
+    }
+  );
+  assert.throws(
+    () => nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({ kind: "authorize-client-success", userPublicKey: [1] }),
+    /delegations are missing/
+  );
+}
 
-assert.deepEqual(staticAppleAppSiteAssociation.applinks.details[0], {
-  appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-  paths: ["/*"]
+assert.equal(existsSync(staticAppleAppSiteAssociationURL), true);
+assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8")), {
+  applinks: {
+    apps: [],
+    details: [
+      {
+        appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+        paths: ["/ios-auth-callback*", "/ios-share*"]
+      }
+    ]
+  },
+  webcredentials: {
+    apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
+  }
 });
-assert.deepEqual(staticAppleAppSiteAssociation.webcredentials.apps, ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]);
 
 {
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
@@ -74,7 +150,7 @@ assert.deepEqual(staticAppleAppSiteAssociation.webcredentials.apps, ["AKN976G7AK
   assert.equal(response.status, 200);
   const body = await response.text();
   assert.match(body, /Open KinicWikiApp/);
-  assert.match(body, /kinicwiki:\/\/share/);
+  assert.doesNotMatch(body, /kinicwiki:\/\//);
 }
 
 await withEnv({}, async () => {
@@ -96,6 +172,10 @@ await withEnv(
   async () => {
     const forbidden = await triggerRouteModule.POST(triggerRequest("https://evil.example"));
     assert.equal(forbidden.status, 403);
+
+    const localIosPreflight = triggerRouteModule.OPTIONS(triggerRequest("https://ios-local.kinic.xyz"));
+    assert.equal(localIosPreflight.status, 204);
+    assert.equal(localIosPreflight.headers.get("access-control-allow-origin"), "https://ios-local.kinic.xyz");
 
     const preflight = triggerRouteModule.OPTIONS(triggerRequest("chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj"));
     assert.equal(preflight.status, 204);
@@ -163,6 +243,10 @@ await withEnv(
       const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
+
+      const localIosResponse = await triggerRouteModule.POST(triggerRequest("https://ios-local.kinic.xyz"));
+      assert.equal(localIosResponse.status, 200);
+      assert.equal(localIosResponse.headers.get("access-control-allow-origin"), "https://ios-local.kinic.xyz");
     });
     triggerRouteModule.setSourceCaptureTriggerDepsForTest();
 
@@ -274,6 +358,30 @@ await withEnv(
     assert.doesNotMatch(sourceRunRoute, /checkQueryAnswerSession/);
   }
 );
+
+{
+  const env = {
+    KINIC_WIKI_WORKER_TOKEN: "local-dev-worker-token",
+    KINIC_WIKI_CANISTER_ID: "aaaaa-aa"
+  };
+  const unauthorized = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(mockWorkerRequest({}, "bad-token"), env);
+  assert.equal(unauthorized.status, 401);
+
+  const invalidPath = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(
+    mockWorkerRequest({ requestPath: "/Sources/not-a-request.md" }, "local-dev-worker-token"),
+    env
+  );
+  assert.equal(invalidPath.status, 400);
+
+  const accepted = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(mockWorkerRequest({}, "local-dev-worker-token"), env);
+  assert.equal(accepted.status, 202);
+  assert.deepEqual(await accepted.json(), {
+    accepted: true,
+    canisterId: "aaaaa-aa",
+    databaseId: "db_1",
+    requestPath: "/Sources/source-capture-requests/1.md"
+  });
+}
 
 await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
   const missingKey = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
@@ -517,6 +625,20 @@ function triggerRequest(origin, overrides = {}) {
   return new Request("https://local.test/api/source-capture/trigger", {
     method: "POST",
     headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({
+      canisterId: "aaaaa-aa",
+      databaseId: "db_1",
+      requestPath: "/Sources/source-capture-requests/1.md",
+      sessionNonce: "session-1",
+      ...overrides
+    })
+  });
+}
+
+function mockWorkerRequest(overrides = {}, token = "local-dev-worker-token") {
+  return new Request("http://127.0.0.1:8787/source-capture", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",

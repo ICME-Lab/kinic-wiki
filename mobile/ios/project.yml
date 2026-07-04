@@ -62,12 +62,15 @@ targets:
       - KinicShareExtension
       - KinicApp/Models/AppConfiguration.swift
       - KinicApp/Models/CaptureSubmission.swift
+      - KinicApp/Models/CreatedDatabase.swift
       - KinicApp/Models/DatabaseRole.swift
       - KinicApp/Models/DatabaseStatus.swift
       - KinicApp/Models/DatabaseSummary.swift
+      - KinicApp/Models/PendingSourceCaptureTrigger.swift
       - KinicApp/Models/PendingSharedURL.swift
       - KinicApp/Models/ShareCaptureResult.swift
       - KinicApp/Models/SharedURLRecord.swift
+      - KinicApp/Models/SourceCaptureTriggerRecord.swift
       - KinicApp/Models/SourceCaptureRequest.swift
       - KinicApp/Services/KinicAuthSessionStore.swift
       - KinicApp/Services/KinicICClient.swift
@@ -76,6 +79,7 @@ targets:
       - KinicApp/Services/SharedDefaultsStore.swift
       - KinicApp/Services/SourceCaptureRequestBuilder.swift
       - KinicApp/Services/SourceCaptureRequestError.swift
+      - KinicApp/Services/SourceCaptureTriggerQueue.swift
       - KinicApp/Services/VFSCandidDecoder.swift
       - KinicApp/Services/VFSCandidEncoder.swift
       - KinicApp/Services/VFSCandidError.swift
@@ -87,6 +91,7 @@ targets:
       - KinicApp/Utilities/URLNormalizerError.swift
       - KinicApp/Views/KinicDesign.swift
       - KinicApp/Assets.xcassets
+      - KinicApp/PrivacyInfo.xcprivacy
     dependencies:
       - package: ICNativeClient
     settings:

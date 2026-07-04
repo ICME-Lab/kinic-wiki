@@ -57,15 +57,139 @@ const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
 const MCP_TOOL_NAMES = [
   "find_databases",
   "search",
-  "fetch",
   "fetch_many",
   "read_path",
   "read_paths",
   "list",
   "memory_manifest",
-  "context",
-  "source_evidence"
+  "context"
 ] as const;
+
+const databaseResultSchema = z.object({
+  database_id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  tags: z.array(z.string()),
+  url: z.string(),
+  score: z.number()
+});
+const searchResultSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  url: z.string(),
+  metadata: z.object({
+    database_id: z.string(),
+    path: z.string(),
+    kind: z.string(),
+    score: z.number(),
+    snippet: z.string().nullable(),
+    preview: z.string().nullable(),
+    match_reasons: z.array(z.string())
+  })
+});
+const fetchedNodeSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  text: z.string(),
+  url: z.string(),
+  metadata: z.object({
+    database_id: z.string(),
+    path: z.string(),
+    kind: z.string(),
+    etag: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    metadata_json: z.string(),
+    truncated: z.boolean()
+  })
+});
+const itemErrorSchema = z.object({
+  id: z.string().optional(),
+  path: z.string().optional(),
+  error: z.string(),
+  is_error: z.literal(true)
+});
+const listedNodeSchema = z.object({
+  path: z.string(),
+  kind: z.string(),
+  etag: z.string(),
+  updated_at: z.string(),
+  has_children: z.boolean()
+});
+const linkEdgeSchema = z.object({
+  updated_at: z.string(),
+  link_kind: z.string(),
+  link_text: z.string(),
+  source_path: z.string(),
+  raw_href: z.string(),
+  target_path: z.string()
+});
+const sourceEvidenceSchema = z.object({
+  node_path: z.string(),
+  refs: z.array(
+    z.object({
+      link_text: z.string(),
+      via_path: z.string(),
+      source_content_hash: z.string().nullable(),
+      source_path: z.string(),
+      source_updated_at: z.string().nullable(),
+      source_etag: z.string().nullable(),
+      raw_href: z.string()
+    })
+  )
+});
+const nodeSummarySchema = z.object({
+  title: z.string(),
+  path: z.string(),
+  kind: z.string(),
+  etag: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  metadata_json: z.string(),
+  text: z.string(),
+  truncated: z.boolean()
+});
+const memoryManifestOutputSchema = {
+  api_version: z.string(),
+  purpose: z.string(),
+  enabled_stores: z.array(z.string()),
+  roots: z.array(z.object({ path: z.string(), kind: z.string() })),
+  entry_roots: z.array(z.object({ path: z.string(), kind: z.string() })),
+  capabilities: z.array(z.object({ name: z.string(), description: z.string() })),
+  canonical_roles: z.array(z.object({ name: z.string(), path_pattern: z.string(), purpose: z.string() })),
+  write_policy: z.string(),
+  recommended_entrypoint: z.string(),
+  max_depth: z.number(),
+  max_query_limit: z.number(),
+  budget_unit: z.string()
+};
+const contextOutputSchema = {
+  task: z.string(),
+  namespace: z.string(),
+  truncated: z.boolean(),
+  nodes: z.array(
+    z.object({
+      node: nodeSummarySchema,
+      incoming_links: z.array(linkEdgeSchema),
+      outgoing_links: z.array(linkEdgeSchema)
+    })
+  ),
+  graph_links: z.array(linkEdgeSchema),
+  evidence: z.array(sourceEvidenceSchema),
+  search_hits: z.array(
+    z.object({
+      title: z.string(),
+      metadata: z.object({
+        path: z.string(),
+        kind: z.string(),
+        score: z.number(),
+        snippet: z.string().nullable(),
+        preview: z.string().nullable(),
+        match_reasons: z.array(z.string())
+      })
+    })
+  )
+};
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -78,6 +202,9 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/health") {
       return withCors(Response.json({ ok: true, name: "kinic-wiki-mcp" }));
+    }
+    if (request.method === "GET" && url.pathname === "/.well-known/openai-apps-challenge") {
+      return withCors(openAiAppsChallengeResponse(env));
     }
     if (url.pathname !== "/mcp" || (request.method !== "POST" && request.method !== "GET")) {
       return withCors(Response.json({ error: "not found" }, { status: 404 }));
@@ -110,6 +237,14 @@ function rootInfo(url: URL) {
   };
 }
 
+function openAiAppsChallengeResponse(env: RuntimeEnv) {
+  const token = env.OPENAI_APPS_CHALLENGE_TOKEN?.trim();
+  if (!token) {
+    return new Response("not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  return new Response(token, { headers: { "content-type": "text/plain; charset=utf-8" } });
+}
+
 export function createServer(env: RuntimeEnv): McpServer {
   const server = new McpServer(
     {
@@ -118,7 +253,7 @@ export function createServer(env: RuntimeEnv): McpServer {
     },
     {
       instructions:
-        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, do not stop at the first search result or a single fetch: build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch enough evidence with fetch_many for result ids or read_paths for known paths, and report coverage limits, excluded candidates, fetched count, and truncated results."
+        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch enough evidence with fetch_many for search result ids or read_paths for known paths, and report coverage limits, excluded candidates, fetched count, and truncated results."
     }
   );
 
@@ -129,6 +264,9 @@ export function createServer(env: RuntimeEnv): McpServer {
       inputSchema: {
         query: z.string().optional(),
         limit: z.number().int().min(1).max(MAX_DATABASE_LIMIT).optional()
+      },
+      outputSchema: {
+        databases: z.array(databaseResultSchema)
       },
       annotations: TOOL_ANNOTATIONS
     },
@@ -147,6 +285,9 @@ export function createServer(env: RuntimeEnv): McpServer {
         limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
         preview_mode: z.enum(["light", "content-start", "none"]).optional()
       },
+      outputSchema: {
+        results: z.array(searchResultSchema)
+      },
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, query, prefix, limit, preview_mode }) =>
@@ -154,25 +295,15 @@ export function createServer(env: RuntimeEnv): McpServer {
   );
 
   server.registerTool(
-    "fetch",
-    {
-      description:
-        "Fetch full text for one Kinic Wiki search result id returned by search. Use for final evidence checks; for several result ids use fetch_many and report truncation.",
-      inputSchema: {
-        id: z.string().min(1)
-      },
-      annotations: TOOL_ANNOTATIONS
-    },
-    async ({ id }) => toToolResult(await fetchSearchResult(env, { id }))
-  );
-
-  server.registerTool(
     "fetch_many",
     {
       description:
-        "Fetch full text for up to 10 Kinic Wiki search result ids. Use after candidate search for broad or list questions instead of repeated single fetch calls. Item-level errors are returned without failing the whole call.",
+        "Fetch full text for up to 10 Kinic Wiki search result ids. Use after candidate search for broad or list questions, including for a single strongest result id. Item-level errors are returned without failing the whole call.",
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
+      },
+      outputSchema: {
+        results: z.array(z.union([fetchedNodeSchema, itemErrorSchema]))
       },
       annotations: TOOL_ANNOTATIONS
     },
@@ -187,6 +318,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         database_id: z.string().min(1),
         path: z.string().min(1)
       },
+      outputSchema: fetchedNodeSchema.shape,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, path }) => toToolResult(await readPath(env, { database_id, path }))
@@ -200,6 +332,18 @@ export function createServer(env: RuntimeEnv): McpServer {
       inputSchema: {
         database_id: z.string().min(1),
         paths: z.array(z.string().min(1)).min(2).max(MAX_READ_PATHS)
+      },
+      outputSchema: {
+        results: z.array(z.union([fetchedNodeSchema, itemErrorSchema])),
+        metadata: z.object({
+          database_id: z.string(),
+          requested_paths: z.number(),
+          unique_paths: z.number(),
+          row_count: z.number(),
+          limit: z.number(),
+          parse_error_count: z.number(),
+          batch_error: z.string().nullable()
+        })
       },
       annotations: TOOL_ANNOTATIONS
     },
@@ -217,6 +361,16 @@ export function createServer(env: RuntimeEnv): McpServer {
         recursive: z.boolean().optional(),
         limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional()
       },
+      outputSchema: {
+        entries: z.array(listedNodeSchema),
+        metadata: z.object({
+          database_id: z.string(),
+          prefix: z.string(),
+          recursive: z.boolean(),
+          limit: z.number(),
+          truncated: z.boolean()
+        })
+      },
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, prefix, recursive, limit }) =>
@@ -230,6 +384,7 @@ export function createServer(env: RuntimeEnv): McpServer {
       inputSchema: {
         database_id: z.string().min(1)
       },
+      outputSchema: memoryManifestOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id }) => toToolResult(await readMemoryManifest(env, { database_id }))
@@ -249,6 +404,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         include_evidence: z.boolean().optional(),
         depth: z.number().int().min(0).max(MAX_CONTEXT_DEPTH).optional()
       },
+      outputSchema: contextOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, task, entities, namespace, budget_tokens, include_evidence, depth }) =>
@@ -263,19 +419,6 @@ export function createServer(env: RuntimeEnv): McpServer {
           depth
         })
     )
-  );
-
-  server.registerTool(
-    "source_evidence",
-    {
-      description: "Read source evidence references for one known Kinic Wiki knowledge node path.",
-      inputSchema: {
-        database_id: z.string().min(1),
-        node_path: z.string().min(1)
-      },
-      annotations: TOOL_ANNOTATIONS
-    },
-    async ({ database_id, node_path }) => toToolResult(await readSourceEvidenceRefs(env, { database_id, node_path }))
   );
 
   return server;
@@ -1059,7 +1202,9 @@ function clipText(text: string, maxChars: number): string {
 }
 
 function toToolResult(payload: Record<string, unknown> | ToolErrorResult) {
-  return isToolErrorResult(payload) ? payload : { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+  return isToolErrorResult(payload)
+    ? payload
+    : { content: [{ type: "text" as const, text: JSON.stringify(payload) }], structuredContent: payload };
 }
 
 function toolError(message: string, payload: Record<string, unknown>) {

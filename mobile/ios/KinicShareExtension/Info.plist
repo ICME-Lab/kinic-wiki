@@ -14,10 +14,10 @@
 	<string>$(KINIC_CANISTER_ID)</string>
 	<key>KINIC_DERIVATION_ORIGIN</key>
 	<string>$(KINIC_DERIVATION_ORIGIN)</string>
+	<key>KINIC_IDENTITY_PROVIDER</key>
+	<string>$(KINIC_IDENTITY_PROVIDER)</string>
 	<key>KINIC_KEYCHAIN_ACCESS_GROUP</key>
 	<string>$(KINIC_KEYCHAIN_ACCESS_GROUP)</string>
-	<key>KINIC_OPEN_URL</key>
-	<string>$(KINIC_OPEN_URL)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -36,6 +36,13 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Save to KinicWiki connects to a local development canister on this network.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
@@ -43,8 +50,6 @@
 			<key>NSExtensionActivationRule</key>
 			<dict>
 				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-				<integer>1</integer>
-				<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
 				<integer>1</integer>
 			</dict>
 		</dict>

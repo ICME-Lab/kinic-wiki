@@ -8,8 +8,12 @@ struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private let defaults: UserDefaults
 
-    init(appGroupId: String?) {
-        defaults = Self.defaults(appGroupId: appGroupId)
+    init(appGroupId: String?, strict: Bool = false) throws {
+        defaults = try Self.defaults(appGroupId: appGroupId, strict: strict)
+    }
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
     }
 
     var databaseId: String {
@@ -21,12 +25,34 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
     }
 
-    static func defaults(appGroupId: String?) -> UserDefaults {
+    static func defaults(appGroupId: String?, strict: Bool = false) throws -> UserDefaults {
         guard let appGroupId,
-              !appGroupId.isEmpty,
-              let shared = UserDefaults(suiteName: appGroupId) else {
+              !appGroupId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            if strict {
+                throw SharedDefaultsStoreError.missingAppGroupId
+            }
+            return .standard
+        }
+        guard let shared = UserDefaults(suiteName: appGroupId) else {
+            if strict {
+                throw SharedDefaultsStoreError.unavailableAppGroup(appGroupId)
+            }
             return .standard
         }
         return shared
+    }
+}
+
+enum SharedDefaultsStoreError: LocalizedError, Equatable {
+    case missingAppGroupId
+    case unavailableAppGroup(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAppGroupId:
+            "APP_GROUP_ID is missing."
+        case let .unavailableAppGroup(appGroupId):
+            "App Group defaults are unavailable: \(appGroupId)"
+        }
     }
 }

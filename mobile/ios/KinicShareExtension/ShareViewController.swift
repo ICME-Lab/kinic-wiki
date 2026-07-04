@@ -133,9 +133,9 @@ final class ShareViewController: UIViewController {
         activityIndicator.stopAnimating()
         doneButton.isHidden = false
         switch result {
-        case let .saved(requestPath, triggerError):
+        case .saved:
             titleLabel.text = "Saved to KinicWiki"
-            messageLabel.text = triggerError ?? "Source capture request created at \(requestPath)."
+            messageLabel.text = "Source capture request saved."
         case let .queued(reason):
             titleLabel.text = "Saved for later"
             messageLabel.text = reason

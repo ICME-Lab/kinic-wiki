@@ -46,12 +46,17 @@ Enable these capabilities:
 
 Share Extension capture is best-effort: it writes directly through VFS when possible, otherwise queues the URL and lets the main app auto-submit later. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` including `applinks` / `webcredentials` for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
 
+The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
+
 ## Verification
 
 - `xcodebuild build -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO`
 - `xcodebuild build-for-testing -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO`
 - `xcodebuild build -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS' -allowProvisioningUpdates`
+- `mobile/ios/scripts/install-device.sh`
 - `pnpm --dir wikibrowser test`
 - `pnpm --dir wikibrowser typecheck`
 
 `xcodebuild test` requires a working CoreSimulatorService. If simulator services are down, use `build-for-testing` plus a real-device smoke test.
+
+`mobile/ios/scripts/install-device.sh` builds `KinicWikiApp` for the first connected iPhone reported by Xcode, then installs it with `devicectl`. If device discovery or install stalls, unlock the iPhone, keep the screen awake, trust this Mac, reconnect USB, then retry. Set `KINIC_IOS_DEVICE_ID=<udid>` to pin a specific device.

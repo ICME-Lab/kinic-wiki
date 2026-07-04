@@ -5,11 +5,8 @@
 import Foundation
 
 struct PendingSharedURL: Identifiable, Equatable, Sendable {
+    let id: String
     let url: URL
     let receivedAt: Date
-
-    var id: String {
-        "\(receivedAt.timeIntervalSince1970)-\(url.absoluteString)"
-    }
+    let requestId: String
 }
-
