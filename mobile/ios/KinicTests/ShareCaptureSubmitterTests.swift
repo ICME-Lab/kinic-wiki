@@ -108,6 +108,13 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
+    func makeLiveThrowsInsteadOfCrashingWhenAppGroupIsMissing() {
+        #expect(throws: (any Error).self) {
+            try ShareCaptureSubmitter.makeLive(configuration: .preview)
+        }
+    }
+
+    @Test
     func queuedRetryKeepsFailedSubmissionRequestId() async throws {
         let harness = try ShareCaptureHarness()
         let probe = RequestPathProbe()

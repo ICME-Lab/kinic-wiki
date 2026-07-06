@@ -15,8 +15,27 @@ struct VFSCandidCodecTests {
     @Test
     func encodesMkdirNodeRequest() {
         let data = VFSCandidEncoder.mkdirNode(databaseId: "db_demo", path: "/Sources")
-        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
-        #expect(String(data: data.suffix(16), encoding: .utf8)?.contains("db_demo") == true)
+        #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c016c02a5cbc7d204719f9bbd940a710100082f536f75726365730764625f64656d6f")
+    }
+
+    @Test
+    func encodesAuthorizeSourceCaptureTriggerSessionRequest() {
+        let data = VFSCandidEncoder.authorizeSourceCaptureTriggerSession(databaseId: "db_demo", sessionNonce: "session-nonce-1")
+        #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c016c0286a09bb905719f9bbd940a7101000f73657373696f6e2d6e6f6e63652d310764625f64656d6f")
+    }
+
+    @Test
+    func encodesWriteNodeRequest() {
+        let request = SourceCaptureRequest(
+            databaseId: "db_demo",
+            requestId: "req_1",
+            requestPath: "/Sources/page.md",
+            content: "hello world",
+            metadataJson: "{\"a\":1}",
+            normalizedURL: URL(string: "https://example.com")!
+        )
+        let data = VFSCandidEncoder.writeNode(request)
+        #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c036b03ced593f1027f9cf5d3f4027ffbc998b6067f6e716c06b99adecb0171d4c2a7b80400a5cbc7d20471fcc2a1eb0601b8c8dc8509719f9bbd940a7101020b68656c6c6f20776f726c6401102f536f75726365732f706167652e6d6400077b2261223a317d0764625f64656d6f")
     }
 
     @Test
@@ -30,8 +49,7 @@ struct VFSCandidCodecTests {
     @Test
     func encodesCreateDatabaseRequest() {
         let data = VFSCandidEncoder.createDatabase(name: "Team skills")
-        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
-        #expect(String(data: data.suffix(11), encoding: .utf8) == "Team skills")
+        #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c016c01cbe4fdc7047101000b5465616d20736b696c6c73")
     }
 
     @Test

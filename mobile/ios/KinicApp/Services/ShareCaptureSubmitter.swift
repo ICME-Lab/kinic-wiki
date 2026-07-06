@@ -15,42 +15,38 @@ struct ShareCaptureSubmitter: Sendable {
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
-    init(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) {
+    static func makeLive(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) throws -> ShareCaptureSubmitter {
         let sessionStore = KinicAuthSessionStore(configuration: configuration)
-        do {
-            let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
-            let triggerQueue = try SourceCaptureTriggerQueue(strictAppGroupId: configuration.appGroupId)
-            let client = KinicICClient(configuration: configuration)
-            self.init(
-                configuration: configuration,
-                timeoutNanoseconds: timeoutNanoseconds,
-                restoreSession: {
-                    sessionStore.restore()
-                },
-                selectedDatabaseId: {
-                    settingsStore.databaseId
-                },
-                enqueueURL: { url, receivedAt, requestId in
-                    let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
-                    try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
-                },
-                enqueueTrigger: { request, createdAt in
-                    try triggerQueue.enqueue(request, createdAt: createdAt)
-                },
-                saveRequest: { request, session in
-                    try await client.saveSourceCaptureRequest(request, session: session)
-                },
-                triggerSourceCapture: { submission, session in
-                    try await client.triggerSourceCapture(
-                        databaseId: submission.databaseId,
-                        requestPath: submission.requestPath,
-                        session: session
-                    )
-                }
-            )
-        } catch {
-            fatalError(error.localizedDescription)
-        }
+        let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
+        let triggerQueue = try SourceCaptureTriggerQueue(strictAppGroupId: configuration.appGroupId)
+        let client = KinicICClient(configuration: configuration)
+        return ShareCaptureSubmitter(
+            configuration: configuration,
+            timeoutNanoseconds: timeoutNanoseconds,
+            restoreSession: {
+                sessionStore.restore()
+            },
+            selectedDatabaseId: {
+                settingsStore.databaseId
+            },
+            enqueueURL: { url, receivedAt, requestId in
+                let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
+                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
+            },
+            enqueueTrigger: { request, createdAt in
+                try triggerQueue.enqueue(request, createdAt: createdAt)
+            },
+            saveRequest: { request, session in
+                try await client.saveSourceCaptureRequest(request, session: session)
+            },
+            triggerSourceCapture: { submission, session in
+                try await client.triggerSourceCapture(
+                    databaseId: submission.databaseId,
+                    requestPath: submission.requestPath,
+                    session: session
+                )
+            }
+        )
     }
 
     init(

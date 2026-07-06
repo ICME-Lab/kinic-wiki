@@ -120,7 +120,13 @@ final class ShareViewController: UIViewController {
     }
 
     private func submitSharedURL(_ url: URL) {
-        let submitter = ShareCaptureSubmitter(configuration: AppConfiguration.liveFromBundle())
+        let submitter: ShareCaptureSubmitter
+        do {
+            submitter = try ShareCaptureSubmitter.makeLive(configuration: AppConfiguration.liveFromBundle())
+        } catch {
+            showResult(.failed(message: error.localizedDescription))
+            return
+        }
         Task { [weak self] in
             let result = await submitter.submitSharedURL(url)
             await MainActor.run {
