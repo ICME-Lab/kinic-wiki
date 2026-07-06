@@ -284,7 +284,7 @@ test("triggerSourceGeneration calls source run route with issued source-run sess
     assert.equal(result.sourceEtag, "etag-source");
     assert.equal(fetchCalls[0][0], "https://wiki.kinic.xyz/api/source/run");
     assert.deepEqual(JSON.parse(fetchCalls[0][1].body), {
-      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
       databaseId: "team-db",
       sourcePath: "/Sources/web/abc.md",
       sourceEtag: "etag-source",
@@ -522,7 +522,7 @@ function evidenceSource() {
 
 function config() {
   return {
-    canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+    canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     databaseId: "team-db",
     host: "https://icp0.io"
   };

@@ -11,7 +11,7 @@ const CANISTER_ID_ENV: &str = "VFS_CANISTER_ID";
 const DATABASE_ID_ENV: &str = "VFS_DATABASE_ID";
 const LOCAL_REPLICA_HOST: &str = "http://127.0.0.1:8000";
 const MAINNET_REPLICA_HOST: &str = "https://icp0.io";
-const MAINNET_CANISTER_ID: &str = "xis3j-paaaa-aaaai-axumq-cai";
+const MAINNET_CANISTER_ID: &str = "6emaw-iyaaa-aaaay-aacka-cai";
 const WORKSPACE_CONFIG_PATH: &str = ".kinic/config.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

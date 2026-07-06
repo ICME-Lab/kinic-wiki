@@ -54,7 +54,7 @@ Without `--canister-id`, the CLI reads configuration from:
 - `.kinic/config.toml`
 - `~/.config/kinic-vfs-cli/config.toml`
 - `~/.kinic-vfs-cli.toml`
-- mainnet default `xis3j-paaaa-aaaai-axumq-cai` when the replica host is `https://icp0.io`
+- mainnet default `6emaw-iyaaa-aaaay-aacka-cai` when the replica host is `https://icp0.io`
 
 Link a workspace once to avoid repeating `--database-id`:
 

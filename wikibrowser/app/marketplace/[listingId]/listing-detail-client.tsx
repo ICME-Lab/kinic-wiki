@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CheckCircle, Database, FileText, GitBranch, ShoppingCart, Tag, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -69,42 +70,41 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
 
   async function purchase() {
     if (!authClient || !principal || !listing) {
-      setMessage("Login with Internet Identity first");
+      toast.error("Login with Internet Identity first");
       setPurchaseState("error");
       return;
     }
     if (!wallet) {
-      setMessage("Connect OISY or Plug first");
+      toast.error("Connect OISY or Plug first");
       setPurchaseState("error");
       return;
     }
     setPurchaseState("loading");
-    setMessage(null);
     try {
       const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listing.listingId);
       if (preview.alreadyEntitled) {
-        setMessage("Access is already active.");
+        toast.info("Access is already active.");
         setPurchaseState("success");
         return;
       }
       if (preview.priceE8s !== listing.priceE8s) {
-        setMessage("Listing price changed. Reload the listing before purchasing.");
+        toast.error("Listing price changed. Reload the listing before purchasing.");
         setPurchaseState("error");
         await load();
         return;
       }
       const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s), accessPrincipal: principal }, wallet);
-      setMessage(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
+      toast.success(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
       await refreshWalletBalance(wallet);
       setPurchaseState("success");
     } catch (cause) {
       const message = errorMessage(cause);
       if (message.includes("active entitlement already exists")) {
-        setMessage("Access is already active.");
+        toast.info("Access is already active.");
         setPurchaseState("success");
         return;
       }
-      setMessage(message);
+      toast.error(message);
       setPurchaseState("error");
     }
   }

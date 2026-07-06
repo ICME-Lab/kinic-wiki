@@ -2,6 +2,9 @@ import { databaseRouteBase } from "./share-links";
 import type { SearchLimit, SearchPreviewMode, SearchScope } from "./search-options";
 
 const INTERNAL_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources", "/Wiki"] as const;
+const DATABASE_ROUTE_ALIASES: Record<string, string> = {
+  db_bfzk4yokfnin: "db_nnoe2kborlsq"
+};
 
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
@@ -21,9 +24,28 @@ export function parseWikiRoute(pathname: string): { databaseId: string | null; n
     .map(decodePathSegment)
     .join("/");
   return {
-    databaseId: decodePathSegment(segments[1]),
+    databaseId: canonicalDatabaseId(decodePathSegment(segments[1])),
     nodePath: path ? `/${path}` : "/Knowledge",
   };
+}
+
+export function canonicalDatabaseId(databaseId: string): string {
+  return DATABASE_ROUTE_ALIASES[databaseId] ?? databaseId;
+}
+
+export function hrefForCanonicalDatabaseRoute(pathname: string, queryString: string): string | null {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] !== "db" || !segments[1]) {
+    return null;
+  }
+  const routeDatabaseId = decodePathSegment(segments[1]);
+  const canonicalId = canonicalDatabaseId(routeDatabaseId);
+  if (canonicalId === routeDatabaseId) {
+    return null;
+  }
+  const suffix = segments.slice(2).join("/");
+  const query = queryString ? `?${queryString}` : "";
+  return `${databaseRouteBase(canonicalId)}${suffix ? `/${suffix}` : ""}${query}`;
 }
 
 export function hrefForPath(

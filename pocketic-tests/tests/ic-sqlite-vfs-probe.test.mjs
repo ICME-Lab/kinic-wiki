@@ -7,10 +7,15 @@ import { IDL } from "@dfinity/candid";
 import { PocketIc, PocketIcServer } from "@dfinity/pic";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
+const pocketIcBin = process.env.POCKET_IC_BIN;
 const wasmPath = resolve(
   repoRoot,
   "target/wasm32-unknown-unknown/release/ic_sqlite_vfs_probe.wasm",
 );
+
+if (pocketIcBin) {
+  PocketIcServer.getBinPath = () => pocketIcBin;
+}
 
 const resultUnit = IDL.Variant({ Ok: IDL.Null, Err: IDL.Text });
 const resultText = IDL.Variant({ Ok: IDL.Text, Err: IDL.Text });

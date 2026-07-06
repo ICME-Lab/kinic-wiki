@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
+import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Settings, Share2, Trash2, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -21,7 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
+import { hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
 import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
@@ -32,6 +32,7 @@ import {
   errorHint,
   errorMessage,
   inferNoteRole,
+  isDatabaseNotFoundErrorCode,
   isNotFoundError,
   loadingState,
   parseModeTab,
@@ -68,6 +69,7 @@ type DatabaseDirectoryState = {
   memberDatabases: DatabaseSummary[];
   cyclesConfig: CyclesBillingConfig | null;
   publicDatabaseIds: ReadonlySet<string>;
+  publicDatabasesLoaded: boolean;
   memberDatabasesLoaded: boolean;
   databaseListError: string | null;
 };
@@ -136,6 +138,7 @@ export function WikiBrowser() {
   const childNodesCache = useRef(new Map<string, ChildNode[]>());
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
   const invalidCanister = validateCanisterText(canisterId);
+  const canonicalRouteHref = useMemo(() => hrefForCanonicalDatabaseRoute(pathname, searchParams.toString()), [pathname, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +165,7 @@ export function WikiBrowser() {
     let publicDatabases: DatabaseSummary[] = [];
     let authenticatedDatabases: DatabaseSummary[] = [];
     let nextCyclesConfig: CyclesBillingConfig | null = null;
+    let nextPublicDatabasesLoaded = false;
     let nextMemberDatabasesLoaded = false;
     let cyclesConfigError: string | null = null;
     let publicListError: string | null = null;
@@ -173,6 +177,7 @@ export function WikiBrowser() {
         memberDatabases: authenticatedDatabases,
         cyclesConfig: nextCyclesConfig,
         publicDatabaseIds: new Set(publicDatabases.map((database) => database.databaseId)),
+        publicDatabasesLoaded: nextPublicDatabasesLoaded,
         memberDatabasesLoaded: nextMemberDatabasesLoaded,
         databaseListError: databaseListWarning(cyclesConfigError, publicListError, memberListError)
       });
@@ -183,12 +188,14 @@ export function WikiBrowser() {
         if (cancelled) return;
         publicDatabases = nextPublicDatabases;
         publicListError = null;
+        nextPublicDatabasesLoaded = true;
         updateDatabaseRows();
       })
       .catch((cause) => {
         if (cancelled) return;
         publicDatabases = [];
         publicListError = errorMessage(cause);
+        nextPublicDatabasesLoaded = false;
         updateDatabaseRows();
       });
 
@@ -225,6 +232,11 @@ export function WikiBrowser() {
       cancelled = true;
     };
   }, [canisterId, databaseDirectoryRequestKey, readIdentity]);
+
+  useEffect(() => {
+    if (!canonicalRouteHref) return;
+    router.replace(canonicalRouteHref);
+  }, [canonicalRouteHref, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -279,7 +291,7 @@ export function WikiBrowser() {
               }
             } catch (indexError) {
               if (!cancelled) {
-                setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: errorMessage(indexError), hint: errorHint(indexError), loading: false });
+                setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: errorMessage(indexError), code: errorCode(indexError), hint: errorHint(indexError), loading: false });
               }
             }
           } else {
@@ -289,10 +301,19 @@ export function WikiBrowser() {
         }
       })
       .catch((nodeError: Error) => {
+        if (isDatabaseNotFoundErrorCode(errorCode(nodeError))) {
+          if (!cancelled) {
+            setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+            setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+            setChildNodes({ requestKey, path: selectedPath, data: null, error: null, loading: false });
+            setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: null, loading: false });
+          }
+          return;
+        }
         if (!isNotFoundError(nodeError)) {
           if (!cancelled) {
-            setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
-            setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
+            setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+            setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
             setChildNodes({ requestKey, path: selectedPath, data: null, error: null, loading: false });
             setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: null, loading: false });
           }
@@ -303,8 +324,8 @@ export function WikiBrowser() {
           .then((data) => {
             if (!cancelled) {
               if (data.length === 0 && looksLikeFilePath(selectedPath)) {
-                setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
-                setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
+                setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+                setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
                 setChildNodes({ requestKey, path: selectedPath, data: null, error: `path not found: ${selectedPath}`, loading: false });
                 setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: null, loading: false });
               } else {
@@ -318,9 +339,9 @@ export function WikiBrowser() {
           })
           .catch((childrenError: Error) => {
             if (!cancelled) {
-              setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
-              setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), hint: errorHint(nodeError), loading: false });
-              setChildNodes({ requestKey, path: selectedPath, data: null, error: errorMessage(childrenError), hint: errorHint(childrenError), loading: false });
+              setNode({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+              setNodeContext({ requestKey, path: selectedPath, data: null, error: errorMessage(nodeError), code: errorCode(nodeError), hint: errorHint(nodeError), loading: false });
+              setChildNodes({ requestKey, path: selectedPath, data: null, error: errorMessage(childrenError), code: errorCode(childrenError), hint: errorHint(childrenError), loading: false });
               setFolderIndexNode({ requestKey: indexRequestKey, path: indexPath, data: null, error: null, loading: false });
             }
           });
@@ -1417,6 +1438,7 @@ function TopBar({
         <button
           className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           type="button"
+          data-tid="mobile-sidebar-toggle"
           aria-expanded={mobileSidebarOpen}
           aria-controls="wiki-mobile-sidebar"
           aria-label="Toggle workspace panel"
@@ -1434,6 +1456,16 @@ function TopBar({
         >
           <Network size={18} aria-hidden />
           <span className="sr-only sm:not-sr-only">Graph</span>
+        </Link>
+        <Link
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
+          data-tid="header-manage-link"
+          href={`/dashboard/project/${encodeURIComponent(databaseId)}`}
+          aria-label="Manage database settings"
+          title="Manage database settings"
+        >
+          <Settings aria-hidden size={18} />
+          <span className="sr-only sm:not-sr-only">Manage</span>
         </Link>
         <DatabaseCyclesBadge cycles={cycles} database={currentDatabase} />
         {principal ? (
@@ -1540,6 +1572,7 @@ function emptyDatabaseDirectoryState(requestKey: string): DatabaseDirectoryState
     memberDatabases: EMPTY_DATABASE_SUMMARIES,
     cyclesConfig: null,
     publicDatabaseIds: EMPTY_PUBLIC_DATABASE_IDS,
+    publicDatabasesLoaded: false,
     memberDatabasesLoaded: false,
     databaseListError: null
   };
@@ -1644,6 +1677,7 @@ function tabTitle(tab: ModeTab): string {
 
 function tabLabel(tab: ModeTab): string {
   if (tab === "query") return "query";
+  if (tab === "source-capture") return "capture";
   return tab;
 }
 
@@ -1681,6 +1715,10 @@ function currentNodeState(
     return { path: selectedPath, data: null, error: "Invalid canister ID", hint: invalidCanister, loading: false };
   }
   return node.requestKey === requestKey ? node : browserLoadingState<WikiNode>(canisterId, databaseId, selectedPath);
+}
+
+function errorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.code : null;
 }
 
 function currentNodeContextState(

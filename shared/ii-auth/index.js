@@ -2,7 +2,7 @@
 // What: Shared Internet Identity constants and browser-safe validation helpers.
 // Why: Chrome extension auth and canister-hosted CLI login must derive the same principal.
 export const MAINNET_II_PROVIDER_URL = "https://id.ai";
-export const WIKI_CANISTER_DERIVATION_ORIGIN = "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io";
+export const WIKI_CANISTER_DERIVATION_ORIGIN = "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io";
 
 const AUTH_SESSION_DAYS = 29;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;

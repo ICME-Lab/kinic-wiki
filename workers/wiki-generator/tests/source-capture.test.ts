@@ -389,7 +389,7 @@ test("failed source capture request is terminal", async () => {
   await triggerSourceCaptureRequest(
     testEnv(queue),
     {
-      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
       databaseId: "db_1",
       requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: "session-1"
@@ -438,7 +438,7 @@ test("second trigger for the same request is accepted without reprocessing", asy
     await triggerSourceCaptureRequest(
       testEnv(queue),
       {
-        canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         databaseId: "db_1",
         requestPath: "/Sources/source-capture-requests/1.md",
         sessionNonce: "session-1"
@@ -448,7 +448,7 @@ test("second trigger for the same request is accepted without reprocessing", asy
     await triggerSourceCaptureRequest(
       testEnv(queue),
       {
-        canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         databaseId: "db_1",
         requestPath: "/Sources/source-capture-requests/1.md",
         sessionNonce: "session-1"
@@ -485,7 +485,7 @@ test("stale fetching request is claimed before processing", async () => {
     await triggerSourceCaptureRequest(
       testEnv(queue),
       {
-        canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         databaseId: "db_1",
         requestPath: "/Sources/source-capture-requests/1.md",
         sessionNonce: "session-1"

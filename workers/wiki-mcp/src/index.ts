@@ -1,5 +1,5 @@
 // Where: workers/wiki-mcp/src/index.ts
-// What: Remote MCP entrypoint exposing public Kinic Wiki database discovery, search, and fetch.
+// What: Remote MCP entrypoint exposing public Kinic Wiki database discovery, search, and read tools.
 // Why: ChatGPT should read public wiki memory through anonymous canister queries without write access.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,7 +14,6 @@ import {
   readNode,
   resolveCanisterId,
   searchNodes,
-  sourceEvidence as readSourceEvidence,
   type DatabaseSummary,
   type LinkEdge,
   type MemoryManifest,
@@ -65,7 +64,7 @@ const MCP_TOOL_NAMES = [
   "context"
 ] as const;
 
-const databaseResultSchema = z.object({
+const databaseResultOutputSchema = z.object({
   database_id: z.string(),
   name: z.string(),
   description: z.string(),
@@ -73,7 +72,8 @@ const databaseResultSchema = z.object({
   url: z.string(),
   score: z.number()
 });
-const searchResultSchema = z.object({
+
+const searchResultOutputSchema = z.object({
   id: z.string(),
   title: z.string(),
   url: z.string(),
@@ -87,7 +87,8 @@ const searchResultSchema = z.object({
     match_reasons: z.array(z.string())
   })
 });
-const fetchedNodeSchema = z.object({
+
+const fetchedNodeOutputSchema = z.object({
   id: z.string(),
   title: z.string(),
   text: z.string(),
@@ -103,20 +104,28 @@ const fetchedNodeSchema = z.object({
     truncated: z.boolean()
   })
 });
-const itemErrorSchema = z.object({
-  id: z.string().optional(),
-  path: z.string().optional(),
+
+const fetchItemErrorOutputSchema = z.object({
+  id: z.string(),
   error: z.string(),
   is_error: z.literal(true)
 });
-const listedNodeSchema = z.object({
+
+const readPathItemErrorOutputSchema = z.object({
+  path: z.string(),
+  error: z.string(),
+  is_error: z.literal(true)
+});
+
+const listedNodeOutputSchema = z.object({
   path: z.string(),
   kind: z.string(),
   etag: z.string(),
   updated_at: z.string(),
   has_children: z.boolean()
 });
-const linkEdgeSchema = z.object({
+
+const linkEdgeOutputSchema = z.object({
   updated_at: z.string(),
   link_kind: z.string(),
   link_text: z.string(),
@@ -124,7 +133,8 @@ const linkEdgeSchema = z.object({
   raw_href: z.string(),
   target_path: z.string()
 });
-const sourceEvidenceSchema = z.object({
+
+const sourceEvidenceOutputSchema = z.object({
   node_path: z.string(),
   refs: z.array(
     z.object({
@@ -138,7 +148,8 @@ const sourceEvidenceSchema = z.object({
     })
   )
 });
-const nodeSummarySchema = z.object({
+
+const nodeSummaryOutputSchema = z.object({
   title: z.string(),
   path: z.string(),
   kind: z.string(),
@@ -149,47 +160,101 @@ const nodeSummarySchema = z.object({
   text: z.string(),
   truncated: z.boolean()
 });
-const memoryManifestOutputSchema = {
+
+const contextSearchHitOutputSchema = z.object({
+  title: z.string(),
+  metadata: z.object({
+    path: z.string(),
+    kind: z.string(),
+    score: z.number(),
+    snippet: z.string().nullable(),
+    preview: z.string().nullable(),
+    match_reasons: z.array(z.string())
+  })
+});
+
+const findDatabasesOutputSchema = z.object({
+  databases: z.array(databaseResultOutputSchema)
+});
+
+const searchOutputSchema = z.object({
+  results: z.array(searchResultOutputSchema)
+});
+
+const fetchManyOutputSchema = z.object({
+  results: z.array(z.union([fetchedNodeOutputSchema, fetchItemErrorOutputSchema]))
+});
+
+const readPathsOutputSchema = z.object({
+  results: z.array(z.union([fetchedNodeOutputSchema, readPathItemErrorOutputSchema])),
+  metadata: z.object({
+    database_id: z.string(),
+    requested_paths: z.number().int(),
+    unique_paths: z.number().int(),
+    row_count: z.number().int(),
+    limit: z.number().int(),
+    parse_error_count: z.number().int(),
+    batch_error: z.string().nullable()
+  })
+});
+
+const listOutputSchema = z.object({
+  entries: z.array(listedNodeOutputSchema),
+  metadata: z.object({
+    database_id: z.string(),
+    prefix: z.string(),
+    recursive: z.boolean(),
+    limit: z.number().int(),
+    truncated: z.boolean()
+  })
+});
+
+const memoryRootOutputSchema = z.object({
+  path: z.string(),
+  kind: z.string()
+});
+
+const memoryCapabilityOutputSchema = z.object({
+  name: z.string(),
+  description: z.string()
+});
+
+const memoryManifestOutputSchema = z.object({
   api_version: z.string(),
   purpose: z.string(),
   enabled_stores: z.array(z.string()),
-  roots: z.array(z.object({ path: z.string(), kind: z.string() })),
-  entry_roots: z.array(z.object({ path: z.string(), kind: z.string() })),
-  capabilities: z.array(z.object({ name: z.string(), description: z.string() })),
-  canonical_roles: z.array(z.object({ name: z.string(), path_pattern: z.string(), purpose: z.string() })),
+  roots: z.array(memoryRootOutputSchema),
+  entry_roots: z.array(memoryRootOutputSchema),
+  capabilities: z.array(memoryCapabilityOutputSchema),
+  canonical_roles: z.array(
+    z.object({
+      name: z.string(),
+      path_pattern: z.string(),
+      purpose: z.string()
+    })
+  ),
   write_policy: z.string(),
   recommended_entrypoint: z.string(),
-  max_depth: z.number(),
-  max_query_limit: z.number(),
+  max_depth: z.number().int(),
+  max_query_limit: z.number().int(),
   budget_unit: z.string()
-};
-const contextOutputSchema = {
+});
+
+const contextOutputSchema = z.object({
   task: z.string(),
   namespace: z.string(),
   truncated: z.boolean(),
   nodes: z.array(
     z.object({
-      node: nodeSummarySchema,
-      incoming_links: z.array(linkEdgeSchema),
-      outgoing_links: z.array(linkEdgeSchema)
+      node: nodeSummaryOutputSchema,
+      incoming_links: z.array(linkEdgeOutputSchema),
+      outgoing_links: z.array(linkEdgeOutputSchema)
     })
   ),
-  graph_links: z.array(linkEdgeSchema),
-  evidence: z.array(sourceEvidenceSchema),
-  search_hits: z.array(
-    z.object({
-      title: z.string(),
-      metadata: z.object({
-        path: z.string(),
-        kind: z.string(),
-        score: z.number(),
-        snippet: z.string().nullable(),
-        preview: z.string().nullable(),
-        match_reasons: z.array(z.string())
-      })
-    })
-  )
-};
+  graph_links: z.array(linkEdgeOutputSchema),
+  evidence: z.array(sourceEvidenceOutputSchema),
+  search_hits: z.array(contextSearchHitOutputSchema)
+});
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -253,7 +318,7 @@ export function createServer(env: RuntimeEnv): McpServer {
     },
     {
       instructions:
-        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch enough evidence with fetch_many for search result ids or read_paths for known paths, and report coverage limits, excluded candidates, fetched count, and truncated results."
+        "Use find_databases first when the user has not provided a Kinic Wiki database id. For normal questions, start with context. For broad, list, or classification tasks, do not stop at the first search result: build a candidate set with multiple search queries, use list with prefix / when /Knowledge is thin to discover /Sources or nonstandard prefixes, separate title/path matches from topic or ability-term matches, fetch evidence with fetch_many for result ids or read_paths for known paths, use read_path for a single known path, and report coverage limits, excluded candidates, fetched count, and truncated results."
     }
   );
 
@@ -265,9 +330,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         query: z.string().optional(),
         limit: z.number().int().min(1).max(MAX_DATABASE_LIMIT).optional()
       },
-      outputSchema: {
-        databases: z.array(databaseResultSchema)
-      },
+      outputSchema: findDatabasesOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ query, limit }) => toToolResult(await findDatabases(env, { query, limit }))
@@ -285,9 +348,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
         preview_mode: z.enum(["light", "content-start", "none"]).optional()
       },
-      outputSchema: {
-        results: z.array(searchResultSchema)
-      },
+      outputSchema: searchOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, query, prefix, limit, preview_mode }) =>
@@ -302,9 +363,7 @@ export function createServer(env: RuntimeEnv): McpServer {
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
       },
-      outputSchema: {
-        results: z.array(z.union([fetchedNodeSchema, itemErrorSchema]))
-      },
+      outputSchema: fetchManyOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ ids }) => toToolResult(await fetchManySearchResults(env, { ids }))
@@ -318,7 +377,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         database_id: z.string().min(1),
         path: z.string().min(1)
       },
-      outputSchema: fetchedNodeSchema.shape,
+      outputSchema: fetchedNodeOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, path }) => toToolResult(await readPath(env, { database_id, path }))
@@ -333,18 +392,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         database_id: z.string().min(1),
         paths: z.array(z.string().min(1)).min(2).max(MAX_READ_PATHS)
       },
-      outputSchema: {
-        results: z.array(z.union([fetchedNodeSchema, itemErrorSchema])),
-        metadata: z.object({
-          database_id: z.string(),
-          requested_paths: z.number(),
-          unique_paths: z.number(),
-          row_count: z.number(),
-          limit: z.number(),
-          parse_error_count: z.number(),
-          batch_error: z.string().nullable()
-        })
-      },
+      outputSchema: readPathsOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, paths }) => toToolResult(await readPaths(env, { database_id, paths }))
@@ -361,16 +409,7 @@ export function createServer(env: RuntimeEnv): McpServer {
         recursive: z.boolean().optional(),
         limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional()
       },
-      outputSchema: {
-        entries: z.array(listedNodeSchema),
-        metadata: z.object({
-          database_id: z.string(),
-          prefix: z.string(),
-          recursive: z.boolean(),
-          limit: z.number(),
-          truncated: z.boolean()
-        })
-      },
+      outputSchema: listOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
     async ({ database_id, prefix, recursive, limit }) =>
@@ -437,10 +476,6 @@ export type SearchInput = {
   preview_mode?: SearchPreviewMode;
 };
 
-export type FetchInput = {
-  id: string;
-};
-
 export type FetchManyInput = {
   ids: string[];
 };
@@ -474,11 +509,6 @@ export type ContextInput = {
 
 export type MemoryManifestInput = {
   database_id: string;
-};
-
-export type SourceEvidenceInput = {
-  database_id: string;
-  node_path: string;
 };
 
 export type SearchResultId = {
@@ -544,25 +574,6 @@ export async function searchDatabase(env: RuntimeEnv, input: SearchInput) {
   return {
     results: orderSearchHitsForRetrieval(hits).map((hit) => searchResult(env, canisterId, databaseId, hit))
   };
-}
-
-export async function fetchSearchResult(env: RuntimeEnv, input: FetchInput) {
-  const decoded = decodeSearchResultId(input.id);
-  if (!decoded) {
-    return toolError("invalid search result id", { error: "invalid search result id", id: input.id });
-  }
-  const canisterId = resolveCanisterId(env);
-  if (decoded.canister_id !== canisterId) {
-    return toolError("search result id is for another canister", {
-      error: "search result id is for another canister",
-      id: input.id
-    });
-  }
-  const node = await readNode(env, decoded.database_id, decoded.path);
-  if (!node) {
-    return toolError("node not found", { error: "node not found", id: input.id });
-  }
-  return fetchedNode(env, input.id, decoded.database_id, node);
 }
 
 export async function fetchManySearchResults(env: RuntimeEnv, input: FetchManyInput) {
@@ -693,17 +704,6 @@ export async function readMemoryManifest(env: RuntimeEnv, input: MemoryManifestI
     return toolError("database_id is required", { error: "database_id is required" });
   }
   return manifestResult(await memoryManifest(env, databaseId));
-}
-
-export async function readSourceEvidenceRefs(env: RuntimeEnv, input: SourceEvidenceInput) {
-  const databaseId = input.database_id.trim();
-  if (!databaseId) {
-    return toolError("database_id is required", { error: "database_id is required" });
-  }
-  const nodePath = normalizePrefix(input.node_path);
-  return {
-    evidence: sourceEvidence(await readSourceEvidence(env, databaseId, nodePath))
-  };
 }
 
 export function encodeSearchResultId(payload: SearchResultId): string {
@@ -1208,9 +1208,10 @@ function toToolResult(payload: Record<string, unknown> | ToolErrorResult) {
 }
 
 function toolError(message: string, payload: Record<string, unknown>) {
+  const contentPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
   return {
-    content: [{ type: "text" as const, text: message }],
-    structuredContent: payload,
+    content: [{ type: "text" as const, text: JSON.stringify(contentPayload) }],
+    structuredContent: contentPayload,
     isError: true
   };
 }

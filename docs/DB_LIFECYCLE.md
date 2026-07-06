@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The latest schema requires `database_index:038_initial_free_database_grants` and `database_free_cycle_grants`. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
+The index DB startup path ensures the current schema. Fresh index DBs are created directly at the current schema, and already-current DBs are validated only. The current schema marker is `database_index:001_initial` and includes `database_free_cycle_grants`. Older index schemas, partial billing schemas, and index DBs without `schema_migrations` are rejected instead of repaired.
 
 Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active DBs consume one active user DB slot. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
@@ -91,16 +91,15 @@ Cycles history redacts payer/caller principals for reader and writer callers. DB
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh`. For existing mainnet deploys, the script resolves unset `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` from the current canister `get_cycles_billing_config`; fresh installs must set both explicitly. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet deploys must use `scripts/mainnet/deploy_wiki.sh`. The wrapper supports only `mainnet-sev`, so fresh installs must set `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` explicitly. The wrapper rejects `old-mainnet`, ambiguous `ic` environment usage, and any other environment. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
 
-Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles. Keep the existing production canister `xis3j-paaaa-aaaai-axumq-cai` documented as the current production canister until traffic cutover is complete.
+Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles.
 
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
-- The first upgrade from the pre-billing mainnet index schema requires a valid `CyclesBillingConfig`; missing or invalid principals trap before migration.
-- After `cycles_billing_config` exists in the index schema, no-arg upgrade is supported and the stored config remains authoritative.
-- The only supported automatic billing upgrade is the production pre-billing mainnet `database_index:011_source_run_sessions` schema to latest. Partial billing schemas and legacy credit schemas are unsupported; recreate or reinstall those DBs instead of auto-converting them.
+- Existing canisters must already have the current index schema marker `database_index:001_initial`.
+- Older schemas are unsupported after the reset. Recreate or reinstall instead of auto-converting them.
 
 Normal operator flow:
 

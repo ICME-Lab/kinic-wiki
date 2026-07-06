@@ -29,39 +29,6 @@ pub(crate) fn sync_node_links(tx: &Transaction<'_>, node: &Node) -> Result<(), S
     Ok(())
 }
 
-pub(crate) fn backfill_node_links(tx: &Transaction<'_>) -> Result<(), String> {
-    let mut stmt = tx
-        .prepare("SELECT path, content, updated_at FROM fs_nodes ORDER BY path ASC")
-        .map_err(|error| error.to_string())?;
-    let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
-        Ok((
-            crate::sqlite::row_get::<String>(row, 0)?,
-            crate::sqlite::row_get::<String>(row, 1)?,
-            crate::sqlite::row_get::<i64>(row, 2)?,
-        ))
-    })
-    .map_err(|error| error.to_string())?;
-    for (source_path, content, updated_at) in rows {
-        for edge in extract_link_edges(&source_path, &content, updated_at) {
-            tx.execute(
-                "INSERT OR REPLACE INTO fs_links
-                 (source_path, target_path, raw_href, link_text, link_kind, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    edge.source_path,
-                    edge.target_path,
-                    edge.raw_href,
-                    edge.link_text,
-                    edge.link_kind,
-                    edge.updated_at
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn delete_source_links(tx: &Transaction<'_>, source_path: &str) -> Result<(), String> {
     tx.execute(
         "DELETE FROM fs_links WHERE source_path = ?1",

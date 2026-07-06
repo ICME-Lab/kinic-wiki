@@ -4,6 +4,7 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { BusyAction } from "./access-control";
 import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, DatabaseMetadataDialog, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
 import { useAppSession } from "../app-session-provider";
@@ -49,8 +50,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionTone, setActionTone] = useState<"error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [metadataOpen, setMetadataOpen] = useState(false);
@@ -58,6 +57,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [cycleEntries, setCycleEntries] = useState<DatabaseCycleEntry[]>([]);
   const [cycleEntriesError, setCycleEntriesError] = useState<string | null>(null);
   const [cycleEntriesLoading, setCycleEntriesLoading] = useState(false);
+  const [cyclePageIndex, setCyclePageIndex] = useState(0);
+  const [cyclePageCursors, setCyclePageCursors] = useState<(string | null)[]>([null]);
   const [cycleNextCursor, setCycleNextCursor] = useState<string | null>(null);
   const [pendingPurchases, setPendingPurchases] = useState<DatabaseCyclesPendingPurchase[]>([]);
   const [pendingPurchasesError, setPendingPurchasesError] = useState<string | null>(null);
@@ -83,6 +84,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setCycleEntries([]);
     setCycleEntriesError(null);
     setCycleEntriesLoading(false);
+    setCyclePageIndex(0);
+    setCyclePageCursors([null]);
     setCycleNextCursor(null);
     setPendingPurchases([]);
     setPendingPurchasesError(null);
@@ -207,9 +210,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   );
 
   const loadCyclesHistory = useCallback(
-    async (append: boolean, cursor: string | null) => {
+    async (pageIndex: number, cursor: string | null, refreshPending: boolean) => {
       if (!canisterId || !databaseId) return;
-      if (append && !cursor) return;
+      if (pageIndex < 0) return;
       const requestSeq = (cyclesHistorySeqRef.current += 1);
       const isCurrentRequest = () => requestSeq === cyclesHistorySeqRef.current;
       const identity = principal && authClient ? authClient.getIdentity() : null;
@@ -217,8 +220,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       if (!isCurrentRequest()) return;
       setCycleEntriesLoading(true);
       setCycleEntriesError(null);
-      if (!append) {
+      if (refreshPending) {
         setCycleEntries([]);
+        setCyclePageIndex(0);
+        setCyclePageCursors([null]);
         setCycleNextCursor(null);
         setPendingPurchases([]);
         setPendingPurchasesError(null);
@@ -226,18 +231,27 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       }
       try {
         const entriesPromise = listDatabaseCycleEntries(canisterId, databaseId, cursor, CYCLES_HISTORY_LIMIT, identity ?? undefined);
-        const pendingPromise = identity ? listDatabaseCyclesPendingPurchasesAuthenticated(canisterId, identity, databaseId) : Promise.resolve<DatabaseCyclesPendingPurchase[]>([]);
+        const pendingPromise = refreshPending && identity ? listDatabaseCyclesPendingPurchasesAuthenticated(canisterId, identity, databaseId) : Promise.resolve<DatabaseCyclesPendingPurchase[] | null>(null);
         const [entriesResult, pendingResult] = await Promise.allSettled([entriesPromise, pendingPromise]);
         if (!isCurrentRequest()) return;
         if (entriesResult.status === "fulfilled") {
-          setCycleEntries((current) => append ? [...current, ...entriesResult.value.entries] : entriesResult.value.entries);
+          setCycleEntries(entriesResult.value.entries);
+          setCyclePageIndex(pageIndex);
           setCycleNextCursor(entriesResult.value.nextCursor);
+          setCyclePageCursors((current) => {
+            const next = current.slice(0, pageIndex + 1);
+            next[pageIndex] = cursor;
+            if (entriesResult.value.nextCursor) {
+              next[pageIndex + 1] = entriesResult.value.nextCursor;
+            }
+            return next;
+          });
         } else {
           setCycleEntriesError(errorMessage(entriesResult.reason));
         }
-        if (!append && identity) {
+        if (refreshPending && identity) {
           if (pendingResult.status === "fulfilled") {
-            setPendingPurchases(pendingResult.value);
+            setPendingPurchases(pendingResult.value ?? []);
             setPendingPurchasesError(null);
           } else {
             setPendingPurchases([]);
@@ -266,7 +280,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (activeTab !== "cycles-history") return;
     if (!canViewCyclesHistory) return;
     const timer = window.setTimeout(() => {
-      void loadCyclesHistory(false, null);
+      void loadCyclesHistory(0, null, true);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [activeTab, canViewCyclesHistory, databaseId, loadCyclesHistory, principal]);
@@ -292,15 +306,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (!authClient || !databaseId) return;
     setBusy(true);
     setBusyAction({ kind: "grant", principalText, role });
-    setActionMessage(null);
     try {
       await grantDatabaseAccessAuthenticated(canisterId, authClient.getIdentity(), databaseId, principalText, role);
-      setActionTone("info");
-      setActionMessage("Access updated.");
+      toast.success("Access updated.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setActionTone("error");
-      setActionMessage(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setBusy(false);
       setBusyAction(null);
@@ -311,15 +322,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (!authClient || !databaseId) return;
     setBusy(true);
     setBusyAction({ kind: "revoke", principalText });
-    setActionMessage(null);
     try {
       await revokeDatabaseAccessAuthenticated(canisterId, authClient.getIdentity(), databaseId, principalText);
-      setActionTone("info");
-      setActionMessage("Access revoked.");
+      toast.success("Access revoked.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setActionTone("error");
-      setActionMessage(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setBusy(false);
       setBusyAction(null);
@@ -330,19 +338,16 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (!authClient || !databaseId) return false;
     setBusy(true);
     setBusyAction({ kind: "metadata" });
-    setActionMessage(null);
     try {
       await updateDatabaseMetadataAuthenticated(canisterId, authClient.getIdentity(), {
         databaseId,
         ...metadata
       });
-      setActionTone("info");
-      setActionMessage("Database metadata updated.");
+      toast.success("Database metadata updated.");
       await refresh(authClient, databaseId);
       return true;
     } catch (cause) {
-      setActionTone("error");
-      setActionMessage(errorMessage(cause));
+      toast.error(errorMessage(cause));
       return false;
     } finally {
       setBusy(false);
@@ -367,7 +372,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (!database) return "Database summary unavailable.";
     setBusy(true);
     setBusyAction({ kind: "delete" });
-    setActionMessage(null);
     try {
       await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), {
         databaseId
@@ -385,14 +389,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   async function createMarketListing(request: MarketCreateListingRequest) {
     if (!authClient || !databaseId) return;
     setMarketBusy(true);
-    setActionMessage(null);
     try {
       await marketCreateListing(canisterId, authClient.getIdentity(), request);
-      setActionTone("info");
-      setActionMessage("Listing published.");
+      toast.success("Listing published.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setMarketError(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setMarketBusy(false);
     }
@@ -401,14 +403,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   async function updateMarketListing(request: MarketUpdateListingRequest) {
     if (!authClient || !databaseId) return;
     setMarketBusy(true);
-    setActionMessage(null);
     try {
       await marketUpdateListing(canisterId, authClient.getIdentity(), request);
-      setActionTone("info");
-      setActionMessage("Listing updated.");
+      toast.success("Listing updated.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setMarketError(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setMarketBusy(false);
     }
@@ -417,14 +417,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   async function publishMarketListing(listingId: string) {
     if (!authClient || !databaseId) return;
     setMarketBusy(true);
-    setActionMessage(null);
     try {
       await marketPublishListing(canisterId, authClient.getIdentity(), listingId);
-      setActionTone("info");
-      setActionMessage("Listing published.");
+      toast.success("Listing published.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setMarketError(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setMarketBusy(false);
     }
@@ -433,14 +431,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   async function pauseMarketListing(listingId: string) {
     if (!authClient || !databaseId) return;
     setMarketBusy(true);
-    setActionMessage(null);
     try {
       await marketPauseListing(canisterId, authClient.getIdentity(), listingId);
-      setActionTone("info");
-      setActionMessage("Listing paused.");
+      toast.success("Listing paused.");
       await refresh(authClient, databaseId);
     } catch (cause) {
-      setMarketError(errorMessage(cause));
+      toast.error(errorMessage(cause));
     } finally {
       setMarketBusy(false);
     }
@@ -470,7 +466,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
-        {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
         {metadataOpen && database ? (
           <DatabaseMetadataDialog
             busy={busy}
@@ -511,12 +506,18 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             entries={cycleEntries}
             entriesError={cycleEntriesError}
             entriesLoading={cycleEntriesLoading}
+            hasPreviousPage={cyclePageIndex > 0}
             nextCursor={cycleNextCursor}
+            pageIndex={cyclePageIndex}
+            pageSize={CYCLES_HISTORY_LIMIT}
             pendingError={pendingPurchasesError}
             pendingLoading={pendingPurchasesLoading}
             pendingPurchases={pendingPurchases}
-            onLoadMore={() => void loadCyclesHistory(true, cycleNextCursor)}
-            onRefresh={() => void loadCyclesHistory(false, null)}
+            onNextPage={() => {
+              if (cycleNextCursor) void loadCyclesHistory(cyclePageIndex + 1, cycleNextCursor, false);
+            }}
+            onPreviousPage={() => void loadCyclesHistory(cyclePageIndex - 1, cyclePageCursors[cyclePageIndex - 1] ?? null, false)}
+            onRefresh={() => void loadCyclesHistory(0, null, true)}
           />
         ) : activeTab === "settings" && showDashboardTabs && canManageSettings && database ? (
           <DashboardSettingsPanel

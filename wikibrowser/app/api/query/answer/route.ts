@@ -108,7 +108,7 @@ export async function POST(request: Request): Promise<Response> {
   if (limited) return jsonError("rate limit exceeded", 429, origin);
 
   if (input.context.length === 0) {
-    return Response.json({ answer: "根拠不足。回答に使える database context がない。", citations: [], abstained: true }, { headers: corsHeaders(origin) });
+    return Response.json({ answer: "Insufficient evidence: no database context is available for the answer.", citations: [], abstained: true }, { headers: corsHeaders(origin) });
   }
 
   try {
@@ -213,7 +213,7 @@ async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: Fet
               "If the context is insufficient, set abstained true and say what is missing.",
               "Return JSON with answer string, citations string array, and abstained boolean.",
               "Citations must be exact paths from the supplied context.",
-              'Example JSON: {"answer":"根拠不足。回答に使える database context がない。","citations":[],"abstained":true}'
+              'Example JSON: {"answer":"Insufficient evidence: no database context is available for the answer.","citations":[],"abstained":true}'
             ].join("\n")
           },
           {

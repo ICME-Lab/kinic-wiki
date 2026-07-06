@@ -313,7 +313,7 @@ test("action click opens settings when database config is incomplete", async () 
     { url: "https://example.com/", title: "Example" },
     actionDeps({
       loadConfig: async () => ({
-        canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         databaseId: "",
         host: "https://icp0.io"
       }),

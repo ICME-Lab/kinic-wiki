@@ -187,17 +187,17 @@ test("worker log append failure is non-fatal", async () => {
 test("source capture queue message without nonce is invalid", async () => {
   const envelope = parseQueueMessageEnvelope({
     kind: "source_capture",
-    canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+    canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     databaseId: "db_1",
     requestPath: "/Sources/source-capture-requests/1.md"
   });
 
   assert.equal(envelope.kind, "invalid");
-  assert.equal(parseQueueMessageEnvelope({ kind: "source_capture", canisterId: "xis3j-paaaa-aaaai-axumq-cai", databaseId: "db_1" }).kind, "invalid");
+  assert.equal(parseQueueMessageEnvelope({ kind: "source_capture", canisterId: "6emaw-iyaaa-aaaay-aacka-cai", databaseId: "db_1" }).kind, "invalid");
   assert.equal(
     parseQueueMessageEnvelope({
       kind: "source_capture",
-      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
       databaseId: "db_1",
       requestPath: "/Sources/source-capture-requests/1.md",
       sessionNonce: ""
@@ -463,7 +463,7 @@ test("valid queue envelope passes test context to source capture processing", as
         kind: "valid",
         message: {
           kind: "source_capture",
-          canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+          canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
           databaseId: "db_1",
           requestPath: "/Sources/source-capture-requests/1.md",
           sessionNonce: "session-1"

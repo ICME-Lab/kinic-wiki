@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Where: scripts/smoke/local_canister_post_upgrade.sh
-# What: Smoke local install/upgrade with explicit cycles config and pending DB persistence.
+# What: Smoke local install/upgrade with explicit cycles config and DB persistence.
 # Why: Constructor args are operationally required, and post_upgrade must preserve initialized state.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local-wiki}"
 IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/${ICP_ENVIRONMENT}.ids.json"
 REPLICA_HOST="${REPLICA_HOST:-http://127.0.0.1:8011}"
 SMOKE_CYCLE_PURCHASE_E8S="${SMOKE_CYCLE_PURCHASE_E8S:-100000000}"
-SMOKE_CYCLES_ALLOWANCE_E8S="${SMOKE_CYCLES_ALLOWANCE_E8S:-200000000}"
+SMOKE_CYCLES_ALLOWANCE_E8S="${SMOKE_CYCLES_ALLOWANCE_E8S:-300000000}"
 
 case "${ICP_ENVIRONMENT}" in
   local | local-wiki) ;;

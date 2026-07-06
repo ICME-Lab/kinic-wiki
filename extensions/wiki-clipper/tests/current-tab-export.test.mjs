@@ -625,7 +625,7 @@ test("load-config leaves databaseId empty until saved", async () => {
   const restore = installChromeStorage(memoryStorage(), memoryStorage());
   try {
     const response = await handleMessage({ type: "load-config" }, null);
-    assert.equal(response.config.canisterId, "xis3j-paaaa-aaaai-axumq-cai");
+    assert.equal(response.config.canisterId, "6emaw-iyaaa-aaaay-aacka-cai");
     assert.equal(response.config.databaseId, "");
     assert.equal(response.config.host, "https://icp0.io");
     assert.equal("generatorUrl" in response.config, false);

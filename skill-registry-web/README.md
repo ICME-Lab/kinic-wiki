@@ -26,7 +26,7 @@ Required public environment:
 
 ```bash
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
-NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
+NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai
 ```
 
 ## Checks

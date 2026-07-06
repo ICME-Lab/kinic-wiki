@@ -8,10 +8,9 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
-import { canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, rootChild, STORE_ROOT_PATHS, type LoadState } from "@/lib/wiki-helpers";
+import { ApiError, canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, rootChild, type LoadState } from "@/lib/wiki-helpers";
 
 const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
-const STORE_ROOT_PATH_SET = new Set<string>(STORE_ROOT_PATHS);
 
 export function ExplorerTree({
   canisterId,
@@ -34,13 +33,14 @@ export function ExplorerTree({
   const rootRequestKey = nodeRequestKey(canisterId, databaseId, "/", readPrincipal);
   const [rootNodes, setRootNodes] = useState<LoadState<ChildNode[]>>(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
-    return cached ? { data: filterStoreRoots(cached), error: null, loading: false } : { data: null, error: null, loading: true };
+    return cached ? { data: cached, error: null, loading: false } : { data: null, error: null, loading: true };
   });
   const requestedRootKey = useRef<string | null>(null);
   const cachedRootNodes = childNodesCache.current.get(rootRequestKey);
-  const rootNodeData = cachedRootNodes ? filterStoreRoots(cachedRootNodes) : rootNodes.data;
+  const rootNodeData = cachedRootNodes ?? rootNodes.data;
   const rootError = cachedRootNodes ? null : rootNodes.error;
-  const visibleRootNodes = rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
+  const rootDatabaseNotFound = !cachedRootNodes && isDatabaseNotFoundErrorCode(rootNodes.code);
+  const visibleRootNodes = rootDatabaseNotFound ? [] : rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
 
   useEffect(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
@@ -60,13 +60,14 @@ export function ExplorerTree({
       })
       .then((data) => {
         if (cancelled) return;
-        const roots = filterStoreRoots(data);
-        childNodesCache.current.set(rootRequestKey, roots);
-        setRootNodes({ data: roots, error: null, loading: false });
+        childNodesCache.current.set(rootRequestKey, data);
+        setRootNodes({ data, error: null, loading: false });
       })
       .catch((error: Error) => {
         if (cancelled) return;
-        setRootNodes({ data: null, error: errorMessage(error), loading: false });
+        const message = errorMessage(error);
+        const code = errorCode(error);
+        setRootNodes({ data: null, error: isDatabaseNotFoundErrorCode(code) ? null : message, code, loading: false });
         requestedRootKey.current = null;
       });
     return () => {
@@ -83,10 +84,6 @@ export function ExplorerTree({
       {rootError ? <TreeStatus depth={0} label={rootError} /> : null}
     </div>
   );
-}
-
-function filterStoreRoots(children: ChildNode[]): ChildNode[] {
-  return children.filter((child) => STORE_ROOT_PATH_SET.has(child.path));
 }
 
 function TreeNode({
@@ -129,7 +126,10 @@ function TreeNode({
   });
   const autoExpandedKey = useRef<string | null>(expanded ? selectedPath : null);
   const requestedKey = useRef<string | null>(null);
-  const canExpand = canExpandChildNode(node);
+  const isStoreRoot = depth === 0 && isStoreRootPath(nodePath);
+  const emptyStoreRoot = isEmptyStoreRootPath(nodePath, children.data);
+  const nodeCanExpand = canExpandChildNode(node);
+  const canExpand = nodeCanExpand;
   const selected = selectedPath === nodePath;
   const selectedAncestor = nodePath === selectedPath || selectedPath.startsWith(`${nodePath}/`);
 
@@ -158,7 +158,7 @@ function TreeNode({
   }, [nodeEtag, nodeHasChildren, nodeIsVirtual, nodeKind, nodeName, nodePath, nodeSizeBytes, nodeUpdatedAt, onSelectedNode, selected]);
 
   useEffect(() => {
-    if (!expanded || !canExpand || children.data || children.error || requestedKey.current === requestKey) return;
+    if ((!expanded && !isStoreRoot) || !nodeCanExpand || children.data || children.error || requestedKey.current === requestKey) return;
     const cached = childNodesCache.current.get(requestKey);
     if (cached) {
       let cancelled = false;
@@ -181,7 +181,7 @@ function TreeNode({
       })
       .then((module) => {
         if (!module) return [];
-        return module.listChildren(canisterId, databaseId, node.path, readIdentity ?? undefined);
+        return module.listChildren(canisterId, databaseId, nodePath, readIdentity ?? undefined);
       })
       .then((data) => {
         if (!cancelled) {
@@ -191,7 +191,9 @@ function TreeNode({
       })
       .catch((error: Error) => {
         if (!cancelled) {
-          setChildren({ data: null, error: errorMessage(error), loading: false });
+          const message = errorMessage(error);
+          const code = errorCode(error);
+          setChildren({ data: null, error: isDatabaseNotFoundErrorCode(code) ? null : message, code, loading: false });
           requestedKey.current = null;
         }
       });
@@ -199,14 +201,14 @@ function TreeNode({
       cancelled = true;
       if (requestedKey.current === requestKey) requestedKey.current = null;
     };
-  }, [canisterId, databaseId, canExpand, childNodesCache, children.data, children.error, expanded, node.path, readIdentity, requestKey]);
+  }, [canisterId, databaseId, childNodesCache, children.data, children.error, expanded, isStoreRoot, nodeCanExpand, nodePath, readIdentity, requestKey]);
+
+  if (emptyStoreRoot) return null;
 
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${
-          selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"
-        }`}
+        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
@@ -234,6 +236,10 @@ function TreeNode({
       ) : null}
     </div>
   );
+}
+
+function errorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.code : null;
 }
 
 function Toggle({ expanded, setExpanded }: { expanded: boolean; setExpanded: (value: boolean) => void }) {

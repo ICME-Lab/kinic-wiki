@@ -19,3 +19,7 @@ environments:
     network: local-wiki
     canisters:
       - wiki
+  - name: mainnet-sev
+    network: ic
+    canisters:
+      - wiki

@@ -5,6 +5,7 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
 import { DatabaseBody, StatusPanel } from "../home-ui";
@@ -28,6 +29,7 @@ export function DashboardHomeClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const refreshSeqRef = useRef(0);
+  const fundingToastKeyRef = useRef<string | null>(null);
   const {
     authClient,
     authError,
@@ -217,6 +219,13 @@ export function DashboardHomeClient() {
     loading: loadState === "loading"
   });
   const fundingSuccessMessage = dashboardFundingSuccessMessage(searchParams);
+  const fundingToastKey = searchParams.toString();
+  useEffect(() => {
+    if (!fundingSuccessMessage || fundingToastKeyRef.current === fundingToastKey) return;
+    fundingToastKeyRef.current = fundingToastKey;
+    toast.success(fundingSuccessMessage);
+    router.replace("/dashboard");
+  }, [fundingSuccessMessage, fundingToastKey, router]);
   const createDatabaseAction = (
     <button
       className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
@@ -235,7 +244,6 @@ export function DashboardHomeClient() {
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {walletBalanceError ? <StatusPanel tone="error" message={walletBalanceError} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
-        {fundingSuccessMessage ? <StatusPanel tone="info" message={fundingSuccessMessage} /> : null}
         {walletMessage ? <StatusPanel tone="info" message={walletMessage} /> : null}
         <CreateDatabaseDialog
           createDisabled={createDisabled}
@@ -243,7 +251,7 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          paymentNote={freeGrantAvailable ? "無料枠あり: wallet approval is not required." : "wallet 支払い必要: wallet approval pays directly from ledger balance."}
+          paymentNote={freeGrantAvailable ? "Free grant available: wallet approval is not required." : "Wallet payment required: wallet approval pays directly from ledger balance."}
           requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {

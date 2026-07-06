@@ -2,6 +2,8 @@
 // What: Shared database link-preview metadata helpers.
 // Why: Keep server-rendered page and image generation independent from canister latency.
 
+import { canonicalDatabaseId } from "@/lib/paths";
+
 export type DatabasePreview = {
   databaseId: string;
   databaseTitle: string;
@@ -10,7 +12,7 @@ export type DatabasePreview = {
 };
 
 export async function loadDatabasePreview(canisterId: string, databaseId: string): Promise<DatabasePreview> {
-  const normalizedId = databaseId.trim() || "unknown database";
+  const normalizedId = canonicalDatabaseId(databaseId.trim() || "unknown database");
   if (canisterId) {
     try {
       const { listDatabasesPublic } = await import("@/lib/vfs-client");

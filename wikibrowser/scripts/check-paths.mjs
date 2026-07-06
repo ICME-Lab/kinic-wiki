@@ -14,7 +14,7 @@ const compiled = ts.transpileModule(source, {
   }
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await import(moduleUrl);
+const { canonicalDatabaseId, hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await import(moduleUrl);
 
 assert.equal(pathFromSegments([]), "/Knowledge");
 assert.equal(pathFromSegments(["Knowledge", "100%.md"]), "/Knowledge/100%.md");
@@ -22,6 +22,14 @@ assert.deepEqual(parseWikiRoute("/db/db_1"), { databaseId: "db_1", nodePath: "/K
 assert.deepEqual(parseWikiRoute("/db/db_1/Wiki"), { databaseId: "db_1", nodePath: "/Wiki" });
 assert.deepEqual(parseWikiRoute("/db/db_1/Wiki/page.md"), { databaseId: "db_1", nodePath: "/Wiki/page.md" });
 assert.deepEqual(parseWikiRoute("/db/db%201/Wiki/space%20name.md"), { databaseId: "db 1", nodePath: "/Wiki/space name.md" });
+assert.equal(canonicalDatabaseId("db_bfzk4yokfnin"), "db_nnoe2kborlsq");
+assert.equal(canonicalDatabaseId("db_1"), "db_1");
+assert.deepEqual(parseWikiRoute("/db/db_bfzk4yokfnin/Wiki/thought.md"), { databaseId: "db_nnoe2kborlsq", nodePath: "/Wiki/thought.md" });
+assert.equal(
+  hrefForCanonicalDatabaseRoute("/db/db_bfzk4yokfnin/Wiki/thought.md", "tab=explorer"),
+  "/db/db_nnoe2kborlsq/Wiki/thought.md?tab=explorer"
+);
+assert.equal(hrefForCanonicalDatabaseRoute("/db/db_1/Wiki/thought.md", "tab=explorer"), null);
 assert.equal(
   hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/100%.md"),
   "/db/alpha/Knowledge/100%25.md"

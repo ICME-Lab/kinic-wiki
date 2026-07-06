@@ -11,7 +11,7 @@ kinic-vfs-cli --help
 
 The npm package downloads the matching release binary from GitHub Releases and verifies its SHA-256 checksum.
 
-Canonical guide: https://wiki.kinic.xyz/cli
+Canonical guide: https://wiki.kinic.xyz/docs/cli
 
 Repo docs:
 

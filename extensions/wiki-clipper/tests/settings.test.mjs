@@ -290,7 +290,7 @@ test("CLI login helpers use mainnet Internet Identity and canonical derivation o
   );
   assert.equal(
     derivationOriginForLocation({
-      hostname: "xis3j-paaaa-aaaai-axumq-cai.icp0.io",
+      hostname: "6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
       origin: WIKI_CANISTER_DERIVATION_ORIGIN
     }),
     WIKI_CANISTER_DERIVATION_ORIGIN

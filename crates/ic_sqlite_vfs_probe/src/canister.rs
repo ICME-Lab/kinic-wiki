@@ -4,11 +4,9 @@
 use std::cell::RefCell;
 
 use ic_cdk::{init, post_upgrade, query, update};
-use ic_stable_structures::DefaultMemoryImpl;
-use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 
 use crate::{get, init_probe, params, put};
-use ic_sqlite_vfs::{DbError, DbHandle};
+use ic_sqlite_vfs::{DbError, DbHandle, DefaultMemoryImpl, MemoryId, MemoryManager};
 
 const FIRST_SLOT_MEMORY_ID: MemoryId = MemoryId::new(120);
 const SECOND_SLOT_MEMORY_ID: MemoryId = MemoryId::new(121);
@@ -21,7 +19,10 @@ struct Handles {
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
-        RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
+        RefCell::new(
+            MemoryManager::init_strict(DefaultMemoryImpl::default())
+                .expect("stable memory must be empty or contain an ic-sqlite-vfs image"),
+        );
     static HANDLES: RefCell<Option<Handles>> = const { RefCell::new(None) };
 }
 

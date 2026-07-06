@@ -23,7 +23,7 @@ KINIC_CAPTURE_DATABASE_ID=<database-id>
 Use a writable database id. The public demo database from the root README is reader-oriented and is not a writer target.
 
 Load `extensions/wiki-clipper` as an unpacked extension after `dist/service-worker.js`, `dist/content-ui.js`, and `dist/popup.js` exist.
-The manifest includes a fixed Chrome extension key. Local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io` as the derivation origin, and that VFS canister allows the fixed ID, the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`, and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
+The manifest includes a fixed Chrome extension key. Local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io` as the derivation origin, and that VFS canister allows the fixed ID, the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`, and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 Open settings from the extension details page `Extension options`.
 
 ## Chrome Web Store release
@@ -65,7 +65,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 
 ## Safety Notes
 
-- Canister ID is fixed to `xis3j-paaaa-aaaai-axumq-cai`.
+- Canister ID is fixed to `6emaw-iyaaa-aaaay-aacka-cai`.
 - IC host is fixed to `https://icp0.io`.
 - Database ID is selected and saved automatically from writable active databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
