@@ -28,11 +28,8 @@ The Bundle IDs are fixed to the App Store records:
 - `KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki`
 - `KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension`
 
-Set the web deployment environment:
-
-- `KINIC_IOS_APP_ID = AKN976G7AK.xyz.kinic.ios.KinicWiki`
-
-The AASA route returns `503` until `KINIC_IOS_APP_ID` is configured, to avoid caching a bad Apple association document.
+The production AASA document is a static JSON file at `wikibrowser/public/.well-known/apple-app-site-association`.
+It uses the fixed App ID `AKN976G7AK.xyz.kinic.ios.KinicWiki`.
 
 Enable these capabilities:
 
@@ -44,7 +41,7 @@ Enable these capabilities:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
 
-Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` including `applinks` / `webcredentials` for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
+Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` serving the static `applinks` / `webcredentials` document for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
 
 The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
 

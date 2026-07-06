@@ -94,7 +94,7 @@ jobs:
   ios-check:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-26-arm64
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - name: Select Xcode 26.5

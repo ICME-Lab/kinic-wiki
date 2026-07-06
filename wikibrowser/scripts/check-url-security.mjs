@@ -23,12 +23,12 @@ const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts"
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
+const nativeAuthRouteModule = await importNativeAuthRoute();
 const nativeAuthPayloadModule = await importTs("../lib/native-auth-payload.ts");
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const staticAppleAppSiteAssociationURL = new URL("../public/.well-known/apple-app-site-association", import.meta.url);
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
-const nativeAuthBridge = readFileSync(new URL("../components/native-auth-bridge.tsx", import.meta.url), "utf8");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
@@ -38,7 +38,6 @@ assert.doesNotMatch(documentPane, /Write access/);
 assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
 assert.match(sourceCapture, /function isSafeRequestSegment/);
 assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
-assert.match(nativeAuthBridge, /#\/native-auth/);
 assert.match(homePage, /location\.hash\.startsWith\(marker\)/);
 assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)/);
 assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
@@ -59,20 +58,6 @@ assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
 assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
-assert.match(nativeAuthBridge, /location\.pathname === "\/native-auth" \|\| location\.pathname === "\/native-auth\/"/);
-assert.match(nativeAuthBridge, /function nativeAuthParams/);
-assert.match(nativeAuthBridge, /location\.hash\.startsWith\(marker\)/);
-assert.match(nativeAuthBridge, /function storedNativeAuthQuery/);
-assert.match(nativeAuthBridge, /authorize-client/);
-assert.match(nativeAuthBridge, /normalizeInternetIdentityResponseForNative/);
-assert.match(nativeAuthBridge, /onClick=\{startAuthorization\}/);
-assert.match(nativeAuthBridge, /sessionPublicKey: new Uint8Array\(parsed\.sessionPublicKey\)/);
-assert.match(nativeAuthBridge, /idpWindow\.location\.href = callback\.toString\(\)/);
-assert.match(nativeAuthBridge, /url\.protocol !== configured\.protocol/);
-assert.match(nativeAuthBridge, /url\.host !== configured\.host/);
-assert.match(nativeAuthBridge, /url\.pathname !== configured\.pathname/);
-assert.match(nativeAuthBridge, /url\.search !== configured\.search/);
-assert.doesNotMatch(nativeAuthBridge, /useEffect\(\(\) => \{\s*if \(bridgeState\.status !== "ready"\)/);
 
 {
   const normalized = nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
@@ -144,6 +129,30 @@ assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8
   assert.equal(response.status, 200);
   assert.match(await response.text(), /Return to KinicWikiApp/);
 }
+
+{
+  const response = nativeAuthRouteModule.GET();
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /https:\/\/id\.ai/);
+  assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
+  assert.doesNotMatch(body, /raw\.localhost|id\.ai\.localhost|127\.0\.0\.1:8011/);
+}
+
+await withEnv(
+  {
+    NEXT_PUBLIC_ENABLE_LOCAL_II_E2E: "1",
+    NEXT_PUBLIC_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
+    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    NEXT_PUBLIC_WIKI_IC_HOST: "http://127.0.0.1:8011"
+  },
+  async () => {
+    const response = nativeAuthRouteModule.GET();
+    const body = await response.text();
+    assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
+    assert.doesNotMatch(body, /http:\/\/aaaaa-aa\.localhost:8011/);
+  }
+);
 
 {
   const response = iosShareRouteModule.GET();
@@ -587,6 +596,28 @@ async function importTs(relativePath) {
   return import(moduleUrl);
 }
 
+async function importNativeAuthRoute() {
+  const authModule = await importTs("../lib/auth.ts");
+  const sourcePath = new URL("../app/native-auth/route.ts", import.meta.url);
+  const source = readFileSync(sourcePath, "utf8").replace(
+    'import { DELEGATION_TTL_NS, derivationOriginUrl, identityProviderUrl } from "@/lib/auth";',
+    "const { DELEGATION_TTL_NS, derivationOriginUrl, identityProviderUrl } = globalThis.__kinicNativeAuthRouteDeps;"
+  );
+  globalThis.__kinicNativeAuthRouteDeps = authModule;
+  try {
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022
+      }
+    }).outputText;
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
+    return await import(moduleUrl);
+  } finally {
+    delete globalThis.__kinicNativeAuthRouteDeps;
+  }
+}
+
 async function withMockFetch(handler, run) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = handler;
@@ -604,7 +635,9 @@ async function withEnv(values, run) {
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
     "KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN",
-    "KINIC_IOS_APP_ID",
+    "NEXT_PUBLIC_ENABLE_LOCAL_II_E2E",
+    "NEXT_PUBLIC_II_PROVIDER_URL",
+    "NEXT_PUBLIC_WIKI_IC_HOST",
     "DEEPSEEK_API_KEY",
     "KINIC_WIKI_WORKER_MODEL"
   ];
