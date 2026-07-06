@@ -37,14 +37,18 @@ struct ShareInbox: @unchecked Sendable {
             .compactMap { fileURL -> PendingSharedURL? in
                 guard let data = try? Data(contentsOf: fileURL),
                       let record = try? decoder.decode(SharedURLRecord.self, from: data),
-                      let url = URL(string: record.url) else {
+                      Self.isSafeRecordId(record.id),
+                      record.id == fileURL.deletingPathExtension().lastPathComponent,
+                      let requestId = try? SourceCaptureRequestBuilder.validateRequestId(record.requestId),
+                      let rawURL = URL(string: record.url),
+                      let url = try? URLNormalizer.normalizedHTTPURL(rawURL) else {
                     return nil
                 }
                 return PendingSharedURL(
                     id: record.id,
                     url: url,
                     receivedAt: record.receivedAt,
-                    requestId: record.requestId
+                    requestId: requestId
                 )
             }
             .sorted { left, right in
@@ -58,11 +62,17 @@ struct ShareInbox: @unchecked Sendable {
 
     func enqueue(_ url: URL, receivedAt: Date = .now, requestId: String? = nil) throws {
         let id = UUID().uuidString.lowercased()
+        let resolvedRequestId: String
+        if let requestId {
+            resolvedRequestId = try SourceCaptureRequestBuilder.validateRequestId(requestId)
+        } else {
+            resolvedRequestId = try SourceCaptureRequestBuilder.makeRequestId(now: receivedAt)
+        }
         let record = SharedURLRecord(
             id: id,
             url: url.absoluteString,
             receivedAt: receivedAt,
-            requestId: try requestId ?? SourceCaptureRequestBuilder.makeRequestId(now: receivedAt)
+            requestId: resolvedRequestId
         )
         let data = try encoder.encode(record)
         let temporaryURL = queueDirectory.appending(path: "\(id).tmp")
@@ -72,8 +82,15 @@ struct ShareInbox: @unchecked Sendable {
     }
 
     func remove(_ item: PendingSharedURL) {
+        guard Self.isSafeRecordId(item.id) else {
+            return
+        }
         let fileURL = queueDirectory.appending(path: "\(item.id).json")
         try? fileManager.removeItem(at: fileURL)
+    }
+
+    private static func isSafeRecordId(_ id: String) -> Bool {
+        SourceCaptureRequestBuilder.isSafeStorageSegment(id)
     }
 
     private static func queueDirectory(appGroupId: String?, strict: Bool, fileManager: FileManager) throws -> URL {

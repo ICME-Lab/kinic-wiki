@@ -37,14 +37,18 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
             .compactMap { fileURL -> PendingSourceCaptureTrigger? in
                 guard let data = try? Data(contentsOf: fileURL),
                       let record = try? decoder.decode(SourceCaptureTriggerRecord.self, from: data),
-                      let url = URL(string: record.url) else {
+                      let requestId = try? SourceCaptureRequestBuilder.validateRequestId(record.requestId),
+                      requestId == fileURL.deletingPathExtension().lastPathComponent,
+                      record.requestPath == Self.requestPath(for: requestId),
+                      let rawURL = URL(string: record.url),
+                      let url = try? URLNormalizer.normalizedHTTPURL(rawURL) else {
                     return nil
                 }
                 return PendingSourceCaptureTrigger(
-                    id: record.requestId,
+                    id: requestId,
                     databaseId: record.databaseId,
                     requestPath: record.requestPath,
-                    requestId: record.requestId,
+                    requestId: requestId,
                     url: url,
                     createdAt: record.createdAt,
                     lastError: record.lastError
@@ -86,14 +90,27 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
     }
 
     func remove(_ trigger: PendingSourceCaptureTrigger) {
-        let fileURL = queueDirectory.appending(path: "\(trigger.requestId).json")
+        guard let requestId = try? SourceCaptureRequestBuilder.validateRequestId(trigger.requestId) else {
+            return
+        }
+        let fileURL = queueDirectory.appending(path: "\(requestId).json")
         try? fileManager.removeItem(at: fileURL)
     }
 
     private func write(_ record: SourceCaptureTriggerRecord) throws {
-        let data = try encoder.encode(record)
-        let temporaryURL = queueDirectory.appending(path: "\(record.requestId).tmp")
-        let finalURL = queueDirectory.appending(path: "\(record.requestId).json")
+        let requestId = try SourceCaptureRequestBuilder.validateRequestId(record.requestId)
+        let data = try encoder.encode(
+            SourceCaptureTriggerRecord(
+                databaseId: record.databaseId,
+                requestPath: record.requestPath,
+                requestId: requestId,
+                url: record.url,
+                createdAt: record.createdAt,
+                lastError: record.lastError
+            )
+        )
+        let temporaryURL = queueDirectory.appending(path: "\(requestId).tmp")
+        let finalURL = queueDirectory.appending(path: "\(requestId).json")
         try data.write(to: temporaryURL, options: .atomic)
         if fileManager.fileExists(atPath: finalURL.path) {
             try fileManager.removeItem(at: finalURL)
@@ -118,5 +135,9 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
                 .appending(path: queueDirectoryName)
         }
         return containerURL.appending(path: queueDirectoryName)
+    }
+
+    private static func requestPath(for requestId: String) -> String {
+        "/Sources/source-capture-requests/\(requestId).md"
     }
 }

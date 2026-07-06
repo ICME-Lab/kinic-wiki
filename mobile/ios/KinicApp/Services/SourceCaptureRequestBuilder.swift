@@ -5,6 +5,13 @@
 import Foundation
 
 enum SourceCaptureRequestBuilder {
+    private static let safeStorageSegmentFirstCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    )
+    private static let safeStorageSegmentCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    )
+
     static func request(
         url: URL,
         databaseId: String,
@@ -14,8 +21,13 @@ enum SourceCaptureRequestBuilder {
         uuid: UUID = UUID()
     ) throws -> SourceCaptureRequest {
         let normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
-        let requestId = try requestId ?? makeRequestId(now: now, uuid: uuid)
-        let requestPath = "/Sources/source-capture-requests/\(requestId).md"
+        let resolvedRequestId: String
+        if let requestId {
+            resolvedRequestId = try validateRequestId(requestId)
+        } else {
+            resolvedRequestId = try makeRequestId(now: now, uuid: uuid)
+        }
+        let requestPath = "/Sources/source-capture-requests/\(resolvedRequestId).md"
         let requestedAt = now.formatted(.iso8601)
         let urlText = normalizedURL.absoluteString
         let content = [
@@ -43,7 +55,7 @@ enum SourceCaptureRequestBuilder {
         let metadataJson = String(data: metadata, encoding: .utf8) ?? "{}"
         return SourceCaptureRequest(
             databaseId: databaseId,
-            requestId: requestId,
+            requestId: resolvedRequestId,
             requestPath: requestPath,
             content: content,
             metadataJson: metadataJson,
@@ -55,13 +67,20 @@ enum SourceCaptureRequestBuilder {
         try safeRequestId(timeMs: milliseconds(now), uuid: uuid.uuidString.lowercased())
     }
 
+    static func validateRequestId(_ requestId: String) throws -> String {
+        guard isSafeStorageSegment(requestId, maxLength: 128) else {
+            throw SourceCaptureRequestError.invalidRequestId
+        }
+        return requestId
+    }
+
     static func safeRequestId(timeMs: Int64, uuid: String) throws -> String {
         let suffix = uuid.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isSafeSegment(suffix), suffix.count <= 96 else {
+        guard isSafeStorageSegment(suffix, maxLength: 96) else {
             throw SourceCaptureRequestError.invalidRequestId
         }
         let requestId = "\(timeMs)-\(suffix)"
-        guard isSafeSegment(requestId), requestId.count <= 128 else {
+        guard isSafeStorageSegment(requestId, maxLength: 128) else {
             throw SourceCaptureRequestError.invalidRequestId
         }
         return requestId
@@ -71,16 +90,16 @@ enum SourceCaptureRequestBuilder {
         Int64((date.timeIntervalSince1970 * 1_000).rounded(.down))
     }
 
-    private static func isSafeSegment(_ value: String) -> Bool {
+    static func isSafeStorageSegment(_ value: String, maxLength: Int = 128) -> Bool {
         guard let first = value.unicodeScalars.first,
-              CharacterSet.alphanumerics.contains(first),
+              safeStorageSegmentFirstCharacters.contains(first),
+              value.count <= maxLength,
               value != ".",
               value != "..",
               !value.contains("..") else {
             return false
         }
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
-        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
+        return value.unicodeScalars.allSatisfy { safeStorageSegmentCharacters.contains($0) }
     }
 
     private static func jsonString(_ value: String) -> String {

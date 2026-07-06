@@ -39,7 +39,7 @@ Route behavior:
   - Returns fetchable opaque ids
 - `fetch_many`
   - Input: `{ "ids": ["<id-from-search>"] }`
-  - Fetches up to 10 search result ids and returns item-level errors for invalid or stale ids
+  - Fetches 1 to 10 search result ids and returns item-level errors for invalid or stale ids
 - `read_path`
   - Input: `{ "database_id": "db_...", "path": "/Knowledge/index.md" }`
   - Calls canister `read_node` for a known path without requiring a search result id
@@ -76,7 +76,7 @@ For broad, list, or classification tasks:
 2. Use `preview_mode: "content-start"` when search result previews are used for candidate classification.
 3. If `/Knowledge` is thin, use `list` with `prefix: "/"` to discover top-level prefixes, then search `/Sources` and any discovered wiki prefix such as `/Wiki`.
 4. Separate title/path matches from topic or ability-term matches before synthesis. Do not mix another work's ability evidence into a title-matched work.
-5. Use `fetch_many` for one or more search result ids. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single known-path evidence check.
+5. Use `fetch_many` for one or more search result ids. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single known-path evidence check. Use returned `context.evidence` for source-reference trust checks.
 6. Report coverage limits: search queries, prefixes checked, fetched count, excluded candidates, and any `truncated: true` results.
 
 Recipe list example:

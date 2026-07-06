@@ -27,6 +27,19 @@ struct SourceCaptureRequestBuilderTests {
     }
 
     @Test
+    func preservesValidExplicitRequestId() throws {
+        let request = try SourceCaptureRequestBuilder.request(
+            url: URL(string: "https://example.com/page")!,
+            databaseId: "db_demo",
+            requestedBy: "aaaaa-aa",
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000"
+        )
+
+        #expect(request.requestId == "1700000000000-00000000-0000-4000-8000-000000000000")
+        #expect(request.requestPath == "/Sources/source-capture-requests/1700000000000-00000000-0000-4000-8000-000000000000.md")
+    }
+
+    @Test
     func rejectsNonHTTPURLs() throws {
         #expect(throws: URLNormalizerError.unsupportedURL) {
             try URLNormalizer.normalizedHTTPURL(URL(string: "file:///tmp/a.txt")!)
@@ -37,6 +50,30 @@ struct SourceCaptureRequestBuilderTests {
     func rejectsUnsafeRequestId() throws {
         #expect(throws: SourceCaptureRequestError.invalidRequestId) {
             try SourceCaptureRequestBuilder.safeRequestId(timeMs: 1, uuid: "../bad")
+        }
+    }
+
+    @Test
+    func rejectsUnsafeExplicitRequestIds() throws {
+        let invalidRequestIds = [
+            "../x",
+            "a/b",
+            ".",
+            "..",
+            "a..b",
+            "",
+            "aé",
+            String(repeating: "a", count: 129)
+        ]
+        for requestId in invalidRequestIds {
+            #expect(throws: SourceCaptureRequestError.invalidRequestId) {
+                try SourceCaptureRequestBuilder.request(
+                    url: URL(string: "https://example.com/page")!,
+                    databaseId: "db_demo",
+                    requestedBy: "aaaaa-aa",
+                    requestId: requestId
+                )
+            }
         }
     }
 }

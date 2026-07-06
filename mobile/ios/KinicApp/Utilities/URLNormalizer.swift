@@ -8,7 +8,8 @@ enum URLNormalizer {
     static func normalizedHTTPURL(_ url: URL) throws -> URL {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme == "http" || components.scheme == "https",
-              components.host != nil else {
+              let host = components.host,
+              !host.isEmpty else {
             throw URLNormalizerError.unsupportedURL
         }
         components.fragment = nil
@@ -18,4 +19,3 @@ enum URLNormalizer {
         return normalized
     }
 }
-
