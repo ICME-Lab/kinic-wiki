@@ -12,9 +12,9 @@ KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
 
 case "${ICP_ENVIRONMENT}" in
-  local | local-wiki) ;;
+  local-wiki) ;;
   *)
-    echo "ICP_ENVIRONMENT must be local or local-wiki for local deploy" >&2
+    echo "ICP_ENVIRONMENT must be local-wiki for local deploy" >&2
     exit 1
     ;;
 esac

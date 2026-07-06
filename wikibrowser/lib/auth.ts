@@ -59,19 +59,6 @@ export function derivationOriginUrl(locationLike: LocationLike | null = currentL
   if (!localIiE2eEnabled()) {
     return DERIVATION_ORIGIN;
   }
-  const iosNativeDerivationOrigin = process.env.NEXT_PUBLIC_IOS_NATIVE_DERIVATION_ORIGIN;
-  if (iosNativeDerivationOrigin) {
-    let url: URL;
-    try {
-      url = new URL(iosNativeDerivationOrigin);
-    } catch {
-      return DERIVATION_ORIGIN;
-    }
-    if (url.protocol === "https:" && url.username === "" && url.password === "" && url.hash === "") {
-      return url.toString().replace(/\/$/, "");
-    }
-    return DERIVATION_ORIGIN;
-  }
   if (!locationLike || !isLocalHostname(locationLike.hostname)) {
     return DERIVATION_ORIGIN;
   }

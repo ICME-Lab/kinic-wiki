@@ -134,20 +134,20 @@ final class ShareViewController: UIViewController {
         doneButton.isHidden = false
         switch result {
         case .saved:
-            titleLabel.text = "Saved to KinicWiki"
-            messageLabel.text = "Source capture request saved."
+            titleLabel.text = "Capture started"
+            messageLabel.text = "KinicWiki is generating the source capture."
         case let .queued(reason):
             titleLabel.text = "Saved for later"
             messageLabel.text = reason
         case let .failed(message):
-            titleLabel.text = "Could not save URL"
+            titleLabel.text = "Could not complete capture"
             messageLabel.text = message
         }
     }
 
     private func showFailure(_ error: Error) {
         activityIndicator.stopAnimating()
-        titleLabel.text = "Could not save URL"
+        titleLabel.text = "Could not complete capture"
         messageLabel.text = error.localizedDescription
         doneButton.isHidden = false
     }

@@ -13,6 +13,7 @@ struct ShareCaptureSubmitter: Sendable {
     private let enqueueURL: @Sendable (URL, Date, String?) throws -> Void
     private let enqueueTrigger: @Sendable (SourceCaptureRequest, Date) throws -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
+    private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
     init(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) {
         let sessionStore = KinicAuthSessionStore(configuration: configuration)
@@ -38,6 +39,13 @@ struct ShareCaptureSubmitter: Sendable {
                 },
                 saveRequest: { request, session in
                     try await client.saveSourceCaptureRequest(request, session: session)
+                },
+                triggerSourceCapture: { submission, session in
+                    try await client.triggerSourceCapture(
+                        databaseId: submission.databaseId,
+                        requestPath: submission.requestPath,
+                        session: session
+                    )
                 }
             )
         } catch {
@@ -52,7 +60,8 @@ struct ShareCaptureSubmitter: Sendable {
         selectedDatabaseId: @escaping @Sendable () -> String,
         enqueueURL: @escaping @Sendable (URL, Date, String?) throws -> Void,
         enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void,
-        saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
+        saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
+        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
     ) {
         self.configuration = configuration
         self.timeoutNanoseconds = timeoutNanoseconds
@@ -61,6 +70,7 @@ struct ShareCaptureSubmitter: Sendable {
         self.enqueueURL = enqueueURL
         self.enqueueTrigger = enqueueTrigger
         self.saveRequest = saveRequest
+        self.triggerSourceCapture = triggerSourceCapture
     }
 
     func submitSharedURL(_ url: URL) async -> ShareCaptureResult {
@@ -89,18 +99,42 @@ struct ShareCaptureSubmitter: Sendable {
         } catch {
             return .failed(message: error.localizedDescription)
         }
+        let submission: CaptureSubmission
         do {
-            let submission = try await withTimeout {
-                return try await saveRequest(request, session)
+            submission = try await withTimeout {
+                try await saveRequest(request, session)
             }
-            try enqueueTrigger(request, receivedAt)
-            return .saved(requestPath: submission.requestPath)
         } catch {
             return queue(
                 normalizedURL,
                 receivedAt: receivedAt,
                 requestId: request.requestId,
                 reason: "Saved for later because immediate submission failed."
+            )
+        }
+        do {
+            try await withTimeout {
+                try await triggerSourceCapture(submission, session)
+            }
+            return .saved(requestPath: submission.requestPath)
+        } catch {
+            return savedRequestWithPendingTrigger(request, receivedAt: receivedAt, triggerError: error)
+        }
+    }
+
+    private func savedRequestWithPendingTrigger(
+        _ request: SourceCaptureRequest,
+        receivedAt: Date,
+        triggerError: Error
+    ) -> ShareCaptureResult {
+        do {
+            try enqueueTrigger(request, receivedAt)
+            return .failed(
+                message: "Source capture request was saved, but capture could not start. Open KinicWikiApp to retry."
+            )
+        } catch {
+            return .failed(
+                message: "Source capture request was saved, but capture could not start or queue for retry: \(triggerError.localizedDescription); \(error.localizedDescription)"
             )
         }
     }

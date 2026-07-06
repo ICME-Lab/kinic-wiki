@@ -51,10 +51,13 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
-    func savesWithoutQueueingWhenSubmissionSucceeds() async throws {
+    func savesWithoutQueueingWhenSubmissionAndTriggerSucceed() async throws {
         let harness = try ShareCaptureHarness()
+        let triggerProbe = TriggerProbe()
         let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
             CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+        } triggerSourceCapture: { submission, _ in
+            await triggerProbe.record(submission)
         }
 
         let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
@@ -65,20 +68,23 @@ struct ShareCaptureSubmitterTests {
         }
         #expect(requestPath.hasPrefix("/Sources/source-capture-requests/"))
         #expect(harness.pendingURLs().isEmpty)
-        #expect(harness.pendingTriggers().map(\.requestPath) == [requestPath])
+        #expect(harness.pendingTriggers().isEmpty)
+        #expect(await triggerProbe.requestPaths() == [requestPath])
     }
 
     @Test
-    func savedResultDoesNotExposeWorkerTriggerState() async throws {
+    func failsAndKeepsPendingTriggerWhenWorkerTriggerFails() async throws {
         let harness = try ShareCaptureHarness()
         let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
             CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+        } triggerSourceCapture: { _, _ in
+            throw ShareCaptureTestError.triggerFailed
         }
 
         let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
 
-        guard case .saved = result else {
-            Issue.record("Expected saved result, got \(result)")
+        guard case .failed = result else {
+            Issue.record("Expected failed result, got \(result)")
             return
         }
         #expect(harness.pendingURLs().isEmpty)
@@ -147,10 +153,10 @@ private struct ShareCaptureHarness {
             .appending(path: "kinic-share-trigger-tests")
             .appending(path: UUID().uuidString)
         configuration = AppConfiguration(
-            canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+            canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
             apiBaseURL: URL(string: "https://icp0.io")!,
             identityProvider: URL(string: "https://id.ai/#authorize")!,
-            derivationOrigin: "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io",
+            derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
@@ -165,6 +171,8 @@ private struct ShareCaptureHarness {
         databaseId: String,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission = { request, _ in
             CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+        },
+        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void = { _, _ in
         }
     ) -> ShareCaptureSubmitter {
         let queueDirectory = queueDirectory
@@ -186,7 +194,8 @@ private struct ShareCaptureHarness {
                 let queue = try SourceCaptureTriggerQueue(testQueueDirectory: triggerQueueDirectory)
                 try queue.enqueue(request, createdAt: createdAt)
             },
-            saveRequest: saveRequest
+            saveRequest: saveRequest,
+            triggerSourceCapture: triggerSourceCapture
         )
     }
 
@@ -212,9 +221,9 @@ private struct ShareCaptureHarness {
 private func makeSession() -> ICAuthSession {
     ICAuthSession(
         principal: "aaaaa-aa",
-        canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         identityProvider: "https://id.ai/#authorize",
-        derivationOrigin: "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io",
+        derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
         sessionPublicKey: Data(),
         sessionPrivateKey: Data(),
         delegation: ICDelegationChain(publicKey: Data(), delegations: []),
@@ -222,6 +231,19 @@ private func makeSession() -> ICAuthSession {
     )
 }
 
+private actor TriggerProbe {
+    private var submissions: [CaptureSubmission] = []
+
+    func record(_ submission: CaptureSubmission) {
+        submissions.append(submission)
+    }
+
+    func requestPaths() -> [String] {
+        submissions.map(\.requestPath)
+    }
+}
+
 private enum ShareCaptureTestError: Error {
     case submissionFailed
+    case triggerFailed
 }

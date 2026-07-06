@@ -44,9 +44,13 @@ Enable these capabilities:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
 
-Share Extension capture is best-effort: it writes directly through VFS when possible, otherwise queues the URL and lets the main app auto-submit later. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` including `applinks` / `webcredentials` for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
+Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` including `applinks` / `webcredentials` for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
 
 The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
+
+## Runtime target
+
+iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
 
 ## Verification
 
@@ -64,7 +68,7 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 
 ## TestFlight
 
-TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `xis3j-paaaa-aaaai-axumq-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
+TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
 The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
 
 Validate inputs without archiving:
@@ -89,5 +93,3 @@ mobile/ios/scripts/testflight-upload.sh
 
 Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200 and includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
 The script fails before upload if either the app archive or Share Extension archive lacks `PrivacyInfo.xcprivacy`.
-
-See [`../../docs/MAINNET_TESTFLIGHT_RELEASE.md`](../../docs/MAINNET_TESTFLIGHT_RELEASE.md) for the full mainnet and TestFlight runbook.

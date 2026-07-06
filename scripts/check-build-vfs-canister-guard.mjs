@@ -12,8 +12,9 @@ const script = join(root, "scripts", "build-vfs-canister.sh");
 assert.equal(run({ KINIC_VFS_LOCAL_II_ORIGINS: "1", ICP_ENVIRONMENT: "ic" }).status, 1);
 assert.match(
   run({ KINIC_VFS_LOCAL_II_ORIGINS: "1", ICP_ENVIRONMENT: "ic" }).stderr,
-  /only allowed for ICP_ENVIRONMENT=local or local-wiki/
+  /only allowed for ICP_ENVIRONMENT=local-wiki/
 );
+assert.equal(run({ KINIC_VFS_LOCAL_II_ORIGINS: "1", ICP_ENVIRONMENT: "local" }).status, 1);
 assert.equal(run({ KINIC_VFS_LOCAL_II_ORIGINS: "1", ICP_ENVIRONMENT: "local-wiki" }).status, 0);
 assert.equal(run({ KINIC_VFS_LOCAL_II_ORIGINS: "1" }).status, 1);
 assert.equal(run({}).status, 0);

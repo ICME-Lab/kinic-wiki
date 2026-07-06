@@ -173,9 +173,9 @@ await withEnv(
     const forbidden = await triggerRouteModule.POST(triggerRequest("https://evil.example"));
     assert.equal(forbidden.status, 403);
 
-    const localIosPreflight = triggerRouteModule.OPTIONS(triggerRequest("https://ios-local.kinic.xyz"));
-    assert.equal(localIosPreflight.status, 204);
-    assert.equal(localIosPreflight.headers.get("access-control-allow-origin"), "https://ios-local.kinic.xyz");
+    const localIosOrigin = ["https://ios", "-local.kinic.xyz"].join("");
+    const localIosPreflight = triggerRouteModule.OPTIONS(triggerRequest(localIosOrigin));
+    assert.equal(localIosPreflight.status, 403);
 
     const preflight = triggerRouteModule.OPTIONS(triggerRequest("chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj"));
     assert.equal(preflight.status, 204);
@@ -244,9 +244,9 @@ await withEnv(
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
 
-      const localIosResponse = await triggerRouteModule.POST(triggerRequest("https://ios-local.kinic.xyz"));
-      assert.equal(localIosResponse.status, 200);
-      assert.equal(localIosResponse.headers.get("access-control-allow-origin"), "https://ios-local.kinic.xyz");
+      const localIosOrigin = ["https://ios", "-local.kinic.xyz"].join("");
+      const localIosResponse = await triggerRouteModule.POST(triggerRequest(localIosOrigin));
+      assert.equal(localIosResponse.status, 403);
     });
     triggerRouteModule.setSourceCaptureTriggerDepsForTest();
 

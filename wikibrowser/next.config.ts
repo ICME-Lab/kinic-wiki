@@ -17,7 +17,7 @@ function readWranglerPublicVars(): PublicVars {
 const wranglerVars = readWranglerPublicVars();
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1", "ios-local.kinic.xyz", "ii-ios-local.kinic.xyz", "ic-ios-local.kinic.xyz"],
+  allowedDevOrigins: ["127.0.0.1"],
   async headers() {
     return [
       {

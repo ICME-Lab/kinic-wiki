@@ -118,10 +118,10 @@ xcodebuild archive \
   -authenticationKeyIssuerID "$asc_issuer_id" \
   CURRENT_PROJECT_VERSION="$build_number" \
   MARKETING_VERSION="$marketing_version" \
-  KINIC_CANISTER_ID="xis3j-paaaa-aaaai-axumq-cai" \
+  KINIC_CANISTER_ID="6emaw-iyaaa-aaaay-aacka-cai" \
   KINIC_API_BASE_URL="https://icp0.io" \
   KINIC_IDENTITY_PROVIDER="https://id.ai/#authorize" \
-  KINIC_DERIVATION_ORIGIN="https://xis3j-paaaa-aaaai-axumq-cai.icp0.io" \
+  KINIC_DERIVATION_ORIGIN="https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io" \
   KINIC_AUTH_ORIGIN="https://wiki.kinic.xyz" \
   KINIC_CALLBACK_DOMAIN="wiki.kinic.xyz" \
   KINIC_ASSOCIATED_DOMAIN="wiki.kinic.xyz"
