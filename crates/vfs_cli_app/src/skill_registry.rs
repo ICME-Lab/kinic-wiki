@@ -7,14 +7,16 @@ mod model;
 use anyhow::{Context, Result, anyhow};
 use model::{
     RUN_ROOT, SkillId, manifest_for_source, normalize_manifest, now_millis, now_rfc3339,
-    parse_skill_source_frontmatter, print, remove_root_frontmatter_fields_preserving_content,
-    set_manifest_provenance_field, set_manifest_status_preserving_content,
-    set_root_frontmatter_field_preserving_content, skill_base_path,
+    parse_manifest, parse_skill_source_frontmatter, print,
+    remove_root_frontmatter_fields_preserving_content, set_manifest_provenance_field,
+    set_manifest_status_preserving_content, set_root_frontmatter_field_preserving_content,
+    skill_base_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -49,6 +51,10 @@ pub async fn run_skill_command(
             json,
         } => print(
             find_skills(client, database_id, &query, include_deprecated, top_k).await?,
+            json,
+        )?,
+        SkillCommand::List { status, json } => print(
+            list_skill_packages(client, database_id, &status).await?,
             json,
         )?,
         SkillCommand::Inspect { id, json } => {
@@ -159,6 +165,16 @@ pub async fn run_skill_command(
         }
         SkillCommand::Install { id, lockfile, json } => print(
             install_skill_lockfile(client, database_id, &id, &lockfile).await?,
+            json,
+        )?,
+        SkillCommand::Sync {
+            target,
+            status,
+            prune,
+            dry_run,
+            json,
+        } => print(
+            sync_skill_packages(client, database_id, &target, &status, prune, dry_run).await?,
             json,
         )?,
     }
@@ -542,6 +558,604 @@ pub(crate) async fn install_skill_lockfile(
         "manifest_path": value["manifest_path"],
         "entry_path": value["entry_path"]
     }))
+}
+
+#[derive(Debug, Clone)]
+struct SkillPackageRecord {
+    id: String,
+    status: String,
+    title: Option<String>,
+    version: String,
+    manifest_path: String,
+    entry_path: String,
+    manifest_etag: String,
+    entry_etag: String,
+    manifest_hash: String,
+    entry_hash: String,
+}
+
+#[derive(Debug, Default)]
+struct SkillPackageScan {
+    records: Vec<SkillPackageRecord>,
+    skipped: Vec<serde_json::Value>,
+    protected_ids: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillSyncLock {
+    schema_version: u32,
+    database_id: String,
+    managed_skills: BTreeMap<String, SkillSyncLockEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_synced_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SkillSyncLockEntry {
+    entry_etag: String,
+    manifest_etag: String,
+    entry_hash: String,
+    manifest_hash: String,
+    files: BTreeMap<String, String>,
+    synced_at: String,
+}
+
+pub(crate) async fn list_skill_packages(
+    client: &impl VfsApi,
+    database_id: &str,
+    statuses: &[SkillStatusArg],
+) -> Result<serde_json::Value> {
+    let filter = skill_status_filter(statuses);
+    let scan = scan_skill_packages(client, database_id, &filter).await?;
+    Ok(json!({
+        "database_id": database_id,
+        "status": filter.iter().cloned().collect::<Vec<_>>(),
+        "skills": scan.records.iter().map(skill_package_record_json).collect::<Vec<_>>(),
+        "skipped": scan.skipped
+    }))
+}
+
+pub(crate) async fn sync_skill_packages(
+    client: &impl VfsApi,
+    database_id: &str,
+    target: &Path,
+    statuses: &[SkillStatusArg],
+    prune: bool,
+    dry_run: bool,
+) -> Result<serde_json::Value> {
+    let filter = skill_status_filter(statuses);
+    let scan = scan_skill_packages(client, database_id, &filter).await?;
+    let selected_ids = scan
+        .records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<BTreeSet<_>>();
+    let existing_lock = read_skill_sync_lock(target, database_id)?;
+    let lock_was_present = existing_lock.is_some();
+    let locked = existing_lock
+        .as_ref()
+        .map(|lock| lock.managed_skills.clone())
+        .unwrap_or_default();
+    let mut next_locked = if prune {
+        BTreeMap::new()
+    } else {
+        locked.clone()
+    };
+    for protected_id in &scan.protected_ids {
+        if let Some(entry) = locked.get(protected_id) {
+            next_locked.insert(protected_id.clone(), entry.clone());
+        }
+    }
+
+    let mut added = Vec::new();
+    let mut updated = Vec::new();
+    let mut removed = Vec::new();
+    let mut unchanged = Vec::new();
+    let mut skipped = scan.skipped;
+    let mut conflicts = Vec::new();
+    let mut conflict_ids = BTreeSet::new();
+    if !dry_run {
+        fs::create_dir_all(target)
+            .with_context(|| format!("failed to create {}", target.display()))?;
+    }
+
+    for record in scan.records {
+        let target_dir = target.join(&record.id);
+        let locked_entry = locked.get(&record.id);
+        let item = sync_item_json(&record, &target_dir);
+        if let Some(conflict) = sync_local_conflict(&record.id, &target_dir, locked_entry)? {
+            conflict_ids.insert(record.id.clone());
+            if let Some(entry) = locked_entry {
+                next_locked.insert(record.id.clone(), entry.clone());
+            }
+            conflicts.push(conflict);
+            continue;
+        }
+        let changed = locked_entry
+            .map(|entry| {
+                entry.entry_etag != record.entry_etag
+                    || entry.manifest_etag != record.manifest_etag
+                    || entry.entry_hash != record.entry_hash
+                    || entry.manifest_hash != record.manifest_hash
+                    || !target_dir.join("SKILL.md").is_file()
+            })
+            .unwrap_or(true);
+        if !changed {
+            unchanged.push(item);
+            if let Some(entry) = locked_entry {
+                next_locked.insert(record.id.clone(), entry.clone());
+            }
+            continue;
+        }
+        if dry_run {
+            if locked_entry.is_some() {
+                updated.push(item);
+            } else {
+                added.push(item);
+            }
+            continue;
+        }
+        match sync_one_skill_package(client, database_id, target, &record).await {
+            Ok(files) => {
+                next_locked.insert(
+                    record.id.clone(),
+                    SkillSyncLockEntry {
+                        entry_etag: record.entry_etag.clone(),
+                        manifest_etag: record.manifest_etag.clone(),
+                        entry_hash: record.entry_hash.clone(),
+                        manifest_hash: record.manifest_hash.clone(),
+                        files,
+                        synced_at: now_rfc3339(),
+                    },
+                );
+                if locked_entry.is_some() {
+                    updated.push(item);
+                } else {
+                    added.push(item);
+                }
+            }
+            Err(error) => skipped.push(json!({
+                "id": record.id,
+                "path": target_dir.display().to_string(),
+                "reason": "export_failed",
+                "error": error.to_string()
+            })),
+        }
+    }
+
+    if prune {
+        for id in locked.keys() {
+            if selected_ids.contains(id)
+                || scan.protected_ids.contains(id)
+                || conflict_ids.contains(id)
+            {
+                continue;
+            }
+            let target_dir = target.join(id);
+            let Some(locked_entry) = locked.get(id) else {
+                continue;
+            };
+            if let Some(conflict) = sync_local_conflict(id, &target_dir, Some(locked_entry))? {
+                next_locked.insert(id.clone(), locked_entry.clone());
+                conflicts.push(conflict);
+                continue;
+            }
+            let item = json!({
+                "id": id,
+                "path": target_dir.display().to_string(),
+                "existed": target_dir.exists()
+            });
+            if !dry_run && target_dir.exists() {
+                fs::remove_dir_all(&target_dir)
+                    .with_context(|| format!("failed to remove {}", target_dir.display()))?;
+            }
+            next_locked.remove(id);
+            removed.push(item);
+        }
+    }
+
+    if !dry_run && (lock_was_present || !next_locked.is_empty()) {
+        write_skill_sync_lock(target, database_id, next_locked)?;
+    }
+
+    Ok(json!({
+        "target": target.display().to_string(),
+        "dry_run": dry_run,
+        "status": filter.iter().cloned().collect::<Vec<_>>(),
+        "added": added,
+        "updated": updated,
+        "removed": removed,
+        "unchanged": unchanged,
+        "skipped": skipped,
+        "conflicts": conflicts
+    }))
+}
+
+async fn scan_skill_packages(
+    client: &impl VfsApi,
+    database_id: &str,
+    filter: &BTreeSet<String>,
+) -> Result<SkillPackageScan> {
+    let mut scan = SkillPackageScan::default();
+    for entry in client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: "/Skills".to_string(),
+            recursive: true,
+        })
+        .await?
+    {
+        if entry.kind != NodeEntryKind::File {
+            continue;
+        }
+        let Some(skill_id) = skill_id_from_manifest_path(&entry.path) else {
+            continue;
+        };
+        let manifest_path = entry.path.clone();
+        let Some(manifest_node) = client.read_node(database_id, &manifest_path).await? else {
+            scan.protected_ids.insert(skill_id.clone());
+            scan.skipped.push(json!({
+                "id": skill_id,
+                "path": manifest_path,
+                "reason": "manifest_disappeared"
+            }));
+            continue;
+        };
+        let manifest = match parse_manifest(&manifest_node.content) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                scan.protected_ids.insert(skill_id.clone());
+                scan.skipped.push(json!({
+                    "id": skill_id,
+                    "path": manifest_path,
+                    "reason": "invalid_manifest",
+                    "error": error.to_string()
+                }));
+                continue;
+            }
+        };
+        if manifest.id != skill_id {
+            scan.protected_ids.insert(skill_id.clone());
+            scan.skipped.push(json!({
+                "id": skill_id,
+                "path": manifest_path,
+                "reason": "manifest_id_mismatch",
+                "manifest_id": manifest.id
+            }));
+            continue;
+        }
+        let status = manifest
+            .status
+            .clone()
+            .unwrap_or_else(|| "draft".to_string());
+        if !filter.contains(&status) {
+            continue;
+        }
+        let base_path = skill_base_path(&SkillId::parse(&skill_id)?);
+        let entry_path = format!("{base_path}/SKILL.md");
+        let Some(entry_node) = client.read_node(database_id, &entry_path).await? else {
+            scan.protected_ids.insert(skill_id.clone());
+            scan.skipped.push(json!({
+                "id": skill_id,
+                "path": entry_path,
+                "reason": "missing_skill"
+            }));
+            continue;
+        };
+        scan.records.push(SkillPackageRecord {
+            id: skill_id,
+            status,
+            title: manifest.title,
+            version: manifest.version,
+            manifest_path,
+            entry_path,
+            manifest_etag: manifest_node.etag,
+            entry_etag: entry_node.etag,
+            manifest_hash: sha256_hex(&manifest_node.content),
+            entry_hash: sha256_hex(&entry_node.content),
+        });
+    }
+    scan.records.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(scan)
+}
+
+fn skill_status_filter(statuses: &[SkillStatusArg]) -> BTreeSet<String> {
+    let selected = if statuses.is_empty() {
+        vec![SkillStatusArg::Reviewed, SkillStatusArg::Promoted]
+    } else {
+        statuses.to_vec()
+    };
+    selected
+        .into_iter()
+        .map(|status| status.as_str().to_string())
+        .collect()
+}
+
+fn skill_package_record_json(record: &SkillPackageRecord) -> serde_json::Value {
+    json!({
+        "id": record.id,
+        "status": record.status,
+        "title": record.title,
+        "version": record.version,
+        "manifest_path": record.manifest_path,
+        "entry_path": record.entry_path,
+        "manifest_etag": record.manifest_etag,
+        "entry_etag": record.entry_etag
+    })
+}
+
+fn sync_item_json(record: &SkillPackageRecord, target_dir: &Path) -> serde_json::Value {
+    json!({
+        "id": record.id,
+        "status": record.status,
+        "version": record.version,
+        "path": target_dir.display().to_string(),
+        "manifest_etag": record.manifest_etag,
+        "entry_etag": record.entry_etag
+    })
+}
+
+fn sync_local_conflict(
+    id: &str,
+    target_dir: &Path,
+    locked_entry: Option<&SkillSyncLockEntry>,
+) -> Result<Option<serde_json::Value>> {
+    let Some(locked_entry) = locked_entry else {
+        if target_dir.exists() {
+            return Ok(Some(json!({
+                "id": id,
+                "path": target_dir.display().to_string(),
+                "reason": "unmanaged_existing_dir"
+            })));
+        }
+        return Ok(None);
+    };
+    if !target_dir.is_dir() {
+        return Ok(Some(json!({
+            "id": id,
+            "path": target_dir.display().to_string(),
+            "reason": "managed_file_missing",
+            "file": "SKILL.md"
+        })));
+    }
+    for (file, expected_hash) in &locked_entry.files {
+        let local_file = target_dir.join(file);
+        if !local_file.is_file() {
+            return Ok(Some(json!({
+                "id": id,
+                "path": target_dir.display().to_string(),
+                "reason": "managed_file_missing",
+                "file": file
+            })));
+        }
+        let content = fs::read_to_string(&local_file)
+            .with_context(|| format!("failed to read {}", local_file.display()))?;
+        let local_hash = sha256_hex(&content);
+        if &local_hash != expected_hash {
+            return Ok(Some(json!({
+                "id": id,
+                "path": target_dir.display().to_string(),
+                "reason": "managed_local_dirty",
+                "file": file,
+                "expected_hash": expected_hash,
+                "actual_hash": local_hash
+            })));
+        }
+    }
+    let expected_files = locked_entry.files.keys().cloned().collect::<BTreeSet<_>>();
+    let local_files = collect_sync_local_files(target_dir)?;
+    if let Some(extra_file) = local_files
+        .iter()
+        .find(|local_file| !expected_files.contains(*local_file))
+    {
+        return Ok(Some(json!({
+            "id": id,
+            "path": target_dir.display().to_string(),
+            "reason": "managed_extra_file",
+            "file": extra_file
+        })));
+    }
+    Ok(None)
+}
+
+fn collect_sync_local_files(root: &Path) -> Result<BTreeSet<String>> {
+    let mut files = BTreeSet::new();
+    collect_sync_local_files_inner(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_sync_local_files_inner(
+    root: &Path,
+    current: &Path,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
+    for entry in
+        fs::read_dir(current).with_context(|| format!("failed to read {}", current.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_sync_local_files_inner(root, &path, files)?;
+        } else if file_type.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .with_context(|| format!("invalid local sync path {}", path.display()))?;
+            files.insert(path_to_sync_relative(relative)?);
+        }
+    }
+    Ok(())
+}
+
+fn path_to_sync_relative(path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let part = part
+                    .to_str()
+                    .ok_or_else(|| anyhow!("sync path must be valid UTF-8"))?;
+                parts.push(part.to_string());
+            }
+            _ => return Err(anyhow!("sync path must stay inside the skill directory")),
+        }
+    }
+    Ok(parts.join("/"))
+}
+
+fn skill_id_from_manifest_path(path: &str) -> Option<String> {
+    let relative = path.strip_prefix("/Skills/")?;
+    let id = relative.strip_suffix("/manifest.md")?;
+    if id.contains('/') || SkillId::parse(id).is_err() {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+fn skill_sync_lock_path(target: &Path) -> PathBuf {
+    target.join(".kinic-skill-sync.json")
+}
+
+fn read_skill_sync_lock(target: &Path, database_id: &str) -> Result<Option<SkillSyncLock>> {
+    let path = skill_sync_lock_path(target);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let lock: SkillSyncLock = serde_json::from_str(
+        &fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?,
+    )
+    .with_context(|| format!("invalid sync lock JSON: {}", path.display()))?;
+    if lock.schema_version != 1 {
+        return Err(anyhow!(
+            "unsupported sync lock schema_version {}: {}",
+            lock.schema_version,
+            path.display()
+        ));
+    }
+    if lock.database_id != database_id {
+        return Err(anyhow!(
+            "sync lock belongs to database {}, not {}",
+            lock.database_id,
+            database_id
+        ));
+    }
+    Ok(Some(lock))
+}
+
+fn write_skill_sync_lock(
+    target: &Path,
+    database_id: &str,
+    managed_skills: BTreeMap<String, SkillSyncLockEntry>,
+) -> Result<()> {
+    let path = skill_sync_lock_path(target);
+    let lock = SkillSyncLock {
+        schema_version: 1,
+        database_id: database_id.to_string(),
+        managed_skills,
+        last_synced_at: Some(now_rfc3339()),
+    };
+    fs::write(&path, serde_json::to_string_pretty(&lock)?)
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+async fn sync_one_skill_package(
+    client: &impl VfsApi,
+    database_id: &str,
+    target: &Path,
+    record: &SkillPackageRecord,
+) -> Result<BTreeMap<String, String>> {
+    let target_dir = target.join(&record.id);
+    let temp = unique_sync_work_dir(target, "tmp")?;
+    let result = match export_skill(client, database_id, &record.id, &temp).await {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&temp);
+            return Err(error);
+        }
+    };
+    let files = sync_export_file_hashes(&temp, &result)?;
+    replace_sync_dir(&temp, &target_dir)?;
+    Ok(files)
+}
+
+fn sync_export_file_hashes(
+    export_dir: &Path,
+    export_result: &serde_json::Value,
+) -> Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    let Some(items) = export_result["files"].as_array() else {
+        return Ok(files);
+    };
+    for item in items {
+        let Some(relative_path) = item.as_str() else {
+            continue;
+        };
+        let path = export_dir.join(relative_path);
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        files.insert(relative_path.to_string(), sha256_hex(&content));
+    }
+    Ok(files)
+}
+
+fn replace_sync_dir(source: &Path, target: &Path) -> Result<()> {
+    if !target.exists() {
+        fs::rename(source, target).with_context(|| {
+            format!(
+                "failed to move {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
+        return Ok(());
+    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("invalid sync target: {}", target.display()))?;
+    let backup = unique_sync_work_dir(parent, "old")?;
+    fs::remove_dir(&backup)
+        .with_context(|| format!("failed to reserve backup path {}", backup.display()))?;
+    fs::rename(target, &backup).with_context(|| {
+        format!(
+            "failed to move {} to {}",
+            target.display(),
+            backup.display()
+        )
+    })?;
+    if let Err(error) = fs::rename(source, target).with_context(|| {
+        format!(
+            "failed to move {} to {}",
+            source.display(),
+            target.display()
+        )
+    }) {
+        let _ = fs::rename(&backup, target);
+        return Err(error);
+    }
+    fs::remove_dir_all(&backup)
+        .with_context(|| format!("failed to remove old sync dir {}", backup.display()))?;
+    Ok(())
+}
+
+fn unique_sync_work_dir(parent: &Path, label: &str) -> Result<PathBuf> {
+    for attempt in 0..100 {
+        let path = parent.join(format!(
+            ".kinic-skill-sync-{label}-{}-{}-{attempt}",
+            std::process::id(),
+            now_millis()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to create {}", path.display()));
+            }
+        }
+    }
+    Err(anyhow!(
+        "failed to create unique sync work dir under {}",
+        parent.display()
+    ))
 }
 
 pub(crate) async fn record_correction(
