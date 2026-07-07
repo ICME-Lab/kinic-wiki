@@ -66,7 +66,9 @@ pub(crate) fn load_marketplace_preview_excerpts(
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGraph, String> {
+pub(crate) fn load_marketplace_category_graph(
+    conn: &Connection,
+) -> Result<MarketCategoryGraph, String> {
     let mut stmt = conn
         .prepare(
             "SELECT path

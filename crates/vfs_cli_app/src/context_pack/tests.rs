@@ -11,8 +11,8 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, ListChildrenRequest, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, NodeContext, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRef, WriteNodeRequest, WriteNodeResult,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRef,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 struct MockClient {
@@ -103,10 +103,7 @@ impl VfsApi for MockClient {
         unreachable!()
     }
 
-    async fn multi_edit_node(
-        &self,
-        _request: MultiEditNodeRequest,
-    ) -> Result<MultiEditNodeResult> {
+    async fn multi_edit_node(&self, _request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
         unreachable!()
     }
 
@@ -143,10 +140,7 @@ impl VfsApi for MockClient {
         unreachable!()
     }
 
-    async fn fetch_updates(
-        &self,
-        _request: FetchUpdatesRequest,
-    ) -> Result<FetchUpdatesResponse> {
+    async fn fetch_updates(&self, _request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse> {
         unreachable!()
     }
 }
@@ -334,8 +328,8 @@ async fn export_writes_okf_concepts_without_raw_source_text() {
     assert!(fact.starts_with("---\n"));
     assert!(fact.contains("type: Fact"));
     assert!(fact.contains("Fact from /Sources/web/source.md"));
-    let reference = fs::read_to_string(out.path().join("references/sources-web-source.md"))
-        .expect("reference");
+    let reference =
+        fs::read_to_string(out.path().join("references/sources-web-source.md")).expect("reference");
     assert!(reference.contains("type: Reference"));
     assert!(reference.contains("store: source_evidence"));
     assert!(reference.contains("store_path: /Sources/web/source.md"));
@@ -452,8 +446,8 @@ async fn export_root_context_does_not_copy_source_nodes_as_concepts() {
     let fact = fs::read_to_string(out.path().join("facts/knowledge-projects-acme-facts.md"))
         .expect("fact");
     assert!(!fact.contains("raw secret transcript"));
-    let reference = fs::read_to_string(out.path().join("references/sources-web-source.md"))
-        .expect("reference");
+    let reference =
+        fs::read_to_string(out.path().join("references/sources-web-source.md")).expect("reference");
     assert!(reference.contains("Referenced store content is not copied"));
     assert!(!reference.contains("raw secret transcript"));
     assert!(
@@ -875,13 +869,9 @@ fn verify_rejects_reference_without_kinic_store_metadata() {
             .iter()
             .any(|error| error.contains("missing-kinic.md") && error.contains("kinic.store"))
     );
-    assert!(
-        result
-            .errors
-            .iter()
-            .any(|error| error.contains("reference-no-source-path.md")
-                && error.contains("kinic.store"))
-    );
+    assert!(result.errors.iter().any(
+        |error| error.contains("reference-no-source-path.md") && error.contains("kinic.store")
+    ));
 }
 
 #[test]

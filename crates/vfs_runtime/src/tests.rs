@@ -1,8 +1,11 @@
 use tempfile::tempdir;
 
 use super::*;
+use crate::billing::{
+    StorageChargeInput, compute_storage_charge_cycles, load_active_databases_for_storage_billing,
+    load_storage_cycle_account, settle_database_storage_charge_in_tx,
+};
 use crate::sessions::parse_frontmatter_fields;
-use crate::billing::{StorageChargeInput, load_active_databases_for_storage_billing, compute_storage_charge_cycles, load_storage_cycle_account, settle_database_storage_charge_in_tx};
 
 #[test]
 fn source_capture_frontmatter_requires_whole_line_terminator() {
@@ -927,9 +930,8 @@ fn storage_billing_batch_uses_cached_logical_size_without_opening_database() {
             .map_err(|error| error.to_string())
         })
         .expect("storage charge ledger should load");
-    let expected =
-        compute_storage_charge_cycles(cached_size as u64, STORAGE_BILLING_INTERVAL_MS)
-            .expect("expected storage cycles should compute");
+    let expected = compute_storage_charge_cycles(cached_size as u64, STORAGE_BILLING_INTERVAL_MS)
+        .expect("expected storage cycles should compute");
     assert_eq!(cycles_delta, expected as i64);
 }
 
@@ -1175,10 +1177,7 @@ fn storage_billing_timer_state_reuses_billing_time_across_batches() {
     assert_eq!(first.processed_databases, 1000);
     assert_eq!(first.next_cursor_mount_id, Some(1010));
     let second = service
-        .settle_database_storage_charges_timer_batch(
-            "canister",
-            STORAGE_BILLING_INTERVAL_MS * 10,
-        )
+        .settle_database_storage_charges_timer_batch("canister", STORAGE_BILLING_INTERVAL_MS * 10)
         .expect("second timer batch should settle");
     assert_eq!(second.processed_databases, 1);
     assert_eq!(second.next_cursor_mount_id, None);
@@ -1209,9 +1208,7 @@ fn storage_billing_timer_state_reuses_billing_time_across_batches() {
     assert_eq!(cycles_delta, expected as i64);
 }
 
-fn storage_test_account_and_ledger(
-    service: &VfsService,
-) -> (i64, Option<i64>, Vec<String>, i64) {
+fn storage_test_account_and_ledger(service: &VfsService) -> (i64, Option<i64>, Vec<String>, i64) {
     service
         .read_index(|conn| {
             let account = load_storage_cycle_account(conn, "alpha")?;

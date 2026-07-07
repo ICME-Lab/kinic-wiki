@@ -843,7 +843,10 @@ fn compute_update_charge(cycles_delta: u128) -> Result<i64, String> {
     i64::try_from(cycles_delta).map_err(|_| "cycle charge exceeds i64 limit".to_string())
 }
 
-pub(crate) fn compute_storage_charge_cycles(size_bytes: u64, elapsed_ms: i64) -> Result<u128, String> {
+pub(crate) fn compute_storage_charge_cycles(
+    size_bytes: u64,
+    elapsed_ms: i64,
+) -> Result<u128, String> {
     if elapsed_ms <= 0 || size_bytes == 0 {
         return Ok(0);
     }

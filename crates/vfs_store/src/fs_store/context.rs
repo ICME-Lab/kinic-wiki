@@ -222,7 +222,10 @@ pub(crate) fn trim_search_hits_to_remaining_budget(
     (kept, used_search_chars, truncated)
 }
 
-pub(crate) fn ordered_context_candidate_paths(namespace: &str, search_hits: &[SearchNodeHit]) -> Vec<String> {
+pub(crate) fn ordered_context_candidate_paths(
+    namespace: &str,
+    search_hits: &[SearchNodeHit],
+) -> Vec<String> {
     let mut paths = Vec::new();
     let mut seen = BTreeSet::new();
     for path in canonical_context_paths(namespace)
@@ -269,7 +272,10 @@ pub(crate) fn load_node_context_for_memory(
     }))
 }
 
-pub(crate) fn source_evidence_for_path(conn: &Connection, node_path: &str) -> Result<SourceEvidence, String> {
+pub(crate) fn source_evidence_for_path(
+    conn: &Connection,
+    node_path: &str,
+) -> Result<SourceEvidence, String> {
     let mut refs = Vec::new();
     let mut seen = BTreeSet::new();
     collect_source_refs_from_path(conn, node_path, &mut refs, &mut seen)?;

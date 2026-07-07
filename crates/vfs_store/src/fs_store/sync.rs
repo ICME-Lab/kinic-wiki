@@ -202,7 +202,9 @@ pub(crate) fn scoped_snapshot_revision(prefix: &str, revision: i64) -> String {
     snapshot_revision_token(prefix, revision)
 }
 
-pub(crate) fn parse_known_snapshot_revision(snapshot_revision: &str) -> Option<KnownSnapshotRevision> {
+pub(crate) fn parse_known_snapshot_revision(
+    snapshot_revision: &str,
+) -> Option<KnownSnapshotRevision> {
     let mut parts = snapshot_revision.split(':');
     let version = parts.next()?;
     let parsed = parts.next()?.parse::<i64>().ok()?;

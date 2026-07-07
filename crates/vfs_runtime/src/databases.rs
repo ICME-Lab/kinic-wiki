@@ -795,7 +795,10 @@ impl VfsService {
     }
 }
 
-pub(crate) fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<(), String> {
+pub(crate) fn delete_database_index_rows(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<(), String> {
     for table in [
         "database_cycle_pending_operations",
         "database_cycle_ledger",
@@ -854,7 +857,10 @@ pub(crate) fn purge_expired_unstarted_pending_databases(
     Ok(())
 }
 
-pub(crate) fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<i64, String> {
+pub(crate) fn pending_database_count_for_caller(
+    conn: &Connection,
+    caller: &str,
+) -> Result<i64, String> {
     conn.query_row(
         "SELECT COUNT(*)
          FROM databases d
@@ -979,7 +985,10 @@ pub(crate) fn complete_pending_database_activation(
     Ok(())
 }
 
-pub(crate) fn database_balance_for_update(conn: &Transaction<'_>, database_id: &str) -> Result<i64, String> {
+pub(crate) fn database_balance_for_update(
+    conn: &Transaction<'_>,
+    database_id: &str,
+) -> Result<i64, String> {
     conn.query_row(
         "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = ?1",
         params![database_id],
@@ -1058,7 +1067,9 @@ pub(crate) fn validate_database_id(database_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn normalize_database_metadata(metadata: DatabaseMetadata) -> Result<DatabaseMetadata, String> {
+pub(crate) fn normalize_database_metadata(
+    metadata: DatabaseMetadata,
+) -> Result<DatabaseMetadata, String> {
     let name = normalize_database_name(&metadata.name)?;
     validate_database_multiline_text(
         "database description",
@@ -1203,7 +1214,10 @@ pub(crate) fn base32_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn database_file_name(databases_dir: &Path, database_id: &str) -> Result<String, String> {
+pub(crate) fn database_file_name(
+    databases_dir: &Path,
+    database_id: &str,
+) -> Result<String, String> {
     validate_database_id(database_id)?;
     Ok(databases_dir
         .join(format!("{database_id}.sqlite3"))
@@ -1323,7 +1337,10 @@ pub(crate) fn database_meta_error(conn: &Connection, database_id: &str) -> Strin
     }
 }
 
-pub(crate) fn load_database_status(conn: &Connection, database_id: &str) -> Result<DatabaseStatus, String> {
+pub(crate) fn load_database_status(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<DatabaseStatus, String> {
     conn.query_row(
         "SELECT status FROM databases WHERE database_id = ?1",
         params![database_id],
@@ -1511,7 +1528,9 @@ pub(crate) fn map_database_meta_with_statuses(
     map_database_meta(row)
 }
 
-pub(crate) fn map_database_meta(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<DatabaseMeta> {
+pub(crate) fn map_database_meta(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<DatabaseMeta> {
     let mount_id: Option<i64> = crate::sqlite::row_get(row, 6)?;
     let mount_id = mount_id.ok_or_else(crate::sqlite::query_returned_no_rows)?;
     let logical_size_bytes: i64 = crate::sqlite::row_get(row, 8)?;
@@ -1563,7 +1582,10 @@ pub(crate) fn database_member_exists(
     .map(|value| value.is_some())
 }
 
-pub(crate) fn database_member_count_for_conn(conn: &Connection, database_id: &str) -> Result<i64, String> {
+pub(crate) fn database_member_count_for_conn(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<i64, String> {
     conn.query_row(
         "SELECT COUNT(*) FROM database_members WHERE database_id = ?1",
         params![database_id],
@@ -1641,4 +1663,3 @@ pub(crate) fn role_allows(role: DatabaseRole, required_role: RequiredRole) -> bo
         RequiredRole::Owner => role == DatabaseRole::Owner,
     }
 }
-

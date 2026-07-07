@@ -9,11 +9,7 @@ mod context;
 mod marketplace;
 mod sql_json;
 mod sync;
-pub(crate) use context::*;
-pub(crate) use marketplace::*;
-pub(crate) use sync::*;
 pub use sql_json::validate_sql_json_select;
-pub(crate) use sql_json::*;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
@@ -1843,4 +1839,3 @@ fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bo
         }
     }
 }
-

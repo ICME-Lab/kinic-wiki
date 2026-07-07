@@ -1,7 +1,7 @@
 use super::{
-    ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
-    DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
-    SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+    ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand, DatabaseCommand,
+    HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand, SkillImportCommand,
+    SkillRunOutcomeArg, SkillStatusArg,
 };
 use clap::{CommandFactory, Parser};
 use std::path::PathBuf;
@@ -223,8 +223,7 @@ fn main_cli_parses_database_link_commands() {
     assert_eq!(database_id, "db_alpha");
     assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
     assert!(
-        Cli::try_parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"])
-            .is_err()
+        Cli::try_parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"]).is_err()
     );
 
     let cli = Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
@@ -432,8 +431,7 @@ fn main_cli_parses_store_api_commands() {
         "/Knowledge/a.md",
         "--json",
     ]);
-    let Some(VfsCommand::SourceEvidence { node_path, json }) =
-        evidence.command.as_vfs_command()
+    let Some(VfsCommand::SourceEvidence { node_path, json }) = evidence.command.as_vfs_command()
     else {
         panic!("expected VFS source-evidence command");
     };
@@ -684,8 +682,7 @@ fn command_identity_requirement_keeps_reads_anonymous() {
     assert!(!context_pack_export.command.requires_identity());
     assert!(context_pack_export.command.probes_anonymous_database_read());
 
-    let context_pack_verify =
-        Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack"]);
+    let context_pack_verify = Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack"]);
     assert!(!context_pack_verify.command.requires_identity());
     assert!(!context_pack_verify.command.probes_anonymous_database_read());
 
@@ -1156,8 +1153,7 @@ fn main_cli_parses_hermes_surfaces() {
 
     let removed_command = ["run", "ready"].join("-");
     assert!(
-        Cli::try_parse_from(["kinic-vfs-cli", "skill", "evolve-jobs", &removed_command])
-            .is_err()
+        Cli::try_parse_from(["kinic-vfs-cli", "skill", "evolve-jobs", &removed_command]).is_err()
     );
 }
 

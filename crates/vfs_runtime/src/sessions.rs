@@ -328,7 +328,9 @@ fn validate_source_capture_request_node(node: &Node, caller: &str) -> Result<(),
     Ok(())
 }
 
-pub(crate) fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<String>>, String> {
+pub(crate) fn parse_frontmatter_fields(
+    content: &str,
+) -> Result<BTreeMap<String, Option<String>>, String> {
     let rest = content
         .strip_prefix("---\n")
         .ok_or_else(|| "source capture request frontmatter is required".to_string())?;

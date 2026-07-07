@@ -4,8 +4,8 @@
 mod billing;
 mod cycles;
 mod databases;
-pub(crate) use databases::*;
 pub use databases::generated_database_id_for_test;
+pub(crate) use databases::*;
 mod index_schema;
 pub(crate) use billing::{DatabaseLedgerInsert, insert_database_ledger};
 mod market;

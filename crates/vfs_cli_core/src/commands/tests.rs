@@ -248,21 +248,17 @@ impl VfsApi for MockClient {
         sql: &str,
         limit: u32,
     ) -> Result<IndexSqlJsonQueryResult> {
-        self.sql_queries.lock().unwrap().push((
-            database_id.to_string(),
-            sql.to_string(),
-            limit,
-        ));
+        self.sql_queries
+            .lock()
+            .unwrap()
+            .push((database_id.to_string(), sql.to_string(), limit));
         Ok(IndexSqlJsonQueryResult {
             rows: vec![r#"{"ok":1}"#.to_string()],
             row_count: 1,
             limit,
         })
     }
-    async fn read_node_context(
-        &self,
-        request: NodeContextRequest,
-    ) -> Result<Option<NodeContext>> {
+    async fn read_node_context(&self, request: NodeContextRequest) -> Result<Option<NodeContext>> {
         self.contexts.lock().unwrap().push(request.clone());
         Ok(Some(NodeContext {
             node: Node {
@@ -395,17 +391,11 @@ impl VfsApi for MockClient {
     async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         unreachable!()
     }
-    async fn graph_neighborhood(
-        &self,
-        request: GraphNeighborhoodRequest,
-    ) -> Result<Vec<LinkEdge>> {
+    async fn graph_neighborhood(&self, request: GraphNeighborhoodRequest) -> Result<Vec<LinkEdge>> {
         self.neighborhoods.lock().unwrap().push(request);
         Ok(Vec::new())
     }
-    async fn multi_edit_node(
-        &self,
-        _request: MultiEditNodeRequest,
-    ) -> Result<MultiEditNodeResult> {
+    async fn multi_edit_node(&self, _request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
         unreachable!()
     }
     async fn search_nodes(&self, _request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
@@ -429,10 +419,7 @@ impl VfsApi for MockClient {
             next_cursor: Some("cursor-2".to_string()),
         })
     }
-    async fn fetch_updates(
-        &self,
-        request: FetchUpdatesRequest,
-    ) -> Result<FetchUpdatesResponse> {
+    async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse> {
         self.fetch_updates_requests.lock().unwrap().push(request);
         Ok(FetchUpdatesResponse {
             snapshot_revision: "rev-3".to_string(),
@@ -1483,8 +1470,7 @@ fn node_field_view_can_omit_content() {
     assert!(metadata.get("content").is_none());
     assert_eq!(metadata["path"], "/Knowledge/index.md");
 
-    let fields =
-        super::node_field_view(&node, false, Some("path,kind,etag")).expect("field view");
+    let fields = super::node_field_view(&node, false, Some("path,kind,etag")).expect("field view");
     assert!(fields.get("content").is_none());
     assert_eq!(
         fields.as_object().expect("fields should be object").len(),

@@ -170,7 +170,10 @@ impl CyclesBillingConfigOutput {
     }
 }
 
-pub(crate) fn cycles_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec<String> {
+pub(crate) fn cycles_config_lines(
+    config: &CyclesBillingConfig,
+    ledger_fee_e8s: u64,
+) -> Vec<String> {
     vec![
         format!(
             "kinic_ledger_canister_id\t{}",
