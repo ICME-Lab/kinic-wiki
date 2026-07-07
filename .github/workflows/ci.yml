@@ -93,6 +93,10 @@ jobs:
           node-version: 24
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
+      - name: Check file size ratchet
+        run: node scripts/check-file-sizes.mjs
+      - name: Check docs links
+        run: node scripts/check-docs-links.mjs
 
   ios-check:
     needs: changes
@@ -263,6 +267,12 @@ jobs:
           rustup component add rustfmt clippy
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - name: Check unused dependencies
+        run: cargo machete
       - name: Run workspace tests
         if: needs.changes.outputs.rust_all == 'true'
         run: cargo test --workspace --locked
