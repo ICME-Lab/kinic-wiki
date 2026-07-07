@@ -1,8 +1,9 @@
 // Where: mobile/ios/KinicShareExtension/ShareViewController.swift
-// What: Minimal Share Extension controller for URL capture.
-// Why: Browser share should submit immediately when possible and otherwise preserve the URL.
+// What: Share Extension controller for URL capture and explicit database selection.
+// Why: Browser shares must show the writable DB target before saving.
 
 import UIKit
+import ICNativeClient
 import UniformTypeIdentifiers
 
 final class ShareViewController: UIViewController {
@@ -11,7 +12,17 @@ final class ShareViewController: UIViewController {
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let databaseTableView = UITableView(frame: .zero, style: .plain)
+    private let refreshButton = UIButton(type: .system)
+    private let saveButton = UIButton(type: .system)
     private let doneButton = UIButton(type: .system)
+    private var sharedURL: URL?
+    private var databases: [DatabaseSummary] = []
+    private var selectedDatabaseId: String?
+    private var configuration: AppConfiguration?
+    private var session: ICAuthSession?
+    private var settingsStore: SharedDefaultsStore?
+    private var submitter: ShareCaptureSubmitter?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -49,15 +60,27 @@ final class ShareViewController: UIViewController {
         activityIndicator.color = KinicDesign.uiHotPink
         activityIndicator.hidesWhenStopped = true
 
-        var doneConfiguration = UIButton.Configuration.plain()
-        doneConfiguration.title = "Done"
-        doneConfiguration.baseForegroundColor = .black
-        doneConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
-        doneConfiguration.background.backgroundColor = .white
-        doneConfiguration.background.strokeColor = KinicDesign.uiHairlineGray
-        doneConfiguration.background.strokeWidth = 1
-        doneConfiguration.background.cornerRadius = KinicDesign.radius
-        doneButton.configuration = doneConfiguration
+        databaseTableView.dataSource = self
+        databaseTableView.delegate = self
+        databaseTableView.backgroundColor = .white
+        databaseTableView.separatorColor = KinicDesign.uiHairlineGray
+        databaseTableView.layer.borderColor = KinicDesign.uiHairlineGray.cgColor
+        databaseTableView.layer.borderWidth = 1
+        databaseTableView.layer.cornerRadius = KinicDesign.radius
+        databaseTableView.isHidden = true
+
+        refreshButton.configuration = buttonConfiguration(title: "Refresh databases", filled: false)
+        refreshButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        refreshButton.addTarget(self, action: #selector(refreshDatabases), for: .touchUpInside)
+        refreshButton.isHidden = true
+
+        saveButton.configuration = buttonConfiguration(title: "Save", filled: true)
+        saveButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        saveButton.addTarget(self, action: #selector(saveSelectedDatabase), for: .touchUpInside)
+        saveButton.isHidden = true
+        saveButton.isEnabled = false
+
+        doneButton.configuration = buttonConfiguration(title: "Done", filled: false)
         doneButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         doneButton.addTarget(self, action: #selector(finish), for: .touchUpInside)
 
@@ -66,9 +89,9 @@ final class ShareViewController: UIViewController {
         textStack.alignment = .fill
         textStack.spacing = 8
 
-        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, doneButton])
+        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, databaseTableView, refreshButton, saveButton, doneButton])
         actionStack.axis = .vertical
-        actionStack.alignment = .center
+        actionStack.alignment = .fill
         actionStack.spacing = 12
 
         let stack = UIStackView(arrangedSubviews: [brandStack, textStack, actionStack])
@@ -82,9 +105,24 @@ final class ShareViewController: UIViewController {
             stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
             stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            databaseTableView.heightAnchor.constraint(equalToConstant: 240),
+            refreshButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            saveButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             doneButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
         ])
+    }
+
+    private func buttonConfiguration(title: String, filled: Bool) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.baseForegroundColor = filled ? .white : .black
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
+        configuration.background.backgroundColor = filled ? KinicDesign.uiHotPink : .white
+        configuration.background.strokeColor = filled ? KinicDesign.uiHotPink : KinicDesign.uiHairlineGray
+        configuration.background.strokeWidth = 1
+        configuration.background.cornerRadius = KinicDesign.radius
+        return configuration
     }
 
     private func processSharedURL() {
@@ -107,7 +145,7 @@ final class ShareViewController: UIViewController {
                     self?.showFailure(ShareExtensionError.missingURL)
                     return
                 }
-                self?.submitSharedURL(sharedURL)
+                self?.prepareDatabaseSelection(for: sharedURL)
             }
         }
     }
@@ -116,27 +154,159 @@ final class ShareViewController: UIViewController {
         titleLabel.text = "Saving to KinicWiki..."
         messageLabel.text = "Keep this sheet open for a moment."
         activityIndicator.startAnimating()
+        databaseTableView.isHidden = true
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
         doneButton.isHidden = true
     }
 
-    private func submitSharedURL(_ url: URL) {
-        let submitter: ShareCaptureSubmitter
+    private func prepareDatabaseSelection(for url: URL) {
+        sharedURL = url
+        let configuration: AppConfiguration
+        let activeSettingsStore: SharedDefaultsStore
+        let activeSubmitter: ShareCaptureSubmitter
         do {
-            submitter = try ShareCaptureSubmitter.makeLive(configuration: AppConfiguration.liveFromBundle())
+            configuration = AppConfiguration.liveFromBundle()
+            activeSettingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
+            activeSubmitter = try ShareCaptureSubmitter.makeLive(configuration: configuration)
         } catch {
             showResult(.failed(message: error.localizedDescription))
             return
         }
+        self.configuration = configuration
+        settingsStore = activeSettingsStore
+        submitter = activeSubmitter
+
+        guard let session = KinicAuthSessionStore(configuration: configuration).restore() else {
+            submitSharedURL(url)
+            return
+        }
+        self.session = session
+
+        let cachedDatabases = activeSettingsStore.writableDatabases
+        if !cachedDatabases.isEmpty {
+            showDatabaseSelection(cachedDatabases, savedDatabaseId: activeSettingsStore.databaseId)
+            return
+        }
+
+        refreshWritableDatabases(
+            configuration: configuration,
+            session: session,
+            settingsStore: activeSettingsStore,
+            fallbackWhenEmpty: true
+        )
+    }
+
+    private func refreshWritableDatabases(
+        configuration: AppConfiguration,
+        session: ICAuthSession,
+        settingsStore: SharedDefaultsStore,
+        fallbackWhenEmpty: Bool
+    ) {
+        titleLabel.text = "Choose database"
+        messageLabel.text = "Loading writable databases..."
+        activityIndicator.startAnimating()
+        databaseTableView.isHidden = true
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
+        doneButton.isHidden = true
+
         Task { [weak self] in
-            let result = await submitter.submitSharedURL(url)
+            let client = KinicICClient(configuration: configuration)
+            do {
+                let databases = try await client.listWritableDatabases(session: session)
+                await MainActor.run {
+                    settingsStore.writableDatabases = databases
+                    self?.showDatabaseSelection(
+                        databases,
+                        savedDatabaseId: settingsStore.databaseId,
+                        fallbackWhenEmpty: fallbackWhenEmpty
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    self?.showRefreshFailure(error)
+                }
+            }
+        }
+    }
+
+    private func showDatabaseSelection(_ loadedDatabases: [DatabaseSummary], savedDatabaseId: String, fallbackWhenEmpty: Bool = false) {
+        guard !loadedDatabases.isEmpty else {
+            if fallbackWhenEmpty {
+                settingsStore?.databaseId = ""
+                submitSharedURL(sharedURL)
+                return
+            }
+            databases = []
+            selectedDatabaseId = nil
+            titleLabel.text = "Choose database"
+            messageLabel.text = "No writable databases were found."
+            activityIndicator.stopAnimating()
+            databaseTableView.reloadData()
+            databaseTableView.isHidden = true
+            refreshButton.isHidden = false
+            refreshButton.isEnabled = true
+            saveButton.isHidden = false
+            doneButton.isHidden = false
+            updateSaveButton()
+            return
+        }
+        databases = loadedDatabases
+        let savedId = savedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        selectedDatabaseId = databases.contains(where: { $0.databaseId == savedId }) ? savedId : nil
+        titleLabel.text = "Choose database"
+        messageLabel.text = "Select where KinicWiki saves this URL."
+        activityIndicator.stopAnimating()
+        databaseTableView.reloadData()
+        if let selectedIndex = databases.firstIndex(where: { $0.databaseId == selectedDatabaseId }) {
+            databaseTableView.selectRow(
+                at: IndexPath(row: selectedIndex, section: 0),
+                animated: false,
+                scrollPosition: .middle
+            )
+        }
+        databaseTableView.isHidden = false
+        refreshButton.isHidden = false
+        refreshButton.isEnabled = true
+        saveButton.isHidden = false
+        doneButton.isHidden = false
+        updateSaveButton()
+    }
+
+    private func submitSharedURL(_ url: URL?, databaseIdOverride: String? = nil) {
+        guard let url else {
+            showFailure(ShareExtensionError.missingURL)
+            return
+        }
+        let activeSubmitter: ShareCaptureSubmitter
+        if let submitter {
+            activeSubmitter = submitter
+        } else {
+            do {
+                activeSubmitter = try ShareCaptureSubmitter.makeLive(configuration: AppConfiguration.liveFromBundle())
+            } catch {
+                showResult(.failed(message: error.localizedDescription))
+                return
+            }
+        }
+        Task { [weak self] in
+            let result = await activeSubmitter.submitSharedURL(url, databaseIdOverride: databaseIdOverride)
             await MainActor.run {
                 self?.showResult(result)
             }
         }
     }
 
+    private func updateSaveButton() {
+        saveButton.isEnabled = selectedDatabaseId != nil
+    }
+
     private func showResult(_ result: ShareCaptureResult) {
         activityIndicator.stopAnimating()
+        databaseTableView.isHidden = true
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
         doneButton.isHidden = false
         switch result {
         case .saved:
@@ -153,13 +323,89 @@ final class ShareViewController: UIViewController {
 
     private func showFailure(_ error: Error) {
         activityIndicator.stopAnimating()
+        databaseTableView.isHidden = true
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
         titleLabel.text = "Could not complete capture"
         messageLabel.text = error.localizedDescription
         doneButton.isHidden = false
     }
 
+    @objc private func saveSelectedDatabase() {
+        guard let selectedDatabaseId else {
+            return
+        }
+        settingsStore?.databaseId = selectedDatabaseId
+        let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.displayTitle ?? selectedDatabaseId
+        titleLabel.text = "Saving to KinicWiki..."
+        messageLabel.text = "Saving to \(databaseTitle)."
+        activityIndicator.startAnimating()
+        databaseTableView.isHidden = true
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
+        doneButton.isHidden = true
+        submitSharedURL(sharedURL, databaseIdOverride: selectedDatabaseId)
+    }
+
+    @objc private func refreshDatabases() {
+        guard let configuration, let session, let settingsStore else {
+            showResult(.failed(message: "KinicWiki session is not available."))
+            return
+        }
+        refreshButton.isEnabled = false
+        saveButton.isEnabled = false
+        refreshWritableDatabases(
+            configuration: configuration,
+            session: session,
+            settingsStore: settingsStore,
+            fallbackWhenEmpty: false
+        )
+    }
+
+    private func showRefreshFailure(_ error: Error) {
+        activityIndicator.stopAnimating()
+        guard !databases.isEmpty else {
+            showResult(.failed(message: error.localizedDescription))
+            return
+        }
+        messageLabel.text = "Could not refresh databases: \(error.localizedDescription)"
+        databaseTableView.isHidden = false
+        refreshButton.isHidden = false
+        refreshButton.isEnabled = true
+        saveButton.isHidden = false
+        doneButton.isHidden = false
+        updateSaveButton()
+    }
+
     @objc private func finish() {
         extensionContext?.completeRequest(returningItems: nil)
+    }
+}
+
+extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        databases.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let database = databases[indexPath.row]
+        let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+        cell.textLabel?.font = .preferredFont(forTextStyle: .headline)
+        cell.textLabel?.text = database.displayTitle
+        cell.detailTextLabel?.font = .preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.textColor = KinicDesign.uiBodyGray
+        cell.detailTextLabel?.numberOfLines = 2
+        cell.detailTextLabel?.text = "\(database.role.displayName) - \(database.databaseId)"
+        cell.tintColor = KinicDesign.uiHotPink
+        cell.accessoryType = database.databaseId == selectedDatabaseId ? .checkmark : .none
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        selectedDatabaseId = databases[indexPath.row].databaseId
+        tableView.deselectRow(at: indexPath, animated: true)
+        tableView.reloadData()
+        updateSaveButton()
     }
 }
 

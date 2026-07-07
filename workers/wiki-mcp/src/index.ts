@@ -1211,7 +1211,6 @@ function toolError(message: string, payload: Record<string, unknown>) {
   const contentPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(contentPayload) }],
-    structuredContent: contentPayload,
     isError: true
   };
 }

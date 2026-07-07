@@ -728,10 +728,10 @@ fn write_nodes_rolls_back_when_later_item_fails() {
 }
 
 #[test]
-fn write_nodes_rejects_folder_item_without_partial_write() {
+fn write_nodes_creates_folder_items() {
     let (_dir, store) = new_store();
 
-    let error = store
+    let results = store
         .write_nodes(
             WriteNodesRequest {
                 database_id: "default".to_string(),
@@ -754,14 +754,19 @@ fn write_nodes_rejects_folder_item_without_partial_write() {
             },
             10,
         )
-        .expect_err("folder item should fail");
+        .expect("folder item should create");
 
-    assert!(error.contains("write_node cannot create folders"));
-    assert!(
+    assert_eq!(results.len(), 2);
+    assert!(results[1].created);
+    assert_eq!(results[1].node.path, "/Knowledge/folder");
+    assert_eq!(results[1].node.kind, NodeKind::Folder);
+    assert_eq!(
         store
-            .read_node("/Knowledge/new-before-folder.md")
+            .read_node("/Knowledge/folder")
             .expect("read should succeed")
-            .is_none()
+            .expect("folder should exist")
+            .kind,
+        NodeKind::Folder
     );
 }
 

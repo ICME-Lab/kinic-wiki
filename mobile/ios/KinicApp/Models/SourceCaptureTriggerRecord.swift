@@ -9,6 +9,7 @@ struct SourceCaptureTriggerRecord: Codable, Equatable, Sendable {
     let requestPath: String
     let requestId: String
     let url: String
+    let sessionNonce: String
     let createdAt: Date
     let lastError: String?
 }

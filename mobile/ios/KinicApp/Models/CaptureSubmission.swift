@@ -9,4 +9,5 @@ struct CaptureSubmission: Equatable, Sendable {
     let requestPath: String
     let requestId: String
     let url: URL
+    let sessionNonce: String
 }

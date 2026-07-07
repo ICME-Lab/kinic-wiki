@@ -11,7 +11,8 @@ struct ShareCaptureSubmitter: Sendable {
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
     private let enqueueURL: @Sendable (URL, Date, String?) throws -> Void
-    private let enqueueTrigger: @Sendable (SourceCaptureRequest, Date) throws -> Void
+    private let enqueueTrigger: @Sendable (SourceCaptureRequest, String, Date) throws -> Void
+    private let removeTrigger: @Sendable (String) -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
@@ -33,8 +34,11 @@ struct ShareCaptureSubmitter: Sendable {
                 let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
                 try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
             },
-            enqueueTrigger: { request, createdAt in
-                try triggerQueue.enqueue(request, createdAt: createdAt)
+            enqueueTrigger: { request, sessionNonce, createdAt in
+                try triggerQueue.enqueue(request, sessionNonce: sessionNonce, createdAt: createdAt)
+            },
+            removeTrigger: { requestId in
+                triggerQueue.remove(requestId: requestId)
             },
             saveRequest: { request, session in
                 try await client.saveSourceCaptureRequest(request, session: session)
@@ -43,6 +47,7 @@ struct ShareCaptureSubmitter: Sendable {
                 try await client.triggerSourceCapture(
                     databaseId: submission.databaseId,
                     requestPath: submission.requestPath,
+                    sessionNonce: submission.sessionNonce,
                     session: session
                 )
             }
@@ -55,7 +60,8 @@ struct ShareCaptureSubmitter: Sendable {
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
         enqueueURL: @escaping @Sendable (URL, Date, String?) throws -> Void,
-        enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void,
+        enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, String, Date) throws -> Void,
+        removeTrigger: @escaping @Sendable (String) -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
         triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
     ) {
@@ -65,11 +71,12 @@ struct ShareCaptureSubmitter: Sendable {
         self.selectedDatabaseId = selectedDatabaseId
         self.enqueueURL = enqueueURL
         self.enqueueTrigger = enqueueTrigger
+        self.removeTrigger = removeTrigger
         self.saveRequest = saveRequest
         self.triggerSourceCapture = triggerSourceCapture
     }
 
-    func submitSharedURL(_ url: URL) async -> ShareCaptureResult {
+    func submitSharedURL(_ url: URL, databaseIdOverride: String? = nil) async -> ShareCaptureResult {
         let normalizedURL: URL
         do {
             normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
@@ -79,7 +86,13 @@ struct ShareCaptureSubmitter: Sendable {
         guard let session = restoreSession() else {
             return queue(normalizedURL, reason: "Sign in in KinicWikiApp to send this URL later.")
         }
-        let databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
+        let databaseId: String
+        if let overrideDatabaseId = databaseIdOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !overrideDatabaseId.isEmpty {
+            databaseId = overrideDatabaseId
+        } else {
+            databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !databaseId.isEmpty else {
             return queue(normalizedURL, reason: "Select a writable database in KinicWikiApp to send this URL later.")
         }
@@ -109,30 +122,21 @@ struct ShareCaptureSubmitter: Sendable {
             )
         }
         do {
-            try await withTimeout {
+            try enqueueTrigger(request, submission.sessionNonce, receivedAt)
+        } catch {
+            return .failed(
+                message: "Source capture request was saved, but capture could not queue for retry: \(error.localizedDescription)"
+            )
+        }
+        Task {
+            do {
                 try await triggerSourceCapture(submission, session)
+                removeTrigger(submission.requestId)
+            } catch {
+                // Retry remains queued for the containing app.
             }
-            return .saved(requestPath: submission.requestPath)
-        } catch {
-            return savedRequestWithPendingTrigger(request, receivedAt: receivedAt, triggerError: error)
         }
-    }
-
-    private func savedRequestWithPendingTrigger(
-        _ request: SourceCaptureRequest,
-        receivedAt: Date,
-        triggerError: Error
-    ) -> ShareCaptureResult {
-        do {
-            try enqueueTrigger(request, receivedAt)
-            return .failed(
-                message: "Source capture request was saved, but capture could not start. Open KinicWikiApp to retry."
-            )
-        } catch {
-            return .failed(
-                message: "Source capture request was saved, but capture could not start or queue for retry: \(triggerError.localizedDescription); \(error.localizedDescription)"
-            )
-        }
+        return .saved(requestPath: submission.requestPath)
     }
 
     private func queue(

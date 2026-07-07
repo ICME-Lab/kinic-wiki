@@ -10,6 +10,7 @@ struct PendingSourceCaptureTrigger: Identifiable, Equatable, Sendable {
     let requestPath: String
     let requestId: String
     let url: URL
+    let sessionNonce: String
     let createdAt: Date
     let lastError: String?
 }

@@ -155,6 +155,7 @@ assert.match(twitterImageSource, /renderLinkPreviewImage/);
 assert.match(databaseLayoutSource, /generateMetadata/);
 assert.match(databaseLayoutSource, /loadDatabasePreview/);
 assert.match(databaseLayoutSource, /databasePreviewTitle/);
+assert.match(databaseLayoutSource, /<div aria-hidden="true" className="wiki-seo-region" inert>/);
 assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/opengraph-image`/);
 assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/twitter-image`/);
 assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/opengraph-image"\)/);

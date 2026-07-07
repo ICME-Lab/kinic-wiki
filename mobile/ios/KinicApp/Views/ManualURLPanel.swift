@@ -12,23 +12,21 @@ struct ManualURLPanel: View {
     var body: some View {
         KinicPanel(title: "Send URL", systemImage: "link") {
             VStack(alignment: .leading, spacing: 12) {
-                ZStack(alignment: .topLeading) {
-                    if urlText.isEmpty {
-                        Text("https://example.com/article")
-                            .foregroundStyle(KinicDesign.bodyGray)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField("", text: $urlText, axis: .vertical)
-                        .foregroundStyle(.black)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .focused(isURLFocused)
-                        .lineLimit(1...3)
-                        .accessibilityLabel("URL")
-                }
+                TextField(
+                    "",
+                    text: $urlText,
+                    prompt: Text("https://example.com/article")
+                        .foregroundStyle(.secondary),
+                    axis: .vertical
+                )
+                    .foregroundStyle(.black)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .focused(isURLFocused)
+                    .lineLimit(1...3)
+                    .accessibilityLabel("URL")
                     .padding(14)
                     .background(.white)
                     .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))

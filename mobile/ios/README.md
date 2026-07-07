@@ -12,6 +12,8 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Submits shared URLs directly from `KinicShareExtension` when a shared Keychain session and selected database are available.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
+- Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
+- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
 
@@ -28,8 +30,8 @@ The Bundle IDs are fixed to the App Store records:
 - `KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki`
 - `KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension`
 
-The production AASA document is a static JSON file at `wikibrowser/public/.well-known/apple-app-site-association`.
-It uses the fixed App ID `AKN976G7AK.xyz.kinic.ios.KinicWiki`.
+The production AASA document is served by `wikibrowser/app/.well-known/apple-app-site-association/route.ts`.
+It uses the fixed App ID `AKN976G7AK.xyz.kinic.ios.KinicWiki` and must return `content-type: application/json`.
 
 Enable these capabilities:
 
@@ -40,8 +42,9 @@ Enable these capabilities:
 - Associated Domains on the app target:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
+  - Debug device builds also include `?mode=developer` variants so iOS can refresh the AASA from the origin while Apple CDN caches are stale.
 
-Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` serving the static `applinks` / `webcredentials` document for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
+Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` serving the JSON `applinks` / `webcredentials` document for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
 
 The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
 
@@ -88,5 +91,17 @@ ASC_ISSUER_ID=<issuer-id> \
 mobile/ios/scripts/testflight-upload.sh
 ```
 
-Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200 and includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
+Upload an external-TestFlight-capable build:
+
+```bash
+KINIC_IOS_BUILD_NUMBER=<next-build-number> \
+ASC_KEY_PATH=/path/to/AuthKey_<key-id>.p8 \
+ASC_KEY_ID=<key-id> \
+ASC_ISSUER_ID=<issuer-id> \
+mobile/ios/scripts/testflight-upload.sh --external
+```
+
+External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
+
+Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200, returns `content-type: application/json`, includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`, and uses `paths: ["/*"]`. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
 The script fails before upload if either the app archive or Share Extension archive lacks `PrivacyInfo.xcprivacy`.

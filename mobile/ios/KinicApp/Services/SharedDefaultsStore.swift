@@ -6,7 +6,11 @@ import Foundation
 
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
+    private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
+    private static let writableDatabasesKey = "kinic.writable-databases.v1"
     private let defaults: UserDefaults
+    private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
 
     init(appGroupId: String?, strict: Bool = false) throws {
         defaults = try Self.defaults(appGroupId: appGroupId, strict: strict)
@@ -22,6 +26,33 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.databaseIdKey)
+        }
+    }
+
+    var browseDatabaseId: String {
+        get {
+            defaults.string(forKey: Self.browseDatabaseIdKey) ?? ""
+        }
+        nonmutating set {
+            defaults.set(newValue, forKey: Self.browseDatabaseIdKey)
+        }
+    }
+
+    var writableDatabases: [DatabaseSummary] {
+        get {
+            guard let data = defaults.data(forKey: Self.writableDatabasesKey),
+                  let databases = try? decoder.decode([DatabaseSummary].self, from: data) else {
+                return []
+            }
+            return databases.filter(\.canWrite)
+        }
+        nonmutating set {
+            let writable = newValue.filter(\.canWrite)
+            guard let data = try? encoder.encode(writable) else {
+                defaults.removeObject(forKey: Self.writableDatabasesKey)
+                return
+            }
+            defaults.set(data, forKey: Self.writableDatabasesKey)
         }
     }
 

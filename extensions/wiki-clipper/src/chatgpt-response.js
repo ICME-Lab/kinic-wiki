@@ -3,6 +3,10 @@
 // Why: Direct API export needs stable mapping/current_node conversion.
 import { appendLimitedMessage } from "./conversation-limits.js";
 
+// ChatGPT private API can include private-use citation markers that are UI artifacts,
+// not stable source evidence. Drop only complete cite tokens and leave text spacing intact.
+const CHATGPT_CITATION_MARKER_PATTERN = /\uE200cite(?:\uE202[^\uE201]*)+\uE201/g;
+
 export function conversationIdFromUrl(value) {
   try {
     const url = new URL(value, location.href);
@@ -80,6 +84,7 @@ function normalizeRole(role) {
 
 function normalizeText(value) {
   return String(value || "")
+    .replace(CHATGPT_CITATION_MARKER_PATTERN, "")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .trim();

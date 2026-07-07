@@ -8,8 +8,10 @@ enum VFSCandidEncoder {
     private static let magic = Data([0x44, 0x49, 0x44, 0x4c])
     private static let typeNull: Int64 = -1
     private static let typeBool: Int64 = -2
+    private static let typeNat32: Int64 = -7
     private static let typeText: Int64 = -15
     private static let typeOpt: Int64 = -18
+    private static let typeVec: Int64 = -19
     private static let typeRecord: Int64 = -20
     private static let typeVariant: Int64 = -21
 
@@ -40,6 +42,50 @@ enum VFSCandidEncoder {
         textArgs([databaseId, path])
     }
 
+    static func listChildren(databaseId: String, path: String) -> Data {
+        oneRecord(
+            tableEntries: [
+                record([
+                    field("path", primitive(typeText)),
+                    field("database_id", primitive(typeText))
+                ])
+            ],
+            argType: table(0),
+            namedValues: [
+                ("path", .text(path)),
+                ("database_id", .text(databaseId))
+            ]
+        )
+    }
+
+    static func searchNodes(databaseId: String, query: String, prefix: String?, topK: UInt32) -> Data {
+        let optionalText = opt(primitive(typeText))
+        let previewMode = variant([
+            field("Light", primitive(typeNull)),
+            field("ContentStart", primitive(typeNull)),
+            field("None", primitive(typeNull))
+        ])
+        let optionalPreviewMode = opt(table(1))
+        let searchRequest = record([
+            field("top_k", primitive(typeNat32)),
+            field("database_id", primitive(typeText)),
+            field("preview_mode", table(2)),
+            field("prefix", table(0)),
+            field("query_text", primitive(typeText))
+        ])
+        return oneRecord(
+            tableEntries: [optionalText, previewMode, optionalPreviewMode, searchRequest],
+            argType: table(3),
+            namedValues: [
+                ("top_k", .nat32(topK)),
+                ("database_id", .text(databaseId)),
+                ("preview_mode", .some(.variant("Light", ["Light", "ContentStart", "None"], .null))),
+                ("prefix", prefix.map { .some(.text($0)) } ?? .none),
+                ("query_text", .text(query))
+            ]
+        )
+    }
+
     static func createDatabase(name: String) -> Data {
         oneRecord(
             tableEntries: [
@@ -50,6 +96,28 @@ enum VFSCandidEncoder {
             argType: table(0),
             values: [
                 .text(name)
+            ]
+        )
+    }
+
+    static func updateDatabaseMetadata(databaseId: String, name: String, description: String, llmSummary: String?, tagsJson: String) -> Data {
+        let optionalText = opt(primitive(typeText))
+        let metadataRequest = record([
+            field("llm_summary", table(0)),
+            field("name", primitive(typeText)),
+            field("description", primitive(typeText)),
+            field("database_id", primitive(typeText)),
+            field("tags_json", primitive(typeText))
+        ])
+        return oneRecord(
+            tableEntries: [optionalText, metadataRequest],
+            argType: table(1),
+            namedValues: [
+                ("llm_summary", llmSummary.map { .some(.text($0)) } ?? .none),
+                ("name", .text(name)),
+                ("description", .text(description)),
+                ("database_id", .text(databaseId)),
+                ("tags_json", .text(tagsJson))
             ]
         )
     }
@@ -90,12 +158,57 @@ enum VFSCandidEncoder {
             argType: table(2),
             values: [
                 .text(request.content),
-                .variant("File", .null),
+                .variant("File", ["File", "Source", "Folder"], .null),
                 .text(request.requestPath),
                 .none,
                 .text(request.metadataJson),
                 .text(request.databaseId)
             ]
+        )
+    }
+
+    static func writeNodes(_ request: SourceCaptureRequest) -> Data {
+        let nodeKind = variant([
+            field("File", primitive(typeNull)),
+            field("Source", primitive(typeNull)),
+            field("Folder", primitive(typeNull))
+        ])
+        let optionalText = opt(primitive(typeText))
+        let writeNodeItem = record([
+            field("content", primitive(typeText)),
+            field("kind", table(0)),
+            field("path", primitive(typeText)),
+            field("expected_etag", table(1)),
+            field("metadata_json", primitive(typeText))
+        ])
+        let writeNodeItems = vec(table(2))
+        let writeNodesRequest = record([
+            field("nodes", table(3)),
+            field("database_id", primitive(typeText))
+        ])
+        return oneRecord(
+            tableEntries: [nodeKind, optionalText, writeNodeItem, writeNodeItems, writeNodesRequest],
+            argType: table(4),
+            namedValues: [
+                ("nodes", .vector([
+                    .record([
+                        ("content", .text(request.content)),
+                        ("kind", .variant("File", ["File", "Source", "Folder"], .null)),
+                        ("path", .text(request.requestPath)),
+                        ("expected_etag", .none),
+                        ("metadata_json", .text(request.metadataJson))
+                    ])
+                ])),
+                ("database_id", .text(request.databaseId))
+            ]
+        )
+    }
+
+    private static func oneRecord(tableEntries: [TypeEntry], argType: TypeRef, namedValues: [(String, Value)]) -> Data {
+        oneRecord(
+            tableEntries: tableEntries,
+            argType: argType,
+            values: namedValues.sorted { label($0.0) < label($1.0) }.map(\.1)
         )
     }
 
@@ -140,8 +253,16 @@ enum VFSCandidEncoder {
         .opt(type)
     }
 
+    private static func vec(_ type: TypeRef) -> TypeEntry {
+        .vec(type)
+    }
+
     private static func field(_ name: String, _ type: TypeRef) -> Field {
         Field(id: VFSCandidLabels.id(name), name: name, type: type)
+    }
+
+    private static func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
     }
 
     private static func primitive(_ value: Int64) -> TypeRef {
@@ -171,6 +292,9 @@ enum VFSCandidEncoder {
         case .opt(let type):
             appendSigned(typeOpt, to: &data)
             encode(type, to: &data)
+        case .vec(let type):
+            appendSigned(typeVec, to: &data)
+            encode(type, to: &data)
         }
     }
 
@@ -185,14 +309,28 @@ enum VFSCandidEncoder {
         switch value {
         case .null:
             break
+        case .nat32(let value):
+            appendFixedUInt32(value, to: &data)
         case .text(let text):
             let bytes = Data(text.utf8)
             appendUnsigned(UInt64(bytes.count), to: &data)
             data.append(bytes)
-        case .variant(let label, let inner):
-            let fields = ["File", "Source", "Folder"].sorted { VFSCandidLabels.id($0) < VFSCandidLabels.id($1) }
+        case .record(let fields):
+            for field in fields.sorted(by: { label($0.0) < label($1.0) }) {
+                encode(field.1, to: &data)
+            }
+        case .vector(let values):
+            appendUnsigned(UInt64(values.count), to: &data)
+            for value in values {
+                encode(value, to: &data)
+            }
+        case .variant(let label, let cases, let inner):
+            let fields = cases.sorted { VFSCandidLabels.id($0) < VFSCandidLabels.id($1) }
             let index = fields.firstIndex(of: label) ?? 0
             appendUnsigned(UInt64(index), to: &data)
+            encode(inner, to: &data)
+        case .some(let inner):
+            data.append(1)
             encode(inner, to: &data)
         case .none:
             data.append(0)
@@ -205,6 +343,12 @@ enum VFSCandidEncoder {
 
     private static func appendSigned(_ value: Int64, to data: inout Data) {
         VFSCandidLEB.appendSigned(value, to: &data)
+    }
+
+    private static func appendFixedUInt32(_ value: UInt32, to data: inout Data) {
+        for offset in 0..<4 {
+            data.append(UInt8(truncatingIfNeeded: value >> UInt32(offset * 8)))
+        }
     }
 
     private struct Field {
@@ -222,12 +366,17 @@ enum VFSCandidEncoder {
         case record([Field])
         case variant([Field])
         case opt(TypeRef)
+        case vec(TypeRef)
     }
 
     private indirect enum Value {
         case null
+        case nat32(UInt32)
         case text(String)
-        case variant(String, Value)
+        case record([(String, Value)])
+        case vector([Value])
+        case variant(String, [String], Value)
+        case some(Value)
         case none
     }
 }

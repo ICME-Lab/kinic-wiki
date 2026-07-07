@@ -42,7 +42,11 @@ enum VFSCandidLEB {
             }
             let byte = data[offset]
             offset += 1
-            result |= UInt64(byte & 0x7f) << shift
+            let payload = UInt64(byte & 0x7f)
+            if shift > 63 || (shift == 63 && payload > 1) {
+                throw VFSCandidError.invalidPayload("unsigned LEB128 is too large")
+            }
+            result |= payload << shift
             if (byte & 0x80) == 0 {
                 return result
             }

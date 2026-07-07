@@ -331,11 +331,7 @@ impl FsStore {
         self.write_conn(|tx| {
             let mut results = Vec::with_capacity(request.nodes.len());
             for item in request.nodes {
-                results.push(write_node_in_tx(
-                    tx,
-                    write_node_request_from_item(&request.database_id, item),
-                    now,
-                )?);
+                results.push(write_node_item_in_tx(tx, &request.database_id, item, now)?);
             }
             Ok(results)
         })
@@ -1219,6 +1215,75 @@ fn write_node_request_from_item(database_id: &str, item: WriteNodeItem) -> Write
         metadata_json: item.metadata_json,
         expected_etag: item.expected_etag,
     }
+}
+
+fn write_node_item_in_tx(
+    tx: &Transaction<'_>,
+    database_id: &str,
+    item: WriteNodeItem,
+    now: i64,
+) -> Result<WriteNodeResult, String> {
+    if item.kind == NodeKind::Folder {
+        return write_folder_item_in_tx(tx, item, now);
+    }
+    write_node_in_tx(tx, write_node_request_from_item(database_id, item), now)
+}
+
+fn write_folder_item_in_tx(
+    tx: &Transaction<'_>,
+    item: WriteNodeItem,
+    now: i64,
+) -> Result<WriteNodeResult, String> {
+    let path = normalize_node_path(&item.path, false)?;
+    if item.expected_etag.is_some() {
+        return Err(format!(
+            "expected_etag must be None for folder item: {path}"
+        ));
+    }
+    if !item.content.is_empty() {
+        return Err(format!("folder item content must be empty: {path}"));
+    }
+    if item.metadata_json.trim() != "{}" {
+        return Err(format!(
+            "folder item metadata_json must be empty object: {path}"
+        ));
+    }
+    if let Some(existing) = load_stored_node(tx, &path)? {
+        if existing.node.kind == NodeKind::Folder {
+            return Ok(WriteNodeResult {
+                node: node_ack(&existing.node),
+                created: false,
+            });
+        }
+        return Err(format!("node already exists and is not a folder: {path}"));
+    }
+    if is_protected_root_folder(&path) {
+        ensure_store_root_folder(tx, &path, now)?;
+        let stored = load_stored_node(tx, &path)?
+            .ok_or_else(|| format!("folder was not created: {path}"))?;
+        return Ok(WriteNodeResult {
+            node: node_ack(&stored.node),
+            created: true,
+        });
+    }
+    let mut node = Node {
+        path,
+        kind: NodeKind::Folder,
+        content: String::new(),
+        created_at: now,
+        updated_at: now,
+        etag: String::new(),
+        metadata_json: "{}".to_string(),
+    };
+    let revision = record_change(tx, &node)?;
+    update_path_state(tx, &node.path, revision)?;
+    node.etag = compute_node_etag(&node);
+    ensure_missing_store_root_for_path(tx, &node.path, now)?;
+    save_node(tx, None, &node)?;
+    Ok(WriteNodeResult {
+        node: node_ack(&node),
+        created: true,
+    })
 }
 
 fn validate_write_nodes_count(count: usize) -> Result<(), String> {

@@ -5,7 +5,7 @@
 import Foundation
 
 struct SourceCaptureTriggerQueue: @unchecked Sendable {
-    private static let queueDirectoryName = "pending-source-capture-triggers.v1"
+    private static let queueDirectoryName = "pending-source-capture-triggers.v2"
     private let queueDirectory: URL
     private let fileManager: FileManager
     private let decoder = JSONDecoder()
@@ -39,6 +39,7 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
                       let record = try? decoder.decode(SourceCaptureTriggerRecord.self, from: data),
                       let requestId = try? SourceCaptureRequestBuilder.validateRequestId(record.requestId),
                       requestId == fileURL.deletingPathExtension().lastPathComponent,
+                      !record.sessionNonce.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       record.requestPath == Self.requestPath(for: requestId),
                       let rawURL = URL(string: record.url),
                       let url = try? URLNormalizer.normalizedHTTPURL(rawURL) else {
@@ -50,6 +51,7 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
                     requestPath: record.requestPath,
                     requestId: requestId,
                     url: url,
+                    sessionNonce: record.sessionNonce,
                     createdAt: record.createdAt,
                     lastError: record.lastError
                 )
@@ -63,13 +65,14 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
             }
     }
 
-    func enqueue(_ request: SourceCaptureRequest, createdAt: Date = .now, lastError: String? = nil) throws {
+    func enqueue(_ request: SourceCaptureRequest, sessionNonce: String, createdAt: Date = .now, lastError: String? = nil) throws {
         try write(
             SourceCaptureTriggerRecord(
                 databaseId: request.databaseId,
                 requestPath: request.requestPath,
                 requestId: request.requestId,
                 url: request.normalizedURL.absoluteString,
+                sessionNonce: sessionNonce,
                 createdAt: createdAt,
                 lastError: lastError
             )
@@ -83,6 +86,7 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
                 requestPath: trigger.requestPath,
                 requestId: trigger.requestId,
                 url: trigger.url.absoluteString,
+                sessionNonce: trigger.sessionNonce,
                 createdAt: trigger.createdAt,
                 lastError: error
             )
@@ -90,7 +94,11 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
     }
 
     func remove(_ trigger: PendingSourceCaptureTrigger) {
-        guard let requestId = try? SourceCaptureRequestBuilder.validateRequestId(trigger.requestId) else {
+        remove(requestId: trigger.requestId)
+    }
+
+    func remove(requestId: String) {
+        guard let requestId = try? SourceCaptureRequestBuilder.validateRequestId(requestId) else {
             return
         }
         let fileURL = queueDirectory.appending(path: "\(requestId).json")
@@ -99,12 +107,16 @@ struct SourceCaptureTriggerQueue: @unchecked Sendable {
 
     private func write(_ record: SourceCaptureTriggerRecord) throws {
         let requestId = try SourceCaptureRequestBuilder.validateRequestId(record.requestId)
+        guard !record.sessionNonce.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SourceCaptureRequestError.invalidRequestId
+        }
         let data = try encoder.encode(
             SourceCaptureTriggerRecord(
                 databaseId: record.databaseId,
                 requestPath: record.requestPath,
                 requestId: requestId,
                 url: record.url,
+                sessionNonce: record.sessionNonce,
                 createdAt: record.createdAt,
                 lastError: record.lastError
             )

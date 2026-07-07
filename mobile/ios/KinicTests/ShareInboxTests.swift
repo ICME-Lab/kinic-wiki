@@ -176,12 +176,13 @@ struct ShareInboxTests {
         )
         let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
 
-        try queue.enqueue(request, createdAt: createdAt)
+        try queue.enqueue(request, sessionNonce: "session-1", createdAt: createdAt)
         var pending = try #require(queue.loadPendingTriggers().first)
         #expect(pending.databaseId == "db_demo")
         #expect(pending.requestPath == request.requestPath)
         #expect(pending.requestId == request.requestId)
         #expect(pending.url.absoluteString == "https://example.com/page")
+        #expect(pending.sessionNonce == "session-1")
         #expect(pending.createdAt == createdAt)
         #expect(pending.lastError == nil)
 
@@ -207,6 +208,7 @@ struct ShareInboxTests {
                 requestPath: "/Sources/source-capture-requests/\(validRequestId).md",
                 requestId: validRequestId,
                 url: "https://example.com/valid#section",
+                sessionNonce: "session-valid",
                 createdAt: createdAt,
                 lastError: nil
             ),
@@ -219,6 +221,7 @@ struct ShareInboxTests {
                 requestPath: "/Sources/source-capture-requests/\(invalidURLRequestId).md",
                 requestId: invalidURLRequestId,
                 url: "file:///tmp/a",
+                sessionNonce: "session-invalid-url",
                 createdAt: createdAt.addingTimeInterval(-10),
                 lastError: nil
             ),
@@ -231,6 +234,7 @@ struct ShareInboxTests {
                 requestPath: "/Sources/source-capture-requests/\(mismatchedFilenameRequestId).md",
                 requestId: mismatchedFilenameRequestId,
                 url: "https://example.com/mismatched-filename",
+                sessionNonce: "session-mismatched-filename",
                 createdAt: createdAt,
                 lastError: nil
             ),
@@ -242,6 +246,7 @@ struct ShareInboxTests {
                 requestPath: "/Sources/source-capture-requests/invalid.md",
                 requestId: "../bad",
                 url: "https://example.com/bad-request",
+                sessionNonce: "session-bad-request",
                 createdAt: createdAt,
                 lastError: nil
             ),
@@ -253,6 +258,7 @@ struct ShareInboxTests {
                 requestPath: "/Sources/source-capture-requests/mismatch.md",
                 requestId: "1700000000000-00000000-0000-4000-8000-000000000001",
                 url: "https://example.com/mismatch",
+                sessionNonce: "session-mismatch",
                 createdAt: createdAt,
                 lastError: nil
             ),
@@ -263,6 +269,7 @@ struct ShareInboxTests {
         let triggers = queue.loadPendingTriggers()
         #expect(triggers.map(\.url.absoluteString) == ["https://example.com/valid"])
         #expect(triggers.map(\.requestId) == [validRequestId])
+        #expect(triggers.map(\.sessionNonce) == ["session-valid"])
     }
 
     @Test
@@ -289,6 +296,25 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStoreCachesOnlyWritableDatabases() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        store.writableDatabases = [
+            database(databaseId: "db_reader", role: .reader),
+            database(databaseId: "db_writer", role: .writer),
+            database(databaseId: "db_owner", role: .owner)
+        ]
+
+        #expect(store.writableDatabases.map(\.databaseId) == ["db_writer", "db_owner"])
+    }
+
+    @Test
     func classifiesOnlySupportedUniversalLinkEntrypoints() {
         #expect(AppModel.openURLAction(
             for: URL(string: "https://wiki.kinic.xyz/ios-share?queued=1")!,
@@ -301,7 +327,19 @@ struct ShareInboxTests {
         #expect(AppModel.openURLAction(
             for: URL(string: "https://wiki.kinic.xyz/db/demo")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .ignore)
+        ) == .appRoot)
+        #expect(AppModel.openURLAction(
+            for: URL(string: "https://wiki.kinic.xyz/dashboard")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .appRoot)
+        #expect(AppModel.openURLAction(
+            for: URL(string: "https://wiki.kinic.xyz/skills/db_demo")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .appRoot)
+        #expect(AppModel.openURLAction(
+            for: URL(string: "https://wiki.kinic.xyz/")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .appRoot)
         #expect(AppModel.openURLAction(
             for: URL(string: "https://evil.example/ios-share")!,
             callbackDomain: "wiki.kinic.xyz"
@@ -316,6 +354,164 @@ struct ShareInboxTests {
         ) == .ignore)
     }
 
+    @MainActor
+    @Test
+    func unsupportedUniversalLinkResetsBrowseRoot() {
+        let model = AppModel.preview()
+        model.selectedBrowseDatabaseId = "db_preview"
+        model.currentPath = "/Knowledge/Nested"
+        model.currentNode = VFSNode(
+            path: "/Knowledge/Nested",
+            kind: .folder,
+            content: "",
+            metadataJson: "{}",
+            etag: "folder-etag",
+            createdAt: 1,
+            updatedAt: 2
+        )
+        model.childNodes = [
+            ChildNode(
+                path: "/Knowledge/Nested/Page.md",
+                name: "Page.md",
+                kind: .file,
+                updatedAt: 2,
+                etag: "etag",
+                sizeBytes: 4,
+                hasChildren: false,
+                isVirtual: false
+            )
+        ]
+        model.loadedBrowsePath = "/Knowledge/Nested"
+        model.selectedBrowseNodePath = "/Knowledge/Nested/Page.md"
+        model.documentNode = VFSNode(
+            path: "/Knowledge/Nested/Page.md",
+            kind: .file,
+            content: "Page",
+            metadataJson: "{}",
+            etag: "etag",
+            createdAt: 1,
+            updatedAt: 2
+        )
+        model.searchQuery = "old"
+        model.searchResults = [
+            SearchNodeHit(
+                path: "/Knowledge/Nested/Page.md",
+                kind: .file,
+                snippet: "Page",
+                previewExcerpt: nil,
+                matchReasons: [],
+                score: 1
+            )
+        ]
+        model.browseError = "old browse error"
+        model.documentError = "old document error"
+        model.isLoadingDocument = true
+
+        model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/dashboard")!)
+
+        #expect(model.rootNavigationID == 1)
+        #expect(model.currentPath == "/Knowledge")
+        #expect(model.currentNode == nil)
+        #expect(model.childNodes.isEmpty)
+        #expect(model.loadedBrowsePath == nil)
+        #expect(model.selectedBrowseNodePath == nil)
+        #expect(model.documentNode == nil)
+        #expect(model.isLoadingDocument == false)
+        #expect(model.searchQuery.isEmpty)
+        #expect(model.searchResults.isEmpty)
+        #expect(model.browseError == nil)
+        #expect(model.documentError == nil)
+    }
+
+    @MainActor
+    @Test
+    func browseDatabaseSwitchClearsDocumentLoadState() {
+        let model = AppModel.preview()
+        model.selectedBrowseDatabaseId = "db_old"
+        model.currentPath = "/Knowledge/Nested"
+        model.currentNode = VFSNode(
+            path: "/Knowledge/Nested",
+            kind: .folder,
+            content: "",
+            metadataJson: "{}",
+            etag: "folder-etag",
+            createdAt: 1,
+            updatedAt: 2
+        )
+        model.childNodes = [
+            ChildNode(
+                path: "/Knowledge/Page.md",
+                name: "Page.md",
+                kind: .file,
+                updatedAt: 2,
+                etag: "etag",
+                sizeBytes: 8,
+                hasChildren: false,
+                isVirtual: false
+            )
+        ]
+        model.loadedBrowsePath = "/Knowledge/Nested"
+        model.selectedBrowseNodePath = "/Knowledge/Page.md"
+        model.documentNode = VFSNode(
+            path: "/Knowledge/Page.md",
+            kind: .file,
+            content: "Old page",
+            metadataJson: "{}",
+            etag: "etag",
+            createdAt: 1,
+            updatedAt: 2
+        )
+        model.documentError = "old document error"
+        model.isLoadingDocument = true
+
+        model.selectBrowseDatabase("db_next")
+
+        #expect(model.selectedBrowseDatabaseId == "db_next")
+        #expect(model.currentPath == "/Knowledge")
+        #expect(model.currentNode == nil)
+        #expect(model.childNodes.isEmpty)
+        #expect(model.loadedBrowsePath == nil)
+        #expect(model.selectedBrowseNodePath == nil)
+        #expect(model.documentNode == nil)
+        #expect(model.documentError == nil)
+        #expect(model.isLoadingDocument == false)
+    }
+
+    @MainActor
+    @Test
+    func signOutClearsLoadedBrowsePath() {
+        let model = AppModel.preview()
+        model.selectedBrowseDatabaseId = "db_preview"
+        model.currentNode = VFSNode(
+            path: "/Knowledge",
+            kind: .folder,
+            content: "",
+            metadataJson: "{}",
+            etag: "folder-etag",
+            createdAt: 1,
+            updatedAt: 2
+        )
+        model.childNodes = [
+            ChildNode(
+                path: "/Knowledge/Page.md",
+                name: "Page.md",
+                kind: .file,
+                updatedAt: 2,
+                etag: "etag",
+                sizeBytes: 8,
+                hasChildren: false,
+                isVirtual: false
+            )
+        ]
+        model.loadedBrowsePath = "/Knowledge"
+
+        model.signOut()
+
+        #expect(model.currentNode == nil)
+        #expect(model.childNodes.isEmpty)
+        #expect(model.loadedBrowsePath == nil)
+    }
+
     @Test
     func validatesDatabaseNames() {
         #expect(AppModel.databaseNameError("Team skills") == nil)
@@ -323,6 +519,163 @@ struct ShareInboxTests {
         #expect(AppModel.databaseNameError(String(repeating: "a", count: 81)) == "Database name must be 1..80 characters.")
         #expect(AppModel.databaseNameError("Team\u{0001}") == "Database name may not contain control characters.")
     }
+
+    @Test
+    func normalizesBrowsePaths() {
+        #expect(AppModel.normalizedBrowsePath("") == "/Knowledge")
+        #expect(AppModel.normalizedBrowsePath("Knowledge/README.md") == "/Knowledge/README.md")
+        #expect(AppModel.normalizedBrowsePath("//Knowledge///Design/") == "/Knowledge/Design")
+        #expect(AppModel.parentPath("/Knowledge/Design/Page.md") == "/Knowledge/Design")
+        #expect(AppModel.parentPath("/Knowledge") == "/")
+        #expect(AppModel.parentPath("/") == "/")
+    }
+
+    @Test
+    func classifiesBrowseNavigationRoutes() {
+        #expect(BrowseFolderRoute(path: "/Knowledge").kind == .folder)
+        #expect(BrowseFolderRoute.document(path: "/Knowledge/Page.md").kind == .document)
+        #expect(BrowseFolderRoute.document(path: "/Knowledge/Page.md").path == "/Knowledge/Page.md")
+    }
+
+    @MainActor
+    @Test
+    func emptyBrowseSearchQueryClearsResults() {
+        let model = AppModel.preview()
+        model.searchResults = [
+            SearchNodeHit(
+                path: "/Knowledge/Page.md",
+                kind: .file,
+                snippet: "Page",
+                previewExcerpt: nil,
+                matchReasons: [],
+                score: 1
+            )
+        ]
+
+        model.searchQueryDidChange(from: "old", to: "   ")
+
+        #expect(model.searchResults.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func changedBrowseSearchQueryClearsStaleResults() {
+        let model = AppModel.preview()
+        model.searchQuery = "old"
+        model.searchResults = [
+            SearchNodeHit(
+                path: "/Knowledge/Page.md",
+                kind: .file,
+                snippet: "Page",
+                previewExcerpt: nil,
+                matchReasons: [],
+                score: 1
+            )
+        ]
+
+        model.searchQueryDidChange(from: "old", to: "new")
+
+        #expect(model.searchResults.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func changedBrowseSearchQueryClearsResultsAfterBindingUpdate() {
+        let model = AppModel.preview()
+        model.searchQuery = "new"
+        model.searchResults = [
+            SearchNodeHit(
+                path: "/Knowledge/Page.md",
+                kind: .file,
+                snippet: "Page",
+                previewExcerpt: nil,
+                matchReasons: [],
+                score: 1
+            )
+        ]
+
+        model.searchQueryDidChange(from: "old", to: "new")
+
+        #expect(model.searchResults.isEmpty)
+    }
+
+    @Test
+    func formatsDatabaseManagementValues() {
+        #expect(DatabaseManagementFormat.cycles(nil) == "Unknown")
+        #expect(DatabaseManagementFormat.cycles(2_000_000_000_000) == "2T cycles")
+        #expect(DatabaseManagementFormat.cycles(3_000_000_000) == "3B cycles")
+        #expect(DatabaseManagementFormat.cycles(4_000_000) == "4M cycles")
+        #expect(DatabaseManagementFormat.cycles(500) == "500 cycles")
+        #expect(!DatabaseManagementFormat.bytes(1_024).isEmpty)
+    }
+
+    @Test
+    func classifiesDatabaseManagementStatus() {
+        let config = CyclesBillingConfig(
+            kinicLedgerCanisterId: "ledger",
+            billingAuthorityId: "authority",
+            cyclesPerKinic: 1,
+            minUpdateCycles: 100,
+            topUp: CyclesTopUpConfig(enabled: true, launcherPrincipal: "launcher", thresholdCycles: 1_000)
+        )
+
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: 2_000, suspendedAt: 10), config: config) == .suspended)
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: nil), config: config) == .unknown)
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: 50), config: config) == .blocked)
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: 500), config: config) == .low)
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: 2_000), config: config) == .ok)
+        #expect(DatabaseManagementStatus.status(for: database(cyclesBalance: 2_000), config: nil) == .unknown)
+    }
+
+    @Test
+    func onlyOwnerCanManageDatabaseSettings() {
+        #expect(DatabaseRole.owner.canManageDatabase)
+        #expect(!DatabaseRole.writer.canManageDatabase)
+        #expect(!DatabaseRole.reader.canManageDatabase)
+    }
+
+    @Test
+    func buildsDatabaseTagsJsonFromCommaSeparatedInput() throws {
+        #expect(try AppModel.databaseTagsJson(from: "") == "[]")
+        #expect(try AppModel.databaseTagsJson(from: "swift, ios") == "[\"swift\",\"ios\"]")
+        #expect(try AppModel.databaseTagsJson(from: " 日本語 , swift ") == "[\"日本語\",\"swift\"]")
+    }
+
+    @Test
+    func rejectsEmptyDatabaseNameForMetadataEdit() {
+        #expect(AppModel.databaseNameError("") == "Database name is required.")
+        #expect(AppModel.databaseNameError("Team DB") == nil)
+    }
+}
+
+private func database(cyclesBalance: UInt64?, suspendedAt: Int64? = nil) -> DatabaseSummary {
+    DatabaseSummary(
+        databaseId: "db_test",
+        title: "Test DB",
+        description: "",
+        metadata: nil,
+        role: .owner,
+        status: .active,
+        logicalSizeBytes: 1_024,
+        cyclesBalance: cyclesBalance,
+        cyclesSuspendedAtMs: suspendedAt,
+        deletedAtMs: nil
+    )
+}
+
+private func database(databaseId: String, role: DatabaseRole) -> DatabaseSummary {
+    DatabaseSummary(
+        databaseId: databaseId,
+        title: databaseId,
+        description: "",
+        metadata: nil,
+        role: role,
+        status: .active,
+        logicalSizeBytes: 0,
+        cyclesBalance: nil,
+        cyclesSuspendedAtMs: nil,
+        deletedAtMs: nil
+    )
 }
 
 private func makeQueueDirectory() -> URL {

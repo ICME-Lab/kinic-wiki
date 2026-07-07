@@ -19,6 +19,7 @@ asc_key_path="${ASC_KEY_PATH:-}"
 asc_key_id="${ASC_KEY_ID:-}"
 asc_issuer_id="${ASC_ISSUER_ID:-}"
 mode="upload"
+distribution="internal-only"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -29,6 +30,7 @@ usage() {
   cat <<'EOF'
 Usage:
   KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh
+  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --external
   mobile/ios/scripts/testflight-upload.sh --validate-only
 
 Environment:
@@ -44,6 +46,10 @@ Environment:
     KINIC_IOS_EXPORT_PATH       Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_SCHEME            Defaults to Kinic.
     KINIC_IOS_CONFIGURATION     Defaults to Release.
+
+Options:
+    --external                  Upload a build that can be assigned to external TestFlight groups.
+    --internal-only             Upload an internal-only TestFlight build. This is the default.
 EOF
 }
 
@@ -51,6 +57,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --validate-only)
       mode="validate-only"
+      shift
+      ;;
+    --external)
+      distribution="external"
+      shift
+      ;;
+    --internal-only)
+      distribution="internal-only"
       shift
       ;;
     -h|--help)
@@ -97,15 +111,23 @@ cat >"$export_options" <<EOF
   <string>automatic</string>
   <key>teamID</key>
   <string>$team_id</string>
+EOF
+
+if [[ "$distribution" == "internal-only" ]]; then
+  cat >>"$export_options" <<EOF
   <key>testFlightInternalTestingOnly</key>
   <true/>
+EOF
+fi
+
+cat >>"$export_options" <<EOF
   <key>uploadSymbols</key>
   <true/>
 </dict>
 </plist>
 EOF
 
-printf 'Archiving %s %s (%s) for App Store Connect...\n' "$bundle_id" "$marketing_version" "$build_number"
+printf 'Archiving %s %s (%s) for App Store Connect (%s)...\n' "$bundle_id" "$marketing_version" "$build_number" "$distribution"
 xcodebuild archive \
   -project "$project" \
   -scheme "$scheme" \
@@ -141,4 +163,4 @@ xcodebuild -exportArchive \
   -authenticationKeyID "$asc_key_id" \
   -authenticationKeyIssuerID "$asc_issuer_id"
 
-printf 'Uploaded KinicWikiApp %s (%s) to TestFlight.\n' "$marketing_version" "$build_number"
+printf 'Uploaded KinicWikiApp %s (%s) to TestFlight (%s).\n' "$marketing_version" "$build_number" "$distribution"

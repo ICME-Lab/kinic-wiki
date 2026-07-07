@@ -20,6 +20,16 @@ struct SessionPanel: View {
                 } else {
                     Button("Sign in with Internet Identity", systemImage: "person.crop.circle.badge.checkmark", action: model.startSignIn)
                         .buttonStyle(KinicPrimaryButtonStyle())
+                        .disabled(model.isSigningIn)
+
+                    if model.isSigningIn {
+                        ProgressView("Starting sign in...")
+                            .font(.footnote)
+                    } else if let message = model.statusMessage {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(KinicDesign.bodyGray)
+                    }
                 }
             }
         }

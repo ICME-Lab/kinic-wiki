@@ -43,10 +43,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_APP_BUNDLE_ID)"
         INFOPLIST_FILE: KinicApp/Info.plist
-        CODE_SIGN_ENTITLEMENTS: KinicApp/Kinic.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: KinicWikiApp
         PRODUCT_MODULE_NAME: Kinic
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: KinicApp/KinicDebug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: KinicApp/Kinic.entitlements
     scheme:
       testTargets:
         - KinicTests
@@ -62,6 +66,7 @@ targets:
       - KinicShareExtension
       - KinicApp/Models/AppConfiguration.swift
       - KinicApp/Models/CaptureSubmission.swift
+      - KinicApp/Models/ChildNode.swift
       - KinicApp/Models/CreatedDatabase.swift
       - KinicApp/Models/DatabaseRole.swift
       - KinicApp/Models/DatabaseStatus.swift
@@ -69,6 +74,7 @@ targets:
       - KinicApp/Models/PendingSourceCaptureTrigger.swift
       - KinicApp/Models/PendingSharedURL.swift
       - KinicApp/Models/ShareCaptureResult.swift
+      - KinicApp/Models/SearchNodeHit.swift
       - KinicApp/Models/SharedURLRecord.swift
       - KinicApp/Models/SourceCaptureTriggerRecord.swift
       - KinicApp/Models/SourceCaptureRequest.swift
@@ -113,3 +119,4 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: xyz.kinic.mobile.tests
+        GENERATE_INFOPLIST_FILE: true

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 
@@ -24,9 +24,9 @@ const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts"
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
+const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
-const staticAppleAppSiteAssociationURL = new URL("../public/.well-known/apple-app-site-association", import.meta.url);
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
 
@@ -59,21 +59,26 @@ assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 
-assert.equal(existsSync(staticAppleAppSiteAssociationURL), true);
-assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8")), {
-  applinks: {
-    apps: [],
-    details: [
-      {
-        appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-        paths: ["/ios-auth-callback*", "/ios-share*"]
-      }
-    ]
-  },
-  webcredentials: {
-    apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
-  }
-});
+{
+  const response = appleAppSiteAssociationRouteModule.GET();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(JSON.parse(await response.text()), {
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+          paths: ["/*"]
+        }
+      ]
+    },
+    webcredentials: {
+      apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
+    }
+  });
+}
 
 {
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));

@@ -4,7 +4,7 @@
 
 import Foundation
 
-enum DatabaseStatus: String, Equatable, Sendable {
+enum DatabaseStatus: String, Codable, Equatable, Sendable {
     case active
     case deleted
     case pending

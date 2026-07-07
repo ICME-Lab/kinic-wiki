@@ -4,13 +4,17 @@
 
 import Foundation
 
-enum DatabaseRole: String, Equatable, Sendable {
+enum DatabaseRole: String, Codable, Equatable, Sendable {
     case owner
     case writer
     case reader
 
     var canWrite: Bool {
         self == .owner || self == .writer
+    }
+
+    var canManageDatabase: Bool {
+        self == .owner
     }
 
     var displayName: String {
