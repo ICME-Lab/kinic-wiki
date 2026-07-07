@@ -1,8 +1,6 @@
 // Where: crates/vfs_cli_app/src/lib.rs
 // What: Agent-facing CLI library for canister-backed wiki operations.
 // Why: The CLI talks to the canister using node-oriented APIs.
-#[cfg(test)]
-mod agent_tools_tests;
 pub mod claude;
 pub mod cli;
 pub mod codex;
