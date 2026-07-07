@@ -2,11 +2,11 @@
 // What: Compare the MCP Worker's inline VFS IDL subset with vfs.did.
 // Why: wiki-mcp was the only TS canister client without a drift check in CI.
 import { readFileSync } from "node:fs";
-import { checkCandidSubset } from "../../../scripts/candid-subset-check.mjs";
+import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
 import {
   didTypeAliases as sharedAliases,
   expectedTypes as sharedTypes
-} from "../../../wikibrowser/scripts/candid-shapes.mjs";
+} from "@kinic/candid-tools/shapes";
 
 const did = readFileSync(new URL("../../../crates/vfs_canister/vfs.did", import.meta.url), "utf8");
 const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8");

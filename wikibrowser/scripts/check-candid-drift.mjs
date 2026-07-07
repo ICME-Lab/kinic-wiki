@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
-import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
+import { didTypeAliases, expectedMethods, expectedTypes } from "@kinic/candid-tools/shapes";
+import { generateVfsIdlFromDid } from "@kinic/candid-tools/generate-vfs-idl";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");

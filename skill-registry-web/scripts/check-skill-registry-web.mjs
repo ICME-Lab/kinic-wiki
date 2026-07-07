@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { checkCandidSubset } from "../../scripts/candid-subset-check.mjs";
-import { didTypeAliases, expectedMethods, expectedTypes } from "../../wikibrowser/scripts/candid-shapes.mjs";
+import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
+import { didTypeAliases, expectedMethods, expectedTypes } from "@kinic/candid-tools/shapes";
 
 const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");

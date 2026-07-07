@@ -4,6 +4,7 @@ packages:
   - workers/wiki-mcp
   - workers/wiki-generator
   - extensions/wiki-clipper
+  - tools/candid
 
 allowBuilds:
   esbuild: true

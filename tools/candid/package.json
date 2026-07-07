@@ -1,0 +1,12 @@
+{
+  "name": "@kinic/candid-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared vfs.did shape definitions, subset drift checks, and TS IDL generation.",
+  "exports": {
+    "./shapes": "./shapes.mjs",
+    "./subset-check": "./subset-check.mjs",
+    "./generate-vfs-idl": "./generate-vfs-idl.mjs"
+  }
+}
