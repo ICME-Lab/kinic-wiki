@@ -81,11 +81,21 @@ generate-vfs-idl.mjs による生成物であり、wiki-generator / wiki-clipper
   CI ガード(check-candid-drift, check-url-security)のみスクリプト残置
 - 完了条件: pnpm install 1回 + lockfile 1本で全 JS パッケージがビルド・テスト可能。
 
-### フェーズ4: Rust 構造整理(フェーズ2-3と並行可)
-- vfs_runtime/src/lib.rs(8,513行)を責務単位で分割(挙動変更なし・移動のみ)
-- vfs_cli_app の src/ 直下テスト4本を tests/ へ移動
-- vfs_cli_core/src/commands.rs をコマンドファミリー単位に分割
-- core/app 境界見直し(context_pack.rs / skill_registry.rs の置き場判定)
+### フェーズ4: Rust 構造整理(フェーズ2-3と並行可、主要部完了)
+- [x] vfs_runtime/src/lib.rs(8,513行)を責務単位で分割:
+      tests / market / cycles / billing / metrics / index_schema / sessions / databases の
+      8モジュールに抽出し、lib.rs は 1,315行。全ファイル 2,000行未満。
+- [x] vfs_cli_app の src/ 直下テスト整理: agent_tools_tests は crate 内部を使わない
+      純粋な統合テストだったため tests/agent_tools.rs へ移動。残り3本
+      (commands_fs / commands_maintenance / skill_registry)は private API を
+      検証する正当な unit test なので src/ に維持(#[cfg(test)] ファイルモジュール)。
+- [x] vfs_cli_core/src/commands.rs(2,921行)を分割:
+      commands/{tests,market,database,cycles}.rs へ抽出し、本体 984行。
+- [ ] 残る 2,000行超: vfs_cli_app/src/context_pack.rs(2,521)、cli.rs(2,494)、
+      vfs_store/src/fs_store.rs(2,810)。cli.rs は clap 定義の性質上、分割の
+      費用対効果を着手時に判断する。
+- [ ] core/app 境界見直し(context_pack.rs / skill_registry.rs の置き場判定)
+- [ ] canbench 非劣化確認(main の既存 failure 修正後に実施)
 - 完了条件: tests を除き 2,000行超の Rust ソースがゼロ。canbench 非劣化。
 
 ### フェーズ5: フロントエンド巨大コンポーネント分割
