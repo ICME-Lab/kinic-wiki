@@ -91,6 +91,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          package-manager-cache: false
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
       - name: Check file size ratchet
