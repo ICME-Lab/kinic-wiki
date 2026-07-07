@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
 
 if (!crypto.subtle.timingSafeEqual) {
@@ -21,6 +21,14 @@ const triggerRouteModule = await importTs("../app/api/source-capture/trigger/rou
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
+const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
+const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
+const nativeAuthRouteModule = await importNativeAuthRoute();
+const nativeAuthPayloadModule = await importTs("../lib/native-auth-payload.ts");
+const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
+const staticAppleAppSiteAssociationURL = new URL("../public/.well-known/apple-app-site-association", import.meta.url);
+const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
@@ -30,6 +38,129 @@ assert.doesNotMatch(documentPane, /Write access/);
 assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
 assert.match(sourceCapture, /function isSafeRequestSegment/);
 assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
+assert.match(homePage, /location\.hash\.startsWith\(marker\)/);
+assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)/);
+assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
+assert.match(nativeAuthRoute, /"content-type": "text\/html; charset=utf-8"/);
+assert.match(nativeAuthRoute, /id="native-auth-message"/);
+assert.match(nativeAuthRoute, /id="native-auth-continue"/);
+assert.match(nativeAuthRoute, /window\.kinicNativeAuthStart/);
+assert.match(nativeAuthRoute, /function nativeAuthScript/);
+assert.match(nativeAuthRoute, /html, body \{ width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; \}/);
+assert.match(nativeAuthRoute, /height: 100dvh/);
+assert.match(nativeAuthRoute, /function nativeAuthParams/);
+assert.match(nativeAuthRoute, /currentLocation\.hash\.startsWith\(marker\)/);
+assert.match(nativeAuthRoute, /function storedNativeAuthQuery/);
+assert.match(nativeAuthRoute, /sessionPublicKey: new Uint8Array\(requestParams\.sessionPublicKey\)/);
+assert.match(nativeAuthRoute, /idpWindow\.location\.href = callback\.toString\(\)/);
+assert.match(nativeAuthRoute, /normalizeInternetIdentityResponseForNative/);
+assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
+assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
+assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
+assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
+
+{
+  const normalized = nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
+    kind: "authorize-client-success",
+    userPublicKey: new Uint8Array([1, 2, 255]),
+    delegations: [
+      {
+        delegation: {
+          pubkey: [3, 4, 5],
+          expiration: 12_345n,
+          targets: [new Uint8Array([6, 7])]
+        },
+        signature: "0A0b"
+      }
+    ]
+  });
+  assert.deepEqual(normalized, {
+    kind: "authorize-client-success",
+    userPublicKey: "0102ff",
+    delegations: [
+      {
+        delegation: {
+          pubkey: "030405",
+          expiration: "12345",
+          targets: ["0607"]
+        },
+        signature: "0a0b"
+      }
+    ]
+  });
+  assert.deepEqual(
+    nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
+      kind: "authorize-client-success",
+      delegation: {
+        publicKey: "0102",
+        delegations: [{ delegation: { pubkey: "0304", expiration: "0x10" }, signature: [5, 6] }]
+      }
+    }),
+    {
+      kind: "authorize-client-success",
+      userPublicKey: "0102",
+      delegations: [{ delegation: { pubkey: "0304", expiration: "16" }, signature: "0506" }]
+    }
+  );
+  assert.throws(
+    () => nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({ kind: "authorize-client-success", userPublicKey: [1] }),
+    /delegations are missing/
+  );
+}
+
+assert.equal(existsSync(staticAppleAppSiteAssociationURL), true);
+assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8")), {
+  applinks: {
+    apps: [],
+    details: [
+      {
+        appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+        paths: ["/ios-auth-callback*", "/ios-share*"]
+      }
+    ]
+  },
+  webcredentials: {
+    apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
+  }
+});
+
+{
+  const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Return to KinicWikiApp/);
+}
+
+{
+  const response = nativeAuthRouteModule.GET();
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /https:\/\/id\.ai/);
+  assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
+  assert.doesNotMatch(body, /raw\.localhost|id\.ai\.localhost|127\.0\.0\.1:8011/);
+}
+
+await withEnv(
+  {
+    NEXT_PUBLIC_ENABLE_LOCAL_II_E2E: "1",
+    NEXT_PUBLIC_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
+    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    NEXT_PUBLIC_WIKI_IC_HOST: "http://127.0.0.1:8011"
+  },
+  async () => {
+    const response = nativeAuthRouteModule.GET();
+    const body = await response.text();
+    assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
+    assert.doesNotMatch(body, /http:\/\/aaaaa-aa\.localhost:8011/);
+  }
+);
+
+{
+  const response = iosShareRouteModule.GET();
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /Open KinicWikiApp/);
+  assert.doesNotMatch(body, /kinicwiki:\/\//);
+}
 
 await withEnv({}, async () => {
   const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
@@ -50,6 +181,10 @@ await withEnv(
   async () => {
     const forbidden = await triggerRouteModule.POST(triggerRequest("https://evil.example"));
     assert.equal(forbidden.status, 403);
+
+    const localIosOrigin = ["https://ios", "-local.kinic.xyz"].join("");
+    const localIosPreflight = triggerRouteModule.OPTIONS(triggerRequest(localIosOrigin));
+    assert.equal(localIosPreflight.status, 403);
 
     const preflight = triggerRouteModule.OPTIONS(triggerRequest("chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj"));
     assert.equal(preflight.status, 204);
@@ -117,6 +252,10 @@ await withEnv(
       const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
+
+      const localIosOrigin = ["https://ios", "-local.kinic.xyz"].join("");
+      const localIosResponse = await triggerRouteModule.POST(triggerRequest(localIosOrigin));
+      assert.equal(localIosResponse.status, 403);
     });
     triggerRouteModule.setSourceCaptureTriggerDepsForTest();
 
@@ -228,6 +367,30 @@ await withEnv(
     assert.doesNotMatch(sourceRunRoute, /checkQueryAnswerSession/);
   }
 );
+
+{
+  const env = {
+    KINIC_WIKI_WORKER_TOKEN: "local-dev-worker-token",
+    KINIC_WIKI_CANISTER_ID: "aaaaa-aa"
+  };
+  const unauthorized = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(mockWorkerRequest({}, "bad-token"), env);
+  assert.equal(unauthorized.status, 401);
+
+  const invalidPath = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(
+    mockWorkerRequest({ requestPath: "/Sources/not-a-request.md" }, "local-dev-worker-token"),
+    env
+  );
+  assert.equal(invalidPath.status, 400);
+
+  const accepted = await mockSourceCaptureWorkerModule.handleMockSourceCaptureRequest(mockWorkerRequest({}, "local-dev-worker-token"), env);
+  assert.equal(accepted.status, 202);
+  assert.deepEqual(await accepted.json(), {
+    accepted: true,
+    canisterId: "aaaaa-aa",
+    databaseId: "db_1",
+    requestPath: "/Sources/source-capture-requests/1.md"
+  });
+}
 
 await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
   const missingKey = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
@@ -433,6 +596,28 @@ async function importTs(relativePath) {
   return import(moduleUrl);
 }
 
+async function importNativeAuthRoute() {
+  const authModule = await importTs("../lib/auth.ts");
+  const sourcePath = new URL("../app/native-auth/route.ts", import.meta.url);
+  const source = readFileSync(sourcePath, "utf8").replace(
+    'import { DELEGATION_TTL_NS, derivationOriginUrl, identityProviderUrl } from "@/lib/auth";',
+    "const { DELEGATION_TTL_NS, derivationOriginUrl, identityProviderUrl } = globalThis.__kinicNativeAuthRouteDeps;"
+  );
+  globalThis.__kinicNativeAuthRouteDeps = authModule;
+  try {
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022
+      }
+    }).outputText;
+    const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
+    return await import(moduleUrl);
+  } finally {
+    delete globalThis.__kinicNativeAuthRouteDeps;
+  }
+}
+
 async function withMockFetch(handler, run) {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = handler;
@@ -450,6 +635,9 @@ async function withEnv(values, run) {
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
     "KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN",
+    "NEXT_PUBLIC_ENABLE_LOCAL_II_E2E",
+    "NEXT_PUBLIC_II_PROVIDER_URL",
+    "NEXT_PUBLIC_WIKI_IC_HOST",
     "DEEPSEEK_API_KEY",
     "KINIC_WIKI_WORKER_MODEL"
   ];
@@ -470,6 +658,20 @@ function triggerRequest(origin, overrides = {}) {
   return new Request("https://local.test/api/source-capture/trigger", {
     method: "POST",
     headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({
+      canisterId: "aaaaa-aa",
+      databaseId: "db_1",
+      requestPath: "/Sources/source-capture-requests/1.md",
+      sessionNonce: "session-1",
+      ...overrides
+    })
+  });
+}
+
+function mockWorkerRequest(overrides = {}, token = "local-dev-worker-token") {
+  return new Request("http://127.0.0.1:8787/source-capture", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",

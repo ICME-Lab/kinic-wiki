@@ -21,11 +21,11 @@ guard_local_ii_origins() {
     return
   fi
   case "${ICP_ENVIRONMENT:-}" in
-    local | local-wiki)
+    local-wiki)
       return
       ;;
     *)
-      echo "KINIC_VFS_LOCAL_II_ORIGINS=1 is only allowed for ICP_ENVIRONMENT=local or local-wiki" >&2
+      echo "KINIC_VFS_LOCAL_II_ORIGINS=1 is only allowed for ICP_ENVIRONMENT=local-wiki" >&2
       exit 1
       ;;
   esac

@@ -1,0 +1,15 @@
+{
+  "originHash" : "d75f071a6910aabc41eb57c3ee0b0890638569a2ec3a63651bca11141a5a83d1",
+  "pins" : [
+    {
+      "identity" : "icnativeclient",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/humandebri/ICNativeClient",
+      "state" : {
+        "revision" : "b1814b528be0d5a254b20db4b893b609a608ff67",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

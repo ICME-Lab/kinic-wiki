@@ -106,6 +106,7 @@ fn production_ii_alternative_origins_do_not_include_localhost() {
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3010"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains(&removed_ios_local_origin()));
 }
 
 #[test]
@@ -115,12 +116,17 @@ fn local_dev_ii_alternative_origins_include_fixed_dev_server_origins() {
     assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3010"));
     assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3010"));
     assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
-    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
+    assert!(!II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
+    assert!(!II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains(&removed_ios_local_origin()));
     assert_eq!(
         II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.matches("://").count(),
-        10,
+        9,
         "Internet Identity rejects ii-alternative-origins with more than 10 entries"
     );
+}
+
+fn removed_ios_local_origin() -> String {
+    ["https://ios", "-local.kinic.xyz"].concat()
 }
 
 #[test]

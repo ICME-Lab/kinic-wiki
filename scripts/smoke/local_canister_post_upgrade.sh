@@ -14,9 +14,9 @@ SMOKE_CYCLE_PURCHASE_E8S="${SMOKE_CYCLE_PURCHASE_E8S:-100000000}"
 SMOKE_CYCLES_ALLOWANCE_E8S="${SMOKE_CYCLES_ALLOWANCE_E8S:-300000000}"
 
 case "${ICP_ENVIRONMENT}" in
-  local | local-wiki) ;;
+  local-wiki) ;;
   *)
-    echo "ICP_ENVIRONMENT must be local or local-wiki for local smoke" >&2
+    echo "ICP_ENVIRONMENT must be local-wiki for local smoke" >&2
     exit 1
     ;;
 esac

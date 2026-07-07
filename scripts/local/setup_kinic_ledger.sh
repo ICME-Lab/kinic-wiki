@@ -14,9 +14,9 @@ DEFAULT_INITIAL_BALANCE_E8S="${KINIC_LEDGER_INITIAL_BALANCE_E8S:-100000000000}"
 LEDGER_TRANSFER_FEE_E8S="${KINIC_LEDGER_TRANSFER_FEE_E8S:-100000}"
 
 case "${ICP_ENVIRONMENT}" in
-  local | local-wiki) ;;
+  local-wiki) ;;
   *)
-    echo "ICP_ENVIRONMENT must be local or local-wiki for local ledger setup" >&2
+    echo "ICP_ENVIRONMENT must be local-wiki for local ledger setup" >&2
     exit 1
     ;;
 esac

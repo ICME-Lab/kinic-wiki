@@ -8,6 +8,16 @@
 # Local agent instructions
 AGENTS.md
 
+# Xcode / iOS local state
+**/DerivedData/
+**/build/
+**/xcuserdata/
+**/*.xcuserstate
+**/*.xcscmblueprint
+**/*.xcresult/
+**/*.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
 # Rust build artifacts
 /target/
 **/target/
@@ -54,6 +64,9 @@ __pycache__/
 /extensions/wiki-clipper/store-listing/assets/*.png
 /extensions/wiki-clipper/store-listing/screenshots/*.png
 
+# Local release runbook drafts
+/docs/MAINNET_TESTFLIGHT_RELEASE.md
+
 # Obsidian plugin artifacts
 /plugins/kinic-wiki/node_modules/
 /plugins/kinic-wiki/main.js
@@ -70,7 +83,6 @@ __pycache__/
 /canbench_results.csv
 /.benchmarks/
 /artifacts/
-/mobile/
 extensions/wiki-clipper/release/
 /skill-registry-web/next-env.d.ts
 /npm/kinic-vfs-cli/vendor/kinic-vfs-cli

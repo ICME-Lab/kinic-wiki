@@ -268,6 +268,9 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") {
       return withCors(Response.json({ ok: true, name: "kinic-wiki-mcp" }));
     }
+    if (request.method === "GET" && url.pathname === "/.well-known/openai-apps-challenge") {
+      return withCors(openAiAppsChallengeResponse(env));
+    }
     if (url.pathname !== "/mcp" || (request.method !== "POST" && request.method !== "GET")) {
       return withCors(Response.json({ error: "not found" }, { status: 404 }));
     }
@@ -297,6 +300,14 @@ function rootInfo(url: URL) {
     health_endpoint: new URL("/health", url.origin).toString(),
     tools: [...MCP_TOOL_NAMES]
   };
+}
+
+function openAiAppsChallengeResponse(env: RuntimeEnv) {
+  const token = env.OPENAI_APPS_CHALLENGE_TOKEN?.trim();
+  if (!token) {
+    return new Response("not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  return new Response(token, { headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
 export function createServer(env: RuntimeEnv): McpServer {
@@ -348,7 +359,7 @@ export function createServer(env: RuntimeEnv): McpServer {
     "fetch_many",
     {
       description:
-        "Fetch full text for up to 10 Kinic Wiki search result ids. Use after candidate search for broad or list questions instead of repeated single fetch calls. Item-level errors are returned without failing the whole call.",
+        "Fetch full text for up to 10 Kinic Wiki search result ids. Use after candidate search for broad or list questions, including for a single strongest result id. Item-level errors are returned without failing the whole call.",
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
       },
@@ -1191,13 +1202,16 @@ function clipText(text: string, maxChars: number): string {
 }
 
 function toToolResult(payload: Record<string, unknown> | ToolErrorResult) {
-  return isToolErrorResult(payload) ? payload : { content: [{ type: "text" as const, text: JSON.stringify(payload) }], structuredContent: payload };
+  return isToolErrorResult(payload)
+    ? payload
+    : { content: [{ type: "text" as const, text: JSON.stringify(payload) }], structuredContent: payload };
 }
 
 function toolError(message: string, payload: Record<string, unknown>) {
   const contentPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(contentPayload) }],
+    structuredContent: contentPayload,
     isError: true
   };
 }

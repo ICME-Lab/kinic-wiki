@@ -11,8 +11,8 @@ const {
   derivationOriginUrl
 } = await importTs("../lib/auth.ts");
 
-assert.equal(DELEGATION_TTL_NS, 29n * 24n * 3_600_000_000_000n);
-assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.idleTimeout, 29 * 24 * 60 * 60 * 1000);
+assert.equal(DELEGATION_TTL_NS, 30n * 24n * 3_600_000_000_000n);
+assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.idleTimeout, 30 * 24 * 60 * 60 * 1000);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.disableDefaultIdleCallback, true);
 assert.equal(identityProviderUrl(), MAINNET_II_PROVIDER_URL);
 assert.equal(DERIVATION_ORIGIN, "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io");
@@ -32,6 +32,10 @@ assert.equal(
 );
 process.env.NEXT_PUBLIC_ENABLE_LOCAL_II_E2E = "1";
 assert.equal(identityProviderUrl(), "http://id.ai.localhost:8011");
+assert.equal(
+  derivationOriginUrl({ hostname: "mobile.local", origin: "https://mobile.local" }),
+  DERIVATION_ORIGIN
+);
 assert.equal(
   derivationOriginUrl({ hostname: "127.0.0.1", origin: "http://127.0.0.1:3100" }),
   "http://tz2ag-zx777-77776-aaabq-cai.localhost:8011"

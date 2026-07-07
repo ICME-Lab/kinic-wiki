@@ -54,9 +54,24 @@ const wikiLayers = [
   }
 ];
 
+const nativeAuthHashRedirectScript = `
+(() => {
+  const marker = "#/native-auth";
+  if (!location.hash.startsWith(marker)) return;
+  const queryStart = location.hash.indexOf("?");
+  if (queryStart < 0) return;
+  const query = location.hash.slice(queryStart + 1);
+  try {
+    sessionStorage.setItem("kinicNativeAuthQuery", query);
+  } catch {}
+  location.replace("/native-auth?" + query);
+})();
+`;
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-white text-ink">
+      <script dangerouslySetInnerHTML={{ __html: nativeAuthHashRedirectScript }} />
       <section className="border-b border-line bg-paper px-4 py-5 sm:px-6">
         <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3">
           <Link className="flex items-center gap-3 text-sm font-semibold text-ink no-underline" href="/">

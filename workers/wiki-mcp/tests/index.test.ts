@@ -42,7 +42,8 @@ import worker, {
 const env = {
   KINIC_WIKI_CANISTER_ID: "canister-a",
   KINIC_WIKI_IC_HOST: "https://icp0.io",
-  KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test"
+  KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test",
+  OPENAI_APPS_CHALLENGE_TOKEN: "test-openai-apps-challenge"
 };
 
 describe("wiki mcp worker", () => {
@@ -201,6 +202,21 @@ describe("wiki mcp worker", () => {
     const response = await worker.fetch(new Request("https://mcp.example.test/health"), env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, name: "kinic-wiki-mcp" });
+  });
+
+  it("serves the OpenAI Apps domain verification challenge token", async () => {
+    const response = await worker.fetch(new Request("https://wiki-mcp.kinic.test/.well-known/openai-apps-challenge"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    await expect(response.text()).resolves.toBe("test-openai-apps-challenge");
+  });
+
+  it("does not serve an empty OpenAI Apps domain verification challenge", async () => {
+    const response = await worker.fetch(
+      new Request("https://wiki-mcp.kinic.test/.well-known/openai-apps-challenge"),
+      { ...env, OPENAI_APPS_CHALLENGE_TOKEN: "" }
+    );
+    expect(response.status).toBe(404);
   });
 
   it("serves root info without aliasing root POST to MCP", async () => {
