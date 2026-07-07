@@ -39,18 +39,33 @@ Status: フェーズ0 実施中(2026-07-07 開始)
 
 ## フェーズ一覧
 
-### フェーズ0: 安全網の整備(実施中)
+### フェーズ0: 安全網の整備(TS 側完了)
 - [x] main の CI ベースライン確認(CI green / Canbench 既存 failure を記録)
 - [x] 行数・構成の計測記録(本ファイル)
-- [ ] Candid contract test(ゴールデンフィクスチャ)を TS×4 / Swift / Rust に接続
+- [x] TS クライアントの vfs.did ドリフト検査を全数化。
+      既存: wikibrowser(生成+検査)/ skill-registry-web(生成+検査)/
+      wiki-generator(サブセット検査)/ wiki-clipper(サブセット検査)。
+      新規: wiki-mcp に check-candid-drift.mjs と CI ジョブを追加(CI ジョブ自体が未存在だった)。
+- [ ] iOS Swift コーデックのゴールデン contract test。
+      mobile/ios は進行中ブランチ(feat/ios-vfs-browse)と競合するため、
+      同ブランチ着地後に実施する。
 
-### フェーズ1: リポジトリ衛生
+### フェーズ1: リポジトリ衛生(完了)
 - [x] .gitignore に /outputs/ 追加
 - [x] docs/README.md 索引の新設
 - [x] 死蔵コード候補の生存確認(shared/ii-auth, wiki_domain, probe → すべて生存)
-- [ ] cargo machete / knip による未使用依存の検出と削除
+- [x] cargo machete による Rust 未使用依存の削除(11件削除、false positive 2件は
+      package.metadata.cargo-machete に理由付きで登録)
+- [ ] knip による JS 未使用コード検出はフェーズ3(モノレポ統合)に統合して実施
 
 ### フェーズ2: VFS クライアント単一ソース化(最重要)
+
+フェーズ0 調査での訂正: wikibrowser と skill-registry-web の vfs-idl.ts は既に
+generate-vfs-idl.mjs による生成物であり、wiki-generator / wiki-clipper / wiki-mcp の
+手書きサブセットもドリフト検査済み。したがって本フェーズの主目的は「壊れた重複の修復」
+ではなく「生成器・shape 定義・actor 生成コードを共有パッケージに集約し、コピーを廃止する」
+ことに更新する。
+
 - vfs.did → TS バインディング自動生成(既存 generate-vfs-idl.mjs を土台に)
 - 共有パッケージ `@kinic/vfs-client` 新設
 - 移行順: wiki-mcp → wiki-generator → skill-registry-web → wiki-clipper → wikibrowser
