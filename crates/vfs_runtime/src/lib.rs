@@ -4,6 +4,7 @@
 mod billing;
 mod cycles;
 mod databases;
+#[cfg(any(test, debug_assertions))]
 pub use databases::generated_database_id_for_test;
 pub(crate) use databases::*;
 mod index_schema;
@@ -885,7 +886,6 @@ impl VfsService {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn default_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),

@@ -56,6 +56,7 @@ impl VfsService {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn run_index_migrations(
     conn: &mut Connection,
     config: &CyclesBillingConfig,
