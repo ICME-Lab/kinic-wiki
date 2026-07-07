@@ -57,13 +57,15 @@ struct BrowseDatabaseListView: View {
     }
 
     private func selectCurrentDatabase() {
-        guard let databaseId = selectedDatabaseId,
-              databaseId != model.selectedBrowseDatabaseId else {
+        guard let databaseId = selectedDatabaseId else {
             return
         }
         selectedDocumentPath = nil
+        selectedManageDatabaseId = nil
         folderPath = []
-        model.selectBrowseDatabase(databaseId)
+        if databaseId != model.selectedBrowseDatabaseId {
+            model.selectBrowseDatabase(databaseId)
+        }
     }
 
     private func openManagement(_ database: DatabaseSummary) {

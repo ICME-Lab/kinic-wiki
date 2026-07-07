@@ -224,18 +224,18 @@ test("queued source capture truncates extracted source text only at source write
 
   assert.ok(vfs.lastSourceWrite);
   assert.match(vfs.lastSourceWrite.content, /truncated: true/);
-  assert.match(vfs.lastSourceWrite.content, /original_chars: 28/);
-  assert.match(vfs.lastSourceWrite.content, /saved_chars: 11/);
+  assert.match(vfs.lastSourceWrite.content, /original_chars: 22/);
+  assert.match(vfs.lastSourceWrite.content, /saved_chars: 12/);
   assert.match(vfs.lastSourceWrite.content, /fetched_truncated: false/);
-  assert.match(vfs.lastSourceWrite.content, /Large Alpha/);
+  assert.match(vfs.lastSourceWrite.content, /Alpha beta g/);
   assert.doesNotMatch(vfs.lastSourceWrite.content, /gamma/);
   assert.deepEqual(JSON.parse(vfs.lastSourceWrite.metadataJson), {
     source_type: "url",
     url: "https://example.com/a",
     final_url: "https://example.com/a",
     truncated: true,
-    original_chars: 28,
-    saved_chars: 11,
+    original_chars: 22,
+    saved_chars: 12,
     fetched_truncated: false,
     fetched_bytes: 81,
     max_fetched_bytes: 5000000

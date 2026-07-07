@@ -86,7 +86,7 @@ const parameters = [
   { name: "sql", type: "text", detail: "Restricted JSON SELECT over fs_nodes or fs_links." },
   { name: "limit", type: "nat32", detail: "Maximum rows returned by the canister response envelope." },
   { name: "path", type: "text", detail: "Exact VFS path, for example /Knowledge/index.md or a path returned by query_database_sql_json." },
-  { name: "nodes", type: "vec WriteNodeItem", detail: "Batch of File or Source writes. Each item has path, kind, content, metadata_json, and optional expected_etag." },
+  { name: "nodes", type: "vec WriteNodeItem", detail: "Batch of File, Source, or Folder writes. Each item has path, kind, content, metadata_json, and optional expected_etag." },
   { name: "expected_etag", type: "opt text", detail: "Use null for create or unchecked replace; use opt \"<etag>\" to reject stale overwrites." }
 ];
 
@@ -106,8 +106,8 @@ const queryEndpoints = [
 ];
 
 const writeEndpoints = [
-  { name: "write_node(request)", detail: "Write or replace one file/source node." },
-  { name: "write_nodes(request)", detail: "Write or replace multiple file/source nodes in one batch." },
+  { name: "write_node(request)", detail: "Write or replace one file/source node, or create one folder." },
+  { name: "write_nodes(request)", detail: "Write or replace multiple file/source nodes, or create folders, in one batch." },
   { name: "append_node(request)", detail: "Append content to one node with an optional etag guard." },
   { name: "edit_node(request)", detail: "Replace text inside one node with an optional etag guard." },
   { name: "delete_node(request)", detail: "Delete one node. Use etag guards for destructive edits." },
@@ -131,7 +131,7 @@ const writeRules = [
   "check_database_write_cycles is a query preflight; it rejects anonymous callers and underfunded DBs.",
   "Use expected_etag when replacing existing content to avoid overwriting concurrent edits.",
   "Use expected_etag = null only for a create or intentionally unchecked replace.",
-  "write_nodes accepts File and Source items; create folders with mkdir_node.",
+  "write_node and write_nodes accept File, Source, and Folder items; folder writes are create-only and idempotent.",
   "Anonymous identity can read only anonymous-readable DBs; it cannot write."
 ];
 

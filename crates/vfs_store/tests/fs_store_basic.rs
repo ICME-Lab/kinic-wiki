@@ -771,6 +771,119 @@ fn write_nodes_creates_folder_items() {
 }
 
 #[test]
+fn write_node_creates_folder_idempotently() {
+    let (_dir, store) = new_store();
+
+    let created = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/write-node-folder".to_string(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("folder write should create");
+    let replay = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/write-node-folder".to_string(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            11,
+        )
+        .expect("existing folder write should replay");
+
+    assert!(created.created);
+    assert_eq!(created.node.kind, NodeKind::Folder);
+    assert!(!replay.created);
+    assert_eq!(replay.node.path, "/Knowledge/write-node-folder");
+}
+
+#[test]
+fn write_node_rejects_invalid_folder_requests() {
+    let (_dir, store) = new_store();
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/existing.md".to_string(),
+                kind: NodeKind::File,
+                content: "file".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("file should create");
+
+    let non_empty = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/non-empty-folder".to_string(),
+                kind: NodeKind::Folder,
+                content: "not empty".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            11,
+        )
+        .expect_err("folder content should reject");
+    let metadata = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/metadata-folder".to_string(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                metadata_json: r#"{"a":1}"#.to_string(),
+                expected_etag: None,
+            },
+            12,
+        )
+        .expect_err("folder metadata should reject");
+    let etag = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/etag-folder".to_string(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some("etag".to_string()),
+            },
+            13,
+        )
+        .expect_err("folder etag should reject");
+    let collision = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/existing.md".to_string(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            14,
+        )
+        .expect_err("folder over file should reject");
+
+    assert!(non_empty.contains("folder item content must be empty"));
+    assert!(metadata.contains("folder item metadata_json must be empty object"));
+    assert!(etag.contains("expected_etag must be None for folder item"));
+    assert!(collision.contains("node already exists and is not a folder"));
+}
+
+#[test]
 fn write_nodes_updates_search_and_links() {
     let (_dir, store) = new_store();
 

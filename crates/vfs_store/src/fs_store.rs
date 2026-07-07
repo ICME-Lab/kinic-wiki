@@ -319,7 +319,10 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        self.write_conn(|tx| write_node_in_tx(tx, request, now))
+        let mut results = self.write_nodes(request.into_write_nodes_request(), now)?;
+        results
+            .pop()
+            .ok_or_else(|| "write_node batch returned no result".to_string())
     }
 
     pub fn write_nodes(
@@ -1181,6 +1184,16 @@ fn write_node_in_tx(
     now: i64,
 ) -> Result<WriteNodeResult, String> {
     let path = normalize_node_path(&request.path, false)?;
+    if request.kind == NodeKind::Folder {
+        return write_folder_in_tx(
+            tx,
+            path,
+            request.content,
+            request.metadata_json,
+            request.expected_etag,
+            now,
+        );
+    }
     let existing = load_stored_node(tx, &path)?;
     if existing
         .as_ref()
@@ -1223,27 +1236,26 @@ fn write_node_item_in_tx(
     item: WriteNodeItem,
     now: i64,
 ) -> Result<WriteNodeResult, String> {
-    if item.kind == NodeKind::Folder {
-        return write_folder_item_in_tx(tx, item, now);
-    }
     write_node_in_tx(tx, write_node_request_from_item(database_id, item), now)
 }
 
-fn write_folder_item_in_tx(
+fn write_folder_in_tx(
     tx: &Transaction<'_>,
-    item: WriteNodeItem,
+    path: String,
+    content: String,
+    metadata_json: String,
+    expected_etag: Option<String>,
     now: i64,
 ) -> Result<WriteNodeResult, String> {
-    let path = normalize_node_path(&item.path, false)?;
-    if item.expected_etag.is_some() {
+    if expected_etag.is_some() {
         return Err(format!(
             "expected_etag must be None for folder item: {path}"
         ));
     }
-    if !item.content.is_empty() {
+    if !content.is_empty() {
         return Err(format!("folder item content must be empty: {path}"));
     }
-    if item.metadata_json.trim() != "{}" {
+    if metadata_json.trim() != "{}" {
         return Err(format!(
             "folder item metadata_json must be empty object: {path}"
         ));
@@ -1957,9 +1969,6 @@ fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<
     if request.expected_etag.is_some() {
         return Err(format!("expected_etag must be None for new node: {path}"));
     }
-    if request.kind == NodeKind::Folder {
-        return Err("write_node cannot create folders; use mkdir_node".to_string());
-    }
     Ok(Node {
         path,
         kind: request.kind,
@@ -2066,9 +2075,6 @@ fn update_existing_node(
             "expected_etag does not match current etag: {}",
             current.path
         ));
-    }
-    if request.kind == NodeKind::Folder {
-        return Err("write_node cannot create folders; use mkdir_node".to_string());
     }
     current.kind = request.kind;
     current.content = request.content;

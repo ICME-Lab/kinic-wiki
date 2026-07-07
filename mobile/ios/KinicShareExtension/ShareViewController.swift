@@ -69,8 +69,8 @@ final class ShareViewController: UIViewController {
         databaseTableView.layer.cornerRadius = KinicDesign.radius
         databaseTableView.isHidden = true
 
-        refreshButton.configuration = buttonConfiguration(title: "Refresh databases", filled: false)
-        refreshButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        refreshButton.configuration = iconButtonConfiguration(systemName: "arrow.clockwise")
+        refreshButton.accessibilityLabel = "Refresh databases"
         refreshButton.addTarget(self, action: #selector(refreshDatabases), for: .touchUpInside)
         refreshButton.isHidden = true
 
@@ -120,6 +120,18 @@ final class ShareViewController: UIViewController {
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
         configuration.background.backgroundColor = filled ? KinicDesign.uiHotPink : .white
         configuration.background.strokeColor = filled ? KinicDesign.uiHotPink : KinicDesign.uiHairlineGray
+        configuration.background.strokeWidth = 1
+        configuration.background.cornerRadius = KinicDesign.radius
+        return configuration
+    }
+
+    private func iconButtonConfiguration(systemName: String) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: systemName)
+        configuration.baseForegroundColor = .black
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 18, bottom: 14, trailing: 18)
+        configuration.background.backgroundColor = .white
+        configuration.background.strokeColor = KinicDesign.uiHairlineGray
         configuration.background.strokeWidth = 1
         configuration.background.cornerRadius = KinicDesign.radius
         return configuration

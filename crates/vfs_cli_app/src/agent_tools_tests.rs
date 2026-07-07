@@ -566,6 +566,12 @@ fn tool_schemas_cap_query_result_limits() {
     let read_context = openai_tool_parameters(&openai, "read_context");
     assert_eq!(read_context["properties"]["link_limit"]["maximum"], 100);
 
+    let write = openai_tool_parameters(&openai, "write");
+    assert_eq!(
+        write["properties"]["kind"]["enum"],
+        serde_json::json!(["file", "source", "folder"])
+    );
+
     let graph = openai_tool_parameters(&openai, "graph_neighborhood");
     assert_eq!(graph["properties"]["depth"]["maximum"], 2);
     assert_eq!(graph["properties"]["limit"]["maximum"], 100);

@@ -124,7 +124,7 @@ pub enum VfsCommand {
         #[arg(long)]
         input: PathBuf,
         #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        kind: Option<AppendNodeKindArg>,
         #[arg(long)]
         metadata_json: Option<String>,
         #[arg(long)]
@@ -433,6 +433,13 @@ pub enum CyclesCommand {
 pub enum NodeKindArg {
     File,
     Source,
+    Folder,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppendNodeKindArg {
+    File,
+    Source,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +471,16 @@ pub enum IdentityModeArg {
 }
 
 impl NodeKindArg {
+    pub fn to_node_kind(self) -> NodeKind {
+        match self {
+            Self::File => NodeKind::File,
+            Self::Source => NodeKind::Source,
+            Self::Folder => NodeKind::Folder,
+        }
+    }
+}
+
+impl AppendNodeKindArg {
     pub fn to_node_kind(self) -> NodeKind {
         match self {
             Self::File => NodeKind::File,

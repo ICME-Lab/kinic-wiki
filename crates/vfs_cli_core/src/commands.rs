@@ -1865,6 +1865,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_node_supports_folder_kind() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("folder.txt");
+        std::fs::write(&input, "").expect("input should write");
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Knowledge/folder".to_string(),
+                kind: NodeKindArg::Folder,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect("write should succeed");
+        assert_eq!(client.writes.lock().unwrap()[0].kind, NodeKind::Folder);
+    }
+
+    #[tokio::test]
     async fn mutating_command_checks_write_cycles_before_write() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("source.md");

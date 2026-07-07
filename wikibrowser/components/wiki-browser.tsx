@@ -549,13 +549,18 @@ export function WikiBrowser() {
     const targetChildren = target.kind === "folder"
       ? childNodesCache.current.get(nodeRequestKey(canisterId, databaseId, target.path, readPrincipal))
       : undefined;
-    if (!isDeletableExplorerNode(target, targetChildren)) throw new Error("Only Markdown files and folders without visible children can be deleted.");
+    if (!isDeletableExplorerNode(target, targetChildren)) throw new Error("Only Markdown files, source nodes, and folders without visible children can be deleted.");
     if (!target.etag) throw new Error("Cannot delete a node without an etag.");
     if (!window.confirm(`Delete ${target.path}?`)) return false;
     const { deleteNodeAuthenticated, readNode } = await import("@/lib/vfs-client");
-    const indexNode = target.kind === "folder"
-      ? await readNode(canisterId, databaseId, folderIndexPath(target.path), readIdentity)
-      : null;
+    let indexNode: WikiNode | null = null;
+    if (target.kind === "folder") {
+      try {
+        indexNode = await readNode(canisterId, databaseId, folderIndexPath(target.path), readIdentity);
+      } catch (cause) {
+        if (!isNotFoundError(cause)) throw cause;
+      }
+    }
     await deleteNodeAuthenticated(canisterId, readIdentity, {
       databaseId,
       path: target.path,
@@ -687,7 +692,7 @@ export function WikiBrowser() {
                 folderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
-                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file or folder without visible children to delete")}
+                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file, source node, or folder without visible children to delete")}
                 onNewFile={() => {
                   setExplorerActionError(null);
                   setExplorerActionMode("file");
@@ -993,7 +998,7 @@ function ExplorerHeaderActions({
         onClick={onDelete}
         disabled={deleteDisabled}
         title={deleteTitle}
-        aria-label="Delete selected Markdown file"
+        aria-label="Delete selected node"
         danger
       >
         <Trash2 size={15} />
@@ -1214,11 +1219,11 @@ function isMutableExplorerNode(node: ChildNode): boolean {
 }
 
 function isDeletableExplorerNode(node: ChildNode, loadedChildren?: ChildNode[]): boolean {
-  if (!isMutableExplorerNode(node)) return false;
+  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path)) return false;
   if (node.kind === "folder") {
     return loadedChildren ? visibleChildren(loadedChildren, node.path).length === 0 : !node.hasChildren;
   }
-  return true;
+  return (node.kind === "file" && node.path.endsWith(".md")) || node.kind === "source";
 }
 
 function loadedWikiFolders(cache: Map<string, ChildNode[]>, excludedNode: ChildNode | null): string[] {

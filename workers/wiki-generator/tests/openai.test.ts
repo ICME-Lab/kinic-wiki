@@ -32,29 +32,41 @@ test("DeepSeek chat completion content parses into a draft", () => {
   validateDraftSources(draft, "/Sources/a/a.md");
 });
 
-test("invalid draft schema is rejected", () => {
-  assert.throws(() => parseDraftText('{"title":"Bad"}'), /schema/);
+test("draft parser normalizes harmless model drift", () => {
+  const raw = JSON.parse(draftJson);
+  const draft = parseDraftText(
+    JSON.stringify({
+      ...raw,
+      extra: true,
+      labels: { ...raw.labels, extra: true },
+      key_facts: [{ text: "Fact", source_path: "/Sources/a/a.md", extra: true }],
+      decisions: null,
+      open_questions: undefined
+    }),
+    "/Sources/a/a.md"
+  );
+  assert.equal(draft.title, "Project Notes");
+  assert.deepEqual(draft.decisions, []);
+  assert.deepEqual(draft.open_questions, []);
+  assert.deepEqual(draft.key_facts, [{ text: "Fact", source_path: "/Sources/a/a.md" }]);
+});
+
+test("invalid draft schema is rejected with details", () => {
+  assert.throws(() => parseDraftText('{"title":"Bad"}', "/Sources/a/a.md"), /\/Sources\/a\/a\.md slug must be a string/);
   const draft = parseDraftResponse({ choices: [{ message: { content: draftJson } }] });
-  assert.throws(() => validateDraftSources(draft, "/Sources/b/b.md"), /unsupported source/);
-  assert.throws(() => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), extra: true })), /schema/);
-  assert.throws(
-    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, extra: true } })),
-    /schema/
-  );
-  assert.throws(
-    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: [{ text: "Fact", source_path: "/Sources/a/a.md", extra: true }] })),
-    /schema/
-  );
+  assert.throws(() => validateDraftSources(draft, "/Sources/b/b.md"), /source_path mismatch/);
+  assert.throws(() => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: "Fact" }), "/Sources/a/a.md"), /key_facts must be an array/);
+  assert.throws(() => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: [{}] }), "/Sources/a/a.md"), /key_facts\[0\]\.text must be a string/);
 });
 
 test("draft labels must be non-empty single-line strings", () => {
   assert.throws(
-    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "" } })),
-    /schema/
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "" } }), "/Sources/a/a.md"),
+    /labels\.summary must be non-empty/
   );
   assert.throws(
-    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "Summary\nInjected" } })),
-    /schema/
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "Summary\nInjected" } }), "/Sources/a/a.md"),
+    /labels\.summary must be a single line/
   );
   const multilingual = parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "概要" } }));
   assert.equal(multilingual.labels.summary, "概要");
