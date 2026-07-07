@@ -15,7 +15,12 @@ if (!crypto.subtle.timingSafeEqual) {
   });
 }
 
-const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
+const wikiBrowserFiles = [
+  "../components/wiki-browser.tsx",
+  "../components/wiki-browser/explorer-pane.tsx",
+  "../components/wiki-browser/top-bar.tsx"
+];
+const wikiBrowser = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const documentPane = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const sourceCapture = readFileSync(new URL("../lib/source-capture.ts", import.meta.url), "utf8");
 const triggerRouteModule = await importTs("../app/api/source-capture/trigger/route.ts");
