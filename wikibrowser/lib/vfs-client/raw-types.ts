@@ -564,4 +564,3 @@ export type VfsActor = {
     { Ok: RawWriteSourceForGenerationResult } | { Err: string }
   >;
 };
-

@@ -353,4 +353,3 @@ export function rawMarketUpdateListingRequest(request: MarketUpdateListingReques
     payout_principal: request.payoutPrincipal
   };
 }
-

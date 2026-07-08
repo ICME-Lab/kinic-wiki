@@ -251,4 +251,3 @@ export function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPen
     requiredAction: raw.required_action
   };
 }
-

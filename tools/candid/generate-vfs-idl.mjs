@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { didTypeAliases, expectedMethods, expectedTypes } from "./shapes.mjs";
@@ -220,7 +220,10 @@ export function generateVfsIdlFromDid(didSource) {
   return renderVfsIdl();
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const entryFile = process.argv[1] ? realpathSync(process.argv[1]) : "";
+const thisFile = realpathSync(fileURLToPath(import.meta.url));
+
+if (entryFile === thisFile) {
   const outArg = process.argv.indexOf("--out");
   if (outArg === -1 || !process.argv[outArg + 1]) {
     console.error("Usage: node generate-vfs-idl.mjs --out <path/to/vfs-idl.ts> [--check]");

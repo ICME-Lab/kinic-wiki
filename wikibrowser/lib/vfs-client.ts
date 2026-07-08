@@ -657,7 +657,6 @@ function rawSourceCaptureTriggerSessionRequest(request: SourceCaptureTriggerSess
     session_nonce: request.sessionNonce
   };
 }
-
 function rawSourceCaptureTriggerSessionCheckRequest(request: SourceCaptureTriggerSessionCheckRequest): RawSourceCaptureTriggerSessionCheckRequest {
   return {
     database_id: request.databaseId,
@@ -688,5 +687,3 @@ function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest):
     session_nonce: request.sessionNonce
   };
 }
-
-

@@ -34,7 +34,9 @@ for (const name of Object.keys(idlMethods)) {
 try {
   const generated = generateVfsIdlFromDid(did);
   if (idl !== generated) {
-    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
+    failures.push(
+      "wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out lib/vfs-idl.ts"
+    );
   }
 } catch (error) {
   failures.push(error instanceof Error ? error.message : String(error));
