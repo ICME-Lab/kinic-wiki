@@ -215,7 +215,7 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
   function maxTTL(value) {
     if (!/^[0-9]+$/.test(value)) throw new Error("maxTimeToLive is invalid");
     if (BigInt(value) > BigInt(config.delegationTtlNs)) throw new Error("maxTimeToLive is too large");
-    return value;
+    return BigInt(value);
   }
 
   function base64URLBytes(value) {

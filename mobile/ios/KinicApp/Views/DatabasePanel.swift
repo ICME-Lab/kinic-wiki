@@ -11,6 +11,20 @@ struct DatabasePanel: View {
 
     var body: some View {
         KinicPanel(title: "Database", systemImage: "externaldrive") {
+            HStack(spacing: 8) {
+                Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(KinicIconButtonStyle())
+                    .accessibilityLabel(model.isCreatingDatabase ? "Creating database" : "Create database")
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+
+                Button("Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(KinicIconButtonStyle())
+                    .accessibilityLabel("Refresh databases")
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+            }
+        } content: {
             VStack(alignment: .leading, spacing: 14) {
                 if model.databases.isEmpty {
                     ContentUnavailableView(
@@ -20,33 +34,12 @@ struct DatabasePanel: View {
                     )
                     .frame(maxWidth: .infinity)
                 } else {
-                    Picker("Target", selection: $model.selectedDatabaseId) {
+                    VStack(alignment: .leading, spacing: 8) {
                         ForEach(model.databases) { database in
-                            Text("\(database.displayTitle) (\(database.role.displayName))")
-                                .tag(database.databaseId)
+                            databaseButton(database)
                         }
                     }
-                    .pickerStyle(.menu)
-                    .tint(KinicDesign.hotPink)
-                    .onChange(of: model.selectedDatabaseId) {
-                        model.selectDatabase(model.selectedDatabaseId)
-                    }
-
-                    if let database = model.selectedDatabase {
-                        Text(database.databaseId)
-                            .font(.footnote)
-                            .foregroundStyle(KinicDesign.bodyGray)
-                            .lineLimit(2)
-                    }
                 }
-
-                Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
-                    .buttonStyle(KinicSecondaryButtonStyle())
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
-
-                Button(model.isLoadingDatabases ? "Refreshing databases" : "Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
-                    .buttonStyle(KinicSecondaryButtonStyle())
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
             }
         }
         .sheet(isPresented: $isCreateSheetPresented) {
@@ -80,6 +73,40 @@ struct DatabasePanel: View {
         }
         isCreateSheetPresented = false
         model.startCreateDatabase(name: newDatabaseName)
+    }
+
+    private func databaseButton(_ database: DatabaseSummary) -> some View {
+        let isSelected = model.selectedDatabaseId == database.databaseId
+        return Button {
+            model.selectDatabase(database.databaseId)
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                BrowseDatabaseRow(database: database, isSelected: isSelected)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.headline)
+                    .foregroundStyle(isSelected ? KinicDesign.hotPink : KinicDesign.bodyGray)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background {
+                RoundedRectangle(cornerRadius: KinicDesign.radius)
+                    .fill(isSelected ? KinicDesign.hotPink.opacity(0.08) : KinicDesign.controlBackground)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: KinicDesign.radius)
+                    .stroke(isSelected ? KinicDesign.hotPink.opacity(0.35) : .primary.opacity(0.08), lineWidth: 0.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(database.displayTitle), \(database.role.displayName), \(database.databaseId)")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint("Sets the source capture database")
     }
 }
 

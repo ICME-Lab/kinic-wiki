@@ -22,8 +22,20 @@ enum KinicDesign {
     static let screenPadding: CGFloat = 16
 
     #if canImport(UIKit)
+    static let appBackground = Color(uiColor: .systemBackground)
+    static let panelBackground = Color(uiColor: .secondarySystemBackground)
+    static let controlBackground = Color(uiColor: .systemBackground)
+    static let primaryButtonBackground = Color(uiColor: .label)
+    static let primaryButtonForeground = Color(uiColor: .systemBackground)
+
     static let uiHotPink = UIColor(red: 1.0, green: 0.149, blue: 0.525, alpha: 1.0)
     static let uiBodyGray = UIColor(red: 0.388, green: 0.38, blue: 0.38, alpha: 1.0)
     static let uiHairlineGray = UIColor(red: 0.902, green: 0.902, blue: 0.902, alpha: 1.0)
+    #else
+    static let appBackground = Color.white
+    static let panelBackground = panelGray
+    static let controlBackground = Color.white
+    static let primaryButtonBackground = Color.black
+    static let primaryButtonForeground = Color.white
     #endif
 }

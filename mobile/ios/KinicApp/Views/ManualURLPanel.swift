@@ -7,20 +7,21 @@ import SwiftUI
 struct ManualURLPanel: View {
     @Bindable var model: AppModel
     let isURLFocused: FocusState<Bool>.Binding
+    var onSubmitted: () -> Void = {}
     @State private var urlText = ""
 
     var body: some View {
-        KinicPanel(title: "Send URL", systemImage: "link") {
+        KinicPanel(title: "Ingest", systemImage: "link") {
             VStack(alignment: .leading, spacing: 12) {
-                ZStack(alignment: .topLeading) {
-                    if urlText.isEmpty {
-                        Text("https://example.com/article")
-                            .foregroundStyle(KinicDesign.bodyGray)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField("", text: $urlText, axis: .vertical)
-                        .foregroundStyle(.black)
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField(
+                        "",
+                        text: $urlText,
+                        prompt: Text("https://example.com/article")
+                            .foregroundStyle(.secondary),
+                        axis: .vertical
+                    )
+                        .foregroundStyle(.primary)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -28,14 +29,16 @@ struct ManualURLPanel: View {
                         .focused(isURLFocused)
                         .lineLimit(1...3)
                         .accessibilityLabel("URL")
-                }
-                    .padding(14)
-                    .background(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+                        .padding(14)
+                        .background(KinicDesign.controlBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
 
-                Button("Send", systemImage: "paperplane.fill", action: submitURL)
-                    .buttonStyle(KinicPrimaryButtonStyle())
-                    .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting)
+                    Button("Send", systemImage: "paperplane.fill", action: submitURL)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(KinicIconButtonStyle(.primary))
+                        .accessibilityLabel("Send")
+                        .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting)
+                }
             }
         }
     }
@@ -43,6 +46,7 @@ struct ManualURLPanel: View {
     private func submitURL() {
         if model.enqueueManualURL(urlText) {
             urlText = ""
+            onSubmitted()
         }
     }
 }

@@ -46,6 +46,35 @@ test("captureFromChatGptResponse normalizes title, roles, and empty content", ()
   ]);
 });
 
+test("messagesFromMapping removes ChatGPT citation markers without changing order or roles", () => {
+  const mapping = {
+    root: node(null, null),
+    user1: node("root", message("user", "Explain SDF")),
+    assistant1: node(
+      "user1",
+      message(
+        "assistant",
+        `SDF is a distance function.${citation("turn429397search0", "turn429397search24")}\n\nRaymarching advances until a surface is hit.`
+      )
+    ),
+    user2: node("assistant1", message("user", "More")),
+    assistant2: node(
+      "user2",
+      message(
+        "assistant",
+        `First source ${citation("turn429397search16")} and second source ${citation("turn429397search25")} remain text only.`
+      )
+    )
+  };
+
+  assert.deepEqual(messagesFromMapping(mapping, "assistant2"), [
+    { role: "user", content: "Explain SDF" },
+    { role: "assistant", content: "SDF is a distance function.\n\nRaymarching advances until a surface is hit." },
+    { role: "user", content: "More" },
+    { role: "assistant", content: "First source  and second source  remain text only." }
+  ]);
+});
+
 test("messagesFromMapping caps captured content before later huge messages", () => {
   const mapping = {
     root: node(null, null),
@@ -71,4 +100,8 @@ function message(role, parts) {
     author: { role },
     content: { parts: Array.isArray(parts) ? parts : [parts] }
   };
+}
+
+function citation(...refs) {
+  return `\uE200cite${refs.map((ref) => `\uE202${ref}`).join("")}\uE201`;
 }

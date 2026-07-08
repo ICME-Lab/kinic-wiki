@@ -350,6 +350,39 @@ test("source queue uses source run session before DeepSeek", async () => {
   }
 });
 
+test("request-bound source queue records detailed schema failure without raw model output", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestWrites: WriteNodeRequest[] = [];
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ title: "RAW_BAD_DRAFT_SENTINEL" }) } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      {
+        kind: "source",
+        databaseId: "db_1",
+        sourcePath: "/Sources/a/a.md",
+        sourceEtag: "etag-source",
+        requestPath: "/Sources/source-capture-requests/1.md",
+        sessionNonce: "session-1"
+      },
+      { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), requestWrites }) }
+    );
+
+    assert.equal(deepSeekCalls, 1);
+    assert.equal(requestWrites.length, 1);
+    assert.match(requestWrites[0]?.content ?? "", /status: "failed"/);
+    assert.match(requestWrites[0]?.content ?? "", /generated knowledge page does not match schema: \/Sources\/a\/a\.md slug must be a string/);
+    assert.doesNotMatch(requestWrites[0]?.content ?? "", /RAW_BAD_DRAFT_SENTINEL/);
+    assert.doesNotMatch(requestWrites[0]?.metadataJson ?? "", /RAW_BAD_DRAFT_SENTINEL/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("request-bound source queue without session nonce fails before DeepSeek", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;

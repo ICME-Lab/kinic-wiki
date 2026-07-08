@@ -146,6 +146,102 @@ test("collectWebPageSnapshot preserves paragraph breaks and limits excessive bla
   }
 });
 
+test("collectWebPageSnapshot renders preformatted text as markdown code blocks", () => {
+  const previousDocument = globalThis.document;
+  const previousLocation = globalThis.location;
+  try {
+    const article = fakeDomElement("article", [
+      fakeDomElement("p", [fakeText("Intro.")]),
+      fakeDomElement("pre", [fakeText("const x = 1;\n  console.log(x);")]),
+      fakeDomElement("p", [fakeText("After.")])
+    ]);
+    globalThis.document = {
+      title: "Code",
+      body: article,
+      querySelectorAll(selector) {
+        return selector === "article,main,[role='main']" ? [article] : [];
+      }
+    };
+    globalThis.location = { href: "https://example.com/code" };
+
+    const snapshot = collectWebPageSnapshot();
+
+    assert.equal(snapshot.text, "Intro.\n\n```\nconst x = 1;\n  console.log(x);\n```\n\nAfter.");
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.location = previousLocation;
+  }
+});
+
+test("collectWebPageSnapshot preserves language and tilde fenced code blocks", () => {
+  const previousDocument = globalThis.document;
+  const previousLocation = globalThis.location;
+  try {
+    const article = fakeElement(
+      [
+        "Intro.",
+        "",
+        "```python",
+        "if True:",
+        "    print('kept')",
+        "```",
+        "",
+        "~~~ts",
+        "const value = 1;",
+        "  console.log(value);",
+        "~~~",
+        "",
+        "After   text."
+      ].join("\n"),
+      [],
+      []
+    );
+    globalThis.document = {
+      title: "Code",
+      body: article,
+      querySelectorAll(selector) {
+        return selector === "article,main,[role='main']" ? [article] : [];
+      }
+    };
+    globalThis.location = { href: "https://example.com/code" };
+
+    const snapshot = collectWebPageSnapshot();
+
+    assert.equal(
+      snapshot.text,
+      "Intro.\n\n```python\nif True:\n    print('kept')\n```\n\n~~~ts\nconst value = 1;\n  console.log(value);\n~~~\n\nAfter text."
+    );
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.location = previousLocation;
+  }
+});
+
+test("collectWebPageSnapshot uses a longer fence for code containing backticks", () => {
+  const previousDocument = globalThis.document;
+  const previousLocation = globalThis.location;
+  try {
+    const article = fakeDomElement("article", [
+      fakeDomElement("pre", [fakeText("```\ninner\n```")])
+    ]);
+    globalThis.document = {
+      title: "Code",
+      body: article,
+      querySelectorAll(selector) {
+        return selector === "article,main,[role='main']" ? [article] : [];
+      }
+    };
+    globalThis.location = { href: "https://example.com/code" };
+
+    const snapshot = collectWebPageSnapshot();
+
+    assert.equal(snapshot.text, "````\n```\ninner\n```\n````");
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.location = previousLocation;
+  }
+});
+
 test("collectWebPageSnapshot caps extracted text before normalizing huge pages", () => {
   const previousDocument = globalThis.document;
   const previousLocation = globalThis.location;
@@ -180,6 +276,23 @@ function fakeElement(textContent, excludedNodes = [], breakNodes = []) {
           return selector.includes("script") ? excludedNodes : breakNodes;
         }
       };
+    }
+  };
+}
+
+function fakeText(nodeValue) {
+  return { nodeType: 3, nodeValue };
+}
+
+function fakeDomElement(tagName, childNodes) {
+  return {
+    nodeType: 1,
+    childNodes,
+    get textContent() {
+      return childNodes.map((child) => child.textContent ?? child.nodeValue ?? "").join("");
+    },
+    matches(selector) {
+      return selector.split(",").some((part) => part.trim().toLowerCase() === tagName);
     }
   };
 }

@@ -483,6 +483,21 @@ pub struct WriteNodesRequest {
     pub nodes: Vec<WriteNodeItem>,
 }
 
+impl WriteNodeRequest {
+    pub fn into_write_nodes_request(self) -> WriteNodesRequest {
+        WriteNodesRequest {
+            database_id: self.database_id,
+            nodes: vec![WriteNodeItem {
+                path: self.path,
+                kind: self.kind,
+                content: self.content,
+                metadata_json: self.metadata_json,
+                expected_etag: self.expected_etag,
+            }],
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SourceCaptureTriggerSessionRequest {
     pub database_id: String,

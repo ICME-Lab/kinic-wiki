@@ -40,6 +40,31 @@ struct SourceCaptureRequestBuilderTests {
     }
 
     @Test
+    func includesShareMetadataWhenProvided() throws {
+        let metadata = ShareCaptureMetadata(
+            title: "Since AI (@sinceaihq)",
+            description: "Building an AI product is one thing. Turning it into a company is another.",
+            imageURL: URL(string: "https://pbs.twimg.com/media/card.jpg")!,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let request = try SourceCaptureRequestBuilder.request(
+            url: URL(string: "https://x.com/sinceaihq/status/2074424777675046913?s=46")!,
+            databaseId: "db_demo",
+            requestedBy: "aaaaa-aa",
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            captureMetadata: metadata
+        )
+
+        #expect(request.content.contains("shared_metadata_source: \"x_og_metadata\""))
+        #expect(request.content.contains("shared_description: \"Building an AI product is one thing. Turning it into a company is another.\""))
+        #expect(request.content.contains("### Description"))
+        #expect(request.content.contains("Building an AI product is one thing. Turning it into a company is another."))
+        #expect(request.metadataJson.contains("\"shared_description\":\"Building an AI product is one thing. Turning it into a company is another.\""))
+        #expect(request.metadataJson.contains("\"shared_image_url\":\"https:\\/\\/pbs.twimg.com\\/media\\/card.jpg\""))
+    }
+
+    @Test
     func rejectsNonHTTPURLs() throws {
         #expect(throws: URLNormalizerError.unsupportedURL) {
             try URLNormalizer.normalizedHTTPURL(URL(string: "file:///tmp/a.txt")!)

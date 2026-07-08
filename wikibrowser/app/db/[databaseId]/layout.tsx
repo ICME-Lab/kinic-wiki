@@ -58,11 +58,15 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
 }
 
 export default async function WikiDatabaseLayout({ children, params }: WikiDatabaseLayoutProps) {
-  void children;
   void params;
   return (
-    <Suspense fallback={<div className="min-h-screen bg-canvas" />}>
-      <WikiBrowser />
-    </Suspense>
+    <>
+      <div className="wiki-seo-region">
+        {children}
+      </div>
+      <Suspense fallback={<div className="min-h-screen bg-canvas" />}>
+        <WikiBrowser />
+      </Suspense>
+    </>
   );
 }

@@ -5,8 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg,
-    MarketCommand, NodeKindArg, SearchPreviewModeArg,
+    AppendNodeKindArg, ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg,
+    IdentityModeArg, MarketCommand, NodeKindArg, SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
@@ -330,7 +330,7 @@ pub enum Command {
         #[arg(long)]
         input: PathBuf,
         #[arg(long, value_enum)]
-        kind: Option<NodeKindArg>,
+        kind: Option<AppendNodeKindArg>,
         #[arg(long)]
         metadata_json: Option<String>,
         #[arg(long, help = "Reject the append if the current node etag differs")]
@@ -2182,8 +2182,8 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_rejects_folder_kind_for_write_and_append() {
-        let write = Cli::try_parse_from([
+    fn main_cli_accepts_folder_kind_for_write_but_rejects_append() {
+        let write = Cli::parse_from([
             "kinic-vfs-cli",
             "write-node",
             "--path",
@@ -2193,7 +2193,10 @@ mod tests {
             "--input",
             "folder.md",
         ]);
-        assert!(write.is_err());
+        let Command::WriteNode { kind, .. } = write.command else {
+            panic!("expected write-node command");
+        };
+        assert_eq!(kind, NodeKindArg::Folder);
 
         let append = Cli::try_parse_from([
             "kinic-vfs-cli",

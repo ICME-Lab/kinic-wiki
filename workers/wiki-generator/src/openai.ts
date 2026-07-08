@@ -16,7 +16,25 @@ type DeepSeekChoice = {
 
 const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
 
+type DraftSectionKey = "key_facts" | "decisions" | "open_questions" | "follow_ups";
+type DraftLabelKey = "summary" | "key_facts" | "decisions" | "open_questions" | "follow_ups" | "related_context" | "provenance" | "none";
+
+export class DraftValidationError extends Error {
+  constructor(sourcePath: string, reason: string) {
+    super(`generated knowledge page does not match schema: ${sourcePath} ${reason}`);
+    this.name = "DraftValidationError";
+  }
+}
+
 export async function generateDraft(source: WikiNode, contextHits: SearchNodeHit[], config: WorkerConfig, deepSeekApiKey: string): Promise<WikiDraft> {
+  return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config), config, deepSeekApiKey), source.path);
+}
+
+export async function requestDeepSeekDraft(
+  messages: { role: "system" | "user"; content: string }[],
+  config: WorkerConfig,
+  deepSeekApiKey: string
+): Promise<unknown> {
   const response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers: {
@@ -27,49 +45,64 @@ export async function generateDraft(source: WikiNode, contextHits: SearchNodeHit
       model: config.model,
       max_tokens: config.maxOutputTokens,
       response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `${buildWikiDraftSystemPrompt()}\nReturn only a JSON object that matches this schema: ${JSON.stringify(wikiDraftSchema())}`
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            source_path: source.path,
-            raw_content: source.content.slice(0, config.maxRawChars),
-            context: contextHits.map((hit) => ({
-              path: hit.path,
-              preview: hit.previewExcerpt ?? hit.snippet ?? ""
-            }))
-          })
-        }
-      ]
+      messages
     })
   });
   if (!response.ok) {
     throw new Error(await deepSeekErrorMessageFromResponse(response));
   }
-  const body = await response.json();
-  return parseDraftResponse(body);
+  return response.json();
+}
+
+function draftMessages(source: WikiNode, contextHits: SearchNodeHit[], config: WorkerConfig): { role: "system" | "user"; content: string }[] {
+  return [
+    {
+      role: "system",
+      content: `${buildWikiDraftSystemPrompt()}\nReturn only a JSON object that matches this schema: ${JSON.stringify(wikiDraftSchema())}`
+    },
+    {
+      role: "user",
+      content: JSON.stringify(sourcePromptObject(source, contextHits, config))
+    }
+  ];
+}
+
+function sourcePromptObject(source: WikiNode, contextHits: SearchNodeHit[], config: WorkerConfig): object {
+  return {
+    source_path: source.path,
+    raw_content: source.content.slice(0, config.maxRawChars),
+    context: contextHits.map((hit) => ({
+      path: hit.path,
+      preview: hit.previewExcerpt ?? hit.snippet ?? ""
+    }))
+  };
 }
 
 export function parseDraftResponse(body: unknown): WikiDraft {
   return parseDraftText(extractDeepSeekResponseText(body));
 }
 
-export function parseDraftText(text: string): WikiDraft {
-  const parsed = JSON.parse(text);
-  if (!isWikiDraft(parsed)) {
-    throw new Error("generated knowledge page does not match schema");
+export function parseAndValidateDraftResponse(body: unknown, sourcePath: string): WikiDraft {
+  const draft = parseDraftText(extractDeepSeekResponseText(body), sourcePath);
+  validateDraftSources(draft, sourcePath);
+  return draft;
+}
+
+export function parseDraftText(text: string, sourcePath = "<unknown>"): WikiDraft {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new DraftValidationError(sourcePath, "response is not valid JSON");
   }
-  return parsed;
+  return normalizeDraftCandidate(parsed, sourcePath);
 }
 
 export function validateDraftSources(draft: WikiDraft, sourcePath: string): void {
   for (const section of [draft.key_facts, draft.decisions, draft.open_questions, draft.follow_ups]) {
-    for (const item of section) {
+    for (const [index, item] of section.entries()) {
       if (item.source_path !== sourcePath) {
-        throw new Error(`generated item cites unsupported source: ${item.source_path}`);
+        throw new DraftValidationError(sourcePath, `item source_path mismatch at index ${index}: ${item.source_path}`);
       }
     }
   }
@@ -166,53 +199,65 @@ function isDeepSeekChoice(value: unknown): value is DeepSeekChoice {
   return content === undefined || content === null || typeof content === "string";
 }
 
-function isWikiDraft(value: unknown): value is WikiDraft {
-  if (!isObject(value)) return false;
-  if (!hasOnlyKeys(value, ["title", "slug", "labels", "summary", "key_facts", "decisions", "open_questions", "follow_ups"])) return false;
-  return (
-    typeof value.title === "string" &&
-    typeof value.slug === "string" &&
-    isWikiDraftLabels(value.labels) &&
-    typeof value.summary === "string" &&
-    isDraftItemArray(value.key_facts) &&
-    isDraftItemArray(value.decisions) &&
-    isDraftItemArray(value.open_questions) &&
-    isDraftItemArray(value.follow_ups)
-  );
+function normalizeDraftCandidate(value: unknown, sourcePath: string): WikiDraft {
+  if (!isObject(value)) throw new DraftValidationError(sourcePath, "top-level value must be an object");
+  const title = requiredString(value, "title", "title", sourcePath);
+  const slug = requiredString(value, "slug", "slug", sourcePath);
+  const summary = requiredString(value, "summary", "summary", sourcePath);
+  const labels = normalizeDraftLabels(value.labels, sourcePath);
+  return {
+    title,
+    slug,
+    labels,
+    summary,
+    key_facts: normalizeDraftSection(value.key_facts, "key_facts", sourcePath),
+    decisions: normalizeDraftSection(value.decisions, "decisions", sourcePath),
+    open_questions: normalizeDraftSection(value.open_questions, "open_questions", sourcePath),
+    follow_ups: normalizeDraftSection(value.follow_ups, "follow_ups", sourcePath)
+  };
 }
 
-function isWikiDraftLabels(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  if (!hasOnlyKeys(value, ["summary", "key_facts", "decisions", "open_questions", "follow_ups", "related_context", "provenance", "none"])) return false;
-  return (
-    isSingleLineLabel(value.summary) &&
-    isSingleLineLabel(value.key_facts) &&
-    isSingleLineLabel(value.decisions) &&
-    isSingleLineLabel(value.open_questions) &&
-    isSingleLineLabel(value.follow_ups) &&
-    isSingleLineLabel(value.related_context) &&
-    isSingleLineLabel(value.provenance) &&
-    isSingleLineLabel(value.none)
-  );
+function normalizeDraftLabels(value: unknown, sourcePath: string): WikiDraft["labels"] {
+  if (!isObject(value)) throw new DraftValidationError(sourcePath, "labels must be an object");
+  return {
+    summary: requiredLabel(value, "summary", sourcePath),
+    key_facts: requiredLabel(value, "key_facts", sourcePath),
+    decisions: requiredLabel(value, "decisions", sourcePath),
+    open_questions: requiredLabel(value, "open_questions", sourcePath),
+    follow_ups: requiredLabel(value, "follow_ups", sourcePath),
+    related_context: requiredLabel(value, "related_context", sourcePath),
+    provenance: requiredLabel(value, "provenance", sourcePath),
+    none: requiredLabel(value, "none", sourcePath)
+  };
 }
 
-function isSingleLineLabel(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && !/[\r\n]/.test(value);
+function normalizeDraftSection(value: unknown, key: DraftSectionKey, sourcePath: string): WikiDraftItem[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new DraftValidationError(sourcePath, `${key} must be an array`);
+  return value.map((item, index) => normalizeDraftItem(item, `${key}[${index}]`, sourcePath));
 }
 
-function isDraftItemArray(value: unknown): value is WikiDraftItem[] {
-  return Array.isArray(value) && value.every(isDraftItem);
+function normalizeDraftItem(value: unknown, path: string, sourcePath: string): WikiDraftItem {
+  if (!isObject(value)) throw new DraftValidationError(sourcePath, `${path} must be an object`);
+  return {
+    text: requiredString(value, "text", `${path}.text`, sourcePath),
+    source_path: requiredString(value, "source_path", `${path}.source_path`, sourcePath)
+  };
 }
 
-function isDraftItem(value: unknown): value is WikiDraftItem {
-  return isObject(value) && hasOnlyKeys(value, ["text", "source_path"]) && typeof value.text === "string" && typeof value.source_path === "string";
+function requiredString(value: Record<string, unknown>, key: string, label: string, sourcePath: string): string {
+  const raw = value[key];
+  if (typeof raw !== "string") throw new DraftValidationError(sourcePath, `${label} must be a string`);
+  return raw;
+}
+
+function requiredLabel(value: Record<string, unknown>, key: DraftLabelKey, sourcePath: string): string {
+  const label = requiredString(value, key, `labels.${key}`, sourcePath);
+  if (label.trim().length === 0) throw new DraftValidationError(sourcePath, `labels.${key} must be non-empty`);
+  if (/[\r\n]/.test(label)) throw new DraftValidationError(sourcePath, `labels.${key} must be a single line`);
+  return label;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const allowed = new Set(keys);
-  return Object.keys(value).every((key) => allowed.has(key));
 }

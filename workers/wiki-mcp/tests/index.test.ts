@@ -735,6 +735,20 @@ describe("wiki mcp worker", () => {
     expect(response.result.structuredContent).toEqual(parsed);
   });
 
+  it("omits structuredContent from tool errors", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "search", arguments: { database_id: "   ", query: "agent" } }
+    });
+
+    const text = response.result.content[0].text as string;
+    expect(JSON.parse(text)).toEqual({ error: "database_id is required" });
+    expect(response.result.isError).toBe(true);
+    expect(response.result.structuredContent).toBeUndefined();
+  });
+
   it("returns http 400 for non-json MCP requests", async () => {
     const response = await worker.fetch(
       new Request("https://mcp.example.test/mcp", {

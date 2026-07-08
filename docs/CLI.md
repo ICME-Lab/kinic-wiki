@@ -323,7 +323,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ]
 ```
 
-`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required.
+`kind` is `file`, `source`, or `folder`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required. Folder writes are create-only and idempotent; use empty `content`, `metadata_json: "{}"`, and omit `expected_etag`.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

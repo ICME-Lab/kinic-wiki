@@ -505,7 +505,7 @@ fn read_context_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"link_limit":{"type":"integer","minimum":1,"maximum":100}},"required":["database_id","path"],"additionalProperties":false})
 }
 fn write_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["file","source"]},"metadata_json":{"type":"string"},"expected_etag":{"type":"string"}},"required":["database_id","path","content"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["file","source","folder"]},"metadata_json":{"type":"string"},"expected_etag":{"type":"string"}},"required":["database_id","path","content"],"additionalProperties":false})
 }
 fn append_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"content":{"type":"string"},"expected_etag":{"type":"string"},"separator":{"type":"string"},"metadata_json":{"type":"string"},"kind":{"type":"string","enum":["file","source"]}},"required":["database_id","path","content"],"additionalProperties":false})

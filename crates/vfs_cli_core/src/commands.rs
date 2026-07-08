@@ -1377,6 +1377,7 @@ impl WriteNodeInputItem {
 enum WriteNodeInputKind {
     File,
     Source,
+    Folder,
 }
 
 impl WriteNodeInputKind {
@@ -1384,6 +1385,7 @@ impl WriteNodeInputKind {
         match self {
             Self::File => NodeKind::File,
             Self::Source => NodeKind::Source,
+            Self::Folder => NodeKind::Folder,
         }
     }
 }
@@ -1863,6 +1865,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_node_supports_folder_kind() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("folder.txt");
+        std::fs::write(&input, "").expect("input should write");
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Knowledge/folder".to_string(),
+                kind: NodeKindArg::Folder,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect("write should succeed");
+        assert_eq!(client.writes.lock().unwrap()[0].kind, NodeKind::Folder);
+    }
+
+    #[tokio::test]
     async fn mutating_command_checks_write_cycles_before_write() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("source.md");
@@ -2121,7 +2146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_nodes_rejects_folder_kind() {
+    async fn write_nodes_allows_folder_kind() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("nodes.json");
         std::fs::write(
@@ -2130,16 +2155,17 @@ mod tests {
         )
         .expect("input should write");
         let client = MockClient::default();
-        let error = run_vfs_command(
+        run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::WriteNodes { input, json: true },
         )
         .await
-        .expect_err("folder kind should fail");
+        .expect("folder kind should dispatch");
 
-        assert!(error.to_string().contains("unknown variant"));
-        assert!(client.write_batches.lock().unwrap().is_empty());
+        let batches = client.write_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].nodes[0].kind, NodeKind::Folder);
     }
 
     #[tokio::test]

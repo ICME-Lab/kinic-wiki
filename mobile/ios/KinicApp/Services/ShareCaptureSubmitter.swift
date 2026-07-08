@@ -10,47 +10,45 @@ struct ShareCaptureSubmitter: Sendable {
     private let timeoutNanoseconds: UInt64?
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
-    private let enqueueURL: @Sendable (URL, Date, String?) throws -> Void
-    private let enqueueTrigger: @Sendable (SourceCaptureRequest, Date) throws -> Void
+    private let enqueueURL: @Sendable (URL, Date, String?, String?, ShareCaptureMetadata?) throws -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
-    init(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) {
+    static func makeLive(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) throws -> ShareCaptureSubmitter {
         let sessionStore = KinicAuthSessionStore(configuration: configuration)
-        do {
-            let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
-            let triggerQueue = try SourceCaptureTriggerQueue(strictAppGroupId: configuration.appGroupId)
-            let client = KinicICClient(configuration: configuration)
-            self.init(
-                configuration: configuration,
-                timeoutNanoseconds: timeoutNanoseconds,
-                restoreSession: {
-                    sessionStore.restore()
-                },
-                selectedDatabaseId: {
-                    settingsStore.databaseId
-                },
-                enqueueURL: { url, receivedAt, requestId in
-                    let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
-                    try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
-                },
-                enqueueTrigger: { request, createdAt in
-                    try triggerQueue.enqueue(request, createdAt: createdAt)
-                },
-                saveRequest: { request, session in
-                    try await client.saveSourceCaptureRequest(request, session: session)
-                },
-                triggerSourceCapture: { submission, session in
-                    try await client.triggerSourceCapture(
-                        databaseId: submission.databaseId,
-                        requestPath: submission.requestPath,
-                        session: session
-                    )
-                }
-            )
-        } catch {
-            fatalError(error.localizedDescription)
-        }
+        let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
+        let client = KinicICClient(configuration: configuration)
+        return ShareCaptureSubmitter(
+            configuration: configuration,
+            timeoutNanoseconds: timeoutNanoseconds,
+            restoreSession: {
+                sessionStore.restore()
+            },
+            selectedDatabaseId: {
+                settingsStore.databaseId
+            },
+            enqueueURL: { url, receivedAt, requestId, databaseId, captureMetadata in
+                let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
+                try inbox.enqueue(
+                    url,
+                    receivedAt: receivedAt,
+                    requestId: requestId,
+                    databaseId: databaseId,
+                    captureMetadata: captureMetadata
+                )
+            },
+            saveRequest: { request, session in
+                try await client.saveSourceCaptureRequest(request, session: session)
+            },
+            triggerSourceCapture: { submission, session in
+                try await client.triggerSourceCapture(
+                    databaseId: submission.databaseId,
+                    requestPath: submission.requestPath,
+                    sessionNonce: submission.sessionNonce,
+                    session: session
+                )
+            }
+        )
     }
 
     init(
@@ -58,8 +56,7 @@ struct ShareCaptureSubmitter: Sendable {
         timeoutNanoseconds: UInt64?,
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
-        enqueueURL: @escaping @Sendable (URL, Date, String?) throws -> Void,
-        enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void,
+        enqueueURL: @escaping @Sendable (URL, Date, String?, String?, ShareCaptureMetadata?) throws -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
         triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
     ) {
@@ -68,12 +65,15 @@ struct ShareCaptureSubmitter: Sendable {
         self.restoreSession = restoreSession
         self.selectedDatabaseId = selectedDatabaseId
         self.enqueueURL = enqueueURL
-        self.enqueueTrigger = enqueueTrigger
         self.saveRequest = saveRequest
         self.triggerSourceCapture = triggerSourceCapture
     }
 
-    func submitSharedURL(_ url: URL) async -> ShareCaptureResult {
+    func submitSharedURL(
+        _ url: URL,
+        databaseIdOverride: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) async -> ShareCaptureResult {
         let normalizedURL: URL
         do {
             normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
@@ -81,11 +81,25 @@ struct ShareCaptureSubmitter: Sendable {
             return .failed(message: error.localizedDescription)
         }
         guard let session = restoreSession() else {
-            return queue(normalizedURL, reason: "Sign in in KinicWikiApp to send this URL later.")
+            return queue(
+                normalizedURL,
+                captureMetadata: captureMetadata,
+                reason: "Sign in in KinicWikiApp to send this URL later."
+            )
         }
-        let databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
+        let databaseId: String
+        if let overrideDatabaseId = databaseIdOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !overrideDatabaseId.isEmpty {
+            databaseId = overrideDatabaseId
+        } else {
+            databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !databaseId.isEmpty else {
-            return queue(normalizedURL, reason: "Select a writable database in KinicWikiApp to send this URL later.")
+            return queue(
+                normalizedURL,
+                captureMetadata: captureMetadata,
+                reason: "Select a writable database in KinicWikiApp to send this URL later."
+            )
         }
         let receivedAt = Date.now
         let request: SourceCaptureRequest
@@ -94,7 +108,8 @@ struct ShareCaptureSubmitter: Sendable {
                 url: normalizedURL,
                 databaseId: databaseId,
                 requestedBy: session.principal,
-                now: receivedAt
+                now: receivedAt,
+                captureMetadata: captureMetadata
             )
         } catch {
             return .failed(message: error.localizedDescription)
@@ -109,6 +124,8 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 receivedAt: receivedAt,
                 requestId: request.requestId,
+                databaseId: request.databaseId,
+                captureMetadata: captureMetadata,
                 reason: "Saved for later because immediate submission failed."
             )
         }
@@ -116,37 +133,29 @@ struct ShareCaptureSubmitter: Sendable {
             try await withTimeout {
                 try await triggerSourceCapture(submission, session)
             }
-            return .saved(requestPath: submission.requestPath)
         } catch {
-            return savedRequestWithPendingTrigger(request, receivedAt: receivedAt, triggerError: error)
-        }
-    }
-
-    private func savedRequestWithPendingTrigger(
-        _ request: SourceCaptureRequest,
-        receivedAt: Date,
-        triggerError: Error
-    ) -> ShareCaptureResult {
-        do {
-            try enqueueTrigger(request, receivedAt)
-            return .failed(
-                message: "Source capture request was saved, but capture could not start. Open KinicWikiApp to retry."
-            )
-        } catch {
-            return .failed(
-                message: "Source capture request was saved, but capture could not start or queue for retry: \(triggerError.localizedDescription); \(error.localizedDescription)"
+            return queue(
+                normalizedURL,
+                receivedAt: receivedAt,
+                requestId: request.requestId,
+                databaseId: submission.databaseId,
+                captureMetadata: captureMetadata,
+                reason: "Saved for later because capture could not start: \(error.localizedDescription)"
             )
         }
+        return .saved(requestPath: submission.requestPath)
     }
 
     private func queue(
         _ url: URL,
         receivedAt: Date = .now,
         requestId: String? = nil,
+        databaseId: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil,
         reason: String
     ) -> ShareCaptureResult {
         do {
-            try enqueueURL(url, receivedAt, requestId)
+            try enqueueURL(url, receivedAt, requestId, databaseId, captureMetadata)
             return .queued(reason: reason)
         } catch {
             return .failed(message: error.localizedDescription)

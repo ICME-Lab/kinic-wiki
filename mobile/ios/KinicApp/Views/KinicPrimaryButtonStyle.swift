@@ -8,10 +8,10 @@ struct KinicPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(.white)
+            .foregroundStyle(KinicDesign.primaryButtonForeground)
             .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, 18)
-            .background(configuration.isPressed ? KinicDesign.hotPink : .black)
+            .background(configuration.isPressed ? KinicDesign.hotPink : KinicDesign.primaryButtonBackground)
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
             .offset(y: configuration.isPressed ? 1 : 0)
     }

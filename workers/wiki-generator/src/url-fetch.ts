@@ -122,14 +122,22 @@ async function readTextLimited(response: Response, maxBytes: number): Promise<{ 
 
 function extractHtmlText(html: string): { title: string | null; text: string } {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? null;
+  const preBlocks: string[] = [];
   const body = stripRawTextElements(html)
+    .replace(/<head\b[\s\S]*?<\/head>/gi, " ")
     .replace(/<(nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (_match, code: string) => {
+      const placeholder = `KINIC_PRE_BLOCK_${preBlocks.length}_`;
+      preBlocks.push(markdownCodeBlock(htmlTextContent(code)));
+      return `\n\n${placeholder}\n\n`;
+    })
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(br|p|div|section|article|h[1-6]|li)\b[^>]*>/gi, "\n")
     .replace(/<[^>]+>/g, " ");
+  const text = restorePreBlocks(decodeEntities(body), preBlocks);
   return {
     title: title ? decodeEntities(normalizeWhitespace(title)) : null,
-    text: decodeEntities(body)
+    text
   };
 }
 
@@ -145,11 +153,22 @@ function firstMarkdownTitle(text: string): string | null {
 }
 
 function normalizeWhitespace(value: string): string {
-  return value
+  const lines: string[] = [];
+  let fence: MarkdownFence | null = null;
+  for (const line of value
     .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .split("\n")) {
+    const openingFence: MarkdownFence | null = fence ? null : openingFenceForLine(line);
+    const normalized = fence || openingFence ? line.trimEnd() : line.trim().replace(/[ \t]+/g, " ");
+    const closingFence = fence ? closingFenceForLine(normalized) : null;
+    if (fence && closingFence?.marker === fence.marker && closingFence.length >= fence.length) {
+      fence = null;
+    } else if (!fence && openingFence) {
+      fence = openingFence;
+    }
+    lines.push(normalized);
+  }
+  return collapseBlankLines(lines).join("\n").trim();
 }
 
 function decodeEntities(value: string): string {
@@ -160,6 +179,61 @@ function decodeEntities(value: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+}
+
+function htmlTextContent(value: string): string {
+  return decodeEntities(value.replace(/<br\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, ""));
+}
+
+function restorePreBlocks(value: string, preBlocks: string[]): string {
+  return preBlocks.reduce((text, block, index) => text.replaceAll(`KINIC_PRE_BLOCK_${index}_`, block), value);
+}
+
+function markdownCodeBlock(value: string): string {
+  const code = value.replace(/\r\n?/g, "\n").replace(/^\n+|\n+$/g, "");
+  if (!code) return "";
+  const longestBacktickRun = Math.max(0, ...[...code.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return `${fence}\n${code}\n${fence}`;
+}
+
+function collapseBlankLines(lines: string[]): string[] {
+  const output: string[] = [];
+  let previousBlank = true;
+  for (const line of lines) {
+    const blank = line.length === 0;
+    if (blank && previousBlank) continue;
+    output.push(line);
+    previousBlank = blank;
+  }
+  while (output.length > 0 && output[output.length - 1] === "") {
+    output.pop();
+  }
+  return output;
+}
+
+type MarkdownFence = {
+  marker: "`" | "~";
+  length: number;
+};
+
+function openingFenceForLine(line: string): MarkdownFence | null {
+  const match = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+  if (match?.[1].startsWith("`") && match[2].includes("`")) return null;
+  return match ? markdownFence(match[1]) : null;
+}
+
+function closingFenceForLine(line: string): MarkdownFence | null {
+  const match = /^(`{3,}|~{3,})[ \t]*$/.exec(line.trim());
+  return match ? markdownFence(match[1]) : null;
+}
+
+function markdownFence(value: string): MarkdownFence {
+  const marker = value.startsWith("`") ? "`" : "~";
+  return {
+    marker,
+    length: value.length
+  };
 }
 
 function isBlockedHostname(hostname: string): boolean {

@@ -319,7 +319,10 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        self.write_conn(|tx| write_node_in_tx(tx, request, now))
+        let mut results = self.write_nodes(request.into_write_nodes_request(), now)?;
+        results
+            .pop()
+            .ok_or_else(|| "write_node batch returned no result".to_string())
     }
 
     pub fn write_nodes(
@@ -331,11 +334,7 @@ impl FsStore {
         self.write_conn(|tx| {
             let mut results = Vec::with_capacity(request.nodes.len());
             for item in request.nodes {
-                results.push(write_node_in_tx(
-                    tx,
-                    write_node_request_from_item(&request.database_id, item),
-                    now,
-                )?);
+                results.push(write_node_item_in_tx(tx, &request.database_id, item, now)?);
             }
             Ok(results)
         })
@@ -1185,6 +1184,16 @@ fn write_node_in_tx(
     now: i64,
 ) -> Result<WriteNodeResult, String> {
     let path = normalize_node_path(&request.path, false)?;
+    if request.kind == NodeKind::Folder {
+        return write_folder_in_tx(
+            tx,
+            path,
+            request.content,
+            request.metadata_json,
+            request.expected_etag,
+            now,
+        );
+    }
     let existing = load_stored_node(tx, &path)?;
     if existing
         .as_ref()
@@ -1219,6 +1228,74 @@ fn write_node_request_from_item(database_id: &str, item: WriteNodeItem) -> Write
         metadata_json: item.metadata_json,
         expected_etag: item.expected_etag,
     }
+}
+
+fn write_node_item_in_tx(
+    tx: &Transaction<'_>,
+    database_id: &str,
+    item: WriteNodeItem,
+    now: i64,
+) -> Result<WriteNodeResult, String> {
+    write_node_in_tx(tx, write_node_request_from_item(database_id, item), now)
+}
+
+fn write_folder_in_tx(
+    tx: &Transaction<'_>,
+    path: String,
+    content: String,
+    metadata_json: String,
+    expected_etag: Option<String>,
+    now: i64,
+) -> Result<WriteNodeResult, String> {
+    if expected_etag.is_some() {
+        return Err(format!(
+            "expected_etag must be None for folder item: {path}"
+        ));
+    }
+    if !content.is_empty() {
+        return Err(format!("folder item content must be empty: {path}"));
+    }
+    if metadata_json.trim() != "{}" {
+        return Err(format!(
+            "folder item metadata_json must be empty object: {path}"
+        ));
+    }
+    if let Some(existing) = load_stored_node(tx, &path)? {
+        if existing.node.kind == NodeKind::Folder {
+            return Ok(WriteNodeResult {
+                node: node_ack(&existing.node),
+                created: false,
+            });
+        }
+        return Err(format!("node already exists and is not a folder: {path}"));
+    }
+    if is_protected_root_folder(&path) {
+        ensure_store_root_folder(tx, &path, now)?;
+        let stored = load_stored_node(tx, &path)?
+            .ok_or_else(|| format!("folder was not created: {path}"))?;
+        return Ok(WriteNodeResult {
+            node: node_ack(&stored.node),
+            created: true,
+        });
+    }
+    let mut node = Node {
+        path,
+        kind: NodeKind::Folder,
+        content: String::new(),
+        created_at: now,
+        updated_at: now,
+        etag: String::new(),
+        metadata_json: "{}".to_string(),
+    };
+    let revision = record_change(tx, &node)?;
+    update_path_state(tx, &node.path, revision)?;
+    node.etag = compute_node_etag(&node);
+    ensure_missing_store_root_for_path(tx, &node.path, now)?;
+    save_node(tx, None, &node)?;
+    Ok(WriteNodeResult {
+        node: node_ack(&node),
+        created: true,
+    })
 }
 
 fn validate_write_nodes_count(count: usize) -> Result<(), String> {
@@ -1892,9 +1969,6 @@ fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<
     if request.expected_etag.is_some() {
         return Err(format!("expected_etag must be None for new node: {path}"));
     }
-    if request.kind == NodeKind::Folder {
-        return Err("write_node cannot create folders; use mkdir_node".to_string());
-    }
     Ok(Node {
         path,
         kind: request.kind,
@@ -2001,9 +2075,6 @@ fn update_existing_node(
             "expected_etag does not match current etag: {}",
             current.path
         ));
-    }
-    if request.kind == NodeKind::Folder {
-        return Err("write_node cannot create folders; use mkdir_node".to_string());
     }
     current.kind = request.kind;
     current.content = request.content;

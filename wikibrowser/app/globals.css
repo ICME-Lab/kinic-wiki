@@ -129,6 +129,16 @@ code {
   padding: 0;
 }
 
+.wiki-seo-region {
+  display: block;
+}
+
+@media (scripting: enabled) {
+  .wiki-seo-region {
+    display: none;
+  }
+}
+
 .cm-editor {
   height: 100%;
   font-family: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;

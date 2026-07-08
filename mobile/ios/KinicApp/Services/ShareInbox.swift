@@ -44,11 +44,14 @@ struct ShareInbox: @unchecked Sendable {
                       let url = try? URLNormalizer.normalizedHTTPURL(rawURL) else {
                     return nil
                 }
+                let databaseId = record.databaseId?.trimmingCharacters(in: .whitespacesAndNewlines)
                 return PendingSharedURL(
                     id: record.id,
                     url: url,
                     receivedAt: record.receivedAt,
-                    requestId: requestId
+                    requestId: requestId,
+                    databaseId: databaseId?.isEmpty == false ? databaseId : nil,
+                    captureMetadata: record.captureMetadata
                 )
             }
             .sorted { left, right in
@@ -60,7 +63,13 @@ struct ShareInbox: @unchecked Sendable {
             }
     }
 
-    func enqueue(_ url: URL, receivedAt: Date = .now, requestId: String? = nil) throws {
+    func enqueue(
+        _ url: URL,
+        receivedAt: Date = .now,
+        requestId: String? = nil,
+        databaseId: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) throws {
         let id = UUID().uuidString.lowercased()
         let resolvedRequestId: String
         if let requestId {
@@ -68,11 +77,14 @@ struct ShareInbox: @unchecked Sendable {
         } else {
             resolvedRequestId = try SourceCaptureRequestBuilder.makeRequestId(now: receivedAt)
         }
+        let trimmedDatabaseId = databaseId?.trimmingCharacters(in: .whitespacesAndNewlines)
         let record = SharedURLRecord(
             id: id,
             url: url.absoluteString,
             receivedAt: receivedAt,
-            requestId: resolvedRequestId
+            requestId: resolvedRequestId,
+            databaseId: trimmedDatabaseId?.isEmpty == false ? trimmedDatabaseId : nil,
+            captureMetadata: captureMetadata
         )
         let data = try encoder.encode(record)
         let temporaryURL = queueDirectory.appending(path: "\(id).tmp")

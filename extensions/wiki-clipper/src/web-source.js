@@ -80,16 +80,24 @@ export function collectWebPageSnapshot() {
       "keyboard_arrow_up",
       "subject"
     ]);
-    const lines = String(value)
+    const lines = [];
+    let fence = null;
+    for (const line of String(value)
+      .replace(/\r\n?/g, "\n")
       .replace(/\u00a0/g, " ")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n[ \t]+/g, "\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/\n{3,}/g, "\n\n")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => !ignoredLines.has(line));
-    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      .split("\n")) {
+      const openingFence = fence ? null : openingFenceForLine(line);
+      const normalized = normalizeExtractedLine(line, ignoredLines, fence !== null || openingFence !== null);
+      if (normalized === null) continue;
+      const closingFence = fence ? closingFenceForLine(normalized) : null;
+      if (fence && closingFence?.marker === fence.marker && closingFence.length >= fence.length) {
+        fence = null;
+      } else if (!fence && openingFence) {
+        fence = openingFence;
+      }
+      lines.push(normalized);
+    }
+    return collapseBlankLines(lines).join("\n").trim();
   }
 
   const excludedSelector = [
@@ -173,6 +181,10 @@ export function collectWebPageSnapshot() {
     }
     if (!isElementNode(node)) return;
     if (typeof node.matches === "function" && node.matches(excludedSelector)) return;
+    if (typeof node.matches === "function" && node.matches("pre")) {
+      appendChunk(parts, state, markdownCodeBlock(node.textContent || ""));
+      return;
+    }
     const children = node.childNodes ? Array.from(node.childNodes) : [];
     if (!children.length) {
       appendChunk(parts, state, node.textContent || "");
@@ -203,6 +215,54 @@ export function collectWebPageSnapshot() {
     title: document.title || "",
     text
   };
+}
+
+function normalizeExtractedLine(line, ignoredLines, inFence) {
+  if (inFence || openingFenceForLine(line)) return line.trimEnd();
+  const normalized = line.trim().replace(/[ \t]{2,}/g, " ");
+  if (ignoredLines.has(normalized)) return null;
+  return normalized;
+}
+
+function openingFenceForLine(line) {
+  const match = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+  if (match?.[1].startsWith("`") && match[2].includes("`")) return null;
+  return match ? markdownFence(match[1]) : null;
+}
+
+function closingFenceForLine(line) {
+  const match = /^(`{3,}|~{3,})[ \t]*$/.exec(line.trim());
+  return match ? markdownFence(match[1]) : null;
+}
+
+function markdownFence(value) {
+  return {
+    marker: value.startsWith("`") ? "`" : "~",
+    length: value.length
+  };
+}
+
+function collapseBlankLines(lines) {
+  const output = [];
+  let previousBlank = true;
+  for (const line of lines) {
+    const blank = line.length === 0;
+    if (blank && previousBlank) continue;
+    output.push(line);
+    previousBlank = blank;
+  }
+  while (output.length > 0 && output[output.length - 1] === "") {
+    output.pop();
+  }
+  return output;
+}
+
+function markdownCodeBlock(value) {
+  const code = String(value).replace(/\r\n?/g, "\n").replace(/^\n+|\n+$/g, "");
+  if (!code) return "";
+  const longestBacktickRun = Math.max(0, ...[...code.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return `\n\n${fence}\n${code}\n${fence}\n\n`;
 }
 
 async function webSourceId(finalUrl, title) {

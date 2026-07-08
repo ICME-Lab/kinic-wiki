@@ -67,6 +67,61 @@ test("large html can pass fetch guard before extracted text is saved", async () 
   });
 });
 
+test("html pre blocks are preserved as markdown code blocks", async () => {
+  const html = "<html><head><title>Code Page</title></head><body><main><p>Intro.</p><pre><code>const x = 1;\n  console.log(x);</code></pre><p>After.</p></main></body></html>";
+  await withMockFetch(async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/code", 10_000);
+
+    assert.equal(fetched.title, "Code Page");
+    assert.equal(fetched.text, "Intro.\n\n```\nconst x = 1;\n  console.log(x);\n```\n\nAfter.");
+  });
+});
+
+test("html pre blocks use a longer fence when code contains backticks", async () => {
+  const html = "<html><body><main><pre><code>```\ninner\n```</code></pre></main></body></html>";
+  await withMockFetch(async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/code", 10_000);
+
+    assert.equal(fetched.text, "````\n```\ninner\n```\n````");
+  });
+});
+
+test("html pre blocks preserve escaped html examples", async () => {
+  const html = "<html><body><main><pre><code>&lt;div class=&quot;card&quot;&gt;Hello&lt;/div&gt;</code></pre></main></body></html>";
+  await withMockFetch(async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/code", 10_000);
+
+    assert.equal(fetched.text, "```\n<div class=\"card\">Hello</div>\n```");
+  });
+});
+
+test("markdown responses preserve language and tilde fenced code blocks", async () => {
+  const markdown = [
+    "# Code",
+    "",
+    "```python",
+    "if True:",
+    "    print('kept')",
+    "```",
+    "",
+    "~~~ts",
+    "const value = 1;",
+    "  console.log(value);",
+    "~~~",
+    "",
+    "After   text."
+  ].join("\n");
+  await withMockFetch(async () => new Response(markdown, { status: 200, headers: { "content-type": "text/markdown" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/code.md", 10_000);
+
+    assert.equal(fetched.title, "Code");
+    assert.equal(
+      fetched.text,
+      "# Code\n\n```python\nif True:\n    print('kept')\n```\n\n~~~ts\nconst value = 1;\n  console.log(value);\n~~~\n\nAfter text."
+    );
+  });
+});
+
 test("truncated html does not keep unterminated script text", async () => {
   const prefix = "<html><head><title>Cut Product</title></head><body><main>Lead fact</main><script>";
   const html = `${prefix}${"x".repeat(10_000)}</script><main>Late fact</main></body></html>`;

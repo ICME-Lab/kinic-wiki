@@ -6,62 +6,145 @@ import SwiftUI
 
 struct HomeView: View {
     @Bindable var model: AppModel
-    @FocusState private var isManualURLFocused: Bool
+    @State private var selectedTab = AppTab.home
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                CaptureView(model: model)
+            }
+            .tabItem {
+                Label("Home", systemImage: "house")
+            }
+            .tag(AppTab.home)
+
+            BrowseView(model: model, rootNavigationID: model.rootNavigationID)
+            .tabItem {
+                Label("Browse", systemImage: "folder")
+            }
+            .tag(AppTab.browse)
+
+            NavigationStack {
+                ManageView(model: model)
+            }
+            .tabItem {
+                Label("Manage", systemImage: "slider.horizontal.3")
+            }
+            .tag(AppTab.manage)
+        }
+        .tint(KinicDesign.hotPink)
+        .onChange(of: model.rootNavigationID) {
+            selectedTab = .browse
+        }
+        .onChange(of: model.tabSelectionRequestID) {
+            selectedTab = model.requestedTab
+        }
+    }
+}
+
+private struct CaptureView: View {
+    @Bindable var model: AppModel
+    @State private var isShowingIngest = false
+    @State private var isShowingSettings = false
+
+    var body: some View {
+        ZStack {
+            KinicDesign.appBackground
+                .ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    SessionPanel(model: model)
+                    DatabasePanel(model: model)
+
+                    if let message = model.statusMessage {
+                        StatusPanel(message: message)
+                    }
+                }
+                .padding(KinicDesign.screenPadding)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .background {
+                KinicDesign.appBackground
+                    .contentShape(Rectangle())
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                KinicHeaderTitle()
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Ingest", systemImage: "link.badge.plus") {
+                    isShowingIngest = true
+                }
+                .labelStyle(.iconOnly)
+                .tint(KinicDesign.hotPink)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Settings", systemImage: "gearshape") {
+                    isShowingSettings = true
+                }
+                .labelStyle(.iconOnly)
+                .tint(KinicDesign.hotPink)
+            }
+        }
+        .sheet(isPresented: $isShowingIngest) {
+            IngestSheet(model: model)
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            NavigationStack {
+                AppSettingsView(model: model)
+            }
+        }
+        .task {
+            model.refreshInbox()
+            model.startRefreshDatabases()
+            model.autoSubmitPendingURL()
+        }
+    }
+}
+
+private struct IngestSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var model: AppModel
+    @FocusState private var isURLFocused: Bool
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.white
+                KinicDesign.appBackground
                     .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 16) {
-                        SessionPanel(model: model)
-                        DatabasePanel(model: model)
-                        ManualURLPanel(model: model, isURLFocused: $isManualURLFocused)
-
-                        if let message = model.statusMessage {
-                            StatusPanel(message: message)
-                        }
+                    ManualURLPanel(model: model, isURLFocused: $isURLFocused) {
+                        dismiss()
                     }
-                    .padding(KinicDesign.screenPadding)
+                        .padding(KinicDesign.screenPadding)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .background {
-                    Color.white
+                    KinicDesign.appBackground
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            isManualURLFocused = false
+                            isURLFocused = false
                         }
                 }
             }
+            .navigationTitle("Ingest")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.white, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.light, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    KinicHeaderTitle()
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        SettingsView(model: model)
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(KinicDesign.bodyGray)
-                            .frame(width: 44, height: 44)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") {
+                        dismiss()
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Settings")
+                    .labelStyle(.iconOnly)
+                    .tint(KinicDesign.hotPink)
                 }
-            }
-            .task {
-                model.refreshInbox()
-                model.startRefreshDatabases()
-                model.autoSubmitPendingURL()
             }
         }
+        .presentationDetents([.medium, .large])
     }
 }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import ts from "typescript";
 
 if (!crypto.subtle.timingSafeEqual) {
@@ -23,10 +24,9 @@ const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts"
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
+const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const nativeAuthRouteModule = await importNativeAuthRoute();
-const nativeAuthPayloadModule = await importTs("../lib/native-auth-payload.ts");
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
-const staticAppleAppSiteAssociationURL = new URL("../public/.well-known/apple-app-site-association", import.meta.url);
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
 
@@ -60,69 +60,25 @@ assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 
 {
-  const normalized = nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
-    kind: "authorize-client-success",
-    userPublicKey: new Uint8Array([1, 2, 255]),
-    delegations: [
-      {
-        delegation: {
-          pubkey: [3, 4, 5],
-          expiration: 12_345n,
-          targets: [new Uint8Array([6, 7])]
-        },
-        signature: "0A0b"
-      }
-    ]
-  });
-  assert.deepEqual(normalized, {
-    kind: "authorize-client-success",
-    userPublicKey: "0102ff",
-    delegations: [
-      {
-        delegation: {
-          pubkey: "030405",
-          expiration: "12345",
-          targets: ["0607"]
-        },
-        signature: "0a0b"
-      }
-    ]
-  });
-  assert.deepEqual(
-    nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({
-      kind: "authorize-client-success",
-      delegation: {
-        publicKey: "0102",
-        delegations: [{ delegation: { pubkey: "0304", expiration: "0x10" }, signature: [5, 6] }]
-      }
-    }),
-    {
-      kind: "authorize-client-success",
-      userPublicKey: "0102",
-      delegations: [{ delegation: { pubkey: "0304", expiration: "16" }, signature: "0506" }]
+  const response = appleAppSiteAssociationRouteModule.GET();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(JSON.parse(await response.text()), {
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+          paths: ["/*"]
+        }
+      ]
+    },
+    webcredentials: {
+      apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
     }
-  );
-  assert.throws(
-    () => nativeAuthPayloadModule.normalizeInternetIdentityResponseForNative({ kind: "authorize-client-success", userPublicKey: [1] }),
-    /delegations are missing/
-  );
+  });
 }
-
-assert.equal(existsSync(staticAppleAppSiteAssociationURL), true);
-assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8")), {
-  applinks: {
-    apps: [],
-    details: [
-      {
-        appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-        paths: ["/ios-auth-callback*", "/ios-share*"]
-      }
-    ]
-  },
-  webcredentials: {
-    apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
-  }
-});
 
 {
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
@@ -137,6 +93,138 @@ assert.deepEqual(JSON.parse(readFileSync(staticAppleAppSiteAssociationURL, "utf8
   assert.match(body, /https:\/\/id\.ai/);
   assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
   assert.doesNotMatch(body, /raw\.localhost|id\.ai\.localhost|127\.0\.0\.1:8011/);
+}
+
+{
+  const response = nativeAuthRouteModule.GET();
+  const html = await response.text();
+  const scriptMatch = html.match(/<script>\n([\s\S]*?)\n {2}<\/script>/);
+  assert.ok(scriptMatch, "expected an inline <script> in the native-auth response");
+  const nativeAuthScriptSource = scriptMatch[1];
+
+  const runNativeAuthScript = (overrides = {}) => {
+    const postMessages = [];
+    const sandbox = {
+      Uint8Array,
+      TextEncoder,
+      URL,
+      URLSearchParams,
+      atob,
+      btoa,
+      document: { getElementById: () => null },
+      sessionStorage: {
+        store: {},
+        getItem(key) {
+          return Object.prototype.hasOwnProperty.call(this.store, key) ? this.store[key] : null;
+        },
+        setItem(key, value) {
+          this.store[key] = value;
+        },
+        removeItem(key) {
+          delete this.store[key];
+        }
+      },
+      location: {
+        search: overrides.search ?? "",
+        hash: overrides.hash ?? "",
+        host: overrides.host ?? "wiki.kinic.xyz"
+      },
+      __listeners: {},
+      __postMessages: postMessages,
+      __openedIdpWindow: null,
+      addEventListener(type, handler) {
+        (this.__listeners[type] ??= []).push(handler);
+      },
+      removeEventListener(type, handler) {
+        this.__listeners[type] = (this.__listeners[type] || []).filter((registered) => registered !== handler);
+      },
+      setInterval: () => 0,
+      clearInterval: () => {}
+    };
+    sandbox.window = sandbox;
+    sandbox.open = () => {
+      const idpWindow = {
+        closed: false,
+        location: { href: "" },
+        postMessage(message, targetOrigin) {
+          postMessages.push({ message, targetOrigin });
+        }
+      };
+      sandbox.__openedIdpWindow = idpWindow;
+      return idpWindow;
+    };
+    vm.runInContext(nativeAuthScriptSource, vm.createContext(sandbox));
+    return sandbox;
+  };
+
+  const nativeAuthSearch = (fields = {}) =>
+    "?" +
+    new URLSearchParams({
+      state: "state-1",
+      callback: "https://wiki.kinic.xyz/ios-auth-callback",
+      sessionPublicKey: "AQID",
+      maxTimeToLive: "600000000000",
+      identityProvider: "https://id.ai/",
+      ...fields
+    }).toString();
+
+  const decodeBase64Url = (value) => {
+    const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
+    return Buffer.from(padded, "base64").toString("utf8");
+  };
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__postMessages.length, 1);
+    const request = sandbox.__postMessages[0].message;
+    assert.equal(request.kind, "authorize-client");
+    assert.equal(typeof request.maxTimeToLive, "bigint");
+    assert.equal(request.maxTimeToLive, 600000000000n);
+    assert.deepEqual(Array.from(request.sessionPublicKey), [1, 2, 3]);
+
+    const handlers = sandbox.__listeners.message ?? [];
+    assert.equal(handlers.length, 1);
+    for (const handler of handlers) {
+      handler({
+        origin: "https://id.ai",
+        data: {
+          kind: "authorize-client-success",
+          userPublicKey: new Uint8Array([1, 2, 255]),
+          delegations: [
+            {
+              delegation: {
+                pubkey: [3, 4, 5],
+                expiration: 12345n,
+                targets: [new Uint8Array([6, 7])]
+              },
+              signature: "0A0b"
+            }
+          ]
+        }
+      });
+    }
+
+    const redirectUrl = new URL(sandbox.__openedIdpWindow.location.href);
+    assert.equal(redirectUrl.searchParams.get("state"), "state-1");
+    const decoded = JSON.parse(decodeBase64Url(redirectUrl.searchParams.get("result")));
+    assert.deepEqual(decoded, {
+      kind: "authorize-client-success",
+      userPublicKey: "0102ff",
+      delegations: [
+        {
+          delegation: { pubkey: "030405", expiration: "12345", targets: ["0607"] },
+          signature: "0a0b"
+        }
+      ]
+    });
+  }
+
+  for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch({ maxTimeToLive }) });
+    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__postMessages.length, 0);
+  }
 }
 
 await withEnv(

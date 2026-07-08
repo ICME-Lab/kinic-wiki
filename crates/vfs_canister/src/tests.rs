@@ -2272,6 +2272,63 @@ fn write_nodes_records_instruction_charge_and_writes_nodes() {
 }
 
 #[test]
+fn write_nodes_creates_folder_items() {
+    install_test_service();
+
+    let results = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Knowledge/batch-folder".to_string(),
+            kind: NodeKind::Folder,
+            content: String::new(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect("batch folder write should succeed");
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].created);
+    assert_eq!(results[0].node.path, "/Knowledge/batch-folder");
+    assert_eq!(results[0].node.kind, NodeKind::Folder);
+    let children = list_children(ListChildrenRequest {
+        database_id: "default".to_string(),
+        path: "/Knowledge".to_string(),
+    })
+    .expect("children should load");
+    assert!(children.iter().any(
+        |child| child.path == "/Knowledge/batch-folder" && child.kind == NodeEntryKind::Folder
+    ));
+}
+
+#[test]
+fn write_node_creates_folder_items() {
+    install_test_service();
+
+    let result = write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Knowledge/single-folder".to_string(),
+        kind: NodeKind::Folder,
+        content: String::new(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("folder write should succeed");
+
+    assert!(result.created);
+    assert_eq!(result.node.path, "/Knowledge/single-folder");
+    assert_eq!(result.node.kind, NodeKind::Folder);
+    let children = list_children(ListChildrenRequest {
+        database_id: "default".to_string(),
+        path: "/Knowledge".to_string(),
+    })
+    .expect("children should load");
+    assert!(children.iter().any(
+        |child| child.path == "/Knowledge/single-folder" && child.kind == NodeEntryKind::Folder
+    ));
+}
+
+#[test]
 fn write_node_and_write_nodes_record_instruction_charges() {
     install_test_service();
     set_update_charge_units_for_test(vec![7, 11, 13, 19]);

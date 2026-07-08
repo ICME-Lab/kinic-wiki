@@ -23,6 +23,30 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
+    func queuesCaptureMetadataWhenSessionIsMissing() async throws {
+        let harness = try ShareCaptureHarness()
+        let submitter = harness.submitter(session: nil, databaseId: "db_demo")
+        let metadata = ShareCaptureMetadata(
+            title: "Since AI (@sinceaihq)",
+            description: "Building an AI product is one thing.",
+            imageURL: nil,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let result = await submitter.submitSharedURL(
+            URL(string: "https://x.com/sinceaihq/status/2074424777675046913")!,
+            captureMetadata: metadata
+        )
+
+        guard case .queued = result else {
+            Issue.record("Expected queued result, got \(result)")
+            return
+        }
+        #expect(harness.pendingURLs().first?.captureMetadata == metadata)
+    }
+
+    @Test
     func queuesWhenDatabaseIsMissing() async throws {
         let harness = try ShareCaptureHarness()
         let submitter = harness.submitter(session: makeSession(), databaseId: "")
@@ -51,11 +75,11 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
-    func savesWithoutQueueingWhenSubmissionAndTriggerSucceed() async throws {
+    func savesAndTriggersWorker() async throws {
         let harness = try ShareCaptureHarness()
         let triggerProbe = TriggerProbe()
         let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
-            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-1")
         } triggerSourceCapture: { submission, _ in
             await triggerProbe.record(submission)
         }
@@ -68,27 +92,80 @@ struct ShareCaptureSubmitterTests {
         }
         #expect(requestPath.hasPrefix("/Sources/source-capture-requests/"))
         #expect(harness.pendingURLs().isEmpty)
-        #expect(harness.pendingTriggers().isEmpty)
         #expect(await triggerProbe.requestPaths() == [requestPath])
     }
 
     @Test
-    func failsAndKeepsPendingTriggerWhenWorkerTriggerFails() async throws {
+    func immediateSubmissionIncludesCaptureMetadata() async throws {
         let harness = try ShareCaptureHarness()
+        let probe = RequestMetadataProbe()
+        let metadata = ShareCaptureMetadata(
+            title: "Since AI (@sinceaihq)",
+            description: "Building an AI product is one thing.",
+            imageURL: nil,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
         let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
-            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+            await probe.record(request.metadataJson)
+            return CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-metadata")
+        }
+
+        let result = await submitter.submitSharedURL(
+            URL(string: "https://x.com/sinceaihq/status/2074424777675046913")!,
+            captureMetadata: metadata
+        )
+
+        guard case .saved = result else {
+            Issue.record("Expected saved result, got \(result)")
+            return
+        }
+        #expect(await probe.load().contains("\"shared_description\":\"Building an AI product is one thing.\""))
+    }
+
+    @Test
+    func explicitDatabaseOverrideSelectsSubmissionDatabase() async throws {
+        let harness = try ShareCaptureHarness()
+        let databaseProbe = RequestDatabaseProbe()
+        let submitter = harness.submitter(session: makeSession(), databaseId: "db_default") { request, _ in
+            await databaseProbe.record(request.databaseId)
+            return CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-override")
+        }
+
+        let result = await submitter.submitSharedURL(
+            URL(string: "https://example.com/page")!,
+            databaseIdOverride: "db_override"
+        )
+
+        guard case .saved = result else {
+            Issue.record("Expected saved result, got \(result)")
+            return
+        }
+        #expect(await databaseProbe.load() == "db_override")
+    }
+
+    @Test
+    func queuesSameRequestWhenWorkerTriggerFailsAfterSave() async throws {
+        let harness = try ShareCaptureHarness()
+        let probe = RequestPathProbe()
+        let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
+            await probe.record(request.requestPath)
+            return CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-failed-trigger")
         } triggerSourceCapture: { _, _ in
             throw ShareCaptureTestError.triggerFailed
         }
 
         let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
 
-        guard case .failed = result else {
-            Issue.record("Expected failed result, got \(result)")
+        guard case let .queued(reason) = result else {
+            Issue.record("Expected queued result, got \(result)")
             return
         }
-        #expect(harness.pendingURLs().isEmpty)
-        #expect(harness.pendingTriggers().count == 1)
+        let queued = try #require(harness.pendingURLs().first)
+        let attemptedRequestPath = await probe.load()
+        #expect(reason.contains("capture could not start"))
+        #expect(attemptedRequestPath == "/Sources/source-capture-requests/\(queued.requestId).md")
+        #expect(queued.databaseId == "db_demo")
     }
 
     @Test
@@ -104,7 +181,15 @@ struct ShareCaptureSubmitterTests {
             Issue.record("Expected queued result, got \(result)")
             return
         }
-        #expect(harness.pendingURLs().count == 1)
+        let queued = try #require(harness.pendingURLs().first)
+        #expect(queued.databaseId == "db_demo")
+    }
+
+    @Test
+    func makeLiveThrowsInsteadOfCrashingWhenAppGroupIsMissing() {
+        #expect(throws: (any Error).self) {
+            try ShareCaptureSubmitter.makeLive(configuration: .preview)
+        }
     }
 
     @Test
@@ -125,6 +210,7 @@ struct ShareCaptureSubmitterTests {
         let queued = try #require(harness.pendingURLs().first)
         let attemptedRequestPath = await probe.load()
         #expect(attemptedRequestPath == "/Sources/source-capture-requests/\(queued.requestId).md")
+        #expect(queued.databaseId == "db_demo")
     }
 }
 
@@ -140,17 +226,37 @@ private actor RequestPathProbe {
     }
 }
 
+private actor RequestDatabaseProbe {
+    private var value = ""
+
+    func record(_ value: String) {
+        self.value = value
+    }
+
+    func load() -> String {
+        value
+    }
+}
+
+private actor RequestMetadataProbe {
+    private var value = ""
+
+    func record(_ value: String) {
+        self.value = value
+    }
+
+    func load() -> String {
+        value
+    }
+}
+
 private struct ShareCaptureHarness {
     let queueDirectory: URL
-    let triggerQueueDirectory: URL
     let configuration: AppConfiguration
 
     init() throws {
         queueDirectory = FileManager.default.temporaryDirectory
             .appending(path: "kinic-share-capture-tests")
-            .appending(path: UUID().uuidString)
-        triggerQueueDirectory = FileManager.default.temporaryDirectory
-            .appending(path: "kinic-share-trigger-tests")
             .appending(path: UUID().uuidString)
         configuration = AppConfiguration(
             canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
@@ -163,20 +269,18 @@ private struct ShareCaptureHarness {
             keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki"
         )
         try FileManager.default.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: triggerQueueDirectory, withIntermediateDirectories: true)
     }
 
     func submitter(
         session: ICAuthSession?,
         databaseId: String,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission = { request, _ in
-            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL)
+            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-default")
         },
         triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void = { _, _ in
         }
     ) -> ShareCaptureSubmitter {
         let queueDirectory = queueDirectory
-        let triggerQueueDirectory = triggerQueueDirectory
         return ShareCaptureSubmitter(
             configuration: configuration,
             timeoutNanoseconds: nil,
@@ -186,13 +290,15 @@ private struct ShareCaptureHarness {
             selectedDatabaseId: {
                 databaseId
             },
-            enqueueURL: { url, receivedAt, requestId in
+            enqueueURL: { url, receivedAt, requestId, databaseId, captureMetadata in
                 let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
-                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
-            },
-            enqueueTrigger: { request, createdAt in
-                let queue = try SourceCaptureTriggerQueue(testQueueDirectory: triggerQueueDirectory)
-                try queue.enqueue(request, createdAt: createdAt)
+                try inbox.enqueue(
+                    url,
+                    receivedAt: receivedAt,
+                    requestId: requestId,
+                    databaseId: databaseId,
+                    captureMetadata: captureMetadata
+                )
             },
             saveRequest: saveRequest,
             triggerSourceCapture: triggerSourceCapture
@@ -204,15 +310,6 @@ private struct ShareCaptureHarness {
             return try ShareInbox(testQueueDirectory: queueDirectory).loadPendingURLs()
         } catch {
             Issue.record("Could not load pending URLs: \(error.localizedDescription)")
-            return []
-        }
-    }
-
-    func pendingTriggers() -> [PendingSourceCaptureTrigger] {
-        do {
-            return try SourceCaptureTriggerQueue(testQueueDirectory: triggerQueueDirectory).loadPendingTriggers()
-        } catch {
-            Issue.record("Could not load pending triggers: \(error.localizedDescription)")
             return []
         }
     }
