@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/BrowseDatabaseRow.swift
 // What: Compact row for a readable database.
-// Why: The sidebar must expose DB title, role, and id without card-style chrome.
+// Why: The sidebar must expose DB title, role, and visibility without card-style chrome.
 
 import SwiftUI
 
@@ -17,31 +17,33 @@ struct BrowseDatabaseRow: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(database.displayTitle)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(database.displayTitle)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .layoutPriority(1)
+
+                    Spacer(minLength: 8)
+
+                    if isPublicReadable || isPurchased {
+                        HStack(spacing: 6) {
+                            if isPublicReadable {
+                                browseBadge("Public")
+                            }
+                            if isPurchased {
+                                browseBadge("Purchased")
+                            }
+                        }
+                        .fixedSize()
+                    }
+                }
 
                 Text(database.role.displayName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-
-                if isPublicReadable || isPurchased {
-                    HStack(spacing: 6) {
-                        if isPublicReadable {
-                            browseBadge("Public")
-                        }
-                        if isPurchased {
-                            browseBadge("Purchased")
-                        }
-                    }
-                }
-
-                Text(database.databaseId)
-                    .font(.footnote)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 6)
@@ -50,7 +52,7 @@ struct BrowseDatabaseRow: View {
 
     private func browseBadge(_ text: String) -> some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(.caption.bold())
             .foregroundStyle(KinicDesign.hotPink)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

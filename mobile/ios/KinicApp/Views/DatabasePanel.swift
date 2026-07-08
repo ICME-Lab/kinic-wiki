@@ -81,7 +81,12 @@ struct DatabasePanel: View {
             model.selectDatabase(database.databaseId)
         } label: {
             HStack(alignment: .center, spacing: 10) {
-                BrowseDatabaseRow(database: database, isSelected: isSelected)
+                BrowseDatabaseRow(
+                    database: database,
+                    isSelected: isSelected,
+                    isPublicReadable: model.isPublicBrowseDatabase(database.databaseId),
+                    isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -104,9 +109,18 @@ struct DatabasePanel: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(database.displayTitle), \(database.role.displayName), \(database.databaseId)")
+        .accessibilityLabel(databaseAccessibilityLabel(database))
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityHint("Sets the source capture database")
+    }
+
+    private func databaseAccessibilityLabel(_ database: DatabaseSummary) -> String {
+        let badges = [
+            model.isPublicBrowseDatabase(database.databaseId) ? "Public" : nil,
+            model.isPurchasedBrowseDatabase(database.databaseId) ? "Purchased" : nil
+        ].compactMap { $0 }
+        let badgeText = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
+        return "\(database.displayTitle), \(database.role.displayName)\(badgeText)"
     }
 }
 

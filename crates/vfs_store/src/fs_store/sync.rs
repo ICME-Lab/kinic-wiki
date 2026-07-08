@@ -3,10 +3,33 @@
 // Why: Mechanical split out of fs_store.rs; a child module keeps private access.
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SyncCursorPolicy {
+    Returned,
+    Scanned,
+}
+
 impl FsStore {
     pub fn export_snapshot(
         &self,
         request: ExportSnapshotRequest,
+    ) -> Result<ExportSnapshotResponse, String> {
+        self.export_snapshot_with_filter(request, |_| true, SyncCursorPolicy::Returned)
+    }
+
+    pub fn export_snapshot_filtered(
+        &self,
+        request: ExportSnapshotRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+    ) -> Result<ExportSnapshotResponse, String> {
+        self.export_snapshot_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+    }
+
+    fn export_snapshot_with_filter(
+        &self,
+        request: ExportSnapshotRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+        cursor_policy: SyncCursorPolicy,
     ) -> Result<ExportSnapshotResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -36,19 +59,59 @@ impl FsStore {
                     prefix: prefix.clone(),
                 },
             };
-            if request.snapshot_revision.is_some()
+            if cursor_policy == SyncCursorPolicy::Returned
+                && request.snapshot_revision.is_some()
                 && has_prefix_changes_after_revision(conn, &prefix, snapshot.revision)?
             {
                 return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
             }
-            let mut nodes = load_snapshot_nodes_page(
-                conn,
-                &prefix,
-                cursor.as_deref(),
-                snapshot.revision,
-                limit + 1,
-            )?;
-            let next_cursor = page_nodes_by_limit_and_budget(&mut nodes, limit)?;
+            if cursor_policy == SyncCursorPolicy::Scanned
+                && request.snapshot_revision.is_some()
+                && has_allowed_changes_after_revision(
+                    conn,
+                    &prefix,
+                    snapshot.revision,
+                    &mut allow_path,
+                )?
+            {
+                return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+            }
+            let page = load_snapshot_paths_page(conn, &prefix, cursor.as_deref(), limit + 1)?;
+            let page_had_more = page.len() > limit as usize;
+            let mut nodes = Vec::new();
+            let mut scan_cursor = cursor;
+            let mut used_bytes = sync_response_base_bytes("");
+            for path in page.into_iter().take(limit as usize) {
+                if !allow_path(&path) {
+                    scan_cursor = Some(path);
+                    continue;
+                }
+                let node = load_snapshot_node(conn, &path, snapshot.revision)?;
+                let item_bytes = estimated_node_response_bytes(&node);
+                if !sync_item_fits_budget(used_bytes, item_bytes) {
+                    if nodes.is_empty() {
+                        return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
+                    }
+                    return Ok(ExportSnapshotResponse {
+                        snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
+                        snapshot_session_id: None,
+                        next_cursor: sync_next_cursor(
+                            &nodes,
+                            scan_cursor.as_deref(),
+                            cursor_policy,
+                        ),
+                        nodes,
+                    });
+                }
+                used_bytes = used_bytes.saturating_add(item_bytes);
+                scan_cursor = Some(path);
+                nodes.push(node);
+            }
+            let next_cursor = if page_had_more {
+                sync_next_cursor(&nodes, scan_cursor.as_deref(), cursor_policy)
+            } else {
+                None
+            };
             Ok(ExportSnapshotResponse {
                 snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                 snapshot_session_id: None,
@@ -61,6 +124,23 @@ impl FsStore {
     pub fn fetch_updates(
         &self,
         request: FetchUpdatesRequest,
+    ) -> Result<FetchUpdatesResponse, String> {
+        self.fetch_updates_with_filter(request, |_| true, SyncCursorPolicy::Returned)
+    }
+
+    pub fn fetch_updates_filtered(
+        &self,
+        request: FetchUpdatesRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+    ) -> Result<FetchUpdatesResponse, String> {
+        self.fetch_updates_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+    }
+
+    fn fetch_updates_with_filter(
+        &self,
+        request: FetchUpdatesRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+        cursor_policy: SyncCursorPolicy,
     ) -> Result<FetchUpdatesResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -120,7 +200,7 @@ impl FsStore {
             }
             let mut changed_nodes = Vec::new();
             let mut removed_paths = Vec::new();
-            let mut paths = load_changed_paths_page(
+            let paths = load_changed_paths_page(
                 conn,
                 known_snapshot.revision,
                 target_snapshot.revision,
@@ -129,13 +209,14 @@ impl FsStore {
                 limit + 1,
             )?;
             let limit_had_more = paths.len() > limit as usize;
-            if limit_had_more {
-                paths.truncate(limit as usize);
-            }
             let mut next_cursor = None;
             let mut used_bytes = sync_response_base_bytes(&target_snapshot_revision);
-            let mut last_returned_path = None;
-            for path in paths {
+            let mut scan_cursor = cursor;
+            for path in paths.into_iter().take(limit as usize) {
+                if !allow_path(&path) {
+                    scan_cursor = Some(path);
+                    continue;
+                }
                 if load_path_last_change_revision(conn, &path)? > target_snapshot.revision {
                     return Err(
                         "target_snapshot_revision is no longer current for changed path"
@@ -151,18 +232,33 @@ impl FsStore {
                     if changed_nodes.is_empty() && removed_paths.is_empty() {
                         return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
                     }
-                    next_cursor = last_returned_path.clone();
+                    next_cursor = sync_update_next_cursor(
+                        &changed_nodes,
+                        &removed_paths,
+                        scan_cursor.as_deref(),
+                        cursor_policy,
+                    );
                     break;
                 }
                 used_bytes = used_bytes.saturating_add(item_bytes);
-                last_returned_path = Some(path.clone());
                 match current_node {
-                    Some(node) => changed_nodes.push(node),
-                    None => removed_paths.push(path),
+                    Some(node) => {
+                        scan_cursor = Some(node.path.clone());
+                        changed_nodes.push(node);
+                    }
+                    None => {
+                        scan_cursor = Some(path.clone());
+                        removed_paths.push(path);
+                    }
                 }
             }
             if next_cursor.is_none() && limit_had_more {
-                next_cursor = last_returned_path;
+                next_cursor = sync_update_next_cursor(
+                    &changed_nodes,
+                    &removed_paths,
+                    scan_cursor.as_deref(),
+                    cursor_policy,
+                );
             }
             Ok(FetchUpdatesResponse {
                 snapshot_revision: target_snapshot_revision,
@@ -171,6 +267,41 @@ impl FsStore {
                 next_cursor,
             })
         })
+    }
+}
+
+fn sync_next_cursor(
+    nodes: &[Node],
+    scan_cursor: Option<&str>,
+    cursor_policy: SyncCursorPolicy,
+) -> Option<String> {
+    match cursor_policy {
+        SyncCursorPolicy::Returned => nodes.last().map(PageCursorPath::cursor_path),
+        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
+    }
+}
+
+fn sync_update_next_cursor(
+    changed_nodes: &[Node],
+    removed_paths: &[String],
+    scan_cursor: Option<&str>,
+    cursor_policy: SyncCursorPolicy,
+) -> Option<String> {
+    match cursor_policy {
+        SyncCursorPolicy::Returned => last_sync_response_path(changed_nodes, removed_paths),
+        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
+    }
+}
+
+fn last_sync_response_path(changed_nodes: &[Node], removed_paths: &[String]) -> Option<String> {
+    match (
+        changed_nodes.last().map(|node| node.path.as_str()),
+        removed_paths.last().map(String::as_str),
+    ) {
+        (Some(changed), Some(removed)) => Some(changed.max(removed).to_string()),
+        (Some(changed), None) => Some(changed.to_string()),
+        (None, Some(removed)) => Some(removed.to_string()),
+        (None, None) => None,
     }
 }
 

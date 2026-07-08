@@ -24,7 +24,7 @@ struct BrowseNodeListView: View {
             } else if model.loadedBrowsePath != normalizedFolderPath {
                 ProgressView()
                     .tint(KinicDesign.hotPink)
-            } else if model.childNodes.isEmpty {
+            } else if visibleChildNodes.isEmpty {
                 ContentUnavailableView("Empty folder", systemImage: "folder")
             } else {
                 childRows
@@ -51,7 +51,7 @@ struct BrowseNodeListView: View {
     }
 
     private var childRows: some View {
-        ForEach(model.childNodes) { child in
+        ForEach(visibleChildNodes) { child in
             if child.kind == .folder {
                 NavigationLink(value: BrowseFolderRoute(path: child.path)) {
                     BrowseChildNodeRow(child: child)
@@ -68,6 +68,12 @@ struct BrowseNodeListView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    private var visibleChildNodes: [ChildNode] {
+        model.childNodes.filter { child in
+            child.kind != .folder || child.hasChildren
         }
     }
 
