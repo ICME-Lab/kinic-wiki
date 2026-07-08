@@ -10,7 +10,7 @@ struct ShareCaptureSubmitter: Sendable {
     private let timeoutNanoseconds: UInt64?
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
-    private let enqueueURL: @Sendable (URL, Date, String?) throws -> Void
+    private let enqueueURL: @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void
     private let enqueueTrigger: @Sendable (SourceCaptureRequest, String, Date) throws -> Void
     private let removeTrigger: @Sendable (String) -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
@@ -30,9 +30,9 @@ struct ShareCaptureSubmitter: Sendable {
             selectedDatabaseId: {
                 settingsStore.databaseId
             },
-            enqueueURL: { url, receivedAt, requestId in
+            enqueueURL: { url, receivedAt, requestId, captureMetadata in
                 let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
-                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId)
+                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId, captureMetadata: captureMetadata)
             },
             enqueueTrigger: { request, sessionNonce, createdAt in
                 try triggerQueue.enqueue(request, sessionNonce: sessionNonce, createdAt: createdAt)
@@ -59,7 +59,7 @@ struct ShareCaptureSubmitter: Sendable {
         timeoutNanoseconds: UInt64?,
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
-        enqueueURL: @escaping @Sendable (URL, Date, String?) throws -> Void,
+        enqueueURL: @escaping @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void,
         enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, String, Date) throws -> Void,
         removeTrigger: @escaping @Sendable (String) -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
@@ -76,7 +76,11 @@ struct ShareCaptureSubmitter: Sendable {
         self.triggerSourceCapture = triggerSourceCapture
     }
 
-    func submitSharedURL(_ url: URL, databaseIdOverride: String? = nil) async -> ShareCaptureResult {
+    func submitSharedURL(
+        _ url: URL,
+        databaseIdOverride: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) async -> ShareCaptureResult {
         let normalizedURL: URL
         do {
             normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
@@ -84,7 +88,11 @@ struct ShareCaptureSubmitter: Sendable {
             return .failed(message: error.localizedDescription)
         }
         guard let session = restoreSession() else {
-            return queue(normalizedURL, reason: "Sign in in KinicWikiApp to send this URL later.")
+            return queue(
+                normalizedURL,
+                captureMetadata: captureMetadata,
+                reason: "Sign in in KinicWikiApp to send this URL later."
+            )
         }
         let databaseId: String
         if let overrideDatabaseId = databaseIdOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -94,7 +102,11 @@ struct ShareCaptureSubmitter: Sendable {
             databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard !databaseId.isEmpty else {
-            return queue(normalizedURL, reason: "Select a writable database in KinicWikiApp to send this URL later.")
+            return queue(
+                normalizedURL,
+                captureMetadata: captureMetadata,
+                reason: "Select a writable database in KinicWikiApp to send this URL later."
+            )
         }
         let receivedAt = Date.now
         let request: SourceCaptureRequest
@@ -103,7 +115,8 @@ struct ShareCaptureSubmitter: Sendable {
                 url: normalizedURL,
                 databaseId: databaseId,
                 requestedBy: session.principal,
-                now: receivedAt
+                now: receivedAt,
+                captureMetadata: captureMetadata
             )
         } catch {
             return .failed(message: error.localizedDescription)
@@ -118,15 +131,24 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 receivedAt: receivedAt,
                 requestId: request.requestId,
+                captureMetadata: captureMetadata,
                 reason: "Saved for later because immediate submission failed."
             )
         }
         do {
             try enqueueTrigger(request, submission.sessionNonce, receivedAt)
         } catch {
-            return .failed(
-                message: "Source capture request was saved, but capture could not queue for retry: \(error.localizedDescription)"
-            )
+            let queueError = error
+            do {
+                try await triggerSourceCapture(submission, session)
+                return .saved(requestPath: submission.requestPath)
+            } catch {
+                let message = "Source capture request was saved, but capture could not queue for retry " +
+                    "(\(queueError.localizedDescription)) or trigger immediately (\(error.localizedDescription))."
+                return .failed(
+                    message: message
+                )
+            }
         }
         Task {
             do {
@@ -143,10 +165,11 @@ struct ShareCaptureSubmitter: Sendable {
         _ url: URL,
         receivedAt: Date = .now,
         requestId: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil,
         reason: String
     ) -> ShareCaptureResult {
         do {
-            try enqueueURL(url, receivedAt, requestId)
+            try enqueueURL(url, receivedAt, requestId, captureMetadata)
             return .queued(reason: reason)
         } catch {
             return .failed(message: error.localizedDescription)

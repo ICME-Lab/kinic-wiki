@@ -6,7 +6,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Bindable var model: AppModel
-    @State private var selectedTab = HomeTab.capture
+    @State private var selectedTab = HomeTab.home
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -14,9 +14,9 @@ struct HomeView: View {
                 CaptureView(model: model)
             }
             .tabItem {
-                Label("Capture", systemImage: "square.and.arrow.down")
+                Label("Home", systemImage: "house")
             }
-            .tag(HomeTab.capture)
+            .tag(HomeTab.home)
 
             BrowseView(model: model, rootNavigationID: model.rootNavigationID)
             .tabItem {
@@ -40,25 +40,25 @@ struct HomeView: View {
 }
 
 private enum HomeTab: Hashable {
-    case capture
+    case home
     case browse
     case settings
 }
 
 private struct CaptureView: View {
     @Bindable var model: AppModel
-    @FocusState private var isManualURLFocused: Bool
+    @State private var isShowingIngest = false
+    @State private var isShowingAppearanceSettings = false
 
     var body: some View {
         ZStack {
-            Color.white
+            KinicDesign.appBackground
                 .ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 16) {
                     SessionPanel(model: model)
                     DatabasePanel(model: model)
-                    ManualURLPanel(model: model, isURLFocused: $isManualURLFocused)
 
                     if let message = model.statusMessage {
                         StatusPanel(message: message)
@@ -68,20 +68,37 @@ private struct CaptureView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background {
-                Color.white
+                KinicDesign.appBackground
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        isManualURLFocused = false
-                    }
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.white, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.light, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 KinicHeaderTitle()
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Ingest", systemImage: "link.badge.plus") {
+                    isShowingIngest = true
+                }
+                .labelStyle(.iconOnly)
+                .tint(KinicDesign.hotPink)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Appearance", systemImage: "gearshape") {
+                    isShowingAppearanceSettings = true
+                }
+                .labelStyle(.iconOnly)
+                .tint(KinicDesign.hotPink)
+            }
+        }
+        .sheet(isPresented: $isShowingIngest) {
+            IngestSheet(model: model)
+        }
+        .sheet(isPresented: $isShowingAppearanceSettings) {
+            NavigationStack {
+                AppearanceSettingsView(model: model)
             }
         }
         .task {
@@ -89,6 +106,48 @@ private struct CaptureView: View {
             model.startRefreshDatabases()
             model.autoSubmitPendingURL()
         }
+    }
+}
+
+private struct IngestSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var model: AppModel
+    @FocusState private var isURLFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                KinicDesign.appBackground
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    ManualURLPanel(model: model, isURLFocused: $isURLFocused) {
+                        dismiss()
+                    }
+                        .padding(KinicDesign.screenPadding)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .background {
+                    KinicDesign.appBackground
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isURLFocused = false
+                        }
+                }
+            }
+            .navigationTitle("Ingest")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", systemImage: "xmark") {
+                        dismiss()
+                    }
+                    .labelStyle(.iconOnly)
+                    .tint(KinicDesign.hotPink)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

@@ -8,10 +8,10 @@ struct KinicSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(configuration.isPressed ? .white : .black)
+            .foregroundStyle(configuration.isPressed ? .white : .primary)
             .frame(maxWidth: .infinity, minHeight: 50)
             .padding(.horizontal, 18)
-            .background(configuration.isPressed ? KinicDesign.hotPink : .white)
+            .background(configuration.isPressed ? KinicDesign.hotPink : KinicDesign.controlBackground)
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
             .overlay {
                 RoundedRectangle(cornerRadius: KinicDesign.radius)

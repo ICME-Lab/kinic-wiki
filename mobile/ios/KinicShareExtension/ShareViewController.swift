@@ -17,6 +17,7 @@ final class ShareViewController: UIViewController {
     private let saveButton = UIButton(type: .system)
     private let doneButton = UIButton(type: .system)
     private var sharedURL: URL?
+    private var sharedMetadata: ShareCaptureMetadata?
     private var databases: [DatabaseSummary] = []
     private var selectedDatabaseId: String?
     private var configuration: AppConfiguration?
@@ -157,7 +158,18 @@ final class ShareViewController: UIViewController {
                     self?.showFailure(ShareExtensionError.missingURL)
                     return
                 }
-                self?.prepareDatabaseSelection(for: sharedURL)
+                self?.loadMetadataAndPrepareDatabaseSelection(for: sharedURL)
+            }
+        }
+    }
+
+    private func loadMetadataAndPrepareDatabaseSelection(for url: URL) {
+        titleLabel.text = "Reading shared link..."
+        messageLabel.text = "Checking whether the post includes preview text."
+        Task { [weak self] in
+            let metadata = await XPostMetadataFetcher().metadata(for: url)
+            await MainActor.run {
+                self?.prepareDatabaseSelection(for: url, captureMetadata: metadata)
             }
         }
     }
@@ -172,8 +184,9 @@ final class ShareViewController: UIViewController {
         doneButton.isHidden = true
     }
 
-    private func prepareDatabaseSelection(for url: URL) {
+    private func prepareDatabaseSelection(for url: URL, captureMetadata: ShareCaptureMetadata?) {
         sharedURL = url
+        sharedMetadata = captureMetadata
         let configuration: AppConfiguration
         let activeSettingsStore: SharedDefaultsStore
         let activeSubmitter: ShareCaptureSubmitter
@@ -190,7 +203,7 @@ final class ShareViewController: UIViewController {
         submitter = activeSubmitter
 
         guard let session = KinicAuthSessionStore(configuration: configuration).restore() else {
-            submitSharedURL(url)
+            submitSharedURL(url, captureMetadata: captureMetadata)
             return
         }
         self.session = session
@@ -247,7 +260,7 @@ final class ShareViewController: UIViewController {
         guard !loadedDatabases.isEmpty else {
             if fallbackWhenEmpty {
                 settingsStore?.databaseId = ""
-                submitSharedURL(sharedURL)
+                submitSharedURL(sharedURL, captureMetadata: sharedMetadata)
                 return
             }
             databases = []
@@ -286,7 +299,11 @@ final class ShareViewController: UIViewController {
         updateSaveButton()
     }
 
-    private func submitSharedURL(_ url: URL?, databaseIdOverride: String? = nil) {
+    private func submitSharedURL(
+        _ url: URL?,
+        databaseIdOverride: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) {
         guard let url else {
             showFailure(ShareExtensionError.missingURL)
             return
@@ -303,7 +320,11 @@ final class ShareViewController: UIViewController {
             }
         }
         Task { [weak self] in
-            let result = await activeSubmitter.submitSharedURL(url, databaseIdOverride: databaseIdOverride)
+            let result = await activeSubmitter.submitSharedURL(
+                url,
+                databaseIdOverride: databaseIdOverride,
+                captureMetadata: captureMetadata
+            )
             await MainActor.run {
                 self?.showResult(result)
             }
@@ -356,7 +377,7 @@ final class ShareViewController: UIViewController {
         refreshButton.isHidden = true
         saveButton.isHidden = true
         doneButton.isHidden = true
-        submitSharedURL(sharedURL, databaseIdOverride: selectedDatabaseId)
+        submitSharedURL(sharedURL, databaseIdOverride: selectedDatabaseId, captureMetadata: sharedMetadata)
     }
 
     @objc private func refreshDatabases() {

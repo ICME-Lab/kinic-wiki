@@ -22,7 +22,7 @@ struct BrowseDocumentView: View {
                           node.path == normalizedPath {
                     BrowseDocumentContent(node: node, mode: documentMode)
                 } else {
-                    ContentUnavailableView("Select a note", systemImage: "doc.text")
+                    ContentUnavailableView("Select a node", systemImage: "doc.text")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

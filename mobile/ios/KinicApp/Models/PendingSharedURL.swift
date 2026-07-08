@@ -9,4 +9,19 @@ struct PendingSharedURL: Identifiable, Equatable, Sendable {
     let url: URL
     let receivedAt: Date
     let requestId: String
+    let captureMetadata: ShareCaptureMetadata?
+
+    init(
+        id: String,
+        url: URL,
+        receivedAt: Date,
+        requestId: String,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.receivedAt = receivedAt
+        self.requestId = requestId
+        self.captureMetadata = captureMetadata
+    }
 }

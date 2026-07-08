@@ -20,16 +20,27 @@ struct DatabasePanel: View {
                     )
                     .frame(maxWidth: .infinity)
                 } else {
-                    Picker("Target", selection: $model.selectedDatabaseId) {
-                        ForEach(model.databases) { database in
-                            Text("\(database.displayTitle) (\(database.role.displayName))")
-                                .tag(database.databaseId)
+                    HStack(alignment: .center, spacing: 8) {
+                        Picker("Target", selection: $model.selectedDatabaseId) {
+                            ForEach(model.databases) { database in
+                                Text("\(database.displayTitle) (\(database.role.displayName))")
+                                    .tag(database.databaseId)
+                            }
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(KinicDesign.hotPink)
-                    .onChange(of: model.selectedDatabaseId) {
-                        model.selectDatabase(model.selectedDatabaseId)
+                        .pickerStyle(.menu)
+                        .tint(KinicDesign.hotPink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onChange(of: model.selectedDatabaseId) {
+                            model.selectDatabase(model.selectedDatabaseId)
+                        }
+
+                        Button("Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(KinicDesign.hotPink)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel("Refresh databases")
+                            .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
                     }
 
                     if let database = model.selectedDatabase {
@@ -41,11 +52,9 @@ struct DatabasePanel: View {
                 }
 
                 Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
+                    .labelStyle(.iconOnly)
                     .buttonStyle(KinicSecondaryButtonStyle())
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
-
-                Button(model.isLoadingDatabases ? "Refreshing databases" : "Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
-                    .buttonStyle(KinicSecondaryButtonStyle())
+                    .accessibilityLabel(model.isCreatingDatabase ? "Creating database" : "Create database")
                     .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
             }
         }

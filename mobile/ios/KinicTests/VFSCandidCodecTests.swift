@@ -98,6 +98,39 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func encodesGrantDatabaseAccessRequest() {
+        let principal = "aaaaa-aa"
+        let data = VFSCandidEncoder.grantDatabaseAccess(databaseId: "db_demo", principal: principal, role: .writer)
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.range(of: Data(principal.utf8)) != nil)
+    }
+
+    @Test
+    func encodesRevokeDatabaseAccessRequest() {
+        let principal = "aaaaa-aa"
+        let data = VFSCandidEncoder.revokeDatabaseAccess(databaseId: "db_demo", principal: principal)
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.range(of: Data(principal.utf8)) != nil)
+    }
+
+    @Test
+    func encodesListDatabaseCycleEntriesRequest() {
+        let data = VFSCandidEncoder.listDatabaseCycleEntries(databaseId: "db_demo", cursor: 12, limit: 20)
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.suffix(4) == Data([20, 0, 0, 0]))
+    }
+
+    @Test
+    func encodesDeleteDatabaseRequest() {
+        let data = VFSCandidEncoder.deleteDatabase(databaseId: "db_demo")
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+    }
+
+    @Test
     func decodesUnitResultErr() throws {
         #expect(throws: VFSCandidError.canisterRejected("denied")) {
             try VFSCandidDecoder.decodeUnitResult(candidResultErr("denied"))
@@ -186,6 +219,26 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func decodesDatabaseCycleEntryPageResult() throws {
+        let page = try VFSCandidDecoder.decodeDatabaseCycleEntryPageResult(candidDatabaseCycleEntryPageOk())
+        #expect(page.nextCursor == 42)
+        #expect(page.entries.count == 2)
+        #expect(page.entries[0].entryId == 7)
+        #expect(page.entries[0].databaseId == "db_demo")
+        #expect(page.entries[0].kind == "write_charge")
+        #expect(page.entries[0].amountCycles == -1_000_000)
+        #expect(page.entries[0].balanceAfterCycles == 233_000_000_000)
+        #expect(page.entries[0].caller == "aaaaa-aa")
+        #expect(page.entries[0].method == "write_node")
+        #expect(page.entries[0].displayTitle == "write_node")
+        #expect(page.entries[1].entryId == 8)
+        #expect(page.entries[1].kind == "cycles_purchase")
+        #expect(page.entries[1].displayTitle == "cycles_purchase")
+        #expect(page.entries[1].amountCycles == 5_000_000)
+        #expect(page.entries[1].ledgerBlockIndex == 99)
+    }
+
+    @Test
     func rejectsCyclesBillingConfigNatOverflow() throws {
         let overflowNat = Data(repeating: 0x80, count: 9) + Data([0x02])
         #expect(throws: VFSCandidError.invalidPayload("unsigned LEB128 is too large")) {
@@ -196,7 +249,7 @@ struct VFSCandidCodecTests {
     @Test
     func decodesChildNodesFromListChildrenResult() throws {
         let children = try VFSCandidDecoder.decodeChildNodesResult(candidChildNodesOk())
-        #expect(children.count == 2)
+        #expect(children.count == 3)
         #expect(children[0].path == "/Knowledge/Design")
         #expect(children[0].name == "Design")
         #expect(children[0].kind == .folder)
@@ -206,6 +259,9 @@ struct VFSCandidCodecTests {
         #expect(children[1].kind == .file)
         #expect(children[1].etag == "etag_file")
         #expect(children[1].sizeBytes == 128)
+        #expect(children[2].path == "/Sources/web/source.md")
+        #expect(children[2].kind == .source)
+        #expect(children[2].etag == "etag_source")
     }
 
     @Test
@@ -1095,6 +1151,229 @@ private func candidCyclesBillingConfigOk(thresholdCyclesPayload: Data? = nil) ->
     return data
 }
 
+private func candidDatabaseCycleEntryPageOk() -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeNat64: Int64 = -8
+    let typeInt64: Int64 = -12
+    let typeText: Int64 = -15
+    let typeOpt: Int64 = -18
+    let typeVec: Int64 = -19
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func fields(_ raw: [(String, Ref)]) -> [(String, Ref)] {
+        raw.sorted { label($0.0) < label($1.0) }
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = fields(raw)
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendRecord(_ raw: [(String, Ref)]) {
+        appendSigned(typeRecord, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVariant(_ raw: [(String, Ref)]) {
+        appendSigned(typeVariant, to: &data)
+        appendFields(raw)
+    }
+
+    func appendOpt(_ ref: Ref) {
+        appendSigned(typeOpt, to: &data)
+        appendRef(ref)
+    }
+
+    func appendVec(_ ref: Ref) {
+        appendSigned(typeVec, to: &data)
+        appendRef(ref)
+    }
+
+    func appendText(_ text: String) {
+        let bytes = Data(text.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    func appendInt64(_ value: Int64) {
+        let unsigned = UInt64(bitPattern: value)
+        for offset in 0..<8 {
+            data.append(UInt8(truncatingIfNeeded: unsigned >> UInt64(offset * 8)))
+        }
+    }
+
+    func appendNat64(_ value: UInt64) {
+        for offset in 0..<8 {
+            data.append(UInt8(truncatingIfNeeded: value >> UInt64(offset * 8)))
+        }
+    }
+
+    func appendOptionalNat64(_ value: UInt64?) {
+        if let value {
+            data.append(1)
+            appendNat64(value)
+        } else {
+            data.append(0)
+        }
+    }
+
+    func appendOptionalText(_ value: String?) {
+        if let value {
+            data.append(1)
+            appendText(value)
+        } else {
+            data.append(0)
+        }
+    }
+
+    func appendVariantValue(_ selected: String, cases: [String]) {
+        let sorted = cases.sorted { label($0) < label($1) }
+        guard let index = sorted.firstIndex(of: selected) else {
+            preconditionFailure("unknown fixture variant case")
+        }
+        appendUnsigned(UInt64(index), to: &data)
+    }
+
+    func appendEntry(
+        entryId: UInt64,
+        kind: String,
+        amountCycles: Int64,
+        balanceAfterCycles: UInt64,
+        method: String?,
+        ledgerBlockIndex: UInt64?
+    ) {
+        for field in fields([
+            ("entry_id", .primitive(typeNat64)),
+            ("database_id", .primitive(typeText)),
+            ("kind", .primitive(typeText)),
+            ("amount_cycles", .primitive(typeInt64)),
+            ("balance_after_cycles", .primitive(typeNat64)),
+            ("payment_amount_e8s", .table(4)),
+            ("caller", .primitive(typeText)),
+            ("method", .table(5)),
+            ("cycles_delta", .table(4)),
+            ("cycles_per_kinic", .table(4)),
+            ("ledger_block_index", .table(4)),
+            ("created_at_ms", .primitive(typeInt64))
+        ]) {
+            switch field.0 {
+            case "entry_id":
+                appendNat64(entryId)
+            case "database_id":
+                appendText("db_demo")
+            case "kind":
+                appendText(kind)
+            case "amount_cycles":
+                appendInt64(amountCycles)
+            case "balance_after_cycles":
+                appendNat64(balanceAfterCycles)
+            case "payment_amount_e8s":
+                appendOptionalNat64(nil)
+            case "caller":
+                appendText("aaaaa-aa")
+            case "method":
+                appendOptionalText(method)
+            case "cycles_delta":
+                appendOptionalNat64(nil)
+            case "cycles_per_kinic":
+                appendOptionalNat64(nil)
+            case "ledger_block_index":
+                appendOptionalNat64(ledgerBlockIndex)
+            case "created_at_ms":
+                appendInt64(1_700_000_000_000)
+            default:
+                preconditionFailure("unknown fixture cycle entry field")
+            }
+        }
+    }
+
+    appendUnsigned(6, to: &data)
+    appendVariant([
+        ("Ok", .table(1)),
+        ("Err", .primitive(typeText))
+    ])
+    appendRecord([
+        ("entries", .table(2)),
+        ("next_cursor", .table(4))
+    ])
+    appendVec(.table(3))
+    appendRecord([
+        ("entry_id", .primitive(typeNat64)),
+        ("database_id", .primitive(typeText)),
+        ("kind", .primitive(typeText)),
+        ("amount_cycles", .primitive(typeInt64)),
+        ("balance_after_cycles", .primitive(typeNat64)),
+        ("payment_amount_e8s", .table(4)),
+        ("caller", .primitive(typeText)),
+        ("method", .table(5)),
+        ("cycles_delta", .table(4)),
+        ("cycles_per_kinic", .table(4)),
+        ("ledger_block_index", .table(4)),
+        ("created_at_ms", .primitive(typeInt64))
+    ])
+    appendOpt(.primitive(typeNat64))
+    appendOpt(.primitive(typeText))
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendVariantValue("Ok", cases: ["Ok", "Err"])
+    for field in fields([
+        ("entries", .table(2)),
+        ("next_cursor", .table(4))
+    ]) {
+        switch field.0 {
+        case "entries":
+            appendUnsigned(2, to: &data)
+            appendEntry(
+                entryId: 7,
+                kind: "write_charge",
+                amountCycles: -1_000_000,
+                balanceAfterCycles: 233_000_000_000,
+                method: "write_node",
+                ledgerBlockIndex: nil
+            )
+            appendEntry(
+                entryId: 8,
+                kind: "cycles_purchase",
+                amountCycles: 5_000_000,
+                balanceAfterCycles: 233_005_000_000,
+                method: nil,
+                ledgerBlockIndex: 99
+            )
+        case "next_cursor":
+            data.append(1)
+            appendNat64(42)
+        default:
+            preconditionFailure("unknown fixture cycle page field")
+        }
+    }
+    return data
+}
+
 private func candidChildNodesOk() -> Data {
     enum Ref {
         case primitive(Int64)
@@ -1264,9 +1543,10 @@ private func candidChildNodesOk() -> Data {
     appendUnsigned(1, to: &data)
     appendSigned(0, to: &data)
     appendVariantValue("Ok", cases: ["Ok", "Err"])
-    appendUnsigned(2, to: &data)
+    appendUnsigned(3, to: &data)
     appendChild(path: "/Knowledge/Design", name: "Design", kind: "Folder", updatedAt: 30, etag: nil, sizeBytes: nil, hasChildren: true, isVirtual: false)
     appendChild(path: "/Knowledge/README.md", name: "README.md", kind: "File", updatedAt: 40, etag: "etag_file", sizeBytes: 128, hasChildren: false, isVirtual: false)
+    appendChild(path: "/Sources/web/source.md", name: "source.md", kind: "Source", updatedAt: 50, etag: "etag_source", sizeBytes: 256, hasChildren: false, isVirtual: false)
     return data
 }
 

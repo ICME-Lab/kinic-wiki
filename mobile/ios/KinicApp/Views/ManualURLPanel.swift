@@ -7,10 +7,11 @@ import SwiftUI
 struct ManualURLPanel: View {
     @Bindable var model: AppModel
     let isURLFocused: FocusState<Bool>.Binding
+    var onSubmitted: () -> Void = {}
     @State private var urlText = ""
 
     var body: some View {
-        KinicPanel(title: "Send URL", systemImage: "link") {
+        KinicPanel(title: "Ingest", systemImage: "link") {
             VStack(alignment: .leading, spacing: 12) {
                 TextField(
                     "",
@@ -19,7 +20,7 @@ struct ManualURLPanel: View {
                         .foregroundStyle(.secondary),
                     axis: .vertical
                 )
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.primary)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
@@ -28,11 +29,13 @@ struct ManualURLPanel: View {
                     .lineLimit(1...3)
                     .accessibilityLabel("URL")
                     .padding(14)
-                    .background(.white)
+                    .background(KinicDesign.controlBackground)
                     .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
 
                 Button("Send", systemImage: "paperplane.fill", action: submitURL)
+                    .labelStyle(.iconOnly)
                     .buttonStyle(KinicPrimaryButtonStyle())
+                    .accessibilityLabel("Send")
                     .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting)
             }
         }
@@ -41,6 +44,7 @@ struct ManualURLPanel: View {
     private func submitURL() {
         if model.enqueueManualURL(urlText) {
             urlText = ""
+            onSubmitted()
         }
     }
 }

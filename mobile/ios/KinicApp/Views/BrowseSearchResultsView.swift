@@ -8,7 +8,6 @@ struct BrowseSearchResultsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var model: AppModel
     @Binding var selectedDocumentPath: String?
-    @Binding var selectedManageDatabaseId: String?
 
     var body: some View {
         if model.isSearching {
@@ -40,7 +39,6 @@ struct BrowseSearchResultsView: View {
 
     private func openDocument(_ path: String) {
         selectedDocumentPath = path
-        selectedManageDatabaseId = nil
         model.startLoadBrowseDocument(path)
     }
 }

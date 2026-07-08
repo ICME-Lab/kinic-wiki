@@ -28,6 +28,102 @@ struct ShareInboxTests {
     }
 
     @Test
+    func enqueuesAndLoadsCaptureMetadata() throws {
+        let queueDirectory = makeQueueDirectory()
+        defer { removeQueueDirectory(queueDirectory) }
+
+        let metadata = ShareCaptureMetadata(
+            title: "Since AI (@sinceaihq)",
+            description: "Building an AI product is one thing.",
+            imageURL: URL(string: "https://pbs.twimg.com/media/card.jpg")!,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+        try inbox.enqueue(
+            URL(string: "https://x.com/sinceaihq/status/2074424777675046913")!,
+            receivedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            requestId: "1700000001000-00000000-0000-4000-8000-000000000000",
+            captureMetadata: metadata
+        )
+
+        let pendingURL = try #require(inbox.loadPendingURLs().first)
+        #expect(pendingURL.captureMetadata == metadata)
+    }
+
+    @Test
+    func appRetryRebuildsInitialSourceCaptureRequestContent() throws {
+        let receivedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let retryAt = Date(timeIntervalSince1970: 1_700_000_999)
+        let uuid = try #require(UUID(uuidString: "00000000-0000-4000-8000-000000000000"))
+        let url = URL(string: "https://x.com/sinceaihq/status/2074424777675046913?s=46")!
+        let metadata = ShareCaptureMetadata(
+            title: "Since AI (@sinceaihq)",
+            description: "Building an AI product is one thing.",
+            imageURL: URL(string: "https://pbs.twimg.com/media/card.jpg")!,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let initialRequest = try SourceCaptureRequestBuilder.request(
+            url: url,
+            databaseId: "db_demo",
+            requestedBy: "aaaaa-aa",
+            now: receivedAt,
+            uuid: uuid,
+            captureMetadata: metadata
+        )
+        let pendingURL = PendingSharedURL(
+            id: "queued",
+            url: url,
+            receivedAt: receivedAt,
+            requestId: initialRequest.requestId,
+            captureMetadata: metadata
+        )
+
+        let retryRequest = try AppModel.sourceCaptureRequest(
+            for: pendingURL,
+            databaseId: initialRequest.databaseId,
+            requestedBy: "aaaaa-aa"
+        )
+        let retryTimeRequest = try SourceCaptureRequestBuilder.request(
+            url: url,
+            databaseId: initialRequest.databaseId,
+            requestedBy: "aaaaa-aa",
+            requestId: initialRequest.requestId,
+            now: retryAt,
+            captureMetadata: metadata
+        )
+
+        #expect(retryRequest.content == initialRequest.content)
+        #expect(retryRequest.metadataJson == initialRequest.metadataJson)
+        #expect(retryRequest.content.contains(receivedAt.formatted(.iso8601)))
+        #expect(!retryRequest.content.contains(retryAt.formatted(.iso8601)))
+        #expect(retryRequest.content != retryTimeRequest.content)
+    }
+
+    @Test
+    func loadsLegacyRecordsWithoutCaptureMetadata() throws {
+        let queueDirectory = makeQueueDirectory()
+        defer { removeQueueDirectory(queueDirectory) }
+
+        try FileManager.default.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
+        let legacyJSON = #"""
+        {
+          "id": "legacy-id",
+          "url": "https://example.com/legacy#section",
+          "receivedAt": 1700000000,
+          "requestId": "1700000000000-00000000-0000-4000-8000-000000000000"
+        }
+        """#
+        try Data(legacyJSON.utf8).write(to: queueDirectory.appending(path: "legacy-id.json"))
+        let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+
+        let pendingURL = try #require(inbox.loadPendingURLs().first)
+        #expect(pendingURL.url.absoluteString == "https://example.com/legacy")
+        #expect(pendingURL.captureMetadata == nil)
+    }
+
+    @Test
     func appendsFromTwoWritersWithoutLostUpdate() throws {
         let queueDirectory = makeQueueDirectory()
         defer { removeQueueDirectory(queueDirectory) }
@@ -315,6 +411,25 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStorePersistsAppearanceMode() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(store.isDarkAppearanceEnabled == false)
+
+        store.isDarkAppearanceEnabled = true
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).isDarkAppearanceEnabled == true)
+
+        store.isDarkAppearanceEnabled = false
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).isDarkAppearanceEnabled == false)
+    }
+
+    @Test
     func classifiesOnlySupportedUniversalLinkEntrypoints() {
         #expect(AppModel.openURLAction(
             for: URL(string: "https://wiki.kinic.xyz/ios-share?queued=1")!,
@@ -352,6 +467,37 @@ struct ShareInboxTests {
             for: URL(string: "kinicwiki://other")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .ignore)
+    }
+
+    @MainActor
+    @Test
+    func appModelPersistsAppearanceMode() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let inboxDirectory = makeQueueDirectory()
+        let triggerDirectory = makeQueueDirectory()
+        defer {
+            removeQueueDirectory(inboxDirectory)
+            removeQueueDirectory(triggerDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            triggerQueue: try SourceCaptureTriggerQueue(testQueueDirectory: triggerDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.isDarkAppearanceEnabled == false)
+        model.setDarkAppearanceEnabled(true)
+        #expect(model.isDarkAppearanceEnabled == true)
+        #expect(store.isDarkAppearanceEnabled == true)
     }
 
     @MainActor
@@ -410,7 +556,7 @@ struct ShareInboxTests {
         model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/dashboard")!)
 
         #expect(model.rootNavigationID == 1)
-        #expect(model.currentPath == "/Knowledge")
+        #expect(model.currentPath == "/")
         #expect(model.currentNode == nil)
         #expect(model.childNodes.isEmpty)
         #expect(model.loadedBrowsePath == nil)
@@ -467,7 +613,7 @@ struct ShareInboxTests {
         model.selectBrowseDatabase("db_next")
 
         #expect(model.selectedBrowseDatabaseId == "db_next")
-        #expect(model.currentPath == "/Knowledge")
+        #expect(model.currentPath == "/")
         #expect(model.currentNode == nil)
         #expect(model.childNodes.isEmpty)
         #expect(model.loadedBrowsePath == nil)
@@ -522,7 +668,7 @@ struct ShareInboxTests {
 
     @Test
     func normalizesBrowsePaths() {
-        #expect(AppModel.normalizedBrowsePath("") == "/Knowledge")
+        #expect(AppModel.normalizedBrowsePath("") == "/")
         #expect(AppModel.normalizedBrowsePath("Knowledge/README.md") == "/Knowledge/README.md")
         #expect(AppModel.normalizedBrowsePath("//Knowledge///Design/") == "/Knowledge/Design")
         #expect(AppModel.parentPath("/Knowledge/Design/Page.md") == "/Knowledge/Design")
@@ -606,6 +752,8 @@ struct ShareInboxTests {
         #expect(DatabaseManagementFormat.cycles(3_000_000_000) == "3B cycles")
         #expect(DatabaseManagementFormat.cycles(4_000_000) == "4M cycles")
         #expect(DatabaseManagementFormat.cycles(500) == "500 cycles")
+        #expect(DatabaseManagementFormat.signedCycles(-4_000_000) == "-4M cycles")
+        #expect(DatabaseManagementFormat.signedCycles(4_000_000) == "4M cycles")
         #expect(!DatabaseManagementFormat.bytes(1_024).isEmpty)
     }
 

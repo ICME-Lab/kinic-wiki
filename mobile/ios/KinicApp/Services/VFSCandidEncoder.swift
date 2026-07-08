@@ -9,6 +9,7 @@ enum VFSCandidEncoder {
     private static let typeNull: Int64 = -1
     private static let typeBool: Int64 = -2
     private static let typeNat32: Int64 = -7
+    private static let typeNat64: Int64 = -8
     private static let typeText: Int64 = -15
     private static let typeOpt: Int64 = -18
     private static let typeVec: Int64 = -19
@@ -20,6 +21,10 @@ enum VFSCandidEncoder {
         appendUnsigned(0, to: &data)
         appendUnsigned(0, to: &data)
         return data
+    }
+
+    static func textArgsForDatabase(_ databaseId: String) -> Data {
+        textArgs([databaseId])
     }
 
     static func mkdirNode(databaseId: String, path: String) -> Data {
@@ -118,6 +123,57 @@ enum VFSCandidEncoder {
                 ("description", .text(description)),
                 ("database_id", .text(databaseId)),
                 ("tags_json", .text(tagsJson))
+            ]
+        )
+    }
+
+    static func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole) -> Data {
+        let roleVariant = variant([
+            field("Owner", primitive(typeNull)),
+            field("Writer", primitive(typeNull)),
+            field("Reader", primitive(typeNull))
+        ])
+        var data = magic
+        appendUnsigned(1, to: &data)
+        encode(roleVariant, to: &data)
+        appendUnsigned(3, to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(table(0), to: &data)
+        encode(.text(databaseId), to: &data)
+        encode(.text(principal), to: &data)
+        encode(.variant(role.candidName, ["Owner", "Writer", "Reader"], .null), to: &data)
+        return data
+    }
+
+    static func revokeDatabaseAccess(databaseId: String, principal: String) -> Data {
+        textArgs([databaseId, principal])
+    }
+
+    static func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32) -> Data {
+        var data = magic
+        appendUnsigned(1, to: &data)
+        encode(opt(primitive(typeNat64)), to: &data)
+        appendUnsigned(3, to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(table(0), to: &data)
+        encode(primitive(typeNat32), to: &data)
+        encode(.text(databaseId), to: &data)
+        encode(cursor.map { .some(.nat64($0)) } ?? .none, to: &data)
+        encode(.nat32(limit), to: &data)
+        return data
+    }
+
+    static func deleteDatabase(databaseId: String) -> Data {
+        oneRecord(
+            tableEntries: [
+                record([
+                    field("database_id", primitive(typeText))
+                ])
+            ],
+            argType: table(0),
+            values: [
+                .text(databaseId)
             ]
         )
     }
@@ -311,6 +367,8 @@ enum VFSCandidEncoder {
             break
         case .nat32(let value):
             appendFixedUInt32(value, to: &data)
+        case .nat64(let value):
+            appendFixedUInt64(value, to: &data)
         case .text(let text):
             let bytes = Data(text.utf8)
             appendUnsigned(UInt64(bytes.count), to: &data)
@@ -351,6 +409,12 @@ enum VFSCandidEncoder {
         }
     }
 
+    private static func appendFixedUInt64(_ value: UInt64, to data: inout Data) {
+        for offset in 0..<8 {
+            data.append(UInt8(truncatingIfNeeded: value >> UInt64(offset * 8)))
+        }
+    }
+
     private struct Field {
         let id: UInt32
         let name: String
@@ -372,6 +436,7 @@ enum VFSCandidEncoder {
     private indirect enum Value {
         case null
         case nat32(UInt32)
+        case nat64(UInt64)
         case text(String)
         case record([(String, Value)])
         case vector([Value])

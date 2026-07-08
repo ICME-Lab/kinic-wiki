@@ -101,6 +101,72 @@ struct VFSClient: @unchecked Sendable {
         return try VFSCandidDecoder.decodeDatabaseMetadataResult(data)
     }
 
+    func listDatabaseMembers(databaseId: String, session: ICAuthSession) async throws -> [DatabaseMember] {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.queryRaw(
+            method: "list_database_members",
+            arg: VFSCandidEncoder.textArgsForDatabase(databaseId),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeDatabaseMembersResult(data)
+            .sorted { left, right in
+                if left.role != right.role {
+                    return left.role.sortRank < right.role.sortRank
+                }
+                return left.principal.localizedCaseInsensitiveCompare(right.principal) == .orderedAscending
+            }
+    }
+
+    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "grant_database_access",
+            arg: VFSCandidEncoder.grantDatabaseAccess(databaseId: databaseId, principal: principal, role: role),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(data)
+    }
+
+    func revokeDatabaseAccess(databaseId: String, principal: String, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "revoke_database_access",
+            arg: VFSCandidEncoder.revokeDatabaseAccess(databaseId: databaseId, principal: principal),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(data)
+    }
+
+    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: ICAuthSession) async throws -> DatabaseCycleEntryPage {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.queryRaw(
+            method: "list_database_cycle_entries",
+            arg: VFSCandidEncoder.listDatabaseCycleEntries(databaseId: databaseId, cursor: cursor, limit: limit),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeDatabaseCycleEntryPageResult(data)
+    }
+
+    func listDatabaseCyclesPendingPurchases(databaseId: String, session: ICAuthSession) async throws -> [DatabaseCyclesPendingPurchase] {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.queryRaw(
+            method: "list_database_cycles_pending_purchases",
+            arg: VFSCandidEncoder.textArgsForDatabase(databaseId),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeDatabaseCyclesPendingPurchasesResult(data)
+    }
+
+    func deleteDatabase(databaseId: String, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "delete_database",
+            arg: VFSCandidEncoder.deleteDatabase(databaseId: databaseId),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(data)
+    }
+
     func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
         let sessionNonce = UUID().uuidString.lowercased()

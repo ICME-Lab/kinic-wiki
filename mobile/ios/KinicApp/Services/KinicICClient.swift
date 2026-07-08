@@ -55,6 +55,30 @@ actor KinicICClient {
         )
     }
 
+    func listDatabaseMembers(databaseId: String, session: ICAuthSession) async throws -> [DatabaseMember] {
+        try await vfsClient.listDatabaseMembers(databaseId: databaseId, session: session)
+    }
+
+    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: ICAuthSession) async throws {
+        try await vfsClient.grantDatabaseAccess(databaseId: databaseId, principal: principal, role: role, session: session)
+    }
+
+    func revokeDatabaseAccess(databaseId: String, principal: String, session: ICAuthSession) async throws {
+        try await vfsClient.revokeDatabaseAccess(databaseId: databaseId, principal: principal, session: session)
+    }
+
+    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: ICAuthSession) async throws -> DatabaseCycleEntryPage {
+        try await vfsClient.listDatabaseCycleEntries(databaseId: databaseId, cursor: cursor, limit: limit, session: session)
+    }
+
+    func listDatabaseCyclesPendingPurchases(databaseId: String, session: ICAuthSession) async throws -> [DatabaseCyclesPendingPurchase] {
+        try await vfsClient.listDatabaseCyclesPendingPurchases(databaseId: databaseId, session: session)
+    }
+
+    func deleteDatabase(databaseId: String, session: ICAuthSession) async throws {
+        try await vfsClient.deleteDatabase(databaseId: databaseId, session: session)
+    }
+
     func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
         try await vfsClient.saveSourceCaptureRequest(request, session: session)
     }

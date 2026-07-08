@@ -48,7 +48,8 @@ struct ShareInbox: @unchecked Sendable {
                     id: record.id,
                     url: url,
                     receivedAt: record.receivedAt,
-                    requestId: requestId
+                    requestId: requestId,
+                    captureMetadata: record.captureMetadata
                 )
             }
             .sorted { left, right in
@@ -60,7 +61,12 @@ struct ShareInbox: @unchecked Sendable {
             }
     }
 
-    func enqueue(_ url: URL, receivedAt: Date = .now, requestId: String? = nil) throws {
+    func enqueue(
+        _ url: URL,
+        receivedAt: Date = .now,
+        requestId: String? = nil,
+        captureMetadata: ShareCaptureMetadata? = nil
+    ) throws {
         let id = UUID().uuidString.lowercased()
         let resolvedRequestId: String
         if let requestId {
@@ -72,7 +78,8 @@ struct ShareInbox: @unchecked Sendable {
             id: id,
             url: url.absoluteString,
             receivedAt: receivedAt,
-            requestId: resolvedRequestId
+            requestId: resolvedRequestId,
+            captureMetadata: captureMetadata
         )
         let data = try encoder.encode(record)
         let temporaryURL = queueDirectory.appending(path: "\(id).tmp")

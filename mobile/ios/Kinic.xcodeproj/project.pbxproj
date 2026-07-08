@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0B1C2D3E4F5060708090B01 /* AppearanceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090B02 /* AppearanceSettingsView.swift */; };
 		050B4A7BB2C2906C748E77E1 /* SourceCaptureRequestError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB1A4D3401A35A3FE229C60 /* SourceCaptureRequestError.swift */; };
 		05278B7CAF4383AEF8B8FA09 /* KinicICClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A3314D1E60AAC9F871AE75D /* KinicICClient.swift */; };
 		0593F9C40A5D16664A83C207 /* KinicAuthSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA8AE8BD34E2E93B2DD614BA /* KinicAuthSessionStore.swift */; };
@@ -18,6 +19,11 @@
 		0D87CF593D7A85469AE02557 /* SourceCaptureRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6B4DAB1B974F3F54D4A61ED /* SourceCaptureRequest.swift */; };
 		15C895851FC32D410CB70C1D /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */; };
 		17C6A3009F5FA782426A2D61 /* PendingSharedURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = E258A850FB2EBC31BA45AF72 /* PendingSharedURL.swift */; };
+		A0B1C2D3E4F5060708090A01 /* ShareCaptureMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090A03 /* ShareCaptureMetadata.swift */; };
+		A0B1C2D3E4F5060708090A02 /* ShareCaptureMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090A03 /* ShareCaptureMetadata.swift */; };
+		A0B1C2D3E4F5060708090A04 /* XPostMetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090A06 /* XPostMetadataFetcher.swift */; };
+		A0B1C2D3E4F5060708090A05 /* XPostMetadataFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090A06 /* XPostMetadataFetcher.swift */; };
+		A0B1C2D3E4F5060708090A07 /* XPostMetadataFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5060708090A08 /* XPostMetadataFetcherTests.swift */; };
 		1AAECCE37953EAD751EB47D1 /* VFSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C208AE1E19C7460E2C725E00 /* VFSClient.swift */; };
 		1B1F4BF869E586BD39E67064 /* VFSCandidEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C430F751F35989E70D00B02F /* VFSCandidEncoder.swift */; };
 		1B226695C7605349B4201DD8 /* KinicPinkLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A3218FA1E8B100C3E466556 /* KinicPinkLines.swift */; };
@@ -25,14 +31,6 @@
 		1CA2C8D790475FE920A90324 /* VFSNodeKind+Display.swift in Sources */ = {isa = PBXBuildFile; fileRef = FADD8DC89A050E1336AC304F /* VFSNodeKind+Display.swift */; };
 		1D5D74C43370279C66D054A7 /* DatabasePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20691482A79A3FD7767CDE07 /* DatabasePanel.swift */; };
 		28D28ED6098B1D4643382DA8 /* MarkdownContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73AF98B200D7E268B427560F /* MarkdownContent.swift */; };
-		A0C001000000000000000001 /* MarkdownBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000001 /* MarkdownBlock.swift */; };
-		A0C001000000000000000002 /* MarkdownBlockParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000002 /* MarkdownBlockParser.swift */; };
-		A0C001000000000000000003 /* MarkdownInlineText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000003 /* MarkdownInlineText.swift */; };
-		A0C001000000000000000004 /* MarkdownBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000004 /* MarkdownBlockView.swift */; };
-		A0C001000000000000000005 /* MarkdownCodeBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000005 /* MarkdownCodeBlockView.swift */; };
-		A0C001000000000000000006 /* MarkdownListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000006 /* MarkdownListView.swift */; };
-		A0C001000000000000000007 /* MarkdownQuoteBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C002000000000000000007 /* MarkdownQuoteBlockView.swift */; };
-		A0C003000000000000000001 /* MarkdownBlockParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0C004000000000000000001 /* MarkdownBlockParserTests.swift */; };
 		2B171725DFC5D962A06F019A /* KinicAuthSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E910B812EB7222C1CFD6E82 /* KinicAuthSessionStoreTests.swift */; };
 		2DB4966CCD92DA3CCBE44A3B /* BrowseSearchResultRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D38C08E79A98E4036E4524 /* BrowseSearchResultRow.swift */; };
 		2F2F9668A4317160E92A4B3F /* SourceCaptureRequestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF94A354719C4CBFA57DF158 /* SourceCaptureRequestBuilder.swift */; };
@@ -70,6 +68,7 @@
 		77BFB37544E1921CFBCFD3E0 /* KinicHeroView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 414997FD31BB0EFF13850376 /* KinicHeroView.swift */; };
 		79FD4532846E6FFFFE53310D /* BrowseNodeNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 817BAE09ED8AE984AC61803D /* BrowseNodeNavigationView.swift */; };
 		7E2AAD98DEB936DD97A07E81 /* CreatedDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DEC6C27AB5D6A00D5047774 /* CreatedDatabase.swift */; };
+		7F4FF31E5D16DEE242BA36F0 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = B519AB3854D2A91C834F5A3B /* Textual */; };
 		807EBCFF0A51DDB49941AAD4 /* BrowseDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63E85E7C926E0E60BD8C781B /* BrowseDocumentView.swift */; };
 		811FE65A3F0A6BA99CF7A96E /* DatabaseRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE54455628C68CEBE00F8190 /* DatabaseRole.swift */; };
 		8286B91F2792877866E558B7 /* DatabaseStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11B3D73023C45AB1A4358C4 /* DatabaseStatus.swift */; };
@@ -157,6 +156,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A0B1C2D3E4F5060708090B02 /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
 		01DB961B678D8AB65A709C99 /* BrowseDocumentMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseDocumentMode.swift; sourceTree = "<group>"; };
 		0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		0DEC6C27AB5D6A00D5047774 /* CreatedDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreatedDatabase.swift; sourceTree = "<group>"; };
@@ -174,6 +174,9 @@
 		414997FD31BB0EFF13850376 /* KinicHeroView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicHeroView.swift; sourceTree = "<group>"; };
 		421183FD491FD687CB7D405D /* StatusPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPanel.swift; sourceTree = "<group>"; };
 		456AC092F758554F6777B108 /* SharedURLRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedURLRecord.swift; sourceTree = "<group>"; };
+		A0B1C2D3E4F5060708090A03 /* ShareCaptureMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareCaptureMetadata.swift; sourceTree = "<group>"; };
+		A0B1C2D3E4F5060708090A06 /* XPostMetadataFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPostMetadataFetcher.swift; sourceTree = "<group>"; };
+		A0B1C2D3E4F5060708090A08 /* XPostMetadataFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPostMetadataFetcherTests.swift; sourceTree = "<group>"; };
 		4A3314D1E60AAC9F871AE75D /* KinicICClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicICClient.swift; sourceTree = "<group>"; };
 		4C8360B4F7E0C62B60A9A4D4 /* SourceCaptureTriggerQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceCaptureTriggerQueue.swift; sourceTree = "<group>"; };
 		52BD4F9CD0F85DB1283E1046 /* KinicShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KinicShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -187,14 +190,6 @@
 		70E4F5559049E719C8093CD7 /* DatabaseSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseSummary.swift; sourceTree = "<group>"; };
 		71D38C08E79A98E4036E4524 /* BrowseSearchResultRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSearchResultRow.swift; sourceTree = "<group>"; };
 		73AF98B200D7E268B427560F /* MarkdownContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownContent.swift; sourceTree = "<group>"; };
-		A0C002000000000000000001 /* MarkdownBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlock.swift; sourceTree = "<group>"; };
-		A0C002000000000000000002 /* MarkdownBlockParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockParser.swift; sourceTree = "<group>"; };
-		A0C002000000000000000003 /* MarkdownInlineText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownInlineText.swift; sourceTree = "<group>"; };
-		A0C002000000000000000004 /* MarkdownBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockView.swift; sourceTree = "<group>"; };
-		A0C002000000000000000005 /* MarkdownCodeBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownCodeBlockView.swift; sourceTree = "<group>"; };
-		A0C002000000000000000006 /* MarkdownListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownListView.swift; sourceTree = "<group>"; };
-		A0C002000000000000000007 /* MarkdownQuoteBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownQuoteBlockView.swift; sourceTree = "<group>"; };
-		A0C004000000000000000001 /* MarkdownBlockParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownBlockParserTests.swift; sourceTree = "<group>"; };
 		7554096ACD65249CB1748F88 /* Kinic.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Kinic.xcconfig; sourceTree = "<group>"; };
 		7A3218FA1E8B100C3E466556 /* KinicPinkLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPinkLines.swift; sourceTree = "<group>"; };
 		7DBB103CB921787D4A6E08CD /* KinicPrimaryButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPrimaryButtonStyle.swift; sourceTree = "<group>"; };
@@ -232,6 +227,7 @@
 		E16D6C8B973AC4F6276D6741 /* KinicPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicPanel.swift; sourceTree = "<group>"; };
 		E1E028016DBC5A37E831CD90 /* KinicAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicAuthService.swift; sourceTree = "<group>"; };
 		E258A850FB2EBC31BA45AF72 /* PendingSharedURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingSharedURL.swift; sourceTree = "<group>"; };
+		E8F8E965C295A8CAFBE95398 /* KinicDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = KinicDebug.entitlements; sourceTree = "<group>"; };
 		EA06257E0FC09DCD0DBA7A68 /* BrowseSignedOutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseSignedOutView.swift; sourceTree = "<group>"; };
 		EA8AE8BD34E2E93B2DD614BA /* KinicAuthSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KinicAuthSessionStore.swift; sourceTree = "<group>"; };
 		EE54455628C68CEBE00F8190 /* DatabaseRole.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseRole.swift; sourceTree = "<group>"; };
@@ -260,6 +256,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA405C9E21C8D5D68FB643C6 /* ICNativeClient in Frameworks */,
+				7F4FF31E5D16DEE242BA36F0 /* Textual in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -299,6 +296,7 @@
 				AF94A354719C4CBFA57DF158 /* SourceCaptureRequestBuilder.swift */,
 				9AB1A4D3401A35A3FE229C60 /* SourceCaptureRequestError.swift */,
 				4C8360B4F7E0C62B60A9A4D4 /* SourceCaptureTriggerQueue.swift */,
+				A0B1C2D3E4F5060708090A06 /* XPostMetadataFetcher.swift */,
 				CB13AE5CF71CBF1D32F128E6 /* VFSCandidDecoder.swift */,
 				C430F751F35989E70D00B02F /* VFSCandidEncoder.swift */,
 				126811BA1367BFAE955B0B49 /* VFSCandidError.swift */,
@@ -323,6 +321,7 @@
 				F1A70AEE9E0CE1CDC54FECB5 /* PendingSourceCaptureTrigger.swift */,
 				DF392F94AE3F9402A414B065 /* SearchNodeHit.swift */,
 				FC9B30C37444394104BF52D7 /* ShareCaptureResult.swift */,
+				A0B1C2D3E4F5060708090A03 /* ShareCaptureMetadata.swift */,
 				456AC092F758554F6777B108 /* SharedURLRecord.swift */,
 				F6B4DAB1B974F3F54D4A61ED /* SourceCaptureRequest.swift */,
 				AB272A3A023AE899D6A71F5A /* SourceCaptureTriggerRecord.swift */,
@@ -347,6 +346,7 @@
 				C4EDF189E4AE98C8F9BF39F6 /* Info.plist */,
 				D554BCB5A21DF6DBCB59F187 /* Kinic.entitlements */,
 				F78866C930A7D557C5768983 /* KinicApp.swift */,
+				E8F8E965C295A8CAFBE95398 /* KinicDebug.entitlements */,
 				0987A3ED17C6E2A1A5AE8B1B /* PrivacyInfo.xcprivacy */,
 				39E95A615C6F4B2ED4B37A8F /* Models */,
 				351D8B216F184C1F0730B696 /* Services */,
@@ -360,6 +360,7 @@
 		7783E7B76D8880DACC7FDD27 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				A0B1C2D3E4F5060708090B02 /* AppearanceSettingsView.swift */,
 				23D0F0E61978D4B71332C7CF /* BrowseChildNodeRow.swift */,
 				F0336C08E804D7BD90895FC2 /* BrowseDatabaseListView.swift */,
 				6EFC22256E3D86CA2419CF4B /* BrowseDatabaseRow.swift */,
@@ -384,14 +385,7 @@
 				7DBB103CB921787D4A6E08CD /* KinicPrimaryButtonStyle.swift */,
 				A19D4E59B319FE527BC11055 /* KinicSecondaryButtonStyle.swift */,
 				82A9A6C8073FE50A4D5ADA9E /* ManualURLPanel.swift */,
-				A0C002000000000000000001 /* MarkdownBlock.swift */,
-				A0C002000000000000000002 /* MarkdownBlockParser.swift */,
-				A0C002000000000000000004 /* MarkdownBlockView.swift */,
-				A0C002000000000000000005 /* MarkdownCodeBlockView.swift */,
 				73AF98B200D7E268B427560F /* MarkdownContent.swift */,
-				A0C002000000000000000003 /* MarkdownInlineText.swift */,
-				A0C002000000000000000006 /* MarkdownListView.swift */,
-				A0C002000000000000000007 /* MarkdownQuoteBlockView.swift */,
 				7EB7DC8E4ACE29A8D580F582 /* SessionPanel.swift */,
 				1114270F1E7C96C71174AADE /* SettingsView.swift */,
 				421183FD491FD687CB7D405D /* StatusPanel.swift */,
@@ -404,11 +398,11 @@
 			isa = PBXGroup;
 			children = (
 				8E910B812EB7222C1CFD6E82 /* KinicAuthSessionStoreTests.swift */,
-				A0C004000000000000000001 /* MarkdownBlockParserTests.swift */,
 				FD5EAD3512FBF2D3F641E711 /* ShareCaptureSubmitterTests.swift */,
 				F75B0A868E61DD446ED07E41 /* ShareInboxTests.swift */,
 				63BC15D53ACCC84CA0106D23 /* SourceCaptureRequestBuilderTests.swift */,
 				34134F79D45BEDE08D614F0D /* VFSCandidCodecTests.swift */,
+				A0B1C2D3E4F5060708090A08 /* XPostMetadataFetcherTests.swift */,
 			);
 			path = KinicTests;
 			sourceTree = "<group>";
@@ -497,6 +491,7 @@
 			name = Kinic;
 			packageProductDependencies = (
 				AE29406CD3A10A8959790ECD /* ICNativeClient */,
+				B519AB3854D2A91C834F5A3B /* Textual */,
 			);
 			productName = Kinic;
 			productReference = B03C597E292288BA40313206 /* KinicWikiApp.app */;
@@ -536,6 +531,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				B02759DED070D8115695FD69 /* XCRemoteSwiftPackageReference "ICNativeClient" */,
+				D1BDCA1FBDB9F8E2F2B63208 /* XCRemoteSwiftPackageReference "textual" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 604BC09E0D74EF763A3A11B9 /* Products */;
@@ -575,6 +571,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0B1C2D3E4F5060708090B01 /* AppearanceSettingsView.swift in Sources */,
 				57667BBBA343AB16CA547D76 /* AppConfiguration.swift in Sources */,
 				9EA065B0DE34F8462BE3A640 /* AppModel.swift in Sources */,
 				733F5F7D4F87347D0635FBEE /* BrowseChildNodeRow.swift in Sources */,
@@ -612,17 +609,11 @@
 				DAEB64833719A4A1F4FD2942 /* KinicPrimaryButtonStyle.swift in Sources */,
 				9C7BF5607737BD751CF261AB /* KinicSecondaryButtonStyle.swift in Sources */,
 				8AA027644970F2639A4E4A0F /* ManualURLPanel.swift in Sources */,
-				A0C001000000000000000001 /* MarkdownBlock.swift in Sources */,
-				A0C001000000000000000002 /* MarkdownBlockParser.swift in Sources */,
-				A0C001000000000000000004 /* MarkdownBlockView.swift in Sources */,
-				A0C001000000000000000005 /* MarkdownCodeBlockView.swift in Sources */,
 				28D28ED6098B1D4643382DA8 /* MarkdownContent.swift in Sources */,
-				A0C001000000000000000003 /* MarkdownInlineText.swift in Sources */,
-				A0C001000000000000000006 /* MarkdownListView.swift in Sources */,
-				A0C001000000000000000007 /* MarkdownQuoteBlockView.swift in Sources */,
 				D0874C93D40DAB7F2EC13677 /* PendingSharedURL.swift in Sources */,
 				CB39CA1307308B262A9C3C8F /* PendingSourceCaptureTrigger.swift in Sources */,
 				EEBE21C962CBF78073535A82 /* SearchNodeHit.swift in Sources */,
+				A0B1C2D3E4F5060708090A01 /* ShareCaptureMetadata.swift in Sources */,
 				313E85F821BA10AEC9F69F65 /* SessionPanel.swift in Sources */,
 				6C5D2A3FA3B015A733141AD5 /* SettingsView.swift in Sources */,
 				549308CC4ED482DF2D84DEB9 /* ShareCaptureResult.swift in Sources */,
@@ -644,6 +635,7 @@
 				1C539B45C420BA04B244FBCA /* VFSCandidLEB.swift in Sources */,
 				FD59A22C9CDC212F90F2368B /* VFSCandidLabels.swift in Sources */,
 				1AAECCE37953EAD751EB47D1 /* VFSClient.swift in Sources */,
+				A0B1C2D3E4F5060708090A04 /* XPostMetadataFetcher.swift in Sources */,
 				1CA2C8D790475FE920A90324 /* VFSNodeKind+Display.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -653,11 +645,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				2B171725DFC5D962A06F019A /* KinicAuthSessionStoreTests.swift in Sources */,
-				A0C003000000000000000001 /* MarkdownBlockParserTests.swift in Sources */,
 				C06D58460410C87F4BC1DB73 /* ShareCaptureSubmitterTests.swift in Sources */,
 				EEEA18F7920B58905C980B39 /* ShareInboxTests.swift in Sources */,
 				633ECF9FFAD2D81B897D36E8 /* SourceCaptureRequestBuilderTests.swift in Sources */,
 				0694351738520DEB38E63106 /* VFSCandidCodecTests.swift in Sources */,
+				A0B1C2D3E4F5060708090A07 /* XPostMetadataFetcherTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -680,6 +672,7 @@
 				DC7F24B67D34A062763DDC4E /* PendingSourceCaptureTrigger.swift in Sources */,
 				95A83ED68621102399C0E00A /* SearchNodeHit.swift in Sources */,
 				EE84266D74889BFE93F86545 /* ShareCaptureResult.swift in Sources */,
+				A0B1C2D3E4F5060708090A02 /* ShareCaptureMetadata.swift in Sources */,
 				A94556256D62D640F6EFDB0E /* ShareCaptureSubmitter.swift in Sources */,
 				699007FC63A5DA9E2A3F5AE4 /* ShareInbox.swift in Sources */,
 				E69973A0B91B181583E0743C /* ShareViewController.swift in Sources */,
@@ -698,6 +691,7 @@
 				B2449FF4D3ADCAE508A43324 /* VFSCandidLEB.swift in Sources */,
 				30202165CAD65884339369AA /* VFSCandidLabels.swift in Sources */,
 				50374ECB58B71C09E1A1D3EF /* VFSClient.swift in Sources */,
+				A0B1C2D3E4F5060708090A05 /* XPostMetadataFetcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -720,11 +714,11 @@
 		2CF0199362964C58596AD01F /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
-				buildSettings = {
-					BUNDLE_LOADER = "$(TEST_HOST)";
-					GENERATE_INFOPLIST_FILE = YES;
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
@@ -823,7 +817,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -839,11 +833,11 @@
 		8DD68F1A27040D159BEFB0D5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 7554096ACD65249CB1748F88 /* Kinic.xcconfig */;
-				buildSettings = {
-					BUNDLE_LOADER = "$(TEST_HOST)";
-					GENERATE_INFOPLIST_FILE = YES;
-					LD_RUNPATH_SEARCH_PATHS = (
-						"$(inherited)",
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
@@ -908,7 +902,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -1008,6 +1002,14 @@
 				version = 0.1.0;
 			};
 		};
+		D1BDCA1FBDB9F8E2F2B63208 /* XCRemoteSwiftPackageReference "textual" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/textual";
+			requirement = {
+				kind = exactVersion;
+				version = 0.5.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1020,6 +1022,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B02759DED070D8115695FD69 /* XCRemoteSwiftPackageReference "ICNativeClient" */;
 			productName = ICNativeClient;
+		};
+		B519AB3854D2A91C834F5A3B /* Textual */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D1BDCA1FBDB9F8E2F2B63208 /* XCRemoteSwiftPackageReference "textual" */;
+			productName = Textual;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

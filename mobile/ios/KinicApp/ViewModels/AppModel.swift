@@ -42,10 +42,16 @@ final class AppModel {
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
     private var searchRequestID: Int
+    private var databaseManagementRequestID: Int
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String
+    var isDarkAppearanceEnabled: Bool {
+        didSet {
+            settingsStore.isDarkAppearanceEnabled = isDarkAppearanceEnabled
+        }
+    }
     var databases: [DatabaseSummary]
     var readableDatabases: [DatabaseSummary]
     var pendingURLs: [PendingSharedURL]
@@ -57,6 +63,16 @@ final class AppModel {
     var selectedBrowseNodePath: String?
     var documentNode: VFSNode?
     var cyclesBillingConfig: CyclesBillingConfig?
+    var databaseMembers: [DatabaseMember]
+    var databaseMembersDatabaseId: String?
+    var databaseCycleEntries: [DatabaseCycleEntry]
+    var databaseCycleEntriesDatabaseId: String?
+    var databaseCycleEntriesCurrentCursor: UInt64?
+    var databaseCycleEntriesNextCursor: UInt64?
+    var databaseCycleEntryPageIndex: Int
+    var databaseCycleEntryPreviousCursors: [UInt64?]
+    var databaseCyclesPendingPurchases: [DatabaseCyclesPendingPurchase]
+    var databaseCyclesPendingPurchasesDatabaseId: String?
     var searchQuery: String
     var searchResults: [SearchNodeHit]
     var statusMessage: String?
@@ -64,16 +80,24 @@ final class AppModel {
     var documentError: String?
     var cyclesConfigError: String?
     var databaseMetadataError: String?
+    var databaseMembersError: String?
+    var databaseCyclesHistoryError: String?
+    var databasePendingPurchasesError: String?
+    var databaseDeleteError: String?
     var databaseListLastRefreshed: Date?
     var cyclesConfigLastRefreshed: Date?
     var isLoadingDatabases: Bool
     var isLoadingBrowsePath: Bool
     var isLoadingDocument: Bool
     var isLoadingCyclesConfig: Bool
+    var isLoadingDatabaseMembers: Bool
+    var isLoadingDatabaseCycleEntries: Bool
+    var isLoadingDatabasePendingPurchases: Bool
     var isSearching: Bool
     var isSigningIn: Bool
     var isCreatingDatabase: Bool
     var isUpdatingDatabaseMetadata: Bool
+    var databaseAccessBusyAction: DatabaseAccessBusyAction?
     var isSubmitting: Bool
 
     var principalText: String {
@@ -117,17 +141,28 @@ final class AppModel {
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         selectedDatabaseId = settingsStore.databaseId
         selectedBrowseDatabaseId = settingsStore.browseDatabaseId
+        isDarkAppearanceEnabled = settingsStore.isDarkAppearanceEnabled
         databases = []
         readableDatabases = []
         pendingURLs = shareInbox.loadPendingURLs()
         rootNavigationID = 0
-        currentPath = "/Knowledge"
+        currentPath = "/"
         currentNode = nil
         childNodes = []
         loadedBrowsePath = nil
         selectedBrowseNodePath = nil
         documentNode = nil
         cyclesBillingConfig = nil
+        databaseMembers = []
+        databaseMembersDatabaseId = nil
+        databaseCycleEntries = []
+        databaseCycleEntriesDatabaseId = nil
+        databaseCycleEntriesCurrentCursor = nil
+        databaseCycleEntriesNextCursor = nil
+        databaseCycleEntryPageIndex = 0
+        databaseCycleEntryPreviousCursors = []
+        databaseCyclesPendingPurchases = []
+        databaseCyclesPendingPurchasesDatabaseId = nil
         searchQuery = ""
         searchResults = []
         session = authService.restore()
@@ -135,20 +170,29 @@ final class AppModel {
         browsePathLoadRequestID = 0
         documentLoadRequestID = 0
         searchRequestID = 0
+        databaseManagementRequestID = 0
         browseError = nil
         documentError = nil
         cyclesConfigError = nil
         databaseMetadataError = nil
+        databaseMembersError = nil
+        databaseCyclesHistoryError = nil
+        databasePendingPurchasesError = nil
+        databaseDeleteError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
         isLoadingDatabases = false
         isLoadingBrowsePath = false
         isLoadingDocument = false
         isLoadingCyclesConfig = false
+        isLoadingDatabaseMembers = false
+        isLoadingDatabaseCycleEntries = false
+        isLoadingDatabasePendingPurchases = false
         isSearching = false
         isSigningIn = false
         isCreatingDatabase = false
         isUpdatingDatabaseMetadata = false
+        databaseAccessBusyAction = nil
         isSubmitting = false
     }
 
@@ -194,6 +238,10 @@ final class AppModel {
 
     func refreshInbox() {
         pendingURLs = shareInbox.loadPendingURLs()
+    }
+
+    func setDarkAppearanceEnabled(_ enabled: Bool) {
+        isDarkAppearanceEnabled = enabled
     }
 
     func handleOpenURL(_ url: URL) {
@@ -271,7 +319,7 @@ final class AppModel {
         browsePathLoadRequestID += 1
         documentLoadRequestID += 1
         searchRequestID += 1
-        currentPath = "/Knowledge"
+        currentPath = "/"
         currentNode = nil
         childNodes = []
         loadedBrowsePath = nil
@@ -286,12 +334,37 @@ final class AppModel {
         documentError = nil
     }
 
+    private func resetDatabaseManagementState() {
+        databaseManagementRequestID += 1
+        databaseMembers = []
+        databaseMembersDatabaseId = nil
+        databaseCycleEntries = []
+        databaseCycleEntriesDatabaseId = nil
+        databaseCycleEntriesCurrentCursor = nil
+        databaseCycleEntriesNextCursor = nil
+        databaseCycleEntryPageIndex = 0
+        databaseCycleEntryPreviousCursors = []
+        databaseCyclesPendingPurchases = []
+        databaseCyclesPendingPurchasesDatabaseId = nil
+        databaseMembersError = nil
+        databaseCyclesHistoryError = nil
+        databasePendingPurchasesError = nil
+        databaseDeleteError = nil
+        isLoadingDatabaseMembers = false
+        isLoadingDatabaseCycleEntries = false
+        isLoadingDatabasePendingPurchases = false
+        databaseAccessBusyAction = nil
+    }
+
     private func setSelectedDatabase(_ databaseId: String) {
         selectedDatabaseId = databaseId
         settingsStore.databaseId = databaseId
     }
 
     private func setSelectedBrowseDatabase(_ databaseId: String) {
+        if selectedBrowseDatabaseId != databaseId {
+            resetDatabaseManagementState()
+        }
         selectedBrowseDatabaseId = databaseId
         settingsStore.browseDatabaseId = databaseId
     }
@@ -317,6 +390,7 @@ final class AppModel {
         browsePathLoadRequestID += 1
         documentLoadRequestID += 1
         searchRequestID += 1
+        resetDatabaseManagementState()
         currentNode = nil
         childNodes = []
         loadedBrowsePath = nil
@@ -331,6 +405,10 @@ final class AppModel {
         documentError = nil
         cyclesConfigError = nil
         databaseMetadataError = nil
+        databaseMembersError = nil
+        databaseCyclesHistoryError = nil
+        databasePendingPurchasesError = nil
+        databaseDeleteError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
         statusMessage = "Signed out."
@@ -357,6 +435,30 @@ final class AppModel {
     func startLoadCyclesBillingConfigIfNeeded() {
         Task {
             await loadCyclesBillingConfigIfNeeded()
+        }
+    }
+
+    func startLoadDatabaseManagementDetails(databaseId: String) {
+        Task {
+            await loadDatabaseManagementDetails(databaseId: databaseId)
+        }
+    }
+
+    func startRefreshDatabaseManagementDetails(databaseId: String) {
+        Task {
+            await refreshDatabaseManagementDetails(databaseId: databaseId)
+        }
+    }
+
+    func startLoadNextDatabaseCycleEntries(databaseId: String) {
+        Task {
+            await loadNextDatabaseCycleEntries(databaseId: databaseId)
+        }
+    }
+
+    func startLoadPreviousDatabaseCycleEntries(databaseId: String) {
+        Task {
+            await loadPreviousDatabaseCycleEntries(databaseId: databaseId)
         }
     }
 
@@ -410,6 +512,92 @@ final class AppModel {
             return true
         } catch {
             databaseMetadataError = error.localizedDescription
+            return false
+        }
+    }
+
+    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole) async -> Bool {
+        let trimmedPrincipal = principal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrincipal.isEmpty else {
+            databaseMembersError = "Principal is required."
+            return false
+        }
+        guard let session else {
+            databaseMembersError = "Sign in before changing access."
+            return false
+        }
+        guard readableDatabases.first(where: { $0.databaseId == databaseId })?.role.canManageDatabase == true else {
+            databaseMembersError = "Only database owners can change access."
+            return false
+        }
+        databaseAccessBusyAction = .grant(principal: trimmedPrincipal, role: role)
+        databaseMembersError = nil
+        defer {
+            databaseAccessBusyAction = nil
+        }
+        do {
+            try await client.grantDatabaseAccess(databaseId: databaseId, principal: trimmedPrincipal, role: role, session: session)
+            await loadDatabaseMembers(databaseId: databaseId, requestID: databaseManagementRequestID)
+            statusMessage = "Database access updated."
+            return true
+        } catch {
+            databaseMembersError = error.localizedDescription
+            return false
+        }
+    }
+
+    func revokeDatabaseAccess(databaseId: String, principal: String) async -> Bool {
+        let trimmedPrincipal = principal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrincipal.isEmpty else {
+            databaseMembersError = "Principal is required."
+            return false
+        }
+        guard let session else {
+            databaseMembersError = "Sign in before changing access."
+            return false
+        }
+        guard readableDatabases.first(where: { $0.databaseId == databaseId })?.role.canManageDatabase == true else {
+            databaseMembersError = "Only database owners can change access."
+            return false
+        }
+        databaseAccessBusyAction = .revoke(principal: trimmedPrincipal)
+        databaseMembersError = nil
+        defer {
+            databaseAccessBusyAction = nil
+        }
+        do {
+            try await client.revokeDatabaseAccess(databaseId: databaseId, principal: trimmedPrincipal, session: session)
+            await loadDatabaseMembers(databaseId: databaseId, requestID: databaseManagementRequestID)
+            statusMessage = "Database access updated."
+            return true
+        } catch {
+            databaseMembersError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteDatabase(databaseId: String) async -> Bool {
+        guard let session else {
+            databaseDeleteError = "Sign in before deleting a database."
+            return false
+        }
+        guard readableDatabases.first(where: { $0.databaseId == databaseId })?.role.canManageDatabase == true else {
+            databaseDeleteError = "Only database owners can delete databases."
+            return false
+        }
+        databaseAccessBusyAction = .delete
+        databaseDeleteError = nil
+        defer {
+            databaseAccessBusyAction = nil
+        }
+        do {
+            try await client.deleteDatabase(databaseId: databaseId, session: session)
+            resetDatabaseManagementState()
+            await refreshDatabases(selectFirstIfNeeded: true)
+            statusMessage = "Database deleted."
+            return true
+        } catch {
+            databaseDeleteError = error.localizedDescription
             return false
         }
     }
@@ -508,7 +696,7 @@ final class AppModel {
                 statusMessage = created.initialFreeGrantApplied
                     ? "Database created with the initial free grant."
                     : "Database created active."
-                await loadBrowsePath("/Knowledge")
+                await loadBrowsePath("/")
                 if !pendingURLs.isEmpty {
                     await submitNextPendingURL()
                 }
@@ -550,6 +738,7 @@ final class AppModel {
                !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }) {
                 selectedBrowseDatabaseId = ""
                 settingsStore.browseDatabaseId = ""
+                resetDatabaseManagementState()
                 currentNode = nil
                 childNodes = []
                 loadedBrowsePath = nil
@@ -569,7 +758,7 @@ final class AppModel {
                selectedBrowseDatabaseId.isEmpty,
                let first = readableDatabases.first {
                 setSelectedBrowseDatabase(first.databaseId)
-                await loadBrowsePath("/Knowledge")
+                await loadBrowsePath("/")
             } else if !selectedBrowseDatabaseId.isEmpty {
                 await loadBrowsePath(currentPath)
             }
@@ -583,6 +772,155 @@ final class AppModel {
     private func refreshDatabaseManagementInfo() async {
         await refreshDatabases(selectFirstIfNeeded: false)
         await loadCyclesBillingConfig(force: true)
+    }
+
+    private func loadDatabaseManagementDetails(databaseId: String) async {
+        guard !databaseId.isEmpty else {
+            resetDatabaseManagementState()
+            return
+        }
+        if databaseMembersDatabaseId == databaseId,
+           databaseCycleEntriesDatabaseId == databaseId,
+           databaseCyclesPendingPurchasesDatabaseId == databaseId {
+            return
+        }
+        resetDatabaseManagementState()
+        let requestID = databaseManagementRequestID
+        await loadDatabaseMembers(databaseId: databaseId, requestID: requestID)
+        await loadDatabaseCycleEntries(databaseId: databaseId, cursor: nil, requestID: requestID, pageIndex: 0, previousCursors: [])
+        await loadDatabasePendingPurchases(databaseId: databaseId, requestID: requestID)
+    }
+
+    private func refreshDatabaseManagementDetails(databaseId: String) async {
+        resetDatabaseManagementState()
+        let requestID = databaseManagementRequestID
+        await loadCyclesBillingConfig(force: true)
+        await loadDatabaseMembers(databaseId: databaseId, requestID: requestID)
+        await loadDatabaseCycleEntries(databaseId: databaseId, cursor: nil, requestID: requestID, pageIndex: 0, previousCursors: [])
+        await loadDatabasePendingPurchases(databaseId: databaseId, requestID: requestID)
+    }
+
+    private func loadNextDatabaseCycleEntries(databaseId: String) async {
+        guard let nextCursor = databaseCycleEntriesNextCursor else {
+            return
+        }
+        let requestID = databaseManagementRequestID
+        var previous = databaseCycleEntryPreviousCursors
+        previous.append(databaseCycleEntriesDatabaseId == databaseId ? databaseCycleEntriesCurrentCursor : nil)
+        await loadDatabaseCycleEntries(
+            databaseId: databaseId,
+            cursor: nextCursor,
+            requestID: requestID,
+            pageIndex: databaseCycleEntryPageIndex + 1,
+            previousCursors: previous
+        )
+    }
+
+    private func loadPreviousDatabaseCycleEntries(databaseId: String) async {
+        guard !databaseCycleEntryPreviousCursors.isEmpty else {
+            return
+        }
+        let requestID = databaseManagementRequestID
+        var previous = databaseCycleEntryPreviousCursors
+        let cursor = previous.removeLast()
+        await loadDatabaseCycleEntries(
+            databaseId: databaseId,
+            cursor: cursor,
+            requestID: requestID,
+            pageIndex: max(databaseCycleEntryPageIndex - 1, 0),
+            previousCursors: previous
+        )
+    }
+
+    private func loadDatabaseMembers(databaseId: String, requestID: Int) async {
+        guard let session else {
+            databaseMembers = []
+            databaseMembersDatabaseId = nil
+            databaseMembersError = "Sign in before loading members."
+            return
+        }
+        isLoadingDatabaseMembers = true
+        databaseMembersError = nil
+        defer {
+            if requestID == databaseManagementRequestID {
+                isLoadingDatabaseMembers = false
+            }
+        }
+        do {
+            let members = try await client.listDatabaseMembers(databaseId: databaseId, session: session)
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databaseMembers = members
+            databaseMembersDatabaseId = databaseId
+        } catch {
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databaseMembersError = error.localizedDescription
+        }
+    }
+
+    private func loadDatabaseCycleEntries(databaseId: String, cursor: UInt64?, requestID: Int, pageIndex: Int, previousCursors: [UInt64?]) async {
+        guard let session else {
+            databaseCycleEntries = []
+            databaseCycleEntriesDatabaseId = nil
+            databaseCyclesHistoryError = "Sign in before loading cycle history."
+            return
+        }
+        isLoadingDatabaseCycleEntries = true
+        databaseCyclesHistoryError = nil
+        defer {
+            if requestID == databaseManagementRequestID {
+                isLoadingDatabaseCycleEntries = false
+            }
+        }
+        do {
+            let page = try await client.listDatabaseCycleEntries(databaseId: databaseId, cursor: cursor, limit: 20, session: session)
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databaseCycleEntries = page.entries
+            databaseCycleEntriesDatabaseId = databaseId
+            databaseCycleEntriesCurrentCursor = cursor
+            databaseCycleEntriesNextCursor = page.nextCursor
+            databaseCycleEntryPageIndex = pageIndex
+            databaseCycleEntryPreviousCursors = previousCursors
+        } catch {
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databaseCyclesHistoryError = error.localizedDescription
+        }
+    }
+
+    private func loadDatabasePendingPurchases(databaseId: String, requestID: Int) async {
+        guard let session else {
+            databaseCyclesPendingPurchases = []
+            databaseCyclesPendingPurchasesDatabaseId = nil
+            databasePendingPurchasesError = "Sign in before loading pending purchases."
+            return
+        }
+        isLoadingDatabasePendingPurchases = true
+        databasePendingPurchasesError = nil
+        defer {
+            if requestID == databaseManagementRequestID {
+                isLoadingDatabasePendingPurchases = false
+            }
+        }
+        do {
+            let pending = try await client.listDatabaseCyclesPendingPurchases(databaseId: databaseId, session: session)
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databaseCyclesPendingPurchases = pending
+            databaseCyclesPendingPurchasesDatabaseId = databaseId
+        } catch {
+            guard requestID == databaseManagementRequestID else {
+                return
+            }
+            databasePendingPurchasesError = error.localizedDescription
+        }
     }
 
     private func loadCyclesBillingConfigIfNeeded() async {
@@ -644,6 +982,15 @@ final class AppModel {
             }
         }
         do {
+            if normalizedPath == "/" {
+                let loadedChildren = try await client.listChildren(databaseId: databaseId, path: normalizedPath, session: session)
+                if browsePathLoadRequestID == requestID {
+                    currentNode = nil
+                    childNodes = loadedChildren
+                    loadedBrowsePath = normalizedPath
+                }
+                return
+            }
             guard let node = try await client.readNode(databaseId: databaseId, path: normalizedPath, session: session) else {
                 if browsePathLoadRequestID == requestID {
                     currentNode = nil
@@ -783,11 +1130,10 @@ final class AppModel {
             isSubmitting = false
         }
         do {
-            let request = try SourceCaptureRequestBuilder.request(
-                url: item.url,
+            let request = try Self.sourceCaptureRequest(
+                for: item,
                 databaseId: databaseId,
-                requestedBy: session.principal,
-                requestId: item.requestId
+                requestedBy: session.principal
             )
             let submission = try await client.saveSourceCaptureRequest(request, session: session)
             try triggerQueue.enqueue(request, sessionNonce: submission.sessionNonce, createdAt: item.receivedAt)
@@ -826,6 +1172,21 @@ final class AppModel {
         }
     }
 
+    nonisolated static func sourceCaptureRequest(
+        for item: PendingSharedURL,
+        databaseId: String,
+        requestedBy: String
+    ) throws -> SourceCaptureRequest {
+        try SourceCaptureRequestBuilder.request(
+            url: item.url,
+            databaseId: databaseId,
+            requestedBy: requestedBy,
+            requestId: item.requestId,
+            now: item.receivedAt,
+            captureMetadata: item.captureMetadata
+        )
+    }
+
     nonisolated static func databaseNameError(_ databaseName: String) -> String? {
         if databaseName.isEmpty {
             return "Database name is required."
@@ -857,7 +1218,7 @@ final class AppModel {
     nonisolated static func normalizedBrowsePath(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return "/Knowledge"
+            return "/"
         }
         let prefixed = trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
         let segments = prefixed.split(separator: "/").map(String.init)

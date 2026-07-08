@@ -10,15 +10,13 @@ struct BrowseNodeListView: View {
     @Bindable var model: AppModel
     let folderPath: String
     @Binding var selectedDocumentPath: String?
-    @Binding var selectedManageDatabaseId: String?
 
     var body: some View {
         List {
             if isSearching {
                 BrowseSearchResultsView(
                     model: model,
-                    selectedDocumentPath: $selectedDocumentPath,
-                    selectedManageDatabaseId: $selectedManageDatabaseId
+                    selectedDocumentPath: $selectedDocumentPath
                 )
             } else if let error = model.browseError {
                 Text(error)
@@ -33,7 +31,7 @@ struct BrowseNodeListView: View {
             }
         }
         .navigationTitle(model.selectedBrowseDatabase?.displayTitle ?? "Notes")
-        .searchable(text: $model.searchQuery, isPresented: $isSearchPresented, prompt: "Search notes")
+        .searchable(text: $model.searchQuery, isPresented: $isSearchPresented, prompt: "Search nodes")
         .onSubmit(of: .search, model.startSearch)
         .onChange(of: model.searchQuery) { oldQuery, newQuery in
             model.searchQueryDidChange(from: oldQuery, to: newQuery)
@@ -96,7 +94,6 @@ struct BrowseNodeListView: View {
 
     private func openDocument(_ path: String) {
         selectedDocumentPath = path
-        selectedManageDatabaseId = nil
         model.startLoadBrowseDocument(path)
     }
 }

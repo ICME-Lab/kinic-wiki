@@ -9,7 +9,6 @@ struct BrowseView: View {
     let rootNavigationID: Int
     @State private var selectedDatabaseId: String?
     @State private var selectedDocumentPath: String?
-    @State private var selectedManageDatabaseId: String?
     @State private var folderPath: [BrowseFolderRoute] = []
 
     var body: some View {
@@ -18,7 +17,6 @@ struct BrowseView: View {
                 model: model,
                 selectedDatabaseId: $selectedDatabaseId,
                 selectedDocumentPath: $selectedDocumentPath,
-                selectedManageDatabaseId: $selectedManageDatabaseId,
                 folderPath: $folderPath
             )
         } content: {
@@ -27,19 +25,16 @@ struct BrowseView: View {
                     model: model,
                     databaseId: selectedDatabaseId,
                     selectedDocumentPath: $selectedDocumentPath,
-                    selectedManageDatabaseId: $selectedManageDatabaseId,
                     folderPath: $folderPath
                 )
             } else {
                 ContentUnavailableView("Select a database", systemImage: "externaldrive")
             }
         } detail: {
-            if let selectedManageDatabase {
-                BrowseDatabaseManageView(model: model, database: selectedManageDatabase)
-            } else if let selectedDocumentPath {
+            if let selectedDocumentPath {
                 BrowseDocumentView(model: model, path: selectedDocumentPath)
             } else {
-                ContentUnavailableView("Select a note", systemImage: "doc.text")
+                ContentUnavailableView("Select a node", systemImage: "doc.text")
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -60,7 +55,6 @@ struct BrowseView: View {
         guard !databaseId.isEmpty else {
             selectedDatabaseId = nil
             selectedDocumentPath = nil
-            selectedManageDatabaseId = nil
             folderPath = []
             return
         }
@@ -70,15 +64,7 @@ struct BrowseView: View {
     private func resetNavigationToRoot() {
         syncSelectionFromModel()
         selectedDocumentPath = nil
-        selectedManageDatabaseId = nil
         folderPath = []
-    }
-
-    private var selectedManageDatabase: DatabaseSummary? {
-        guard let selectedManageDatabaseId else {
-            return nil
-        }
-        return model.readableDatabases.first { $0.databaseId == selectedManageDatabaseId }
     }
 }
 

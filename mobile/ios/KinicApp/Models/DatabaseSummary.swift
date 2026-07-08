@@ -66,6 +66,65 @@ struct CyclesTopUpConfig: Equatable, Sendable {
     let thresholdCycles: UInt64
 }
 
+struct DatabaseMember: Identifiable, Equatable, Sendable {
+    let principal: String
+    let role: DatabaseRole
+    let createdAtMs: Int64
+
+    var id: String {
+        principal
+    }
+}
+
+struct DatabaseCycleEntry: Identifiable, Equatable, Sendable {
+    let entryId: UInt64
+    let databaseId: String
+    let kind: String
+    let amountCycles: Int64
+    let balanceAfterCycles: UInt64
+    let caller: String
+    let method: String?
+    let ledgerBlockIndex: UInt64?
+    let paymentAmountE8s: UInt64?
+    let cyclesPerKinic: UInt64?
+    let cyclesDelta: UInt64?
+    let createdAtMs: Int64
+
+    var id: UInt64 {
+        entryId
+    }
+
+    var displayTitle: String {
+        method?.isEmpty == false ? method ?? kind : kind
+    }
+}
+
+struct DatabaseCycleEntryPage: Equatable, Sendable {
+    let entries: [DatabaseCycleEntry]
+    let nextCursor: UInt64?
+}
+
+struct DatabaseCyclesPendingPurchase: Identifiable, Equatable, Sendable {
+    let operationId: UInt64
+    let databaseId: String
+    let status: String
+    let amountCycles: UInt64
+    let paymentAmountE8s: UInt64
+    let ledgerBlockIndex: UInt64?
+    let createdAtMs: Int64
+    let requiredAction: String
+
+    var id: UInt64 {
+        operationId
+    }
+}
+
+enum DatabaseAccessBusyAction: Equatable, Sendable {
+    case grant(principal: String, role: DatabaseRole)
+    case revoke(principal: String)
+    case delete
+}
+
 enum DatabaseManagementStatus: Equatable, Sendable {
     case suspended
     case unknown
@@ -113,6 +172,17 @@ enum DatabaseManagementFormat {
         guard let value else {
             return "Unknown"
         }
+        return unsignedCycles(value)
+    }
+
+    static func signedCycles(_ value: Int64) -> String {
+        if value < 0 {
+            return "-\(unsignedCycles(value.magnitude))"
+        }
+        return unsignedCycles(UInt64(value))
+    }
+
+    private static func unsignedCycles(_ value: UInt64) -> String {
         let doubleValue = Double(value)
         if value >= 1_000_000_000_000 {
             return "\(formatted(doubleValue / 1_000_000_000_000))T cycles"
@@ -154,10 +224,34 @@ enum DatabaseManagementFormat {
         return formatter.string(from: date)
     }
 
+    static func date(milliseconds: UInt64) -> String {
+        date(milliseconds: Int64(clamping: milliseconds))
+    }
+
+    static func tokenE8s(_ value: UInt64) -> String {
+        let whole = value / 100_000_000
+        let fraction = value % 100_000_000
+        if fraction == 0 {
+            return "\(whole) KINIC"
+        }
+        let fractionText = String(format: "%08llu", fraction).trimmingTrailingZeros
+        return "\(whole).\(fractionText) KINIC"
+    }
+
     private static func formatted(_ value: Double) -> String {
         let formatter = NumberFormatter()
         formatter.maximumFractionDigits = value >= 10 ? 0 : 1
         formatter.minimumFractionDigits = 0
         return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.1f", value)
+    }
+}
+
+private extension String {
+    var trimmingTrailingZeros: String {
+        var text = self
+        while text.last == "0" {
+            text.removeLast()
+        }
+        return text
     }
 }

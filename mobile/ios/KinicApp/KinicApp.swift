@@ -12,6 +12,7 @@ struct KinicApp: App {
         WindowGroup {
             HomeView(model: model)
                 .tint(KinicDesign.hotPink)
+                .preferredColorScheme(model.isDarkAppearanceEnabled ? .dark : .light)
                 .onOpenURL { url in
                     model.handleOpenURL(url)
                 }

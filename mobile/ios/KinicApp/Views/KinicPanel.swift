@@ -19,13 +19,13 @@ struct KinicPanel<Content: View>: View {
         VStack(alignment: .leading, spacing: 16) {
             Label(title, systemImage: systemImage)
                 .font(.headline)
-                .foregroundStyle(.black)
+                .foregroundStyle(.primary)
 
             content
         }
         .padding(KinicDesign.panelPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KinicDesign.panelGray)
+        .background(KinicDesign.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
     }
 }

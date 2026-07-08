@@ -8,18 +8,24 @@ struct SessionPanel: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        KinicPanel(title: "Session", systemImage: "person.crop.circle") {
+        KinicPanel(title: "Principal", systemImage: "person.crop.circle") {
             VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("Principal", value: model.principalText)
+                Text(model.principalText)
                     .font(.subheadline)
                     .foregroundStyle(KinicDesign.bodyGray)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if model.isSignedIn {
                     Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: model.signOut)
+                        .labelStyle(.iconOnly)
                         .buttonStyle(KinicSecondaryButtonStyle())
+                        .accessibilityLabel("Sign out")
                 } else {
                     Button("Sign in with Internet Identity", systemImage: "person.crop.circle.badge.checkmark", action: model.startSignIn)
+                        .labelStyle(.iconOnly)
                         .buttonStyle(KinicPrimaryButtonStyle())
+                        .accessibilityLabel("Sign in with Internet Identity")
                         .disabled(model.isSigningIn)
 
                     if model.isSigningIn {

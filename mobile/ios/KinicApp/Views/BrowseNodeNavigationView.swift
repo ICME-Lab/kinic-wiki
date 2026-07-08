@@ -8,16 +8,14 @@ struct BrowseNodeNavigationView: View {
     @Bindable var model: AppModel
     let databaseId: String
     @Binding var selectedDocumentPath: String?
-    @Binding var selectedManageDatabaseId: String?
     @Binding var folderPath: [BrowseFolderRoute]
 
     var body: some View {
         NavigationStack(path: $folderPath) {
             BrowseNodeListView(
                 model: model,
-                folderPath: "/Knowledge",
-                selectedDocumentPath: $selectedDocumentPath,
-                selectedManageDatabaseId: $selectedManageDatabaseId
+                folderPath: "/",
+                selectedDocumentPath: $selectedDocumentPath
             )
             .navigationDestination(for: BrowseFolderRoute.self) { route in
                 switch route.kind {
@@ -25,8 +23,7 @@ struct BrowseNodeNavigationView: View {
                     BrowseNodeListView(
                         model: model,
                         folderPath: route.path,
-                        selectedDocumentPath: $selectedDocumentPath,
-                        selectedManageDatabaseId: $selectedManageDatabaseId
+                        selectedDocumentPath: $selectedDocumentPath
                     )
                 case .document:
                     BrowseDocumentView(model: model, path: route.path)

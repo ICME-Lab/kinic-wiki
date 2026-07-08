@@ -149,6 +149,59 @@ enum VFSCandidDecoder {
         )
     }
 
+    static func decodeDatabaseMembersResult(_ data: Data) throws -> [DatabaseMember] {
+        let ok = try decodeResult(data)
+        guard case .vector(let values) = ok else {
+            throw VFSCandidError.invalidPayload("expected database member vector")
+        }
+        return try values.map { value in
+            guard case .record(let fields) = value else {
+                throw VFSCandidError.invalidPayload("database member is not a record")
+            }
+            return DatabaseMember(
+                principal: try text(fields, "principal"),
+                role: try databaseRole(from: variant(fields, "role")),
+                createdAtMs: try int64(fields, "created_at_ms")
+            )
+        }
+    }
+
+    static func decodeDatabaseCycleEntryPageResult(_ data: Data) throws -> DatabaseCycleEntryPage {
+        let ok = try decodeResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("cycle entry page is not a record")
+        }
+        guard case .vector(let values) = try record(fields, "entries") else {
+            throw VFSCandidError.invalidPayload("expected cycle entry vector")
+        }
+        return DatabaseCycleEntryPage(
+            entries: try values.map(databaseCycleEntry(from:)),
+            nextCursor: try optionalNat64(fields, "next_cursor")
+        )
+    }
+
+    static func decodeDatabaseCyclesPendingPurchasesResult(_ data: Data) throws -> [DatabaseCyclesPendingPurchase] {
+        let ok = try decodeResult(data)
+        guard case .vector(let values) = ok else {
+            throw VFSCandidError.invalidPayload("expected pending purchase vector")
+        }
+        return try values.map { value in
+            guard case .record(let fields) = value else {
+                throw VFSCandidError.invalidPayload("pending purchase is not a record")
+            }
+            return DatabaseCyclesPendingPurchase(
+                operationId: try nat64(fields, "operation_id"),
+                databaseId: try text(fields, "database_id"),
+                status: try text(fields, "status"),
+                amountCycles: try nat64(fields, "amount_cycles"),
+                paymentAmountE8s: try nat64(fields, "payment_amount_e8s"),
+                ledgerBlockIndex: try optionalNat64(fields, "ledger_block_index"),
+                createdAtMs: try int64(fields, "created_at_ms"),
+                requiredAction: try text(fields, "required_action")
+            )
+        }
+    }
+
     private static func decodeResult(_ data: Data) throws -> Value {
         var parser = Parser(data: data)
         let values = try parser.parse()
@@ -244,6 +297,26 @@ enum VFSCandidDecoder {
             previewExcerpt: try previewExcerpt(fields, "preview"),
             matchReasons: try textVector(fields, "match_reasons"),
             score: try float32(fields, "score")
+        )
+    }
+
+    private static func databaseCycleEntry(from value: Value) throws -> DatabaseCycleEntry {
+        guard case .record(let fields) = value else {
+            throw VFSCandidError.invalidPayload("cycle entry is not a record")
+        }
+        return DatabaseCycleEntry(
+            entryId: try nat64(fields, "entry_id"),
+            databaseId: try text(fields, "database_id"),
+            kind: try text(fields, "kind"),
+            amountCycles: try int64(fields, "amount_cycles"),
+            balanceAfterCycles: try nat64(fields, "balance_after_cycles"),
+            caller: try text(fields, "caller"),
+            method: try optionalText(fields, "method"),
+            ledgerBlockIndex: try optionalNat64(fields, "ledger_block_index"),
+            paymentAmountE8s: try optionalNat64(fields, "payment_amount_e8s"),
+            cyclesPerKinic: try optionalNat64(fields, "cycles_per_kinic"),
+            cyclesDelta: try optionalNat64(fields, "cycles_delta"),
+            createdAtMs: try int64(fields, "created_at_ms")
         )
     }
 

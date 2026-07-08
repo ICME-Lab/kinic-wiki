@@ -7,6 +7,7 @@ import Foundation
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
+    private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
     private static let writableDatabasesKey = "kinic.writable-databases.v1"
     private let defaults: UserDefaults
     private let decoder = JSONDecoder()
@@ -35,6 +36,15 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.browseDatabaseIdKey)
+        }
+    }
+
+    var isDarkAppearanceEnabled: Bool {
+        get {
+            defaults.bool(forKey: Self.isDarkAppearanceEnabledKey)
+        }
+        nonmutating set {
+            defaults.set(newValue, forKey: Self.isDarkAppearanceEnabledKey)
         }
     }
 
