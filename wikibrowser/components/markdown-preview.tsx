@@ -40,6 +40,8 @@ export function MarkdownPreview({
             if (!safeSrc) {
               return alt ? <span className="text-xs text-muted">{alt}</span> : null;
             }
+            // Markdown may reference arbitrary HTTPS image hosts; next/image requires a host allowlist or fixed sizing.
+            // eslint-disable-next-line @next/next/no-img-element
             return <img src={safeSrc} alt={alt ?? ""} {...props} />;
           }
         }}

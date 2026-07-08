@@ -41,12 +41,16 @@ struct BrowseView: View {
         .task {
             model.startRefreshDatabases()
             syncSelectionFromModel()
+            applyBrowseNavigationRequest()
         }
         .onChange(of: model.selectedBrowseDatabaseId) {
             syncSelectionFromModel()
         }
         .onChange(of: rootNavigationID) {
-            resetNavigationToRoot()
+            applyBrowseNavigationRequest()
+        }
+        .onChange(of: model.browseNavigationRequestID) {
+            applyBrowseNavigationRequest()
         }
     }
 
@@ -61,10 +65,16 @@ struct BrowseView: View {
         selectedDatabaseId = databaseId
     }
 
-    private func resetNavigationToRoot() {
+    private func applyBrowseNavigationRequest() {
         syncSelectionFromModel()
-        selectedDocumentPath = nil
-        folderPath = []
+        switch model.requestedBrowseTarget {
+        case let .folder(path):
+            selectedDocumentPath = nil
+            folderPath = AppModel.folderRoutes(to: path)
+        case let .document(path, parentPath):
+            selectedDocumentPath = path
+            folderPath = AppModel.folderRoutes(to: parentPath)
+        }
     }
 }
 

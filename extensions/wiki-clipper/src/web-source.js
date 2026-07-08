@@ -81,18 +81,19 @@ export function collectWebPageSnapshot() {
       "subject"
     ]);
     const lines = [];
-    let fenceLength = 0;
+    let fence = null;
     for (const line of String(value)
       .replace(/\r\n?/g, "\n")
       .replace(/\u00a0/g, " ")
       .split("\n")) {
-      const normalized = normalizeExtractedLine(line, ignoredLines, fenceLength > 0);
+      const openingFence = fence ? null : openingFenceForLine(line);
+      const normalized = normalizeExtractedLine(line, ignoredLines, fence !== null || openingFence !== null);
       if (normalized === null) continue;
-      const nextFenceLength = fenceLineLength(normalized);
-      if (fenceLength > 0 && nextFenceLength >= fenceLength) {
-        fenceLength = 0;
-      } else if (fenceLength === 0 && nextFenceLength >= 3) {
-        fenceLength = nextFenceLength;
+      const closingFence = fence ? closingFenceForLine(normalized) : null;
+      if (fence && closingFence?.marker === fence.marker && closingFence.length >= fence.length) {
+        fence = null;
+      } else if (!fence && openingFence) {
+        fence = openingFence;
       }
       lines.push(normalized);
     }
@@ -217,15 +218,28 @@ export function collectWebPageSnapshot() {
 }
 
 function normalizeExtractedLine(line, ignoredLines, inFence) {
-  if (inFence || fenceLineLength(line) >= 3) return line.trimEnd();
+  if (inFence || openingFenceForLine(line)) return line.trimEnd();
   const normalized = line.trim().replace(/[ \t]{2,}/g, " ");
   if (ignoredLines.has(normalized)) return null;
   return normalized;
 }
 
-function fenceLineLength(line) {
-  const match = /^(`{3,})$/.exec(line.trim());
-  return match ? match[1].length : 0;
+function openingFenceForLine(line) {
+  const match = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+  if (match?.[1].startsWith("`") && match[2].includes("`")) return null;
+  return match ? markdownFence(match[1]) : null;
+}
+
+function closingFenceForLine(line) {
+  const match = /^(`{3,}|~{3,})[ \t]*$/.exec(line.trim());
+  return match ? markdownFence(match[1]) : null;
+}
+
+function markdownFence(value) {
+  return {
+    marker: value.startsWith("`") ? "`" : "~",
+    length: value.length
+  };
 }
 
 function collapseBlankLines(lines) {

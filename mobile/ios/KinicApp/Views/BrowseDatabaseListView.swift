@@ -17,7 +17,7 @@ struct BrowseDatabaseListView: View {
                     databaseRows
                 }
                 .overlay {
-                    if model.readableDatabases.isEmpty {
+                    if model.browseListDatabases.isEmpty {
                         ContentUnavailableView("No readable databases", systemImage: "externaldrive")
                     }
                 }
@@ -38,7 +38,7 @@ struct BrowseDatabaseListView: View {
     }
 
     private var databaseRows: some View {
-        ForEach(model.readableDatabases) { database in
+        ForEach(model.browseListDatabases) { database in
             NavigationLink(value: database.databaseId) {
                 databaseRowLabel(database)
             }

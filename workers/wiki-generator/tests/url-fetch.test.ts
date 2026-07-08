@@ -95,6 +95,33 @@ test("html pre blocks preserve escaped html examples", async () => {
   });
 });
 
+test("markdown responses preserve language and tilde fenced code blocks", async () => {
+  const markdown = [
+    "# Code",
+    "",
+    "```python",
+    "if True:",
+    "    print('kept')",
+    "```",
+    "",
+    "~~~ts",
+    "const value = 1;",
+    "  console.log(value);",
+    "~~~",
+    "",
+    "After   text."
+  ].join("\n");
+  await withMockFetch(async () => new Response(markdown, { status: 200, headers: { "content-type": "text/markdown" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/code.md", 10_000);
+
+    assert.equal(fetched.title, "Code");
+    assert.equal(
+      fetched.text,
+      "# Code\n\n```python\nif True:\n    print('kept')\n```\n\n~~~ts\nconst value = 1;\n  console.log(value);\n~~~\n\nAfter text."
+    );
+  });
+});
+
 test("truncated html does not keep unterminated script text", async () => {
   const prefix = "<html><head><title>Cut Product</title></head><body><main>Lead fact</main><script>";
   const html = `${prefix}${"x".repeat(10_000)}</script><main>Late fact</main></body></html>`;

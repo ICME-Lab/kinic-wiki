@@ -420,39 +420,51 @@ struct ShareInboxTests {
 
     @Test
     func classifiesOnlySupportedUniversalLinkEntrypoints() {
-        #expect(AppModel.openURLAction(
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/ios-share?queued=1")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .shareHandoff)
-        #expect(AppModel.openURLAction(
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/ios-auth-callback?state=s1")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .authCallback)
-        #expect(AppModel.openURLAction(
-            for: URL(string: "https://wiki.kinic.xyz/db/demo")!,
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/db/db_1")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .appRoot)
-        #expect(AppModel.openURLAction(
+        ) == .browse(databaseId: "db_1", nodePath: "/Knowledge"))
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/db/db_1/Knowledge/Page.md")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .browse(databaseId: "db_1", nodePath: "/Knowledge/Page.md"))
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/db/db%201/Knowledge/space%20name.md")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .browse(databaseId: "db 1", nodePath: "/Knowledge/space name.md"))
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/dashboard")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .appRoot)
-        #expect(AppModel.openURLAction(
-            for: URL(string: "https://wiki.kinic.xyz/skills/db_demo")!,
+        ) == .manage)
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/profile")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .appRoot)
-        #expect(AppModel.openURLAction(
+        ) == .manage)
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/marketplace/listing-1")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .home("Opened /marketplace/listing-1 in KinicWiki."))
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .appRoot)
-        #expect(AppModel.openURLAction(
+        ) == .home(nil))
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://evil.example/ios-share")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .ignore)
-        #expect(AppModel.openURLAction(
+        #expect(AppModel.openURLDestination(
             for: URL(string: "kinicwiki://share")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .ignore)
-        #expect(AppModel.openURLAction(
+        #expect(AppModel.openURLDestination(
             for: URL(string: "kinicwiki://other")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .ignore)
@@ -518,7 +530,7 @@ struct ShareInboxTests {
 
     @MainActor
     @Test
-    func unsupportedUniversalLinkResetsBrowseRoot() {
+    func dashboardUniversalLinkRequestsManageTab() {
         let model = AppModel.preview()
         model.selectedBrowseDatabaseId = "db_preview"
         model.currentPath = "/Knowledge/Nested"
@@ -571,18 +583,38 @@ struct ShareInboxTests {
 
         model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/dashboard")!)
 
-        #expect(model.rootNavigationID == 1)
+        #expect(model.requestedTab == .manage)
+        #expect(model.tabSelectionRequestID == 1)
+        #expect(model.rootNavigationID == 0)
+        #expect(model.currentPath == "/Knowledge/Nested")
+        #expect(model.currentNode?.path == "/Knowledge/Nested")
+        #expect(model.childNodes.count == 1)
+        #expect(model.loadedBrowsePath == "/Knowledge/Nested")
+        #expect(model.selectedBrowseNodePath == "/Knowledge/Nested/Page.md")
+        #expect(model.documentNode?.path == "/Knowledge/Nested/Page.md")
+        #expect(model.isLoadingDocument == true)
+        #expect(model.searchQuery == "old")
+        #expect(model.searchResults.count == 1)
+        #expect(model.browseError == "old browse error")
+        #expect(model.documentError == "old document error")
+    }
+
+    @MainActor
+    @Test
+    func browseUniversalLinkSelectsDirectDatabaseAndBrowseTab() {
+        let model = AppModel.preview()
+
+        model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/db/db_next/Knowledge/Page.md")!)
+
+        #expect(model.requestedTab == .browse)
+        #expect(model.tabSelectionRequestID == 1)
+        #expect(model.selectedBrowseDatabaseId == "db_next")
+        #expect(model.directBrowseDatabaseIds.contains("db_next"))
+        #expect(model.canListBrowseDatabases == true)
+        #expect(model.browseListDatabases.map(\.databaseId) == ["db_next"])
+        #expect(model.requestedBrowseTarget == .folder("/"))
+        #expect(model.browseNavigationRequestID == 1)
         #expect(model.currentPath == "/")
-        #expect(model.currentNode == nil)
-        #expect(model.childNodes.isEmpty)
-        #expect(model.loadedBrowsePath == nil)
-        #expect(model.selectedBrowseNodePath == nil)
-        #expect(model.documentNode == nil)
-        #expect(model.isLoadingDocument == false)
-        #expect(model.searchQuery.isEmpty)
-        #expect(model.searchResults.isEmpty)
-        #expect(model.browseError == nil)
-        #expect(model.documentError == nil)
     }
 
     @MainActor
@@ -798,6 +830,8 @@ struct ShareInboxTests {
         #expect(AppModel.parentPath("/Knowledge/Design/Page.md") == "/Knowledge/Design")
         #expect(AppModel.parentPath("/Knowledge") == "/")
         #expect(AppModel.parentPath("/") == "/")
+        #expect(AppModel.folderRoutes(to: "/Knowledge/Design").map(\.path) == ["/Knowledge", "/Knowledge/Design"])
+        #expect(AppModel.folderRoutes(to: "/").isEmpty)
     }
 
     @Test

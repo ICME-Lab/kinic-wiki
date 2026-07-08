@@ -154,16 +154,17 @@ function firstMarkdownTitle(text: string): string | null {
 
 function normalizeWhitespace(value: string): string {
   const lines: string[] = [];
-  let fenceLength = 0;
+  let fence: MarkdownFence | null = null;
   for (const line of value
     .replace(/\r\n?/g, "\n")
     .split("\n")) {
-    const normalized = fenceLength > 0 || fenceLineLength(line) >= 3 ? line.trimEnd() : line.trim().replace(/[ \t]+/g, " ");
-    const nextFenceLength = fenceLineLength(normalized);
-    if (fenceLength > 0 && nextFenceLength >= fenceLength) {
-      fenceLength = 0;
-    } else if (fenceLength === 0 && nextFenceLength >= 3) {
-      fenceLength = nextFenceLength;
+    const openingFence: MarkdownFence | null = fence ? null : openingFenceForLine(line);
+    const normalized = fence || openingFence ? line.trimEnd() : line.trim().replace(/[ \t]+/g, " ");
+    const closingFence = fence ? closingFenceForLine(normalized) : null;
+    if (fence && closingFence?.marker === fence.marker && closingFence.length >= fence.length) {
+      fence = null;
+    } else if (!fence && openingFence) {
+      fence = openingFence;
     }
     lines.push(normalized);
   }
@@ -211,9 +212,28 @@ function collapseBlankLines(lines: string[]): string[] {
   return output;
 }
 
-function fenceLineLength(line: string): number {
-  const match = /^(`{3,})$/.exec(line.trim());
-  return match ? match[1].length : 0;
+type MarkdownFence = {
+  marker: "`" | "~";
+  length: number;
+};
+
+function openingFenceForLine(line: string): MarkdownFence | null {
+  const match = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+  if (match?.[1].startsWith("`") && match[2].includes("`")) return null;
+  return match ? markdownFence(match[1]) : null;
+}
+
+function closingFenceForLine(line: string): MarkdownFence | null {
+  const match = /^(`{3,}|~{3,})[ \t]*$/.exec(line.trim());
+  return match ? markdownFence(match[1]) : null;
+}
+
+function markdownFence(value: string): MarkdownFence {
+  const marker = value.startsWith("`") ? "`" : "~";
+  return {
+    marker,
+    length: value.length
+  };
 }
 
 function isBlockedHostname(hostname: string): boolean {

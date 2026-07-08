@@ -7,11 +7,24 @@ import ICNativeClient
 import Observation
 import os
 
-enum AppOpenURLAction: Equatable {
+enum AppTab: Hashable {
+    case home
+    case browse
+    case manage
+}
+
+enum BrowseNavigationTarget: Equatable {
+    case folder(String)
+    case document(path: String, parentPath: String)
+}
+
+enum AppOpenURLDestination: Equatable {
     case ignore
     case authCallback
     case shareHandoff
-    case appRoot
+    case browse(databaseId: String, nodePath: String)
+    case manage
+    case home(String?)
 }
 
 enum DatabaseMetadataValidationError: Error, LocalizedError, Equatable {
@@ -70,6 +83,7 @@ final class AppModel {
     private var documentLoadRequestID: Int
     private var searchRequestID: Int
     private var databaseManagementRequestID: Int
+    private var deepLinkResolveRequestID: Int
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
@@ -94,8 +108,13 @@ final class AppModel {
     var memberBrowseDatabaseIds: Set<String>
     var publicBrowseDatabaseIds: Set<String>
     var purchasedBrowseDatabaseIds: Set<String>
+    var directBrowseDatabaseIds: Set<String>
     var pendingURLs: [PendingSharedURL]
     var rootNavigationID: Int
+    var requestedTab: AppTab
+    var tabSelectionRequestID: Int
+    var requestedBrowseTarget: BrowseNavigationTarget
+    var browseNavigationRequestID: Int
     var currentPath: String
     var currentNode: VFSNode?
     var childNodes: [ChildNode]
@@ -177,7 +196,16 @@ final class AppModel {
     }
 
     var canListBrowseDatabases: Bool {
-        session != nil || showPublicBrowseDatabases
+        session != nil || showPublicBrowseDatabases || !directBrowseDatabaseIds.isEmpty
+    }
+
+    var browseListDatabases: [DatabaseSummary] {
+        var result = readableDatabases
+        for databaseId in directBrowseDatabaseIds.sorted()
+            where !result.contains(where: { $0.databaseId == databaseId }) {
+            result.append(Self.directBrowseDatabaseSummary(databaseId: databaseId))
+        }
+        return result
     }
 
     var canBrowse: Bool {
@@ -185,7 +213,7 @@ final class AppModel {
         guard !databaseId.isEmpty else {
             return false
         }
-        return session != nil || publicBrowseDatabaseIds.contains(databaseId)
+        return session != nil || publicBrowseDatabaseIds.contains(databaseId) || directBrowseDatabaseIds.contains(databaseId)
     }
 
     init(
@@ -211,8 +239,13 @@ final class AppModel {
         memberBrowseDatabaseIds = []
         publicBrowseDatabaseIds = []
         purchasedBrowseDatabaseIds = []
+        directBrowseDatabaseIds = []
         pendingURLs = shareInbox.loadPendingURLs()
         rootNavigationID = 0
+        requestedTab = .home
+        tabSelectionRequestID = 0
+        requestedBrowseTarget = .folder("/")
+        browseNavigationRequestID = 0
         currentPath = "/"
         currentNode = nil
         childNodes = []
@@ -237,6 +270,7 @@ final class AppModel {
         documentLoadRequestID = 0
         searchRequestID = 0
         databaseManagementRequestID = 0
+        deepLinkResolveRequestID = 0
         browseError = nil
         documentError = nil
         cyclesConfigError = nil
@@ -325,32 +359,57 @@ final class AppModel {
     }
 
     func handleOpenURL(_ url: URL) {
-        switch Self.openURLAction(for: url, callbackDomain: configuration.callbackDomain) {
+        switch Self.openURLDestination(for: url, callbackDomain: configuration.callbackDomain) {
         case .ignore:
             return
         case .authCallback:
+            requestTab(.home)
             statusMessage = "Returned from sign in."
         case .shareHandoff:
+            requestTab(.home)
             refreshInbox()
             statusMessage = "Opened from share handoff."
             autoSubmitPendingURL()
-        case .appRoot:
-            resetBrowseRoot()
+        case let .browse(databaseId, nodePath):
+            openBrowseDeepLink(databaseId: databaseId, nodePath: nodePath)
+        case .manage:
+            requestTab(.manage)
+            statusMessage = "Opened database management."
+        case let .home(message):
+            requestTab(.home)
+            if let message {
+                statusMessage = message
+            }
         }
     }
 
-    nonisolated static func openURLAction(for url: URL, callbackDomain: String) -> AppOpenURLAction {
+    nonisolated static func openURLDestination(for url: URL, callbackDomain: String) -> AppOpenURLDestination {
         guard url.scheme?.lowercased() == "https",
               url.host?.lowercased() == callbackDomain.lowercased() else {
             return .ignore
         }
-        if url.path.hasPrefix("/ios-share") {
+        let segments = decodedPathSegments(from: url)
+        let firstSegment = segments.first ?? ""
+        if firstSegment == "ios-share" {
             return .shareHandoff
         }
-        if url.path.hasPrefix("/ios-auth-callback") {
+        if firstSegment == "ios-auth-callback" {
             return .authCallback
         }
-        return .appRoot
+        if firstSegment == "db",
+           let databaseId = segments.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !databaseId.isEmpty {
+            let nodeSegments = segments.dropFirst(2)
+            let nodePath = nodeSegments.isEmpty ? "/Knowledge" : "/\(nodeSegments.joined(separator: "/"))"
+            return .browse(databaseId: databaseId, nodePath: normalizedBrowsePath(nodePath))
+        }
+        if ["dashboard", "profile", "cycles"].contains(firstSegment) {
+            return .manage
+        }
+        if firstSegment.isEmpty {
+            return .home(nil)
+        }
+        return .home("Opened \(url.path) in KinicWiki.")
     }
 
     func enqueueManualURL(_ text: String) -> Bool {
@@ -384,8 +443,83 @@ final class AppModel {
         startLoadBrowsePath(currentPath)
     }
 
+    private func requestTab(_ tab: AppTab) {
+        requestedTab = tab
+        tabSelectionRequestID += 1
+    }
+
+    private func openBrowseDeepLink(databaseId: String, nodePath: String) {
+        let normalizedPath = Self.normalizedBrowsePath(nodePath)
+        directBrowseDatabaseIds.insert(databaseId)
+        setSelectedBrowseDatabase(databaseId)
+        resetBrowseStateForRoot()
+        requestTab(.browse)
+        deepLinkResolveRequestID += 1
+        let requestID = deepLinkResolveRequestID
+        requestedBrowseTarget = .folder("/")
+        browseNavigationRequestID += 1
+        Task {
+            await resolveBrowseDeepLink(databaseId: databaseId, nodePath: normalizedPath, requestID: requestID)
+        }
+    }
+
+    private func resolveBrowseDeepLink(databaseId: String, nodePath: String, requestID: Int) async {
+        guard deepLinkResolveRequestID == requestID else {
+            return
+        }
+        let session = browseSession(for: databaseId)
+        do {
+            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: nodePath, session: session) else {
+                await applyMissingBrowseDeepLink(nodePath: nodePath, requestID: requestID)
+                return
+            }
+            guard deepLinkResolveRequestID == requestID else {
+                return
+            }
+            if node.kind == .folder {
+                requestedBrowseTarget = .folder(node.path)
+                browseNavigationRequestID += 1
+                await loadBrowsePath(node.path)
+            } else {
+                let parentPath = Self.parentPath(node.path)
+                requestedBrowseTarget = .document(path: node.path, parentPath: parentPath)
+                browseNavigationRequestID += 1
+                await loadBrowsePath(parentPath)
+                await loadBrowseDocument(node.path)
+            }
+        } catch {
+            guard deepLinkResolveRequestID == requestID else {
+                return
+            }
+            let parentPath = Self.parentPath(nodePath)
+            requestedBrowseTarget = .folder(parentPath)
+            browseNavigationRequestID += 1
+            await loadBrowsePath(parentPath)
+            guard deepLinkResolveRequestID == requestID else {
+                return
+            }
+            browseError = error.localizedDescription
+        }
+    }
+
+    private func applyMissingBrowseDeepLink(nodePath: String, requestID: Int) async {
+        guard deepLinkResolveRequestID == requestID else {
+            return
+        }
+        let parentPath = Self.parentPath(nodePath)
+        requestedBrowseTarget = .folder(parentPath)
+        browseNavigationRequestID += 1
+        await loadBrowsePath(parentPath)
+        guard deepLinkResolveRequestID == requestID else {
+            return
+        }
+        browseError = "Node not found: \(nodePath)"
+    }
+
     private func resetBrowseRoot() {
         rootNavigationID += 1
+        requestedBrowseTarget = .folder("/")
+        browseNavigationRequestID += 1
         resetBrowseStateForRoot()
         if canBrowse {
             startLoadBrowsePath(currentPath)
@@ -462,6 +596,7 @@ final class AppModel {
         memberBrowseDatabaseIds = []
         publicBrowseDatabaseIds = []
         purchasedBrowseDatabaseIds = []
+        directBrowseDatabaseIds = []
         selectedDatabaseId = ""
         settingsStore.databaseId = ""
         settingsStore.writableDatabases = []
@@ -819,7 +954,8 @@ final class AppModel {
                 settingsStore.databaseId = ""
             }
             if !selectedBrowseDatabaseId.isEmpty,
-               !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }) {
+               !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }),
+               !directBrowseDatabaseIds.contains(selectedBrowseDatabaseId) {
                 clearBrowseSelectionAndState()
             }
             if selectFirstIfNeeded,
@@ -1405,5 +1541,41 @@ final class AppModel {
             return "/"
         }
         return "/\(segments.dropLast().joined(separator: "/"))"
+    }
+
+    nonisolated private static func directBrowseDatabaseSummary(databaseId: String) -> DatabaseSummary {
+        DatabaseSummary(
+            databaseId: databaseId,
+            title: databaseId,
+            description: "Opened from direct link.",
+            metadata: nil,
+            role: .reader,
+            status: .active,
+            logicalSizeBytes: 0,
+            cyclesBalance: nil,
+            cyclesSuspendedAtMs: nil,
+            deletedAtMs: nil
+        )
+    }
+
+    nonisolated static func folderRoutes(to path: String) -> [BrowseFolderRoute] {
+        let normalized = normalizedBrowsePath(path)
+        guard normalized != "/" else {
+            return []
+        }
+        var routes: [BrowseFolderRoute] = []
+        var currentPath = ""
+        for segment in normalized.split(separator: "/").map(String.init) {
+            currentPath += "/\(segment)"
+            routes.append(BrowseFolderRoute(path: currentPath))
+        }
+        return routes
+    }
+
+    nonisolated private static func decodedPathSegments(from url: URL) -> [String] {
+        url.path(percentEncoded: true)
+            .split(separator: "/")
+            .map(String.init)
+            .map { $0.removingPercentEncoding ?? $0 }
     }
 }

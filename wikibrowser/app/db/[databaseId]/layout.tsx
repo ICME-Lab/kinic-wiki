@@ -61,7 +61,7 @@ export default async function WikiDatabaseLayout({ children, params }: WikiDatab
   void params;
   return (
     <>
-      <div aria-hidden="true" className="wiki-seo-region" inert>
+      <div className="wiki-seo-region">
         {children}
       </div>
       <Suspense fallback={<div className="min-h-screen bg-canvas" />}>

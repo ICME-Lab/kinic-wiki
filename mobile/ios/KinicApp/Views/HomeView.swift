@@ -6,7 +6,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Bindable var model: AppModel
-    @State private var selectedTab = HomeTab.home
+    @State private var selectedTab = AppTab.home
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -16,13 +16,13 @@ struct HomeView: View {
             .tabItem {
                 Label("Home", systemImage: "house")
             }
-            .tag(HomeTab.home)
+            .tag(AppTab.home)
 
             BrowseView(model: model, rootNavigationID: model.rootNavigationID)
             .tabItem {
                 Label("Browse", systemImage: "folder")
             }
-            .tag(HomeTab.browse)
+            .tag(AppTab.browse)
 
             NavigationStack {
                 ManageView(model: model)
@@ -30,19 +30,16 @@ struct HomeView: View {
             .tabItem {
                 Label("Manage", systemImage: "slider.horizontal.3")
             }
-            .tag(HomeTab.manage)
+            .tag(AppTab.manage)
         }
         .tint(KinicDesign.hotPink)
         .onChange(of: model.rootNavigationID) {
             selectedTab = .browse
         }
+        .onChange(of: model.tabSelectionRequestID) {
+            selectedTab = model.requestedTab
+        }
     }
-}
-
-private enum HomeTab: Hashable {
-    case home
-    case browse
-    case manage
 }
 
 private struct CaptureView: View {
