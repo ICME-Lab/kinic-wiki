@@ -11,7 +11,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const groups = {
   security_path_validation: [
     ["crates/wiki_domain/src/lib.rs", "source_path_rejects_non_sources_paths"],
-    ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_allow_source_paths_without_schema_validation"],
+    ["crates/vfs_canister/src/tests/fs_entrypoints.rs", "fs_entrypoints_allow_source_paths_without_schema_validation"],
     ["workers/wiki-generator/tests/source-path.test.ts", "/Sourcesfoo/alpha/alpha.md"],
     ["extensions/wiki-clipper/tests/source-capture-request.test.mjs", "normalizedHttpUrl accepts only http and https"]
   ],
