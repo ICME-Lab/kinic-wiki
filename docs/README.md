@@ -1,35 +1,34 @@
-# docs 索引
+# Docs Index
 
-## 利用者向け
+## User Guides
 
-- [CLI.md](CLI.md) — kinic-vfs-cli の正式ガイド
-- [QUICKSTART_SKILL_KB.md](QUICKSTART_SKILL_KB.md) — skill 知識ベースのクイックスタート
-- [mcp.md](mcp.md) — MCP サーバーの使い方
-- [STORE_API.md](STORE_API.md) — Store API(read-only canister メソッド)
-- [SKILL_REGISTRY.md](SKILL_REGISTRY.md) — skill レジストリの仕様
-- [Context Pack.md](<Context Pack.md>) — OKF handoff アーティファクトの仕様
-- [AGENT_TOOL_CALLING.md](AGENT_TOOL_CALLING.md) — エージェント向けツール呼び出し規約
-- [DB_LIFECYCLE.md](DB_LIFECYCLE.md) — データベースのライフサイクル
+- [CLI.md](CLI.md) — Official guide for kinic-vfs-cli
+- [QUICKSTART_SKILL_KB.md](QUICKSTART_SKILL_KB.md) — Quickstart for the skill knowledge base
+- [mcp.md](mcp.md) — MCP server usage
+- [STORE_API.md](STORE_API.md) — Store API (read-only canister methods)
+- [SKILL_REGISTRY.md](SKILL_REGISTRY.md) — Skill registry specification
+- [Context Pack.md](<Context Pack.md>) — OKF handoff artifact specification
+- [AGENT_TOOL_CALLING.md](AGENT_TOOL_CALLING.md) — Tool calling conventions for agents
+- [DB_LIFECYCLE.md](DB_LIFECYCLE.md) — Database lifecycle
 
-## 運用向け
+## Operations
 
-- [RELEASE.md](RELEASE.md) — リリース手順
-- [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — 公開環境のスモーク手順
+- [RELEASE.md](RELEASE.md) — Release procedure
+- [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — Public environment smoke test procedure
 
-## 内部設計(internal/)
+## Internal Design (internal/)
 
-- [REFACTORING_PLAN.md](internal/REFACTORING_PLAN.md) — フェーズ分けリファクタリング計画(進行中)
-- [DEPENDENCY_FORKS.md](internal/DEPENDENCY_FORKS.md) — fork 依存の範囲と更新方針
-- [LLM_WIKI_STRUCTURE.md](internal/LLM_WIKI_STRUCTURE.md) — wiki 構造の設計
-- [IDEA_TO_DECISION_WIKI.md](internal/IDEA_TO_DECISION_WIKI.md) — 設計判断の経緯
-- [WIKI_BROWSER_PLAN.md](internal/WIKI_BROWSER_PLAN.md) — ブラウザ UI の当初計画
+- [DEPENDENCY_FORKS.md](internal/DEPENDENCY_FORKS.md) — Scope and update policy for forked dependencies
+- [LLM_WIKI_STRUCTURE.md](internal/LLM_WIKI_STRUCTURE.md) — Wiki structure design
+- [IDEA_TO_DECISION_WIKI.md](internal/IDEA_TO_DECISION_WIKI.md) — Background for design decisions
+- [WIKI_BROWSER_PLAN.md](internal/WIKI_BROWSER_PLAN.md) — Initial browser UI plan
 
-## 検証(validation/)
+## Validation (validation/)
 
-- [VFS_VALIDATION_PLAN.md](validation/VFS_VALIDATION_PLAN.md) — VFS 検証計画
-- [VFS_CORRECTNESS_CHECKLIST.md](validation/VFS_CORRECTNESS_CHECKLIST.md) — 正しさチェックリスト
-- [VFS_DEPLOYED_CANISTER_BENCHMARKS.md](validation/VFS_DEPLOYED_CANISTER_BENCHMARKS.md) — 実機ベンチ結果
+- [VFS_VALIDATION_PLAN.md](validation/VFS_VALIDATION_PLAN.md) — VFS validation plan
+- [VFS_CORRECTNESS_CHECKLIST.md](validation/VFS_CORRECTNESS_CHECKLIST.md) — Correctness checklist
+- [VFS_DEPLOYED_CANISTER_BENCHMARKS.md](validation/VFS_DEPLOYED_CANISTER_BENCHMARKS.md) — Deployed canister benchmark results
 
-## アーカイブ(archive/)
+## Archive (archive/)
 
-- [idea.md](archive/idea.md) — 初期アイデアメモ(歴史的記録)
+- [idea.md](archive/idea.md) — Initial idea notes (historical record)
