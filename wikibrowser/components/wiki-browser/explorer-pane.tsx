@@ -404,11 +404,11 @@ export function isMutableExplorerNode(node: ChildNode): boolean {
 }
 
 export function isDeletableExplorerNode(node: ChildNode, loadedChildren?: ChildNode[]): boolean {
-  if (!isMutableExplorerNode(node)) return false;
+  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path)) return false;
   if (node.kind === "folder") {
     return loadedChildren ? visibleChildren(loadedChildren, node.path).length === 0 : !node.hasChildren;
   }
-  return true;
+  return (node.kind === "file" && node.path.endsWith(".md")) || node.kind === "source";
 }
 
 export function loadedWikiFolders(cache: Map<string, ChildNode[]>, excludedNode: ChildNode | null): string[] {
