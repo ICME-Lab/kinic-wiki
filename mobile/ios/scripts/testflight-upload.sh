@@ -6,6 +6,19 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+env_files=("$repo_root/mobile/ios/.env.local" "$repo_root/mobile/ios/.env.testflight.local")
+if [[ -n "${KINIC_IOS_ENV_FILE:-}" ]]; then
+  env_files=("$KINIC_IOS_ENV_FILE")
+fi
+for env_file in "${env_files[@]}"; do
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$env_file"
+    set +a
+  fi
+done
+
 project="$repo_root/mobile/ios/Kinic.xcodeproj"
 scheme="${KINIC_IOS_SCHEME:-Kinic}"
 configuration="${KINIC_IOS_CONFIGURATION:-Release}"
@@ -31,6 +44,7 @@ usage() {
 Usage:
   KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh
   KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --external
+  mobile/ios/scripts/testflight-upload.sh --external
   mobile/ios/scripts/testflight-upload.sh --validate-only
 
 Environment:
@@ -46,6 +60,7 @@ Environment:
     KINIC_IOS_EXPORT_PATH       Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_SCHEME            Defaults to Kinic.
     KINIC_IOS_CONFIGURATION     Defaults to Release.
+    KINIC_IOS_ENV_FILE          Overrides the default env file loading.
 
 Options:
     --external                  Upload a build that can be assigned to external TestFlight groups.

@@ -62,6 +62,7 @@ __pycache__/
 **/cloudflare-env.d.ts
 **/.env.local
 **/.env.e2e.local
+**/.env.testflight.local
 **/.dev.vars
 
 # Generated copies and store assets

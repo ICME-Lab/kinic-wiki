@@ -75,34 +75,23 @@ iOS local tunnel execution is not supported. Real-device and TestFlight checks u
 
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
 The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
+The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
 
 Validate inputs without archiving:
 
 ```bash
-KINIC_IOS_BUILD_NUMBER=<next-build-number> \
-ASC_KEY_PATH=/path/to/AuthKey_<key-id>.p8 \
-ASC_KEY_ID=<key-id> \
-ASC_ISSUER_ID=<issuer-id> \
 mobile/ios/scripts/testflight-upload.sh --validate-only
 ```
 
 Upload an internal TestFlight build:
 
 ```bash
-KINIC_IOS_BUILD_NUMBER=<next-build-number> \
-ASC_KEY_PATH=/path/to/AuthKey_<key-id>.p8 \
-ASC_KEY_ID=<key-id> \
-ASC_ISSUER_ID=<issuer-id> \
 mobile/ios/scripts/testflight-upload.sh
 ```
 
 Upload an external-TestFlight-capable build:
 
 ```bash
-KINIC_IOS_BUILD_NUMBER=<next-build-number> \
-ASC_KEY_PATH=/path/to/AuthKey_<key-id>.p8 \
-ASC_KEY_ID=<key-id> \
-ASC_ISSUER_ID=<issuer-id> \
 mobile/ios/scripts/testflight-upload.sh --external
 ```
 
