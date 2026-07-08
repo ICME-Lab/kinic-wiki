@@ -202,6 +202,20 @@ enum VFSCandidDecoder {
         }
     }
 
+    static func decodeMarketEntitlementPageResult(_ data: Data) throws -> MarketEntitlementPage {
+        let ok = try decodeResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("market entitlement page is not a record")
+        }
+        guard case .vector(let values) = try record(fields, "entitlements") else {
+            throw VFSCandidError.invalidPayload("expected market entitlement vector")
+        }
+        return MarketEntitlementPage(
+            entitlements: try values.map(marketEntitlement(from:)),
+            nextCursor: try optionalText(fields, "next_cursor")
+        )
+    }
+
     private static func decodeResult(_ data: Data) throws -> Value {
         var parser = Parser(data: data)
         let values = try parser.parse()
@@ -317,6 +331,20 @@ enum VFSCandidDecoder {
             cyclesPerKinic: try optionalNat64(fields, "cycles_per_kinic"),
             cyclesDelta: try optionalNat64(fields, "cycles_delta"),
             createdAtMs: try int64(fields, "created_at_ms")
+        )
+    }
+
+    private static func marketEntitlement(from value: Value) throws -> MarketEntitlement {
+        guard case .record(let fields) = value else {
+            throw VFSCandidError.invalidPayload("market entitlement is not a record")
+        }
+        return MarketEntitlement(
+            databaseId: try text(fields, "database_id"),
+            buyerPrincipal: try text(fields, "buyer_principal"),
+            listingId: try text(fields, "listing_id"),
+            orderId: try text(fields, "order_id"),
+            purchasedAtMs: try int64(fields, "purchased_at_ms"),
+            status: try text(fields, "status")
         )
     }
 

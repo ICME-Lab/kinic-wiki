@@ -165,6 +165,7 @@ struct ShareCaptureSubmitterTests {
         let attemptedRequestPath = await probe.load()
         #expect(reason.contains("capture could not start"))
         #expect(attemptedRequestPath == "/Sources/source-capture-requests/\(queued.requestId).md")
+        #expect(queued.databaseId == "db_demo")
     }
 
     @Test
@@ -180,7 +181,8 @@ struct ShareCaptureSubmitterTests {
             Issue.record("Expected queued result, got \(result)")
             return
         }
-        #expect(harness.pendingURLs().count == 1)
+        let queued = try #require(harness.pendingURLs().first)
+        #expect(queued.databaseId == "db_demo")
     }
 
     @Test
@@ -208,6 +210,7 @@ struct ShareCaptureSubmitterTests {
         let queued = try #require(harness.pendingURLs().first)
         let attemptedRequestPath = await probe.load()
         #expect(attemptedRequestPath == "/Sources/source-capture-requests/\(queued.requestId).md")
+        #expect(queued.databaseId == "db_demo")
     }
 }
 
@@ -287,9 +290,15 @@ private struct ShareCaptureHarness {
             selectedDatabaseId: {
                 databaseId
             },
-            enqueueURL: { url, receivedAt, requestId, captureMetadata in
+            enqueueURL: { url, receivedAt, requestId, databaseId, captureMetadata in
                 let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
-                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId, captureMetadata: captureMetadata)
+                try inbox.enqueue(
+                    url,
+                    receivedAt: receivedAt,
+                    requestId: requestId,
+                    databaseId: databaseId,
+                    captureMetadata: captureMetadata
+                )
             },
             saveRequest: saveRequest,
             triggerSourceCapture: triggerSourceCapture

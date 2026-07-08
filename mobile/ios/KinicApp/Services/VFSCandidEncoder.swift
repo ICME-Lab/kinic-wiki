@@ -164,6 +164,18 @@ enum VFSCandidEncoder {
         return data
     }
 
+    static func marketListEntitlements(cursor: String?, limit: UInt32) -> Data {
+        var data = magic
+        appendUnsigned(1, to: &data)
+        encode(opt(primitive(typeText)), to: &data)
+        appendUnsigned(2, to: &data)
+        encode(table(0), to: &data)
+        encode(primitive(typeNat32), to: &data)
+        encode(cursor.map { .some(.text($0)) } ?? .none, to: &data)
+        encode(.nat32(limit), to: &data)
+        return data
+    }
+
     static func deleteDatabase(databaseId: String) -> Data {
         oneRecord(
             tableEntries: [

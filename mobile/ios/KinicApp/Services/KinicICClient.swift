@@ -24,6 +24,14 @@ actor KinicICClient {
         try await vfsClient.listReadableDatabases(session: session)
     }
 
+    func listPublicDatabases() async throws -> [DatabaseSummary] {
+        try await vfsClient.listPublicDatabases()
+    }
+
+    func marketListEntitlements(session: ICAuthSession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
+        try await vfsClient.marketListEntitlements(session: session, cursor: cursor, limit: limit)
+    }
+
     func getCyclesBillingConfig(session: ICAuthSession) async throws -> CyclesBillingConfig {
         try await vfsClient.getCyclesBillingConfig(session: session)
     }
@@ -32,12 +40,16 @@ actor KinicICClient {
         try await vfsClient.readNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func listChildren(databaseId: String, path: String, session: ICAuthSession) async throws -> [ChildNode] {
-        try await vfsClient.listChildren(databaseId: databaseId, path: path, session: session)
+    func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
+        try await vfsClient.readBrowseNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func searchNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession) async throws -> [SearchNodeHit] {
-        try await vfsClient.searchNodes(databaseId: databaseId, query: query, prefix: prefix, limit: limit, session: session)
+    func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
+        try await vfsClient.listBrowseChildren(databaseId: databaseId, path: path, session: session)
+    }
+
+    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession?) async throws -> [SearchNodeHit] {
+        try await vfsClient.searchBrowseNodes(databaseId: databaseId, query: query, prefix: prefix, limit: limit, session: session)
     }
 
     func createDatabase(name: String, session: ICAuthSession) async throws -> CreatedDatabase {

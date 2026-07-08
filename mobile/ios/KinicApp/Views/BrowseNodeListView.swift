@@ -48,7 +48,6 @@ struct BrowseNodeListView: View {
         .task(id: normalizedFolderPath) {
             loadFolder()
         }
-        .onAppear(perform: loadFolder)
     }
 
     private var childRows: some View {

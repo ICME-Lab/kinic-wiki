@@ -8,6 +8,8 @@ struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
     private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
+    private static let showPublicBrowseDatabasesKey = "kinic.browse-show-public-databases.v1"
+    private static let showPurchasedBrowseDatabasesKey = "kinic.browse-show-purchased-databases.v1"
     private static let writableDatabasesKey = "kinic.writable-databases.v1"
     private let defaults: UserDefaults
     private let decoder = JSONDecoder()
@@ -45,6 +47,24 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.isDarkAppearanceEnabledKey)
+        }
+    }
+
+    var showPublicBrowseDatabases: Bool {
+        get {
+            defaults.bool(forKey: Self.showPublicBrowseDatabasesKey)
+        }
+        nonmutating set {
+            defaults.set(newValue, forKey: Self.showPublicBrowseDatabasesKey)
+        }
+    }
+
+    var showPurchasedBrowseDatabases: Bool {
+        get {
+            defaults.bool(forKey: Self.showPurchasedBrowseDatabasesKey)
+        }
+        nonmutating set {
+            defaults.set(newValue, forKey: Self.showPurchasedBrowseDatabasesKey)
         }
     }
 

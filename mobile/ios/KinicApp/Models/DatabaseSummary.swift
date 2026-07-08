@@ -119,6 +119,20 @@ struct DatabaseCyclesPendingPurchase: Identifiable, Equatable, Sendable {
     }
 }
 
+struct MarketEntitlement: Equatable, Sendable {
+    let databaseId: String
+    let buyerPrincipal: String
+    let listingId: String
+    let orderId: String
+    let purchasedAtMs: Int64
+    let status: String
+}
+
+struct MarketEntitlementPage: Equatable, Sendable {
+    let entitlements: [MarketEntitlement]
+    let nextCursor: String?
+}
+
 enum DatabaseAccessBusyAction: Equatable, Sendable {
     case grant(principal: String, role: DatabaseRole)
     case revoke(principal: String)

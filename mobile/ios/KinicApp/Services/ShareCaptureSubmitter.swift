@@ -10,7 +10,7 @@ struct ShareCaptureSubmitter: Sendable {
     private let timeoutNanoseconds: UInt64?
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
-    private let enqueueURL: @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void
+    private let enqueueURL: @Sendable (URL, Date, String?, String?, ShareCaptureMetadata?) throws -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
@@ -27,9 +27,15 @@ struct ShareCaptureSubmitter: Sendable {
             selectedDatabaseId: {
                 settingsStore.databaseId
             },
-            enqueueURL: { url, receivedAt, requestId, captureMetadata in
+            enqueueURL: { url, receivedAt, requestId, databaseId, captureMetadata in
                 let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
-                try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId, captureMetadata: captureMetadata)
+                try inbox.enqueue(
+                    url,
+                    receivedAt: receivedAt,
+                    requestId: requestId,
+                    databaseId: databaseId,
+                    captureMetadata: captureMetadata
+                )
             },
             saveRequest: { request, session in
                 try await client.saveSourceCaptureRequest(request, session: session)
@@ -50,7 +56,7 @@ struct ShareCaptureSubmitter: Sendable {
         timeoutNanoseconds: UInt64?,
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
-        enqueueURL: @escaping @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void,
+        enqueueURL: @escaping @Sendable (URL, Date, String?, String?, ShareCaptureMetadata?) throws -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
         triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
     ) {
@@ -118,6 +124,7 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 receivedAt: receivedAt,
                 requestId: request.requestId,
+                databaseId: request.databaseId,
                 captureMetadata: captureMetadata,
                 reason: "Saved for later because immediate submission failed."
             )
@@ -131,6 +138,7 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 receivedAt: receivedAt,
                 requestId: request.requestId,
+                databaseId: submission.databaseId,
                 captureMetadata: captureMetadata,
                 reason: "Saved for later because capture could not start: \(error.localizedDescription)"
             )
@@ -142,11 +150,12 @@ struct ShareCaptureSubmitter: Sendable {
         _ url: URL,
         receivedAt: Date = .now,
         requestId: String? = nil,
+        databaseId: String? = nil,
         captureMetadata: ShareCaptureMetadata? = nil,
         reason: String
     ) -> ShareCaptureResult {
         do {
-            try enqueueURL(url, receivedAt, requestId, captureMetadata)
+            try enqueueURL(url, receivedAt, requestId, databaseId, captureMetadata)
             return .queued(reason: reason)
         } catch {
             return .failed(message: error.localizedDescription)

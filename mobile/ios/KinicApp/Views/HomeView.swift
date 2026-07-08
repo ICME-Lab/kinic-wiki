@@ -25,12 +25,12 @@ struct HomeView: View {
             .tag(HomeTab.browse)
 
             NavigationStack {
-                SettingsView(model: model)
+                ManageView(model: model)
             }
             .tabItem {
-                Label("Settings", systemImage: "gearshape")
+                Label("Manage", systemImage: "slider.horizontal.3")
             }
-            .tag(HomeTab.settings)
+            .tag(HomeTab.manage)
         }
         .tint(KinicDesign.hotPink)
         .onChange(of: model.rootNavigationID) {
@@ -42,13 +42,13 @@ struct HomeView: View {
 private enum HomeTab: Hashable {
     case home
     case browse
-    case settings
+    case manage
 }
 
 private struct CaptureView: View {
     @Bindable var model: AppModel
     @State private var isShowingIngest = false
-    @State private var isShowingAppearanceSettings = false
+    @State private var isShowingSettings = false
 
     var body: some View {
         ZStack {
@@ -86,8 +86,8 @@ private struct CaptureView: View {
                 .tint(KinicDesign.hotPink)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Appearance", systemImage: "gearshape") {
-                    isShowingAppearanceSettings = true
+                Button("Settings", systemImage: "gearshape") {
+                    isShowingSettings = true
                 }
                 .labelStyle(.iconOnly)
                 .tint(KinicDesign.hotPink)
@@ -96,9 +96,9 @@ private struct CaptureView: View {
         .sheet(isPresented: $isShowingIngest) {
             IngestSheet(model: model)
         }
-        .sheet(isPresented: $isShowingAppearanceSettings) {
+        .sheet(isPresented: $isShowingSettings) {
             NavigationStack {
-                AppearanceSettingsView(model: model)
+                AppSettingsView(model: model)
             }
         }
         .task {

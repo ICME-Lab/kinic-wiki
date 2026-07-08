@@ -9,6 +9,7 @@ struct SharedURLRecord: Codable, Equatable, Sendable {
     let url: String
     let receivedAt: Date
     let requestId: String
+    let databaseId: String?
     let captureMetadata: ShareCaptureMetadata?
 
     init(
@@ -16,12 +17,14 @@ struct SharedURLRecord: Codable, Equatable, Sendable {
         url: String,
         receivedAt: Date,
         requestId: String,
+        databaseId: String? = nil,
         captureMetadata: ShareCaptureMetadata? = nil
     ) {
         self.id = id
         self.url = url
         self.receivedAt = receivedAt
         self.requestId = requestId
+        self.databaseId = databaseId
         self.captureMetadata = captureMetadata
     }
 }

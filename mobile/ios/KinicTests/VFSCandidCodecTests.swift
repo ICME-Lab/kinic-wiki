@@ -124,6 +124,18 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func encodesMarketListEntitlementsRequest() {
+        let withoutCursor = VFSCandidEncoder.marketListEntitlements(cursor: nil, limit: 100)
+        #expect(withoutCursor.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(withoutCursor.suffix(5) == Data([0, 100, 0, 0, 0]))
+
+        let withCursor = VFSCandidEncoder.marketListEntitlements(cursor: "cursor-1", limit: 100)
+        #expect(withCursor.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(withCursor.range(of: Data("cursor-1".utf8)) != nil)
+        #expect(withCursor.suffix(4) == Data([100, 0, 0, 0]))
+    }
+
+    @Test
     func encodesDeleteDatabaseRequest() {
         let data = VFSCandidEncoder.deleteDatabase(databaseId: "db_demo")
         #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
@@ -236,6 +248,19 @@ struct VFSCandidCodecTests {
         #expect(page.entries[1].displayTitle == "cycles_purchase")
         #expect(page.entries[1].amountCycles == 5_000_000)
         #expect(page.entries[1].ledgerBlockIndex == 99)
+    }
+
+    @Test
+    func decodesMarketEntitlementPageResult() throws {
+        let page = try VFSCandidDecoder.decodeMarketEntitlementPageResult(candidMarketEntitlementPageOk())
+        #expect(page.nextCursor == "cursor-2")
+        #expect(page.entitlements.count == 1)
+        #expect(page.entitlements[0].databaseId == "db_market")
+        #expect(page.entitlements[0].buyerPrincipal == "buyer")
+        #expect(page.entitlements[0].listingId == "listing-1")
+        #expect(page.entitlements[0].orderId == "order-1")
+        #expect(page.entitlements[0].purchasedAtMs == 123)
+        #expect(page.entitlements[0].status == "active")
     }
 
     @Test
@@ -1732,6 +1757,161 @@ private func candidSearchHitsOk() -> Data {
     appendVariantValue("Ok", cases: ["Ok", "Err"])
     appendUnsigned(1, to: &data)
     appendHit()
+    return data
+}
+
+private func candidMarketEntitlementPageOk() -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeText: Int64 = -15
+    let typeInt64: Int64 = -12
+    let typeOpt: Int64 = -18
+    let typeVec: Int64 = -19
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func fields(_ raw: [(String, Ref)]) -> [(String, Ref)] {
+        raw.sorted { label($0.0) < label($1.0) }
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = fields(raw)
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendRecord(_ raw: [(String, Ref)]) {
+        appendSigned(typeRecord, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVariant(_ raw: [(String, Ref)]) {
+        appendSigned(typeVariant, to: &data)
+        appendFields(raw)
+    }
+
+    func appendOpt(_ ref: Ref) {
+        appendSigned(typeOpt, to: &data)
+        appendRef(ref)
+    }
+
+    func appendVec(_ ref: Ref) {
+        appendSigned(typeVec, to: &data)
+        appendRef(ref)
+    }
+
+    func appendText(_ text: String) {
+        let bytes = Data(text.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    func appendInt64(_ value: Int64) {
+        let unsigned = UInt64(bitPattern: value)
+        for offset in 0..<8 {
+            data.append(UInt8(truncatingIfNeeded: unsigned >> UInt64(offset * 8)))
+        }
+    }
+
+    func appendVariantValue(_ selected: String, cases: [String]) {
+        let sorted = cases.sorted { label($0) < label($1) }
+        guard let index = sorted.firstIndex(of: selected) else {
+            preconditionFailure("unknown fixture variant case")
+        }
+        appendUnsigned(UInt64(index), to: &data)
+    }
+
+    func appendEntitlement() {
+        for field in fields([
+            ("status", .primitive(typeText)),
+            ("purchased_at_ms", .primitive(typeInt64)),
+            ("database_id", .primitive(typeText)),
+            ("buyer_principal", .primitive(typeText)),
+            ("order_id", .primitive(typeText)),
+            ("listing_id", .primitive(typeText))
+        ]) {
+            switch field.0 {
+            case "status":
+                appendText("active")
+            case "purchased_at_ms":
+                appendInt64(123)
+            case "database_id":
+                appendText("db_market")
+            case "buyer_principal":
+                appendText("buyer")
+            case "order_id":
+                appendText("order-1")
+            case "listing_id":
+                appendText("listing-1")
+            default:
+                preconditionFailure("unknown fixture entitlement field")
+            }
+        }
+    }
+
+    func appendPage() {
+        for field in fields([
+            ("next_cursor", .table(2)),
+            ("entitlements", .table(3))
+        ]) {
+            switch field.0 {
+            case "next_cursor":
+                data.append(1)
+                appendText("cursor-2")
+            case "entitlements":
+                appendUnsigned(1, to: &data)
+                appendEntitlement()
+            default:
+                preconditionFailure("unknown fixture entitlement page field")
+            }
+        }
+    }
+
+    appendUnsigned(5, to: &data)
+    appendVariant([
+        ("Ok", .table(1)),
+        ("Err", .primitive(typeText))
+    ])
+    appendRecord([
+        ("next_cursor", .table(2)),
+        ("entitlements", .table(3))
+    ])
+    appendOpt(.primitive(typeText))
+    appendVec(.table(4))
+    appendRecord([
+        ("status", .primitive(typeText)),
+        ("purchased_at_ms", .primitive(typeInt64)),
+        ("database_id", .primitive(typeText)),
+        ("buyer_principal", .primitive(typeText)),
+        ("order_id", .primitive(typeText)),
+        ("listing_id", .primitive(typeText))
+    ])
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendVariantValue("Ok", cases: ["Ok", "Err"])
+    appendPage()
     return data
 }
 

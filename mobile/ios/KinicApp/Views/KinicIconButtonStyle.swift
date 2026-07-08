@@ -1,24 +1,8 @@
-// Where: mobile/ios/KinicApp/Views/KinicSecondaryButtonStyle.swift
-// What: Secondary Kinic action button style.
-// Why: White bordered actions keep the surface light while preserving clear tap targets.
+// Where: mobile/ios/KinicApp/Views/KinicIconButtonStyle.swift
+// What: Compact icon button style for Kinic controls.
+// Why: Toolbar-style actions need consistent tap targets without repeating chrome.
 
 import SwiftUI
-
-struct KinicSecondaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .foregroundStyle(configuration.isPressed ? .white : .primary)
-            .frame(maxWidth: .infinity, minHeight: 50)
-            .padding(.horizontal, 18)
-            .background(configuration.isPressed ? KinicDesign.hotPink : KinicDesign.controlBackground)
-            .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
-            .overlay {
-                RoundedRectangle(cornerRadius: KinicDesign.radius)
-                    .stroke(configuration.isPressed ? KinicDesign.hotPink : .primary.opacity(0.12), lineWidth: 0.5)
-            }
-    }
-}
 
 struct KinicIconButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled

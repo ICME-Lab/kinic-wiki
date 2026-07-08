@@ -34,6 +34,29 @@ struct VFSClient: @unchecked Sendable {
             }
     }
 
+    func listPublicDatabases() async throws -> [DatabaseSummary] {
+        let data = try await client.queryRaw(
+            method: "list_databases",
+            arg: VFSCandidEncoder.empty(),
+            identity: nil
+        )
+        return try VFSCandidDecoder.decodeDatabaseSummaries(data)
+            .filter(\.canRead)
+            .sorted { left, right in
+                left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
+            }
+    }
+
+    func marketListEntitlements(session: ICAuthSession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.queryRaw(
+            method: "market_list_entitlements",
+            arg: VFSCandidEncoder.marketListEntitlements(cursor: cursor, limit: limit),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeMarketEntitlementPageResult(data)
+    }
+
     func getCyclesBillingConfig(session: ICAuthSession) async throws -> CyclesBillingConfig {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
         let data = try await client.queryRaw(
@@ -54,8 +77,22 @@ struct VFSClient: @unchecked Sendable {
         return try VFSCandidDecoder.decodeReadNodeResult(data)
     }
 
-    func listChildren(databaseId: String, path: String, session: ICAuthSession) async throws -> [ChildNode] {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+    func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
+        if let session {
+            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        }
+        let data = try await client.queryRaw(
+            method: "read_node",
+            arg: VFSCandidEncoder.readNode(databaseId: databaseId, path: path),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeReadNodeResult(data)
+    }
+
+    func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
+        if let session {
+            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        }
         let data = try await client.queryRaw(
             method: "list_children",
             arg: VFSCandidEncoder.listChildren(databaseId: databaseId, path: path),
@@ -65,8 +102,10 @@ struct VFSClient: @unchecked Sendable {
             .sorted(by: childSort)
     }
 
-    func searchNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession) async throws -> [SearchNodeHit] {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession?) async throws -> [SearchNodeHit] {
+        if let session {
+            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        }
         let data = try await client.queryRaw(
             method: "search_nodes",
             arg: VFSCandidEncoder.searchNodes(databaseId: databaseId, query: query, prefix: prefix, topK: limit),

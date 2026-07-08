@@ -28,6 +28,22 @@ struct ShareInboxTests {
     }
 
     @Test
+    func enqueuesAndLoadsDatabaseId() throws {
+        let queueDirectory = makeQueueDirectory()
+        defer { removeQueueDirectory(queueDirectory) }
+
+        let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+        try inbox.enqueue(
+            URL(string: "https://example.com/page")!,
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            databaseId: " db_demo "
+        )
+
+        let pendingURL = try #require(inbox.loadPendingURLs().first)
+        #expect(pendingURL.databaseId == "db_demo")
+    }
+
+    @Test
     func enqueuesAndLoadsCaptureMetadata() throws {
         let queueDirectory = makeQueueDirectory()
         defer { removeQueueDirectory(queueDirectory) }
@@ -102,6 +118,64 @@ struct ShareInboxTests {
     }
 
     @Test
+    func pendingRetryUsesQueuedDatabaseWhenPresent() throws {
+        let pendingURL = PendingSharedURL(
+            id: "queued",
+            url: URL(string: "https://example.com/page")!,
+            receivedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            databaseId: "db_original"
+        )
+
+        let resolution = AppModel.pendingSubmissionDatabaseId(
+            for: pendingURL,
+            selectedDatabaseId: "db_current",
+            writableDatabaseIds: ["db_original", "db_current"]
+        )
+
+        #expect(resolution == .ready("db_original"))
+        guard case let .ready(databaseId) = resolution else {
+            Issue.record("Expected queued database to resolve")
+            return
+        }
+        let request = try AppModel.sourceCaptureRequest(
+            for: pendingURL,
+            databaseId: databaseId,
+            requestedBy: "aaaaa-aa"
+        )
+        #expect(request.databaseId == "db_original")
+    }
+
+    @Test
+    func pendingRetryRejectsQueuedDatabaseWithoutWritableAccess() {
+        let pendingURL = PendingSharedURL(
+            id: "queued",
+            url: URL(string: "https://example.com/page")!,
+            receivedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            databaseId: "db_original"
+        )
+
+        let resolution = AppModel.pendingSubmissionDatabaseId(
+            for: pendingURL,
+            selectedDatabaseId: "db_current",
+            writableDatabaseIds: ["db_current"]
+        )
+
+        #expect(resolution == .unavailable("db_original"))
+    }
+
+    @Test
+    func publicDatabaseRefreshFailureFallsBackToEmptyList() async {
+        let result = await AppModel.publicDatabasesForRefresh(showPublic: true) {
+            throw ShareInboxTestError.publicListFailed
+        }
+
+        #expect(result.databases.isEmpty)
+        #expect(result.errorMessage?.contains("Public database list unavailable") == true)
+    }
+
+    @Test
     func loadsLegacyRecordsWithoutCaptureMetadata() throws {
         let queueDirectory = makeQueueDirectory()
         defer { removeQueueDirectory(queueDirectory) }
@@ -120,6 +194,7 @@ struct ShareInboxTests {
 
         let pendingURL = try #require(inbox.loadPendingURLs().first)
         #expect(pendingURL.url.absoluteString == "https://example.com/legacy")
+        #expect(pendingURL.databaseId == nil)
         #expect(pendingURL.captureMetadata == nil)
     }
 
@@ -320,6 +395,30 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStorePersistsBrowseDatabaseVisibilityToggles() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(store.showPublicBrowseDatabases == false)
+        #expect(store.showPurchasedBrowseDatabases == false)
+
+        store.showPublicBrowseDatabases = true
+        store.showPurchasedBrowseDatabases = true
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == true)
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPurchasedBrowseDatabases == true)
+
+        store.showPublicBrowseDatabases = false
+        store.showPurchasedBrowseDatabases = false
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPurchasedBrowseDatabases == false)
+    }
+
+    @Test
     func classifiesOnlySupportedUniversalLinkEntrypoints() {
         #expect(AppModel.openURLAction(
             for: URL(string: "https://wiki.kinic.xyz/ios-share?queued=1")!,
@@ -385,6 +484,36 @@ struct ShareInboxTests {
         model.setDarkAppearanceEnabled(true)
         #expect(model.isDarkAppearanceEnabled == true)
         #expect(store.isDarkAppearanceEnabled == true)
+    }
+
+    @MainActor
+    @Test
+    func appModelPersistsBrowseDatabaseVisibilityToggles() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            removeQueueDirectory(inboxDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.showPublicBrowseDatabases == false)
+        #expect(model.showPurchasedBrowseDatabases == false)
+        model.setShowPublicBrowseDatabases(true)
+        model.setShowPurchasedBrowseDatabases(true)
+        #expect(store.showPublicBrowseDatabases == true)
+        #expect(store.showPurchasedBrowseDatabases == true)
     }
 
     @MainActor
@@ -554,6 +683,114 @@ struct ShareInboxTests {
     }
 
     @Test
+    func mergesBrowseDatabasesWithVisibilityToggles() {
+        let member = database(databaseId: "db_member", role: .owner)
+        let purchased = database(databaseId: "db_purchased", role: .reader)
+        let purchasedWriter = database(databaseId: "db_purchased_writer", role: .writer)
+        let publicOnly = database(databaseId: "db_public", role: .reader)
+        let publicDuplicate = database(databaseId: "db_duplicate", title: "Public Duplicate", role: .reader)
+        let memberDuplicate = database(databaseId: "db_duplicate", title: "Member Duplicate", role: .writer)
+
+        let hidden = AppModel.mergeBrowseDatabases(
+            memberDatabases: [member, purchased, purchasedWriter, memberDuplicate],
+            publicDatabases: [publicOnly, publicDuplicate],
+            purchasedDatabaseIds: ["db_purchased", "db_purchased_writer"],
+            purchasedLookupSucceeded: true,
+            showPublic: false,
+            showPurchased: false
+        )
+        #expect(hidden.databases.map(\.databaseId) == ["db_member", "db_purchased_writer", "db_duplicate"])
+        #expect(hidden.databases.first { $0.databaseId == "db_duplicate" }?.title == "Member Duplicate")
+        #expect(hidden.publicDatabaseIds.isEmpty)
+        #expect(hidden.purchasedDatabaseIds == ["db_purchased", "db_purchased_writer"])
+
+        let publicVisible = AppModel.mergeBrowseDatabases(
+            memberDatabases: [member, purchased, purchasedWriter, memberDuplicate],
+            publicDatabases: [publicOnly, publicDuplicate],
+            purchasedDatabaseIds: ["db_purchased", "db_purchased_writer"],
+            purchasedLookupSucceeded: true,
+            showPublic: true,
+            showPurchased: false
+        )
+        #expect(publicVisible.databases.map(\.databaseId) == ["db_member", "db_public", "db_purchased_writer", "db_duplicate"])
+        #expect(publicVisible.databases.first { $0.databaseId == "db_duplicate" }?.title == "Member Duplicate")
+        #expect(publicVisible.publicDatabaseIds == ["db_public", "db_duplicate"])
+
+        let purchasedVisible = AppModel.mergeBrowseDatabases(
+            memberDatabases: [member, purchased, purchasedWriter, memberDuplicate],
+            publicDatabases: [publicOnly, publicDuplicate],
+            purchasedDatabaseIds: ["db_purchased", "db_purchased_writer"],
+            purchasedLookupSucceeded: true,
+            showPublic: false,
+            showPurchased: true
+        )
+        #expect(purchasedVisible.databases.map(\.databaseId) == ["db_member", "db_purchased", "db_purchased_writer", "db_duplicate"])
+        #expect(purchasedVisible.purchasedDatabaseIds == ["db_purchased", "db_purchased_writer"])
+    }
+
+    @Test
+    func mergesBrowseDatabasesFailClosedWhenPurchasedLookupFails() {
+        let member = database(databaseId: "db_member", role: .owner)
+        let reader = database(databaseId: "db_reader", role: .reader)
+        let writer = database(databaseId: "db_writer", role: .writer)
+        let publicOnly = database(databaseId: "db_public", role: .reader)
+
+        let purchasedHidden = AppModel.mergeBrowseDatabases(
+            memberDatabases: [member, reader, writer],
+            publicDatabases: [publicOnly],
+            purchasedDatabaseIds: ["db_cached_purchased"],
+            purchasedLookupSucceeded: false,
+            showPublic: true,
+            showPurchased: false
+        )
+        #expect(purchasedHidden.databases.map(\.databaseId) == ["db_member", "db_public", "db_writer"])
+        #expect(purchasedHidden.purchasedDatabaseIds == ["db_cached_purchased"])
+
+        let purchasedVisible = AppModel.mergeBrowseDatabases(
+            memberDatabases: [member, reader, writer],
+            publicDatabases: [publicOnly],
+            purchasedDatabaseIds: ["db_cached_purchased"],
+            purchasedLookupSucceeded: false,
+            showPublic: false,
+            showPurchased: true
+        )
+        #expect(purchasedVisible.databases.map(\.databaseId) == ["db_member", "db_reader", "db_writer"])
+        #expect(purchasedVisible.purchasedDatabaseIds == ["db_cached_purchased"])
+    }
+
+    @MainActor
+    @Test
+    func managementDatabasesExcludesPublicOnlyDatabases() throws {
+        let suiteName = "kinic.management.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            removeQueueDirectory(inboxDirectory)
+        }
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: SharedDefaultsStore(defaults: defaults)
+        )
+        let member = database(databaseId: "db_member", role: .owner)
+        let purchased = database(databaseId: "db_purchased", role: .reader)
+        let publicOnly = database(databaseId: "db_public", role: .reader)
+
+        model.readableDatabases = [member, purchased, publicOnly]
+        model.memberBrowseDatabaseIds = ["db_member", "db_purchased"]
+        model.publicBrowseDatabaseIds = ["db_public"]
+        model.purchasedBrowseDatabaseIds = ["db_purchased"]
+
+        #expect(model.managementDatabases.map(\.databaseId) == ["db_member", "db_purchased"])
+    }
+
+    @Test
     func normalizesBrowsePaths() {
         #expect(AppModel.normalizedBrowsePath("") == "/")
         #expect(AppModel.normalizedBrowsePath("Knowledge/README.md") == "/Knowledge/README.md")
@@ -698,10 +935,10 @@ private func database(cyclesBalance: UInt64?, suspendedAt: Int64? = nil) -> Data
     )
 }
 
-private func database(databaseId: String, role: DatabaseRole) -> DatabaseSummary {
+private func database(databaseId: String, title: String? = nil, role: DatabaseRole) -> DatabaseSummary {
     DatabaseSummary(
         databaseId: databaseId,
-        title: databaseId,
+        title: title ?? databaseId,
         description: "",
         metadata: nil,
         role: role,
@@ -726,4 +963,8 @@ private func removeQueueDirectory(_ url: URL) {
 private func writeJSON<T: Encodable>(_ value: T, to fileURL: URL) throws {
     let data = try JSONEncoder().encode(value)
     try data.write(to: fileURL)
+}
+
+private enum ShareInboxTestError: Error {
+    case publicListFailed
 }

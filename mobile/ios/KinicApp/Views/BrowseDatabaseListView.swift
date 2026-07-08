@@ -12,7 +12,7 @@ struct BrowseDatabaseListView: View {
 
     var body: some View {
         Group {
-            if model.isSignedIn {
+            if model.canListBrowseDatabases {
                 List(selection: $selectedDatabaseId) {
                     databaseRows
                 }
@@ -32,7 +32,7 @@ struct BrowseDatabaseListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases)
+                    .disabled(!model.canListBrowseDatabases || model.isLoadingDatabases)
             }
         }
     }
@@ -46,7 +46,12 @@ struct BrowseDatabaseListView: View {
     }
 
     private func databaseRowLabel(_ database: DatabaseSummary) -> some View {
-        BrowseDatabaseRow(database: database, isSelected: selectedDatabaseId == database.databaseId)
+        BrowseDatabaseRow(
+            database: database,
+            isSelected: selectedDatabaseId == database.databaseId,
+            isPublicReadable: model.isPublicBrowseDatabase(database.databaseId),
+            isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
+        )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -63,30 +68,6 @@ struct BrowseDatabaseListView: View {
 
     private func refresh() {
         model.startRefreshDatabases()
-    }
-}
-
-struct BrowseDatabaseManageView: View {
-    @Bindable var model: AppModel
-    let database: DatabaseSummary
-
-    var body: some View {
-        Form {
-            DatabaseManagementFormContent(model: model, database: database)
-        }
-        .navigationTitle(database.role.canManageDatabase ? "Manage Database" : "Database Info")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-                    .disabled(model.isLoadingDatabases || model.isLoadingCyclesConfig)
-            }
-        }
-    }
-
-    private func refresh() {
-        model.startRefreshDatabaseManagementInfo()
-        model.startRefreshDatabaseManagementDetails(databaseId: database.databaseId)
     }
 }
 
@@ -466,16 +447,6 @@ struct DatabaseManagementFormContent: View {
         }
     }
 
-    private func selectableContent(_ title: String, value: String) -> some View {
-        LabeledContent(title) {
-            Text(value)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-                .textSelection(.enabled)
-        }
-    }
-
     private var databaseDescription: String {
         database.description.isEmpty ? "None" : database.description
     }
@@ -587,10 +558,14 @@ private struct DatabaseMemberRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(displayPrincipal)
                     .font(.system(.footnote, design: .monospaced))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
-                Text(member.role.displayName)
-                    .foregroundStyle(roleTint)
+                if !canManage {
+                    Text(member.role.displayName)
+                        .foregroundStyle(.primary)
+                }
             }
 
             Text("Added \(DatabaseManagementFormat.date(milliseconds: member.createdAtMs))")
@@ -599,14 +574,18 @@ private struct DatabaseMemberRow: View {
 
             if canManage {
                 HStack {
-                    Menu("Role") {
+                    Menu {
                         ForEach(DatabaseRole.allCases, id: \.self) { role in
                             Button(role.displayName) {
                                 onGrant(role)
                             }
                             .disabled(role == member.role || (member.principal == DatabaseAccessConstants.anonymousPrincipal && role != .reader))
                         }
+                    } label: {
+                        Text(member.role.displayName)
+                            .foregroundStyle(.primary)
                     }
+                    .tint(.primary)
                     .disabled(isBusy)
 
                     Spacer()
@@ -622,17 +601,6 @@ private struct DatabaseMemberRow: View {
 
     private var displayPrincipal: String {
         member.principal == DatabaseAccessConstants.llmWriterPrincipal ? DatabaseAccessConstants.llmWriterLabel : member.principal
-    }
-
-    private var roleTint: Color {
-        switch member.role {
-        case .owner:
-            KinicDesign.hotPink
-        case .writer:
-            .blue
-        case .reader:
-            .secondary
-        }
     }
 
     private var isBusy: Bool {

@@ -28,6 +28,35 @@ enum DatabaseMetadataValidationError: Error, LocalizedError, Equatable {
     }
 }
 
+struct BrowseDatabaseMergeResult: Equatable, Sendable {
+    let databases: [DatabaseSummary]
+    let memberDatabaseIds: Set<String>
+    let publicDatabaseIds: Set<String>
+    let purchasedDatabaseIds: Set<String>
+}
+
+struct PublicDatabaseRefreshResult: Equatable, Sendable {
+    let databases: [DatabaseSummary]
+    let errorMessage: String?
+}
+
+enum PendingSubmissionDatabaseResolution: Equatable, Sendable {
+    case ready(String)
+    case missingSelection
+    case unavailable(String)
+
+    var statusMessage: String {
+        switch self {
+        case .ready:
+            ""
+        case .missingSelection:
+            "Select a writable database."
+        case let .unavailable(databaseId):
+            "Queued database is no longer writable: \(databaseId). Restore access before retrying."
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -50,8 +79,21 @@ final class AppModel {
             settingsStore.isDarkAppearanceEnabled = isDarkAppearanceEnabled
         }
     }
+    var showPublicBrowseDatabases: Bool {
+        didSet {
+            settingsStore.showPublicBrowseDatabases = showPublicBrowseDatabases
+        }
+    }
+    var showPurchasedBrowseDatabases: Bool {
+        didSet {
+            settingsStore.showPurchasedBrowseDatabases = showPurchasedBrowseDatabases
+        }
+    }
     var databases: [DatabaseSummary]
     var readableDatabases: [DatabaseSummary]
+    var memberBrowseDatabaseIds: Set<String>
+    var publicBrowseDatabaseIds: Set<String>
+    var purchasedBrowseDatabaseIds: Set<String>
     var pendingURLs: [PendingSharedURL]
     var rootNavigationID: Int
     var currentPath: String
@@ -107,7 +149,19 @@ final class AppModel {
     }
 
     var canSubmit: Bool {
-        session != nil && !selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !pendingURLs.isEmpty && !isSubmitting
+        guard session != nil,
+              let item = pendingURLs.first,
+              !isSubmitting else {
+            return false
+        }
+        if case .ready = Self.pendingSubmissionDatabaseId(
+            for: item,
+            selectedDatabaseId: selectedDatabaseId,
+            writableDatabaseIds: Set(databases.map(\.databaseId))
+        ) {
+            return true
+        }
+        return false
     }
 
     var selectedDatabase: DatabaseSummary? {
@@ -118,8 +172,20 @@ final class AppModel {
         readableDatabases.first { $0.databaseId == selectedBrowseDatabaseId }
     }
 
+    var managementDatabases: [DatabaseSummary] {
+        readableDatabases.filter { memberBrowseDatabaseIds.contains($0.databaseId) }
+    }
+
+    var canListBrowseDatabases: Bool {
+        session != nil || showPublicBrowseDatabases
+    }
+
     var canBrowse: Bool {
-        session != nil && !selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else {
+            return false
+        }
+        return session != nil || publicBrowseDatabaseIds.contains(databaseId)
     }
 
     init(
@@ -138,8 +204,13 @@ final class AppModel {
         selectedDatabaseId = settingsStore.databaseId
         selectedBrowseDatabaseId = settingsStore.browseDatabaseId
         isDarkAppearanceEnabled = settingsStore.isDarkAppearanceEnabled
+        showPublicBrowseDatabases = settingsStore.showPublicBrowseDatabases
+        showPurchasedBrowseDatabases = settingsStore.showPurchasedBrowseDatabases
         databases = []
         readableDatabases = []
+        memberBrowseDatabaseIds = []
+        publicBrowseDatabaseIds = []
+        purchasedBrowseDatabaseIds = []
         pendingURLs = shareInbox.loadPendingURLs()
         rootNavigationID = 0
         currentPath = "/"
@@ -235,6 +306,22 @@ final class AppModel {
 
     func setDarkAppearanceEnabled(_ enabled: Bool) {
         isDarkAppearanceEnabled = enabled
+    }
+
+    func setShowPublicBrowseDatabases(_ enabled: Bool) {
+        showPublicBrowseDatabases = enabled
+    }
+
+    func setShowPurchasedBrowseDatabases(_ enabled: Bool) {
+        showPurchasedBrowseDatabases = enabled
+    }
+
+    func isPublicBrowseDatabase(_ databaseId: String) -> Bool {
+        publicBrowseDatabaseIds.contains(databaseId)
+    }
+
+    func isPurchasedBrowseDatabase(_ databaseId: String) -> Bool {
+        purchasedBrowseDatabaseIds.contains(databaseId)
     }
 
     func handleOpenURL(_ url: URL) {
@@ -372,36 +459,24 @@ final class AppModel {
         session = nil
         databases = []
         readableDatabases = []
+        memberBrowseDatabaseIds = []
+        publicBrowseDatabaseIds = []
+        purchasedBrowseDatabaseIds = []
         selectedDatabaseId = ""
-        selectedBrowseDatabaseId = ""
         settingsStore.databaseId = ""
-        settingsStore.browseDatabaseId = ""
         settingsStore.writableDatabases = []
-        browsePathLoadRequestID += 1
-        documentLoadRequestID += 1
-        searchRequestID += 1
+        setSelectedBrowseDatabase("")
+        resetBrowseStateForRoot()
         resetDatabaseManagementState()
-        currentNode = nil
-        childNodes = []
-        loadedBrowsePath = nil
-        selectedBrowseNodePath = nil
-        documentNode = nil
-        isLoadingBrowsePath = false
-        isLoadingDocument = false
-        isSearching = false
         cyclesBillingConfig = nil
-        searchResults = []
-        browseError = nil
-        documentError = nil
         cyclesConfigError = nil
         databaseMetadataError = nil
-        databaseMembersError = nil
-        databaseCyclesHistoryError = nil
-        databasePendingPurchasesError = nil
-        databaseDeleteError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
         statusMessage = "Signed out."
+        if showPublicBrowseDatabases {
+            startRefreshDatabases()
+        }
     }
 
     func startSubmitNextPendingURL() {
@@ -598,10 +673,6 @@ final class AppModel {
         }
     }
 
-    func openBrowsePath(_ path: String) {
-        startLoadBrowsePath(path)
-    }
-
     func startLoadBrowseDocument(_ path: String) {
         Task {
             await loadBrowseDocument(path)
@@ -692,23 +763,54 @@ final class AppModel {
     }
 
     private func refreshDatabases(selectFirstIfNeeded: Bool = true) async {
-        guard let session else {
-            currentNode = nil
-            childNodes = []
-            loadedBrowsePath = nil
-            databases = []
-            readableDatabases = []
-            cyclesBillingConfig = nil
-            cyclesConfigError = nil
-            return
-        }
         isLoadingDatabases = true
         defer {
             isLoadingDatabases = false
         }
         do {
-            readableDatabases = try await client.listReadableDatabases(session: session)
-            databases = readableDatabases.filter(\.canWrite)
+            let currentSession = session
+            let memberDatabases: [DatabaseSummary]
+            if let currentSession {
+                memberDatabases = try await client.listReadableDatabases(session: currentSession)
+            } else {
+                memberDatabases = []
+            }
+
+            let publicRefresh = await Self.publicDatabasesForRefresh(showPublic: showPublicBrowseDatabases) {
+                try await client.listPublicDatabases()
+            }
+            let publicDatabases = publicRefresh.databases
+            if let errorMessage = publicRefresh.errorMessage {
+                statusMessage = errorMessage
+            }
+
+            var purchasedIds = purchasedBrowseDatabaseIds
+            var purchasedLookupSucceeded = currentSession == nil
+            if let currentSession {
+                do {
+                    purchasedIds = try await loadPurchasedDatabaseIds(session: currentSession)
+                    purchasedLookupSucceeded = true
+                } catch {
+                    purchasedLookupSucceeded = false
+                    statusMessage = "Purchased database list unavailable: \(error.localizedDescription)"
+                }
+            }
+
+            let merged = Self.mergeBrowseDatabases(
+                memberDatabases: memberDatabases,
+                publicDatabases: publicDatabases,
+                purchasedDatabaseIds: purchasedIds,
+                purchasedLookupSucceeded: purchasedLookupSucceeded,
+                showPublic: showPublicBrowseDatabases,
+                showPurchased: showPurchasedBrowseDatabases
+            )
+            readableDatabases = merged.databases
+            memberBrowseDatabaseIds = merged.memberDatabaseIds
+            publicBrowseDatabaseIds = merged.publicDatabaseIds
+            if purchasedLookupSucceeded {
+                purchasedBrowseDatabaseIds = merged.purchasedDatabaseIds
+            }
+            databases = memberDatabases.filter(\.canWrite)
             settingsStore.writableDatabases = databases
             databaseListLastRefreshed = Date()
             if !selectedDatabaseId.isEmpty,
@@ -718,18 +820,7 @@ final class AppModel {
             }
             if !selectedBrowseDatabaseId.isEmpty,
                !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }) {
-                selectedBrowseDatabaseId = ""
-                settingsStore.browseDatabaseId = ""
-                resetDatabaseManagementState()
-                currentNode = nil
-                childNodes = []
-                loadedBrowsePath = nil
-                selectedBrowseNodePath = nil
-                documentNode = nil
-                documentLoadRequestID += 1
-                isLoadingDocument = false
-                searchResults = []
-                documentError = nil
+                clearBrowseSelectionAndState()
             }
             if selectFirstIfNeeded,
                selectedDatabaseId.isEmpty,
@@ -744,7 +835,12 @@ final class AppModel {
             } else if !selectedBrowseDatabaseId.isEmpty {
                 await loadBrowsePath(currentPath)
             }
-            await loadCyclesBillingConfigIfNeeded()
+            if currentSession != nil {
+                await loadCyclesBillingConfigIfNeeded()
+            } else {
+                cyclesBillingConfig = nil
+                cyclesConfigError = nil
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -753,6 +849,32 @@ final class AppModel {
     private func refreshDatabaseManagementInfo() async {
         await refreshDatabases(selectFirstIfNeeded: false)
         await loadCyclesBillingConfig(force: true)
+    }
+
+    private func loadPurchasedDatabaseIds(session: ICAuthSession) async throws -> Set<String> {
+        var cursor: String?
+        var ids = Set<String>()
+        repeat {
+            let page = try await client.marketListEntitlements(session: session, cursor: cursor, limit: 100)
+            ids.formUnion(page.entitlements.map(\.databaseId))
+            cursor = page.nextCursor
+        } while cursor != nil
+        return ids
+    }
+
+    private func clearBrowseSelectionAndState() {
+        setSelectedBrowseDatabase("")
+        resetBrowseStateForRoot()
+    }
+
+    private func browseSession(for databaseId: String) -> ICAuthSession? {
+        if let session, memberBrowseDatabaseIds.contains(databaseId) || !publicBrowseDatabaseIds.contains(databaseId) {
+            return session
+        }
+        if publicBrowseDatabaseIds.contains(databaseId) {
+            return nil
+        }
+        return session
     }
 
     private func loadDatabaseManagementDetails(databaseId: String) async {
@@ -937,15 +1059,16 @@ final class AppModel {
     }
 
     private func loadBrowsePath(_ path: String) async {
-        guard let session else {
-            browseError = "Sign in before browsing."
-            return
-        }
         let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else {
             browseError = "Select a database to browse."
             return
         }
+        guard canBrowse else {
+            browseError = "Sign in before browsing."
+            return
+        }
+        let session = browseSession(for: databaseId)
         let normalizedPath = Self.normalizedBrowsePath(path)
         browsePathLoadRequestID += 1
         let requestID = browsePathLoadRequestID
@@ -964,7 +1087,7 @@ final class AppModel {
         }
         do {
             if normalizedPath == "/" {
-                let loadedChildren = try await client.listChildren(databaseId: databaseId, path: normalizedPath, session: session)
+                let loadedChildren = try await client.listBrowseChildren(databaseId: databaseId, path: normalizedPath, session: session)
                 if browsePathLoadRequestID == requestID {
                     currentNode = nil
                     childNodes = loadedChildren
@@ -972,7 +1095,7 @@ final class AppModel {
                 }
                 return
             }
-            guard let node = try await client.readNode(databaseId: databaseId, path: normalizedPath, session: session) else {
+            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: normalizedPath, session: session) else {
                 if browsePathLoadRequestID == requestID {
                     currentNode = nil
                     childNodes = []
@@ -982,7 +1105,7 @@ final class AppModel {
                 return
             }
             let loadedChildren = node.kind == .folder
-                ? try await client.listChildren(databaseId: databaseId, path: normalizedPath, session: session)
+                ? try await client.listBrowseChildren(databaseId: databaseId, path: normalizedPath, session: session)
                 : []
             if browsePathLoadRequestID == requestID {
                 currentNode = node
@@ -1000,15 +1123,16 @@ final class AppModel {
     }
 
     private func loadBrowseDocument(_ path: String) async {
-        guard let session else {
-            documentError = "Sign in before browsing."
-            return
-        }
         let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else {
             documentError = "Select a database to browse."
             return
         }
+        guard canBrowse else {
+            documentError = "Sign in before browsing."
+            return
+        }
+        let session = browseSession(for: databaseId)
         let normalizedPath = Self.normalizedBrowsePath(path)
         documentLoadRequestID += 1
         let requestID = documentLoadRequestID
@@ -1021,7 +1145,7 @@ final class AppModel {
             }
         }
         do {
-            guard let node = try await client.readNode(databaseId: databaseId, path: normalizedPath, session: session) else {
+            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: normalizedPath, session: session) else {
                 if isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: normalizedPath) {
                     documentNode = nil
                     documentError = "Node not found: \(normalizedPath)"
@@ -1053,15 +1177,16 @@ final class AppModel {
     }
 
     private func searchBrowseDatabase() async {
-        guard let session else {
-            browseError = "Sign in before searching."
-            return
-        }
         let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else {
             browseError = "Select a database to search."
             return
         }
+        guard canBrowse else {
+            browseError = "Sign in before searching."
+            return
+        }
+        let session = browseSession(for: databaseId)
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             searchResults = []
@@ -1077,7 +1202,7 @@ final class AppModel {
             }
         }
         do {
-            let hits = try await client.searchNodes(databaseId: databaseId, query: query, prefix: nil, limit: 20, session: session)
+            let hits = try await client.searchBrowseNodes(databaseId: databaseId, query: query, prefix: nil, limit: 20, session: session)
             if searchRequestID == requestID,
                selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines) == databaseId,
                searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query {
@@ -1098,12 +1223,20 @@ final class AppModel {
             statusMessage = "Sign in before submitting."
             return
         }
-        let databaseId = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !databaseId.isEmpty else {
-            statusMessage = "Select a writable database."
+        guard let item = pendingURLs.first else {
             return
         }
-        guard let item = pendingURLs.first else {
+        let databaseResolution = Self.pendingSubmissionDatabaseId(
+            for: item,
+            selectedDatabaseId: selectedDatabaseId,
+            writableDatabaseIds: Set(databases.map(\.databaseId))
+        )
+        let databaseId: String
+        switch databaseResolution {
+        case let .ready(resolvedDatabaseId):
+            databaseId = resolvedDatabaseId
+        case .missingSelection, .unavailable:
+            statusMessage = databaseResolution.statusMessage
             return
         }
         isSubmitting = true
@@ -1150,6 +1283,42 @@ final class AppModel {
         )
     }
 
+    nonisolated static func pendingSubmissionDatabaseId(
+        for item: PendingSharedURL,
+        selectedDatabaseId: String,
+        writableDatabaseIds: Set<String>
+    ) -> PendingSubmissionDatabaseResolution {
+        if let queuedDatabaseId = item.databaseId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !queuedDatabaseId.isEmpty {
+            if writableDatabaseIds.contains(queuedDatabaseId) {
+                return .ready(queuedDatabaseId)
+            }
+            return .unavailable(queuedDatabaseId)
+        }
+        let selected = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selected.isEmpty else {
+            return .missingSelection
+        }
+        return .ready(selected)
+    }
+
+    nonisolated static func publicDatabasesForRefresh(
+        showPublic: Bool,
+        load: @Sendable () async throws -> [DatabaseSummary]
+    ) async -> PublicDatabaseRefreshResult {
+        guard showPublic else {
+            return PublicDatabaseRefreshResult(databases: [], errorMessage: nil)
+        }
+        do {
+            return PublicDatabaseRefreshResult(databases: try await load(), errorMessage: nil)
+        } catch {
+            return PublicDatabaseRefreshResult(
+                databases: [],
+                errorMessage: "Public database list unavailable: \(error.localizedDescription)"
+            )
+        }
+    }
+
     nonisolated static func databaseNameError(_ databaseName: String) -> String? {
         if databaseName.isEmpty {
             return "Database name is required."
@@ -1176,6 +1345,44 @@ final class AppModel {
             throw DatabaseMetadataValidationError.invalidTags
         }
         return json
+    }
+
+    nonisolated static func mergeBrowseDatabases(
+        memberDatabases: [DatabaseSummary],
+        publicDatabases: [DatabaseSummary],
+        purchasedDatabaseIds: Set<String>,
+        purchasedLookupSucceeded: Bool,
+        showPublic: Bool,
+        showPurchased: Bool
+    ) -> BrowseDatabaseMergeResult {
+        let memberIds = Set(memberDatabases.map(\.databaseId))
+        let visiblePublicIds = showPublic ? Set(publicDatabases.map(\.databaseId)) : []
+        var byId: [String: DatabaseSummary] = [:]
+
+        if showPublic {
+            for database in publicDatabases where database.canRead {
+                byId[database.databaseId] = database
+            }
+        }
+
+        for database in memberDatabases where database.canRead {
+            if !showPurchased, database.role == .reader {
+                if !purchasedLookupSucceeded || purchasedDatabaseIds.contains(database.databaseId) {
+                    continue
+                }
+            }
+            byId[database.databaseId] = database
+        }
+
+        let databases = byId.values.sorted { left, right in
+            left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
+        }
+        return BrowseDatabaseMergeResult(
+            databases: databases,
+            memberDatabaseIds: memberIds,
+            publicDatabaseIds: visiblePublicIds,
+            purchasedDatabaseIds: purchasedDatabaseIds
+        )
     }
 
     nonisolated static func normalizedBrowsePath(_ path: String) -> String {
