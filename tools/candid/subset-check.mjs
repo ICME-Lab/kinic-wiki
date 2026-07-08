@@ -1,4 +1,4 @@
-// Where: scripts/candid-subset-check.mjs
+// Where: tools/candid/subset-check.mjs
 // What: Shared structural checks for hand-written Candid IDL subsets.
 // Why: Browser-side hand-written IDL should fail CI when crates/vfs_canister/vfs.did drifts.
 export function checkCandidSubset({ didSource, idlSource, expectedTypes, expectedMethods, didTypeAliases = {} }) {

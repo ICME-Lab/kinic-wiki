@@ -3,7 +3,14 @@ import { assertNoAppBalanceSurface, readProjectFile } from "./check-helpers.mjs"
 
 const listingDetail = readProjectFile("../app/marketplace/[listingId]/listing-detail-client.tsx");
 const wallet = readProjectFile("../lib/kinic-wallet.ts");
-const client = readProjectFile("../lib/vfs-client.ts");
+const vfsClientFiles = [
+  "../lib/vfs-client.ts",
+  "../lib/vfs-client/raw-types.ts",
+  "../lib/vfs-client/actor.ts",
+  "../lib/vfs-client/cycles.ts",
+  "../lib/vfs-client/market.ts"
+];
+const client = vfsClientFiles.map((p) => readProjectFile(p)).join("\n");
 const types = readProjectFile("../lib/types.ts");
 const idl = readProjectFile("../lib/vfs-idl.ts");
 

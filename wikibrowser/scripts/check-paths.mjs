@@ -6,7 +6,12 @@ import ts from "typescript";
 const sourcePath = new URL("../lib/paths.ts", import.meta.url);
 const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
 const source = `${shareLinksSource}\n${readFileSync(sourcePath, "utf8").replace('import { databaseRouteBase } from "./share-links";', "")}`;
-const browserSource = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
+const wikiBrowserFiles = [
+  "../components/wiki-browser.tsx",
+  "../components/wiki-browser/explorer-pane.tsx",
+  "../components/wiki-browser/top-bar.tsx"
+];
+const browserSource = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,

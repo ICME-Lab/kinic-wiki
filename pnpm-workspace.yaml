@@ -1,15 +1,27 @@
+packages:
+  - wikibrowser
+  - skill-registry-web
+  - workers/wiki-mcp
+  - workers/wiki-generator
+  - extensions/wiki-clipper
+  - tools/candid
+
 allowBuilds:
   esbuild: true
   esbuild@0.25.4: true
   esbuild@0.27.3: true
   esbuild@0.28.1: true
+  sharp: true
   sharp@0.34.5: true
+  unrs-resolver: true
   unrs-resolver@1.11.1: true
   workerd: true
   workerd@1.20260507.1: true
+
 minimumReleaseAgeExclude:
   - postcss@8.5.10
   - ws@8.21.0
+
 overrides:
   '@babel/core': 7.29.6
   esbuild: 0.28.1

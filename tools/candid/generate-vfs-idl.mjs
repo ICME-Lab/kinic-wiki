@@ -1,12 +1,11 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
+import { didTypeAliases, expectedMethods, expectedTypes } from "./shapes.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
-const idlPath = join(here, "..", "lib", "vfs-idl.ts");
 
 const typeOrder = [
   "CanisterHealth",
@@ -221,18 +220,27 @@ export function generateVfsIdlFromDid(didSource) {
   return renderVfsIdl();
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const entryFile = process.argv[1] ? realpathSync(process.argv[1]) : "";
+const thisFile = realpathSync(fileURLToPath(import.meta.url));
+
+if (entryFile === thisFile) {
+  const outArg = process.argv.indexOf("--out");
+  if (outArg === -1 || !process.argv[outArg + 1]) {
+    console.error("Usage: node generate-vfs-idl.mjs --out <path/to/vfs-idl.ts> [--check]");
+    process.exit(1);
+  }
+  const idlPath = process.argv[outArg + 1];
   const generated = generateVfsIdlFromDid(readFileSync(didPath, "utf8"));
   if (process.argv.includes("--check")) {
     const current = readFileSync(idlPath, "utf8");
     if (current !== generated) {
-      console.error("wikibrowser/lib/vfs-idl.ts is out of date. Run: node scripts/generate-vfs-idl.mjs");
+      console.error(`${idlPath} is out of date. Run: node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out ${idlPath}`);
       process.exit(1);
     }
-    console.log("Generated VFS IDL is up to date");
+    console.log(`Generated VFS IDL is up to date: ${idlPath}`);
   } else {
     writeFileSync(idlPath, generated);
-    console.log("Generated wikibrowser/lib/vfs-idl.ts");
+    console.log(`Generated ${idlPath}`);
   }
 }
 

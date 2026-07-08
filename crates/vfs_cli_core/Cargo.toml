@@ -22,7 +22,6 @@ sha2 = "0.10.9"
 toml = "0.9.8"
 vfs_client = { package = "kinic-vfs-client", version = "0.1.0", path = "../vfs_client" }
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
-wiki_domain = { package = "kinic-wiki-domain", version = "0.1.0", path = "../wiki_domain" }
 
 [dev-dependencies]
 async-trait = "0.1.89"

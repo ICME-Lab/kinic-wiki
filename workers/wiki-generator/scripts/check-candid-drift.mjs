@@ -2,8 +2,8 @@
 // What: Compare the generator Worker's hand-written VFS IDL subset with vfs.did.
 // Why: Worker canister calls use a local minimal IDL that must drift-fail in CI.
 import { readFileSync } from "node:fs";
-import { checkCandidSubset } from "../../../scripts/candid-subset-check.mjs";
-import { didTypeAliases as sharedAliases } from "../../../wikibrowser/scripts/candid-shapes.mjs";
+import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
+import { didTypeAliases as sharedAliases } from "@kinic/candid-tools/shapes";
 
 const did = readFileSync(new URL("../../../crates/vfs_canister/vfs.did", import.meta.url), "utf8");
 const idl = readFileSync(new URL("../src/vfs-idl.ts", import.meta.url), "utf8");

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
-import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
+import { didTypeAliases, expectedMethods, expectedTypes } from "@kinic/candid-tools/shapes";
+import { generateVfsIdlFromDid } from "@kinic/candid-tools/generate-vfs-idl";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -34,7 +34,9 @@ for (const name of Object.keys(idlMethods)) {
 try {
   const generated = generateVfsIdlFromDid(did);
   if (idl !== generated) {
-    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
+    failures.push(
+      "wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out lib/vfs-idl.ts"
+    );
   }
 } catch (error) {
   failures.push(error instanceof Error ? error.message : String(error));

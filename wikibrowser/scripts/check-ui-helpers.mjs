@@ -46,10 +46,22 @@ const markdownEditorSource = readFileSync(new URL("../components/markdown-editor
 const markdownPreviewSource = readFileSync(new URL("../components/markdown-preview.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
-const wikiBrowserSource = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
+const wikiBrowserFiles = [
+  "../components/wiki-browser.tsx",
+  "../components/wiki-browser/explorer-pane.tsx",
+  "../components/wiki-browser/top-bar.tsx"
+];
+const wikiBrowserSource = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const queryPanelSource = readFileSync(new URL("../components/query-panel.tsx", import.meta.url), "utf8");
 const queryContextSource = readFileSync(new URL("../lib/query-context.ts", import.meta.url), "utf8");
-const vfsClientSource = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
+const vfsClientFiles = [
+  "../lib/vfs-client.ts",
+  "../lib/vfs-client/raw-types.ts",
+  "../lib/vfs-client/actor.ts",
+  "../lib/vfs-client/cycles.ts",
+  "../lib/vfs-client/market.ts"
+];
+const vfsClientSource = vfsClientFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const databasePreviewSource = readFileSync(new URL("../lib/database-preview.ts", import.meta.url), "utf8");
 const wranglerConfigSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 const globalsCss = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");

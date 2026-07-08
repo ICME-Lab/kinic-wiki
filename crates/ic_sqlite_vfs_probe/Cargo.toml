@@ -18,3 +18,7 @@ ic-sqlite-vfs = { workspace = true, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]
 proptest = "1.11.0"
+
+[package.metadata.cargo-machete]
+# ic_cdk::export_candid! expands to paths in the candid crate on wasm32.
+ignored = ["candid"]
