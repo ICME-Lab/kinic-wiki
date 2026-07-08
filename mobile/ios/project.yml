@@ -6,13 +6,13 @@ name: Kinic
 options:
   bundleIdPrefix: xyz.kinic
   deploymentTarget:
-    iOS: "26.5"
+    iOS: "18.0"
   developmentLanguage: en
 settings:
   base:
     DEVELOPMENT_TEAM: AKN976G7AK
     SWIFT_VERSION: "6.0"
-    IPHONEOS_DEPLOYMENT_TARGET: "26.5"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
@@ -75,13 +75,11 @@ targets:
       - KinicApp/Models/DatabaseRole.swift
       - KinicApp/Models/DatabaseStatus.swift
       - KinicApp/Models/DatabaseSummary.swift
-      - KinicApp/Models/PendingSourceCaptureTrigger.swift
       - KinicApp/Models/PendingSharedURL.swift
       - KinicApp/Models/ShareCaptureMetadata.swift
       - KinicApp/Models/ShareCaptureResult.swift
       - KinicApp/Models/SearchNodeHit.swift
       - KinicApp/Models/SharedURLRecord.swift
-      - KinicApp/Models/SourceCaptureTriggerRecord.swift
       - KinicApp/Models/SourceCaptureRequest.swift
       - KinicApp/Services/KinicAuthSessionStore.swift
       - KinicApp/Services/KinicICClient.swift
@@ -90,7 +88,6 @@ targets:
       - KinicApp/Services/SharedDefaultsStore.swift
       - KinicApp/Services/SourceCaptureRequestBuilder.swift
       - KinicApp/Services/SourceCaptureRequestError.swift
-      - KinicApp/Services/SourceCaptureTriggerQueue.swift
       - KinicApp/Services/XPostMetadataFetcher.swift
       - KinicApp/Services/VFSCandidDecoder.swift
       - KinicApp/Services/VFSCandidEncoder.swift

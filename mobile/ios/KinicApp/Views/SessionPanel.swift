@@ -9,6 +9,13 @@ struct SessionPanel: View {
 
     var body: some View {
         KinicPanel(title: "Principal", systemImage: "person.crop.circle") {
+            if model.isSignedIn {
+                Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: model.signOut)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(KinicIconButtonStyle())
+                    .accessibilityLabel("Sign out")
+            }
+        } content: {
             VStack(alignment: .leading, spacing: 12) {
                 Text(model.principalText)
                     .font(.subheadline)
@@ -16,12 +23,7 @@ struct SessionPanel: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if model.isSignedIn {
-                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: model.signOut)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(KinicSecondaryButtonStyle())
-                        .accessibilityLabel("Sign out")
-                } else {
+                if !model.isSignedIn {
                     Button("Sign in with Internet Identity", systemImage: "person.crop.circle.badge.checkmark", action: model.startSignIn)
                         .labelStyle(.iconOnly)
                         .buttonStyle(KinicPrimaryButtonStyle())

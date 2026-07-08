@@ -17,6 +17,8 @@ fail() {
   exit 1
 }
 
+"$repo_root/mobile/ios/scripts/ensure-xcodegen-project.sh"
+
 run_with_timeout() {
   local seconds="$1"
   shift

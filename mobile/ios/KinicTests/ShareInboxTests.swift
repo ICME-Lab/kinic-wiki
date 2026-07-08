@@ -259,116 +259,6 @@ struct ShareInboxTests {
     }
 
     @Test
-    func sourceCaptureTriggerQueueStoresFailureAndRemovesAcceptedTrigger() throws {
-        let queueDirectory = makeQueueDirectory()
-        defer { removeQueueDirectory(queueDirectory) }
-
-        let queue = try SourceCaptureTriggerQueue(testQueueDirectory: queueDirectory)
-        let request = try SourceCaptureRequestBuilder.request(
-            url: URL(string: "https://example.com/page")!,
-            databaseId: "db_demo",
-            requestedBy: "aaaaa-aa",
-            requestId: "1700000000000-00000000-0000-4000-8000-000000000000"
-        )
-        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
-
-        try queue.enqueue(request, sessionNonce: "session-1", createdAt: createdAt)
-        var pending = try #require(queue.loadPendingTriggers().first)
-        #expect(pending.databaseId == "db_demo")
-        #expect(pending.requestPath == request.requestPath)
-        #expect(pending.requestId == request.requestId)
-        #expect(pending.url.absoluteString == "https://example.com/page")
-        #expect(pending.sessionNonce == "session-1")
-        #expect(pending.createdAt == createdAt)
-        #expect(pending.lastError == nil)
-
-        queue.updateFailure(pending, error: "worker unavailable")
-        pending = try #require(queue.loadPendingTriggers().first)
-        #expect(pending.lastError == "worker unavailable")
-
-        queue.remove(pending)
-        #expect(queue.loadPendingTriggers().isEmpty)
-    }
-
-    @Test
-    func sourceCaptureTriggerQueueSkipsInvalidStoredRecords() throws {
-        let queueDirectory = makeQueueDirectory()
-        defer { removeQueueDirectory(queueDirectory) }
-
-        let queue = try SourceCaptureTriggerQueue(testQueueDirectory: queueDirectory)
-        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
-        let validRequestId = "1700000000000-00000000-0000-4000-8000-000000000000"
-        try writeJSON(
-            SourceCaptureTriggerRecord(
-                databaseId: "db_demo",
-                requestPath: "/Sources/source-capture-requests/\(validRequestId).md",
-                requestId: validRequestId,
-                url: "https://example.com/valid#section",
-                sessionNonce: "session-valid",
-                createdAt: createdAt,
-                lastError: nil
-            ),
-            to: queueDirectory.appending(path: "\(validRequestId).json")
-        )
-        let invalidURLRequestId = "1700000000000-00000000-0000-4000-8000-000000000003"
-        try writeJSON(
-            SourceCaptureTriggerRecord(
-                databaseId: "db_demo",
-                requestPath: "/Sources/source-capture-requests/\(invalidURLRequestId).md",
-                requestId: invalidURLRequestId,
-                url: "file:///tmp/a",
-                sessionNonce: "session-invalid-url",
-                createdAt: createdAt.addingTimeInterval(-10),
-                lastError: nil
-            ),
-            to: queueDirectory.appending(path: "\(invalidURLRequestId).json")
-        )
-        let mismatchedFilenameRequestId = "1700000000000-00000000-0000-4000-8000-000000000002"
-        try writeJSON(
-            SourceCaptureTriggerRecord(
-                databaseId: "db_demo",
-                requestPath: "/Sources/source-capture-requests/\(mismatchedFilenameRequestId).md",
-                requestId: mismatchedFilenameRequestId,
-                url: "https://example.com/mismatched-filename",
-                sessionNonce: "session-mismatched-filename",
-                createdAt: createdAt,
-                lastError: nil
-            ),
-            to: queueDirectory.appending(path: "mismatched-filename.json")
-        )
-        try writeJSON(
-            SourceCaptureTriggerRecord(
-                databaseId: "db_demo",
-                requestPath: "/Sources/source-capture-requests/invalid.md",
-                requestId: "../bad",
-                url: "https://example.com/bad-request",
-                sessionNonce: "session-bad-request",
-                createdAt: createdAt,
-                lastError: nil
-            ),
-            to: queueDirectory.appending(path: "invalid-request.json")
-        )
-        try writeJSON(
-            SourceCaptureTriggerRecord(
-                databaseId: "db_demo",
-                requestPath: "/Sources/source-capture-requests/mismatch.md",
-                requestId: "1700000000000-00000000-0000-4000-8000-000000000001",
-                url: "https://example.com/mismatch",
-                sessionNonce: "session-mismatch",
-                createdAt: createdAt,
-                lastError: nil
-            ),
-            to: queueDirectory.appending(path: "mismatch.json")
-        )
-        try Data("not json".utf8).write(to: queueDirectory.appending(path: "broken.json"))
-
-        let triggers = queue.loadPendingTriggers()
-        #expect(triggers.map(\.url.absoluteString) == ["https://example.com/valid"])
-        #expect(triggers.map(\.requestId) == [validRequestId])
-        #expect(triggers.map(\.sessionNonce) == ["session-valid"])
-    }
-
-    @Test
     func sharedDefaultsStoreStrictnessIsExplicit() throws {
         #expect(throws: SharedDefaultsStoreError.missingAppGroupId) {
             try SharedDefaultsStore(appGroupId: nil, strict: true)
@@ -479,10 +369,8 @@ struct ShareInboxTests {
             defaults.removePersistentDomain(forName: suiteName)
         }
         let inboxDirectory = makeQueueDirectory()
-        let triggerDirectory = makeQueueDirectory()
         defer {
             removeQueueDirectory(inboxDirectory)
-            removeQueueDirectory(triggerDirectory)
         }
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
@@ -490,7 +378,6 @@ struct ShareInboxTests {
             authService: KinicAuthService(configuration: .preview),
             client: KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
-            triggerQueue: try SourceCaptureTriggerQueue(testQueueDirectory: triggerDirectory),
             settingsStore: store
         )
 

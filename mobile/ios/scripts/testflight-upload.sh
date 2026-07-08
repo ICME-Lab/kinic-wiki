@@ -91,6 +91,8 @@ if [[ "$mode" == "validate-only" ]]; then
   exit 0
 fi
 
+"$repo_root/mobile/ios/scripts/ensure-xcodegen-project.sh"
+
 export_options="$(mktemp "${TMPDIR:-/tmp}/kinic-testflight-export.XXXXXX.plist")"
 trap 'rm -f "$export_options"' EXIT
 

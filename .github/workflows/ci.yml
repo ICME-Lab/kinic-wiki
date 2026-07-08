@@ -99,6 +99,10 @@ jobs:
       - uses: actions/checkout@v5
       - name: Select Xcode 26.5
         run: sudo xcode-select -s /Applications/Xcode_26.5.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate iOS project
+        run: mobile/ios/scripts/ensure-xcodegen-project.sh
       - name: Run iOS tests
         run: xcodebuild test -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' CODE_SIGNING_ALLOWED=NO
       - name: Validate TestFlight upload inputs

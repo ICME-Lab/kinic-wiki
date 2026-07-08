@@ -34,11 +34,9 @@ final class AppModel {
     private let authService: KinicAuthService
     private let client: KinicICClient
     private let shareInbox: ShareInbox
-    private let triggerQueue: SourceCaptureTriggerQueue
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
     private var session: ICAuthSession?
-    private var isTriggeringSourceCapture: Bool
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
     private var searchRequestID: Int
@@ -129,14 +127,12 @@ final class AppModel {
         authService: KinicAuthService,
         client: KinicICClient,
         shareInbox: ShareInbox,
-        triggerQueue: SourceCaptureTriggerQueue,
         settingsStore: SharedDefaultsStore
     ) {
         self.configuration = configuration
         self.authService = authService
         self.client = client
         self.shareInbox = shareInbox
-        self.triggerQueue = triggerQueue
         self.settingsStore = settingsStore
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         selectedDatabaseId = settingsStore.databaseId
@@ -166,7 +162,6 @@ final class AppModel {
         searchQuery = ""
         searchResults = []
         session = authService.restore()
-        isTriggeringSourceCapture = false
         browsePathLoadRequestID = 0
         documentLoadRequestID = 0
         searchRequestID = 0
@@ -206,7 +201,6 @@ final class AppModel {
                 authService: KinicAuthService(configuration: configuration),
                 client: KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: configuration.appGroupId, strict: strictAppGroup),
-                triggerQueue: try SourceCaptureTriggerQueue(appGroupId: configuration.appGroupId, strict: strictAppGroup),
                 settingsStore: settingsStore
             )
         } catch {
@@ -228,7 +222,6 @@ final class AppModel {
                 authService: KinicAuthService(configuration: configuration),
                 client: KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: nil),
-                triggerQueue: try SourceCaptureTriggerQueue(appGroupId: nil),
                 settingsStore: settingsStore
             )
         } catch {
@@ -254,7 +247,6 @@ final class AppModel {
             refreshInbox()
             statusMessage = "Opened from share handoff."
             autoSubmitPendingURL()
-            startRetryPendingTriggers()
         case .appRoot:
             resetBrowseRoot()
         }
@@ -286,7 +278,6 @@ final class AppModel {
             refreshInbox()
             statusMessage = "URL queued."
             autoSubmitPendingURL()
-            startRetryPendingTriggers()
             return true
         } catch {
             statusMessage = error.localizedDescription
@@ -298,7 +289,6 @@ final class AppModel {
         setSelectedDatabase(databaseId)
         statusMessage = "Database selected."
         autoSubmitPendingURL()
-        startRetryPendingTriggers()
     }
 
     func selectBrowseDatabase(_ databaseId: String) {
@@ -642,12 +632,6 @@ final class AppModel {
         }
     }
 
-    func startRetryPendingTriggers() {
-        Task {
-            await retryPendingTriggers()
-        }
-    }
-
     private func signIn() async {
         guard !isSigningIn else {
             return
@@ -663,7 +647,6 @@ final class AppModel {
             await refreshDatabases()
             await loadBrowsePath(currentPath)
             await submitNextPendingURL()
-            await retryPendingTriggers()
         } catch {
             statusMessage = error.localizedDescription
             logger.error("Kinic sign in failed error=\(error.localizedDescription, privacy: .public)")
@@ -700,7 +683,6 @@ final class AppModel {
                 if !pendingURLs.isEmpty {
                     await submitNextPendingURL()
                 }
-                await retryPendingTriggers()
             } else {
                 statusMessage = "Database created pending. Fund it from the web dashboard before capture."
             }
@@ -763,7 +745,6 @@ final class AppModel {
                 await loadBrowsePath(currentPath)
             }
             await loadCyclesBillingConfigIfNeeded()
-            await retryPendingTriggers()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1136,39 +1117,21 @@ final class AppModel {
                 requestedBy: session.principal
             )
             let submission = try await client.saveSourceCaptureRequest(request, session: session)
-            try triggerQueue.enqueue(request, sessionNonce: submission.sessionNonce, createdAt: item.receivedAt)
-            shareInbox.remove(item)
-            refreshInbox()
-            statusMessage = "Saved \(submission.requestPath)."
-            startRetryPendingTriggers()
-        } catch {
-            statusMessage = error.localizedDescription
-        }
-    }
-
-    private func retryPendingTriggers() async {
-        guard !isTriggeringSourceCapture else {
-            return
-        }
-        guard let session else {
-            return
-        }
-        isTriggeringSourceCapture = true
-        defer {
-            isTriggeringSourceCapture = false
-        }
-        for trigger in triggerQueue.loadPendingTriggers() {
             do {
                 try await client.triggerSourceCapture(
-                    databaseId: trigger.databaseId,
-                    requestPath: trigger.requestPath,
-                    sessionNonce: trigger.sessionNonce,
+                    databaseId: submission.databaseId,
+                    requestPath: submission.requestPath,
+                    sessionNonce: submission.sessionNonce,
                     session: session
                 )
-                triggerQueue.remove(trigger)
+                shareInbox.remove(item)
+                refreshInbox()
+                statusMessage = "Saved \(submission.requestPath)."
             } catch {
-                triggerQueue.updateFailure(trigger, error: error.localizedDescription)
+                statusMessage = "Saved \(submission.requestPath), but capture could not start. It remains queued for retry: \(error.localizedDescription)"
             }
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 

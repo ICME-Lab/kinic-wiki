@@ -11,6 +11,12 @@ struct DatabasePanel: View {
 
     var body: some View {
         KinicPanel(title: "Database", systemImage: "externaldrive") {
+            Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
+                .labelStyle(.iconOnly)
+                .buttonStyle(KinicIconButtonStyle())
+                .accessibilityLabel(model.isCreatingDatabase ? "Creating database" : "Create database")
+                .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+        } content: {
             VStack(alignment: .leading, spacing: 14) {
                 if model.databases.isEmpty {
                     ContentUnavailableView(
@@ -36,9 +42,7 @@ struct DatabasePanel: View {
 
                         Button("Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
                             .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(KinicDesign.hotPink)
-                            .frame(minWidth: 44, minHeight: 44)
+                            .buttonStyle(KinicIconButtonStyle())
                             .accessibilityLabel("Refresh databases")
                             .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
                     }
@@ -50,12 +54,6 @@ struct DatabasePanel: View {
                             .lineLimit(2)
                     }
                 }
-
-                Button(model.isCreatingDatabase ? "Creating database" : "Create database", systemImage: "plus", action: presentCreateSheet)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(KinicSecondaryButtonStyle())
-                    .accessibilityLabel(model.isCreatingDatabase ? "Creating database" : "Create database")
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
             }
         }
         .sheet(isPresented: $isCreateSheetPresented) {

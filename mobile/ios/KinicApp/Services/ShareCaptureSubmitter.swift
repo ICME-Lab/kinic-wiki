@@ -11,15 +11,12 @@ struct ShareCaptureSubmitter: Sendable {
     private let restoreSession: @Sendable () -> ICAuthSession?
     private let selectedDatabaseId: @Sendable () -> String
     private let enqueueURL: @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void
-    private let enqueueTrigger: @Sendable (SourceCaptureRequest, String, Date) throws -> Void
-    private let removeTrigger: @Sendable (String) -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
     private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
 
     static func makeLive(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) throws -> ShareCaptureSubmitter {
         let sessionStore = KinicAuthSessionStore(configuration: configuration)
         let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
-        let triggerQueue = try SourceCaptureTriggerQueue(strictAppGroupId: configuration.appGroupId)
         let client = KinicICClient(configuration: configuration)
         return ShareCaptureSubmitter(
             configuration: configuration,
@@ -33,12 +30,6 @@ struct ShareCaptureSubmitter: Sendable {
             enqueueURL: { url, receivedAt, requestId, captureMetadata in
                 let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
                 try inbox.enqueue(url, receivedAt: receivedAt, requestId: requestId, captureMetadata: captureMetadata)
-            },
-            enqueueTrigger: { request, sessionNonce, createdAt in
-                try triggerQueue.enqueue(request, sessionNonce: sessionNonce, createdAt: createdAt)
-            },
-            removeTrigger: { requestId in
-                triggerQueue.remove(requestId: requestId)
             },
             saveRequest: { request, session in
                 try await client.saveSourceCaptureRequest(request, session: session)
@@ -60,8 +51,6 @@ struct ShareCaptureSubmitter: Sendable {
         restoreSession: @escaping @Sendable () -> ICAuthSession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
         enqueueURL: @escaping @Sendable (URL, Date, String?, ShareCaptureMetadata?) throws -> Void,
-        enqueueTrigger: @escaping @Sendable (SourceCaptureRequest, String, Date) throws -> Void,
-        removeTrigger: @escaping @Sendable (String) -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
         triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
     ) {
@@ -70,8 +59,6 @@ struct ShareCaptureSubmitter: Sendable {
         self.restoreSession = restoreSession
         self.selectedDatabaseId = selectedDatabaseId
         self.enqueueURL = enqueueURL
-        self.enqueueTrigger = enqueueTrigger
-        self.removeTrigger = removeTrigger
         self.saveRequest = saveRequest
         self.triggerSourceCapture = triggerSourceCapture
     }
@@ -136,27 +123,17 @@ struct ShareCaptureSubmitter: Sendable {
             )
         }
         do {
-            try enqueueTrigger(request, submission.sessionNonce, receivedAt)
+            try await withTimeout {
+                try await triggerSourceCapture(submission, session)
+            }
         } catch {
-            let queueError = error
-            do {
-                try await triggerSourceCapture(submission, session)
-                return .saved(requestPath: submission.requestPath)
-            } catch {
-                let message = "Source capture request was saved, but capture could not queue for retry " +
-                    "(\(queueError.localizedDescription)) or trigger immediately (\(error.localizedDescription))."
-                return .failed(
-                    message: message
-                )
-            }
-        }
-        Task {
-            do {
-                try await triggerSourceCapture(submission, session)
-                removeTrigger(submission.requestId)
-            } catch {
-                // Retry remains queued for the containing app.
-            }
+            return queue(
+                normalizedURL,
+                receivedAt: receivedAt,
+                requestId: request.requestId,
+                captureMetadata: captureMetadata,
+                reason: "Saved for later because capture could not start: \(error.localizedDescription)"
+            )
         }
         return .saved(requestPath: submission.requestPath)
     }
