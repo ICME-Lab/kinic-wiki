@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
 import { didTypeAliases, expectedMethods, expectedTypes } from "@kinic/candid-tools/shapes";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
@@ -138,25 +138,11 @@ async function importSkillRegistryPackageForTest(relativePath) {
   const source = readFileSync(sourcePath, "utf8")
     .replace(/^import .+;\n/gm, "")
     .concat("\nexport { markdownPackageLinks, cleanSkillId, normalizeManifestForSkill };\n");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }
 
 async function importSkillManifestForTest(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }

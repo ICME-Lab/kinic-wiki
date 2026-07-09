@@ -17,6 +17,20 @@ interface Queue<T = unknown> {
   send(message: T): Promise<void>;
 }
 
+type R2PutValue = ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob;
+
+type R2PutOptions = {
+  httpMetadata?: {
+    contentType?: string;
+    cacheControl?: string;
+  };
+  customMetadata?: Record<string, string>;
+};
+
+interface R2Bucket {
+  put(key: string, value: R2PutValue, options?: R2PutOptions): Promise<unknown>;
+}
+
 interface Message<T = unknown> {
   body: T;
   ack(): void;
@@ -35,6 +49,7 @@ interface ExecutionContext {
 interface Env {
   DB: D1Database;
   WIKI_GENERATION_QUEUE: Queue;
+  LINK_PREVIEW_IMAGES: R2Bucket;
   KINIC_WIKI_CANISTER_ID: string;
   KINIC_WIKI_IC_HOST: string;
   KINIC_WIKI_WORKER_MODEL: string;

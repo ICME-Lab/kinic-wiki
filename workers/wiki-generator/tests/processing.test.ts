@@ -6,7 +6,7 @@ import test from "node:test";
 import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, SourceJob, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
-import { testEnv, TestQueue, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
+import { testEnv, TestQueue, TestR2Bucket, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
 
 test("manual source run queues the validated source etag", async () => {
   const queue = new TestQueue();
@@ -262,6 +262,75 @@ test("source capture queue message without nonce is invalid", async () => {
       sessionNonce: "session-1"
     }
   });
+});
+
+test("link_preview queue message validates required fields", () => {
+  const requestedAt = "2026-05-12T00:00:00.000Z";
+  assert.deepEqual(parseQueueMessageEnvelope({ kind: "link_preview", canisterId: "canister-1", databaseId: "db_1", requestedAt }), {
+    kind: "valid",
+    message: { kind: "link_preview", canisterId: "canister-1", databaseId: "db_1", requestedAt }
+  });
+  assert.equal(parseQueueMessageEnvelope({ kind: "link_preview", databaseId: "db_1", requestedAt }).kind, "invalid");
+  assert.equal(parseQueueMessageEnvelope({ kind: "link_preview", canisterId: "canister-1", requestedAt }).kind, "invalid");
+  assert.equal(parseQueueMessageEnvelope({ kind: "link_preview", canisterId: "canister-1", databaseId: "db_1", requestedAt: "bad-date" }).kind, "invalid");
+});
+
+test("link_preview queue writes active anonymous public database image to R2", async () => {
+  const bucket = new TestR2Bucket();
+  await processQueueMessageEnvelope(
+    { ...testEnv(new TestQueue()), LINK_PREVIEW_IMAGES: bucket },
+    {
+      kind: "valid",
+      message: {
+        kind: "link_preview",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
+        databaseId: "db_active",
+        requestedAt: "2026-05-12T00:00:00.000Z"
+      }
+    },
+    {
+      config: workerConfig(),
+      publicVfs: {
+        listPublicDatabases: async () => [
+          { databaseId: "db_active", title: "Active DB", description: "Public DB", status: "active" },
+          { databaseId: "db_pending", title: "Pending DB", description: "", status: "pending" }
+        ]
+      },
+      renderLinkPreviewImage: async () => new Response(new Uint8Array([1, 2, 3]))
+    }
+  );
+
+  assert.equal(bucket.puts.length, 1);
+  assert.equal(bucket.puts[0]?.key, "db-link-preview/v1/db_active.png");
+  assert.equal(bucket.puts[0]?.options?.httpMetadata?.contentType, "image/png");
+  assert.equal(bucket.puts[0]?.options?.httpMetadata?.cacheControl, "public, max-age=300, s-maxage=86400");
+});
+
+test("link_preview queue skips non-public or inactive databases", async () => {
+  const bucket = new TestR2Bucket();
+  await processQueueMessageEnvelope(
+    { ...testEnv(new TestQueue()), LINK_PREVIEW_IMAGES: bucket },
+    {
+      kind: "valid",
+      message: {
+        kind: "link_preview",
+        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
+        databaseId: "db_private",
+        requestedAt: "2026-05-12T00:00:00.000Z"
+      }
+    },
+    {
+      config: workerConfig(),
+      publicVfs: {
+        listPublicDatabases: async () => [{ databaseId: "db_pending", title: "Pending DB", description: "", status: "pending" }]
+      },
+      renderLinkPreviewImage: async () => {
+        throw new Error("render should not run");
+      }
+    }
+  );
+
+  assert.equal(bucket.puts.length, 0);
 });
 
 test("source queue write cycles check failure does not call DeepSeek", async () => {
@@ -572,6 +641,7 @@ test("stale source etag message does not overwrite newer queued job", async () =
 
 function failingLogVfs(): VfsClient {
   return {
+    listPublicDatabases: async () => [],
     checkDatabaseWriteCycles: async (): Promise<void> => {},
     checkSourceRunSession: async (): Promise<void> => {},
     checkSourceCaptureTriggerSession: async (): Promise<void> => {},
@@ -612,6 +682,7 @@ function sourceVfs(
   } = {}
 ): VfsClient {
   return {
+    listPublicDatabases: async (): Promise<[]> => [],
     checkDatabaseWriteCycles: async (): Promise<void> => {
       if (options.failWriteCycles) throw new Error("database cycles are suspended");
     },

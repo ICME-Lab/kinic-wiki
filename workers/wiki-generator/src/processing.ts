@@ -3,12 +3,18 @@
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
 import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
+import {
+  databaseLinkPreviewImageKey,
+  generateDatabaseLinkPreviewImage,
+  LINK_PREVIEW_CACHE_CONTROL,
+  LINK_PREVIEW_CONTENT_TYPE
+} from "./link-preview.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
-import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
+import { createAnonymousVfsClient, createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
+import type { LinkPreviewQueueMessage, ManualRunInput, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export type ManualRunContext = {
@@ -22,6 +28,8 @@ export type QueueMessageEnvelope =
 type QueueProcessContext = {
   config?: WorkerConfig;
   vfs?: VfsClient;
+  publicVfs?: Pick<VfsClient, "listPublicDatabases">;
+  renderLinkPreviewImage?: (database: PublicDatabaseSummary) => Promise<Response>;
 };
 
 type ExternalCostGateInput = {
@@ -74,6 +82,10 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
 }
 
 export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage, context?: QueueProcessContext): Promise<void> {
+  if (message.kind === "link_preview") {
+    await processLinkPreviewQueueMessage(env, message, context);
+    return;
+  }
   if (message.kind === "source_capture") {
     await triggerSourceCaptureRequest(env, message, completeTriggerContext(context));
     return;
@@ -165,6 +177,31 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     }
     await markQueueFailed(env, vfs, message, messageText);
   }
+}
+
+async function processLinkPreviewQueueMessage(env: RuntimeEnv, message: LinkPreviewQueueMessage, context?: QueueProcessContext): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
+  if (message.canisterId !== config.canisterId) {
+    console.warn("link_preview canisterId mismatch", message.canisterId);
+    return;
+  }
+  const publicVfs = context?.publicVfs ?? (await createAnonymousVfsClient(config));
+  const databases = await publicVfs.listPublicDatabases();
+  const database = databases.find((candidate) => candidate.databaseId === message.databaseId);
+  if (!database || database.status !== "active") return;
+  const render = context?.renderLinkPreviewImage ?? generateDatabaseLinkPreviewImage;
+  const response = await render(database);
+  await env.LINK_PREVIEW_IMAGES.put(databaseLinkPreviewImageKey(database.databaseId), await response.arrayBuffer(), {
+    httpMetadata: {
+      contentType: LINK_PREVIEW_CONTENT_TYPE,
+      cacheControl: LINK_PREVIEW_CACHE_CONTROL
+    },
+    customMetadata: {
+      databaseId: database.databaseId,
+      generatedAt: new Date().toISOString(),
+      trigger: "queue-miss"
+    }
+  });
 }
 
 function completeTriggerContext(context: QueueProcessContext | undefined): { config: WorkerConfig; vfs: VfsClient } | undefined {
@@ -289,6 +326,17 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
       sessionNonce: value.sessionNonce
     };
   }
+  if (value.kind === "link_preview") {
+    if (!nonEmptyString(value.canisterId)) return null;
+    if (!nonEmptyString(value.databaseId) || value.databaseId.length > 128) return null;
+    if (!nonEmptyString(value.requestedAt) || Number.isNaN(Date.parse(value.requestedAt))) return null;
+    return {
+      kind: "link_preview",
+      canisterId: value.canisterId,
+      databaseId: value.databaseId,
+      requestedAt: value.requestedAt
+    };
+  }
   return null;
 }
 
@@ -301,6 +349,13 @@ export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope 
     if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is missing" };
     if (!isSourceCaptureRequestPath(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is invalid" };
     if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "source_capture sessionNonce is missing" };
+  }
+  if (isObject(value) && value.kind === "link_preview") {
+    if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "link_preview canisterId is missing" };
+    if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "link_preview databaseId is missing" };
+    if (typeof value.databaseId === "string" && value.databaseId.length > 128) return { kind: "invalid", reason: "link_preview databaseId is too long" };
+    if (!nonEmptyString(value.requestedAt)) return { kind: "invalid", reason: "link_preview requestedAt is missing" };
+    if (Number.isNaN(Date.parse(value.requestedAt))) return { kind: "invalid", reason: "link_preview requestedAt is invalid" };
   }
   if (isObject(value) && value.kind === "url_ingest") {
     return { kind: "invalid", reason: "legacy url_ingest queue message is unsupported" };

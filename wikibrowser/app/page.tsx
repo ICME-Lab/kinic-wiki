@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 const linkPreviewImage = {
-  url: "/opengraph-image",
+  url: "/opengraph-image.png",
   width: 1200,
   height: 630,
   alt: "Kinic Wiki Database Dashboard"
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
     images: [
       {
-        url: "/twitter-image",
+        url: "/twitter-image.png",
         alt: linkPreviewImage.alt
       }
     ]

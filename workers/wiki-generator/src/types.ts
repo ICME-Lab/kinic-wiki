@@ -97,7 +97,21 @@ export type SourceCaptureQueueMessage = {
   sessionNonce: string;
 };
 
-export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage;
+export type LinkPreviewQueueMessage = {
+  kind: "link_preview";
+  canisterId: string;
+  databaseId: string;
+  requestedAt: string;
+};
+
+export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage | LinkPreviewQueueMessage;
+
+export type PublicDatabaseSummary = {
+  databaseId: string;
+  title: string;
+  description: string;
+  status: "active" | "pending" | "deleted";
+};
 
 export type ManualRunInput = {
   databaseId: string;

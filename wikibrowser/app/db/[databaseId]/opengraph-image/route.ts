@@ -7,5 +7,5 @@ import { canonicalDatabaseId } from "@/lib/paths";
 
 export async function GET(request: Request, { params }: { params: Promise<{ databaseId: string }> }): Promise<Response> {
   const { databaseId } = await params;
-  return readCachedDatabaseLinkPreviewImage(request, canonicalDatabaseId(databaseId), "/opengraph-image");
+  return readCachedDatabaseLinkPreviewImage(request, canonicalDatabaseId(databaseId), "/opengraph-image.png");
 }

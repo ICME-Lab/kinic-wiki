@@ -19,6 +19,14 @@
       "bucket_name": "kinic-wiki-link-preview-images"
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "LINK_PREVIEW_QUEUE",
+        "queue": "kinic-wiki-generation"
+      }
+    ]
+  },
   "kv_namespaces": [
     {
       "binding": "QUERY_ANSWER_RATE_LIMIT",

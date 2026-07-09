@@ -7,6 +7,7 @@ import type {
   ExportSnapshotPage,
   FetchUpdatesPage,
   NodeKind,
+  PublicDatabaseSummary,
   QueueMessage,
   SearchNodeHit,
   SourceCaptureRequest,
@@ -37,6 +38,7 @@ export function testEnv(queue: TestQueue): RuntimeEnv {
   return {
     DB: new TestD1(),
     WIKI_GENERATION_QUEUE: queue,
+    LINK_PREVIEW_IMAGES: new TestR2Bucket(),
     KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
     KINIC_WIKI_WORKER_MODEL: "deepseek-v4-flash",
@@ -79,6 +81,10 @@ export class TestVfsClient implements VfsClient {
   sourceWriteEtags: string[] = [];
   lastRequest: SourceCaptureRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
+
+  async listPublicDatabases(): Promise<PublicDatabaseSummary[]> {
+    return [];
+  }
 
   async checkDatabaseWriteCycles(databaseId: string): Promise<void> {
     this.writeCycleChecks.push(databaseId);
@@ -168,6 +174,14 @@ export class TestQueue implements Queue {
   }
 }
 
+export class TestR2Bucket implements R2Bucket {
+  puts: { key: string; value: R2PutValue; options?: R2PutOptions }[] = [];
+
+  async put(key: string, value: R2PutValue, options?: R2PutOptions): Promise<void> {
+    this.puts.push({ key, value, options });
+  }
+}
+
 class TestD1 implements D1Database {
   prepare(query: string): D1PreparedStatement {
     return new TestD1Statement(query);
@@ -233,6 +247,16 @@ function isQueueMessage(value: unknown): value is QueueMessage {
       typeof value.databaseId === "string" &&
       typeof value.requestPath === "string" &&
       typeof value.sessionNonce === "string"
+    );
+  }
+  if ("kind" in value && value.kind === "link_preview") {
+    return (
+      "canisterId" in value &&
+      "databaseId" in value &&
+      "requestedAt" in value &&
+      typeof value.canisterId === "string" &&
+      typeof value.databaseId === "string" &&
+      typeof value.requestedAt === "string"
     );
   }
   return false;

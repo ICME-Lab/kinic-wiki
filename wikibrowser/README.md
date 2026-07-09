@@ -93,7 +93,7 @@ Granting `reader` to the anonymous principal `2vxsx-fae` makes a database public
 
 ```bash
 pnpm test
-pnpm lint
+npm run lint
 pnpm typecheck
 pnpm build
 ```
@@ -216,7 +216,7 @@ Pre-deploy checklist:
 
 ```bash
 pnpm test
-pnpm lint
+npm run lint
 pnpm typecheck
 pnpm build
 pnpm build:worker

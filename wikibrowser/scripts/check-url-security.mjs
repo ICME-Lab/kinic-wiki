@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 if (!crypto.subtle.timingSafeEqual) {
   Object.defineProperty(crypto.subtle, "timingSafeEqual", {
@@ -26,7 +26,6 @@ const sourceCapture = readFileSync(new URL("../lib/source-capture.ts", import.me
 const triggerRouteModule = await importTs("../app/api/source-capture/trigger/route.ts");
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
-const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
@@ -607,86 +606,12 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
   queryAnswerRouteModule.setQueryAnswerDepsForTest();
 });
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
-  const missingToken = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-  assert.equal(missingToken.status, 503);
-  assert.match(await missingToken.text(), /KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN is not configured/);
-});
-
-await withEnv(
-  {
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
-    KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN: "regen-token"
-  },
-  async () => {
-    const forbidden = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest({}, "bad-token"));
-    assert.equal(forbidden.status, 403);
-
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest({
-      bucket: linkPreviewBucket(),
-      listDatabasesPublic: async () => [],
-      renderImage: async () => {
-        throw new Error("image should not render");
-      }
-    });
-    const missingDatabase = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-    assert.equal(missingDatabase.status, 404);
-    assert.match(await missingDatabase.text(), /database not found in public list/);
-
-    const writes = [];
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest({
-      bucket: linkPreviewBucket(writes),
-      listDatabasesPublic: async (canisterId) => {
-        assert.equal(canisterId, "aaaaa-aa");
-        return [{ databaseId: "db_1", metadata: { name: "Demo DB", description: "" } }];
-      },
-      renderImage: async (input) => {
-        assert.deepEqual(input, {
-          eyebrow: "Kinic Wiki database",
-          accent: "Public wiki database",
-          title: "Demo DB",
-          description: "Browse, search, and query the Demo DB wiki database.",
-          tags: ["db_1", "/Knowledge", "Search", "Query"]
-        });
-        return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
-      }
-    });
-    const generated = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-    assert.equal(generated.status, 200);
-    const generatedBody = await generated.json();
-    assert.equal(generatedBody.ok, true);
-    assert.equal(generatedBody.key, "db-link-preview/v1/db_1.png");
-    assert.equal(generatedBody.databaseId, "db_1");
-    assert.equal(generatedBody.databaseTitle, "Demo DB");
-    assert.equal(generatedBody.bytes, 3);
-    assert.equal(typeof generatedBody.renderDurationMs, "number");
-    assert.equal(writes.length, 1);
-    assert.equal(writes[0].key, "db-link-preview/v1/db_1.png");
-    assert.equal(writes[0].value.byteLength, 3);
-    assert.deepEqual(writes[0].options.httpMetadata, {
-      contentType: "image/png",
-      cacheControl: "public, max-age=300, s-maxage=86400"
-    });
-    assert.equal(writes[0].options.customMetadata.databaseId, "db_1");
-    assert.equal(writes[0].options.customMetadata.databaseTitle, "Demo DB");
-    assert.match(writes[0].options.customMetadata.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest();
-  }
-);
-
 console.log("URL security checks OK");
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }
 
 async function importNativeAuthRoute() {
@@ -698,14 +623,7 @@ async function importNativeAuthRoute() {
   );
   globalThis.__kinicNativeAuthRouteDeps = authModule;
   try {
-    const compiled = ts.transpileModule(source, {
-      compilerOptions: {
-        module: ts.ModuleKind.ES2022,
-        target: ts.ScriptTarget.ES2022
-      }
-    }).outputText;
-    const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-    return await import(moduleUrl);
+    return await importStrippedTsForTest(source);
   } finally {
     delete globalThis.__kinicNativeAuthRouteDeps;
   }
@@ -727,7 +645,6 @@ async function withEnv(values, run) {
     "KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
-    "KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN",
     "NEXT_PUBLIC_ENABLE_LOCAL_II_E2E",
     "NEXT_PUBLIC_II_PROVIDER_URL",
     "NEXT_PUBLIC_WIKI_IC_HOST",
@@ -803,31 +720,6 @@ function queryAnswerRequest(origin, overrides = {}) {
       ...overrides
     })
   });
-}
-
-function linkPreviewRegenerateRequest(overrides = {}, token = "regen-token") {
-  return new Request("https://local.test/api/link-preview/regenerate", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      databaseId: "db_1",
-      ...overrides
-    })
-  });
-}
-
-function linkPreviewBucket(writes = []) {
-  return {
-    async get() {
-      return null;
-    },
-    async put(key, value, options) {
-      writes.push({ key, value, options });
-    }
-  };
 }
 
 function rateLimitStore(initial = 0) {

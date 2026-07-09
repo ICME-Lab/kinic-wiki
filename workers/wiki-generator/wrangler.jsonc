@@ -29,6 +29,12 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "LINK_PREVIEW_IMAGES",
+      "bucket_name": "kinic-wiki-link-preview-images"
+    }
+  ],
   "queues": {
     "producers": [
       {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const {
   AUTH_CLIENT_CREATE_OPTIONS,
@@ -63,14 +63,7 @@ console.log("Auth checks OK");
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }
 
 function restoreEnv(name, value) {

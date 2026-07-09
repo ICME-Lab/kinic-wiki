@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const sourcePath = new URL("../lib/paths.ts", import.meta.url);
 const shareLinksSource = readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8");
@@ -12,14 +12,7 @@ const wikiBrowserFiles = [
   "../components/wiki-browser/top-bar.tsx"
 ];
 const browserSource = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
-const compiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022
-  }
-}).outputText;
-const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { canonicalDatabaseId, hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await import(moduleUrl);
+const { canonicalDatabaseId, hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, parseWikiRoute, pathFromSegments } = await importStrippedTsForTest(source);
 
 assert.equal(pathFromSegments([]), "/Knowledge");
 assert.equal(pathFromSegments(["Knowledge", "100%.md"]), "/Knowledge/100%.md");

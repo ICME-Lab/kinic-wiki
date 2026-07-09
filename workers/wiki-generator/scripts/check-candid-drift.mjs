@@ -11,10 +11,36 @@ const idl = readFileSync(new URL("../src/vfs-idl.ts", import.meta.url), "utf8");
 const didTypeAliases = {
   ...sharedAliases,
   ResultExportSnapshot: "Result_7",
-  ResultFetchUpdates: "Result_8"
+  ResultFetchUpdates: "Result_8",
+  ResultDatabases: "Result_17"
 };
 
 const expectedTypes = {
+  DatabaseStatus: { kind: "variant", cases: { Active: "null", Deleted: "null", Pending: "null" } },
+  DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
+  DatabaseMetadata: {
+    kind: "record",
+    fields: {
+      name: "text",
+      description: "text",
+      llm_summary: "opt text",
+      tags_json: "text"
+    }
+  },
+  DatabaseSummary: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      metadata: "opt DatabaseMetadata",
+      name: "text",
+      role: "DatabaseRole",
+      status: "DatabaseStatus",
+      logical_size_bytes: "nat64",
+      cycles_balance: "opt nat64",
+      cycles_suspended_at_ms: "opt int64",
+      deleted_at_ms: "opt int64"
+    }
+  },
   NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -132,6 +158,7 @@ const expectedTypes = {
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   MkdirNodeResult: { kind: "record", fields: { created: "bool", path: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
+  ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
   ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
@@ -141,6 +168,7 @@ const expectedTypes = {
 };
 
 const expectedMethods = {
+  list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   check_database_write_cycles: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_source_capture_trigger_session: { input: ["SourceCaptureTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
