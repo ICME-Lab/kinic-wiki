@@ -51,6 +51,7 @@ __pycache__/
 
 # Frontend build and test artifacts
 **/.next/
+**/.gradle/
 **/.open-next/
 **/.wrangler/
 **/.turbo/
