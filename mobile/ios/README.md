@@ -76,6 +76,7 @@ iOS local tunnel execution is not supported. Real-device and TestFlight checks u
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
 The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
 The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
+The default upload mode is external-TestFlight-capable. Use `--internal-only` only when the build must not be assigned to external tester groups.
 
 Validate inputs without archiving:
 
@@ -83,16 +84,16 @@ Validate inputs without archiving:
 mobile/ios/scripts/testflight-upload.sh --validate-only
 ```
 
-Upload an internal TestFlight build:
+Upload an external-TestFlight-capable build:
 
 ```bash
 mobile/ios/scripts/testflight-upload.sh
 ```
 
-Upload an external-TestFlight-capable build:
+Upload an internal-only TestFlight build:
 
 ```bash
-mobile/ios/scripts/testflight-upload.sh --external
+mobile/ios/scripts/testflight-upload.sh --internal-only
 ```
 
 External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
