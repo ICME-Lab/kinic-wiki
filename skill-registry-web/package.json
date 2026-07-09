@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node scripts/normalize-typegen-tsconfig.mjs",
+    "build": "npm run typecheck && node ../scripts/next-with-ts5.cjs build && node scripts/normalize-typegen-tsconfig.mjs",
     "lint": "node ../scripts/eslint-with-ts5.cjs .",
     "test": "node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out lib/vfs-idl.ts --check && node scripts/check-skill-registry-web.mjs",
-    "typecheck": "next typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
+    "typecheck": "node ../scripts/next-with-ts5.cjs typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
     "normalize:typegen": "node scripts/normalize-typegen-tsconfig.mjs"
   },
