@@ -23,6 +23,14 @@ class VfsCandidEncoderTest {
     }
 
     @Test
+    fun encodesListChildrenRecord() {
+        assertEquals(
+            "4449444c016c02a5cbc7d204719f9bbd940a710100012f026462",
+            VfsCandidEncoder.listChildren("db", "/").toHex(),
+        )
+    }
+
+    @Test
     fun encodesWriteNodesRequest() {
         val request = SourceCaptureRequestBuilder.request(
             url = URI("https://example.com/page"),

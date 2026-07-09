@@ -25,6 +25,23 @@ object VfsCandidEncoder {
     fun readNode(databaseId: String, path: String): ByteArray =
         textArgs(listOf(databaseId, path))
 
+    fun listChildren(databaseId: String, path: String): ByteArray =
+        oneRecord(
+            tableEntries = listOf(
+                TypeEntry.Record(
+                    listOf(
+                        field("path", TypeRef.Primitive(typeText)),
+                        field("database_id", TypeRef.Primitive(typeText)),
+                    ),
+                ),
+            ),
+            argType = TypeRef.Table(0),
+            namedValues = listOf(
+                "path" to Value.Text(path),
+                "database_id" to Value.Text(databaseId),
+            ),
+        )
+
     fun authorizeSourceCaptureTriggerSession(databaseId: String, sessionNonce: String): ByteArray =
         oneRecord(
             tableEntries = listOf(
@@ -168,7 +185,7 @@ object VfsCandidEncoder {
     private fun encode(value: Value, out: MutableList<Byte>) {
         when (value) {
             Value.Null -> Unit
-            Value.None -> out += 0
+            Value.None -> out += 0.toByte()
             is Value.Nat32 -> appendFixedUInt32(value.value, out)
             is Value.Text -> appendText(value.text, out)
             is Value.Record -> value.fields.sortedBy { label(it.first) }.forEach { encode(it.second, out) }
@@ -182,7 +199,7 @@ object VfsCandidEncoder {
                 encode(value.inner, out)
             }
             is Value.Some -> {
-                out += 1
+                out += 1.toByte()
                 encode(value.inner, out)
             }
         }

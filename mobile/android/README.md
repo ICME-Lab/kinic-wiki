@@ -9,13 +9,13 @@ Kotlin / Jetpack Compose app scaffold for Kinic Wiki mobile capture.
 - Builds the same `kinic.source_capture_request` markdown node shape used by iOS and `wikibrowser/lib/source-capture.ts`.
 - Includes a VFS-specific Candid encoder for source capture writes and trigger-session authorization.
 - Includes a Kotlin IC client for signed query/call/read_state envelopes and Internet Identity delegation sessions.
-- Provides a Compose app shell for pending captures and manual URL queueing.
+- Provides a Compose app shell for sign-in, pending captures, manual URL queueing, and signed-in Browse basics.
 
 ## Current gaps
 
-- Browser launch UI for Internet Identity is not wired into the Compose screen yet. Android uses `/android-auth-callback`, so the web bridge must allow that callback before native sign-in can complete end to end.
-- Signed IC `queryRaw` / `callRaw` transport exists, but mainnet verification still needs an Android device/browser auth smoke test.
-- Native browse/manage screens are not ported yet; only capture-core logic and app entry points exist.
+- Browser launch UI, `/android-auth-callback` parsing, session restore, and pending URL submission are wired into the Compose screen.
+- Signed IC `queryRaw` / `callRaw` transport, native auth storage, and signed-in Browse basics exist, but mainnet verification still needs an Android device/browser auth smoke test.
+- Public Browse, purchased Browse, search, deep links, and Manage screens are not ported yet.
 
 ## Runtime defaults
 

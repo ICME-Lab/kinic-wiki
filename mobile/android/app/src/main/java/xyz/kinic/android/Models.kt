@@ -43,10 +43,45 @@ data class PendingSharedUrl(
     val captureMetadata: ShareCaptureMetadata?,
 )
 
+data class DatabaseSummary(
+    val databaseId: String,
+    val title: String,
+    val description: String,
+    val metadata: DatabaseMetadata?,
+    val role: DatabaseRole,
+    val status: DatabaseStatus,
+    val logicalSizeBytes: ULong,
+    val cyclesBalance: ULong?,
+    val cyclesSuspendedAtMs: Long?,
+    val deletedAtMs: Long?,
+) {
+    val canWrite: Boolean =
+        status == DatabaseStatus.ACTIVE && role.canWrite
+
+    val canRead: Boolean =
+        status == DatabaseStatus.ACTIVE
+
+    val displayTitle: String =
+        title.ifBlank { databaseId }
+}
+
+data class DatabaseMetadata(
+    val name: String,
+    val description: String,
+    val llmSummary: String?,
+    val tagsJson: String,
+)
+
 enum class DatabaseRole(val candidName: String, val canRead: Boolean, val canWrite: Boolean) {
     OWNER("Owner", canRead = true, canWrite = true),
     WRITER("Writer", canRead = true, canWrite = true),
     READER("Reader", canRead = true, canWrite = false),
+}
+
+enum class DatabaseStatus(val candidName: String) {
+    ACTIVE("Active"),
+    DELETED("Deleted"),
+    PENDING("Pending"),
 }
 
 enum class VfsNodeKind(val candidName: String) {
@@ -54,6 +89,27 @@ enum class VfsNodeKind(val candidName: String) {
     SOURCE("Source"),
     FOLDER("Folder"),
 }
+
+data class VfsNode(
+    val path: String,
+    val kind: VfsNodeKind,
+    val content: String,
+    val metadataJson: String,
+    val etag: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+data class ChildNode(
+    val path: String,
+    val name: String,
+    val kind: VfsNodeKind,
+    val updatedAt: Long?,
+    val etag: String?,
+    val sizeBytes: ULong?,
+    val hasChildren: Boolean,
+    val isVirtual: Boolean,
+)
 
 private fun String?.cleaned(): String? {
     val trimmed = this?.trim()

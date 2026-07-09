@@ -16,29 +16,51 @@ data class CaptureSubmission(
     val sessionNonce: String,
 )
 
+sealed class SourceCaptureSubmissionError(message: String) : Exception(message) {
+    data class ConflictingRequest(val path: String) :
+        SourceCaptureSubmissionError("Source capture request already exists with different content: $path")
+}
+
 class KinicIcClient(
     private val configuration: AppConfiguration,
     private val client: IcClient = IcClient(configuration.icClientConfiguration()),
     private val workerTrigger: SourceCaptureWorkerTrigger = HttpSourceCaptureWorkerTrigger(configuration),
-) {
-    suspend fun saveSourceCaptureRequest(
+) : SourceCaptureGateway {
+    override suspend fun saveSourceCaptureRequest(
         request: SourceCaptureRequest,
         session: IcAuthSession,
     ): CaptureSubmission {
         validateSession(session)
         val sessionNonce = UUID.randomUUID().toString().lowercase()
-        client.callRaw(
-            method = "write_nodes",
-            arg = VfsCandidEncoder.writeNodes(request),
-            identity = session,
-        )
-        client.callRaw(
-            method = "authorize_source_capture_trigger_session",
-            arg = VfsCandidEncoder.authorizeSourceCaptureTriggerSession(
-                databaseId = request.databaseId,
-                sessionNonce = sessionNonce,
+        val existing = VfsCandidDecoder.decodeReadNodeResult(
+            client.queryRaw(
+                method = "read_node",
+                arg = VfsCandidEncoder.readNode(request.databaseId, request.requestPath),
+                identity = session,
             ),
-            identity = session,
+        )
+        if (existing != null) {
+            if (!isSameSourceCaptureRequest(existing, request)) {
+                throw SourceCaptureSubmissionError.ConflictingRequest(request.requestPath)
+            }
+        } else {
+            VfsCandidDecoder.decodeWriteNodesResult(
+                client.callRaw(
+                    method = "write_nodes",
+                    arg = VfsCandidEncoder.writeNodes(request),
+                    identity = session,
+                ),
+            )
+        }
+        VfsCandidDecoder.decodeUnitResult(
+            client.callRaw(
+                method = "authorize_source_capture_trigger_session",
+                arg = VfsCandidEncoder.authorizeSourceCaptureTriggerSession(
+                    databaseId = request.databaseId,
+                    sessionNonce = sessionNonce,
+                ),
+                identity = session,
+            ),
         )
         return CaptureSubmission(
             databaseId = request.databaseId,
@@ -49,7 +71,7 @@ class KinicIcClient(
         )
     }
 
-    suspend fun triggerSourceCapture(submission: CaptureSubmission) {
+    override suspend fun triggerSourceCapture(submission: CaptureSubmission) {
         val result = workerTrigger.trigger(
             TriggerSourceCaptureRequest(
                 canisterId = configuration.canisterId,
@@ -70,3 +92,9 @@ class KinicIcClient(
         client.validateIdentity(session, configuration.canisterId)
     }
 }
+
+private fun isSameSourceCaptureRequest(existing: VfsNode, request: SourceCaptureRequest): Boolean =
+    existing.path == request.requestPath &&
+        existing.kind == VfsNodeKind.FILE &&
+        existing.content == request.content &&
+        existing.metadataJson == request.metadataJson

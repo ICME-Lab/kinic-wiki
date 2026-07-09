@@ -28,6 +28,7 @@ const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
+const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const nativeAuthRouteModule = await importNativeAuthRoute();
@@ -63,6 +64,7 @@ assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
 assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
+assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback"\]\.includes\(url\.pathname\)/);
 
 {
   const response = appleAppSiteAssociationRouteModule.GET();
@@ -88,6 +90,14 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 {
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
   assert.equal(response.status, 200);
+  assert.match(await response.text(), /Return to KinicWikiApp/);
+}
+
+{
+  const response = androidAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/android-auth-callback?state=s1&result=r1"));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.match(await response.text(), /Return to KinicWikiApp/);
 }
 
@@ -223,6 +233,22 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
         }
       ]
     });
+  }
+
+  {
+    const sandbox = runNativeAuthScript({
+      search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/android-auth-callback" })
+    });
+    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__postMessages.length, 1);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({
+      search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/native-auth-callback" })
+    });
+    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__postMessages.length, 0);
   }
 
   for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {

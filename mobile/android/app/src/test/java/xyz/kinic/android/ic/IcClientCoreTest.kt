@@ -43,8 +43,9 @@ class IcClientCoreTest {
     }
 
     @Test
-    fun requestIdHashesNaturalNumbersWithSignedLeb128() {
-        assertArrayEquals(byteArrayOf(0xc0.toByte(), 0x00.toByte()).sha256(), IcRequestId.hash(IcCbor.Value.Unsigned(64uL)))
+    fun requestIdHashesNaturalNumbersWithUnsignedLeb128() {
+        val encoded = byteArrayOf(0xe5.toByte(), 0x8e.toByte(), 0x26.toByte())
+        assertArrayEquals(encoded.sha256(), IcRequestId.hash(IcCbor.Value.Unsigned(624_485uL)))
     }
 
     @Test
@@ -147,7 +148,7 @@ class IcClientCoreTest {
         val envelope = IcCbor.decode(IcClient(configuration).signedEnvelope(content, session))
 
         assertNotNull(IcCbor.mapValue(envelope, "content"))
-        assertNotNull(IcCbor.mapValue(envelope, "sender_pubkey"))
+        assertArrayEquals(session.sessionPublicKey, IcCbor.bytesValue(IcCbor.mapValue(envelope, "sender_pubkey")))
         assertNotNull(IcCbor.mapValue(envelope, "sender_sig"))
         assertNotNull(IcCbor.mapValue(envelope, "sender_delegation"))
     }

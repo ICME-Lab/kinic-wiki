@@ -167,7 +167,7 @@ class IcClient(
         val signature = sign(identity.sessionPrivateKey, challenge)
         return IcCbor.signedEnvelope(
             content = content,
-            publicKey = identity.delegation.publicKey,
+            publicKey = identity.sessionPublicKey,
             signature = signature,
             delegation = identity.delegation,
         )
