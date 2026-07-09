@@ -364,17 +364,14 @@ final class AppModel {
             return
         case .authCallback:
             requestTab(.home)
-            statusMessage = "Returned from sign in."
         case .shareHandoff:
             requestTab(.home)
             refreshInbox()
-            statusMessage = "Opened from share handoff."
             autoSubmitPendingURL()
         case let .browse(databaseId, nodePath):
             openBrowseDeepLink(databaseId: databaseId, nodePath: nodePath)
         case .manage:
             requestTab(.manage)
-            statusMessage = "Opened database management."
         case let .home(message):
             requestTab(.home)
             if let message {
@@ -409,7 +406,7 @@ final class AppModel {
         if firstSegment.isEmpty {
             return .home(nil)
         }
-        return .home("Opened \(url.path) in KinicWiki.")
+        return .home(nil)
     }
 
     func enqueueManualURL(_ text: String) -> Bool {
@@ -422,7 +419,7 @@ final class AppModel {
             let normalizedURL = try URLNormalizer.normalizedHTTPURL(rawURL)
             try shareInbox.enqueue(normalizedURL)
             refreshInbox()
-            statusMessage = "URL queued."
+            statusMessage = nil
             autoSubmitPendingURL()
             return true
         } catch {
@@ -433,7 +430,7 @@ final class AppModel {
 
     func selectDatabase(_ databaseId: String) {
         setSelectedDatabase(databaseId)
-        statusMessage = "Database selected."
+        statusMessage = nil
         autoSubmitPendingURL()
     }
 
@@ -581,7 +578,7 @@ final class AppModel {
     }
 
     func startSignIn() {
-        statusMessage = "Starting sign in..."
+        statusMessage = nil
         logger.info("Kinic sign in requested authOrigin=\(self.configuration.authOrigin.absoluteString, privacy: .public) callbackDomain=\(self.configuration.callbackDomain, privacy: .public)")
         Task {
             await signIn()
@@ -608,7 +605,7 @@ final class AppModel {
         databaseMetadataError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
-        statusMessage = "Signed out."
+        statusMessage = nil
         if showPublicBrowseDatabases {
             startRefreshDatabases()
         }
@@ -708,7 +705,7 @@ final class AppModel {
                 session: session
             )
             await refreshDatabases(selectFirstIfNeeded: false)
-            statusMessage = "Database settings updated."
+            statusMessage = nil
             return true
         } catch {
             databaseMetadataError = error.localizedDescription
@@ -738,7 +735,7 @@ final class AppModel {
         do {
             try await client.grantDatabaseAccess(databaseId: databaseId, principal: trimmedPrincipal, role: role, session: session)
             await loadDatabaseMembers(databaseId: databaseId, requestID: databaseManagementRequestID)
-            statusMessage = "Database access updated."
+            statusMessage = nil
             return true
         } catch {
             databaseMembersError = error.localizedDescription
@@ -768,7 +765,7 @@ final class AppModel {
         do {
             try await client.revokeDatabaseAccess(databaseId: databaseId, principal: trimmedPrincipal, session: session)
             await loadDatabaseMembers(databaseId: databaseId, requestID: databaseManagementRequestID)
-            statusMessage = "Database access updated."
+            statusMessage = nil
             return true
         } catch {
             databaseMembersError = error.localizedDescription
@@ -794,7 +791,7 @@ final class AppModel {
             try await client.deleteDatabase(databaseId: databaseId, session: session)
             resetDatabaseManagementState()
             await refreshDatabases(selectFirstIfNeeded: true)
-            statusMessage = "Database deleted."
+            statusMessage = nil
             return true
         } catch {
             databaseDeleteError = error.localizedDescription
@@ -848,7 +845,7 @@ final class AppModel {
         }
         do {
             session = try await authService.signIn()
-            statusMessage = "Signed in."
+            statusMessage = nil
             logger.info("Kinic sign in succeeded principal=\(self.session?.principal ?? "", privacy: .public)")
             await refreshDatabases()
             await loadBrowsePath(currentPath)
@@ -882,9 +879,7 @@ final class AppModel {
             if created.initialFreeGrantApplied || created.status == .active {
                 setSelectedDatabase(created.databaseId)
                 setSelectedBrowseDatabase(created.databaseId)
-                statusMessage = created.initialFreeGrantApplied
-                    ? "Database created with the initial free grant."
-                    : "Database created active."
+                statusMessage = nil
                 await loadBrowsePath("/")
                 if !pendingURLs.isEmpty {
                     await submitNextPendingURL()
@@ -1395,9 +1390,9 @@ final class AppModel {
                 )
                 shareInbox.remove(item)
                 refreshInbox()
-                statusMessage = "Saved \(submission.requestPath)."
+                statusMessage = nil
             } catch {
-                statusMessage = "Saved \(submission.requestPath), but capture could not start. It remains queued for retry: \(error.localizedDescription)"
+                statusMessage = "Source saved, but capture could not start for \(submission.requestPath). It remains queued for retry: \(error.localizedDescription)"
             }
         } catch {
             statusMessage = error.localizedDescription

@@ -451,7 +451,7 @@ struct ShareInboxTests {
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/marketplace/listing-1")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .home("Opened /marketplace/listing-1 in KinicWiki."))
+        ) == .home(nil))
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/")!,
             callbackDomain: "wiki.kinic.xyz"
