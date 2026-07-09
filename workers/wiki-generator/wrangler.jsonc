@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-generator",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-12",
   "compatibility_flags": ["nodejs_compat"],

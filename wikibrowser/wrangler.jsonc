@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-browser",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-05-11",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
