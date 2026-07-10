@@ -263,8 +263,9 @@ const imageMiss = await readCachedDatabaseLinkPreviewImage(
     nowMs: Date.parse("2026-05-12T00:00:00.000Z")
   }
 );
-assert.equal(imageMiss.status, 308);
+assert.equal(imageMiss.status, 307);
 assert.equal(imageMiss.headers.get("location"), "https://local.test/opengraph-image.png");
+assert.equal(imageMiss.headers.get("cache-control"), "no-store");
 assert.deepEqual(queuedMessages, [
   {
     kind: "link_preview",
@@ -313,7 +314,8 @@ const pendingResponse = await readCachedDatabaseLinkPreviewImage(
     nowMs: Date.parse("2026-05-12T00:05:00.000Z")
   }
 );
-assert.equal(pendingResponse.status, 308);
+assert.equal(pendingResponse.status, 307);
+assert.equal(pendingResponse.headers.get("cache-control"), "no-store");
 assert.equal(pendingMessages.length, 0);
 assert.equal(pendingBucket.puts.length, 0);
 const failingBucket = new LinkPreviewTestBucket();
@@ -332,8 +334,18 @@ const failingResponse = await readCachedDatabaseLinkPreviewImage(
     nowMs: Date.parse("2026-05-12T00:00:00.000Z")
   }
 );
-assert.equal(failingResponse.status, 308);
+assert.equal(failingResponse.status, 307);
+assert.equal(failingResponse.headers.get("cache-control"), "no-store");
 assert.deepEqual(failingBucket.deletes, ["db-link-preview/pending/v1/db_alpha.json"]);
+const missingBucketResponse = await readCachedDatabaseLinkPreviewImage(
+  new Request("https://local.test/db/db_alpha/opengraph-image"),
+  "db_alpha",
+  "/opengraph-image.png",
+  null
+);
+assert.equal(missingBucketResponse.status, 307);
+assert.equal(missingBucketResponse.headers.get("location"), "https://local.test/opengraph-image.png");
+assert.equal(missingBucketResponse.headers.get("cache-control"), "no-store");
 assert.match(queryPanelSource, /authorizeQueryAnswerSession/);
 assert.match(queryPanelSource, /Login with Internet Identity to ask wiki questions/);
 assert.match(queryPanelSource, /sessionNonce/);

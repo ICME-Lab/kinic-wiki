@@ -23,7 +23,7 @@ impl FsStore {
     }
 
     pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
-        self.query_context_with_filter(request, |_| true, CONTEXT_SEARCH_LIMIT, false)
+        self.query_context_with_filter(request, |_| true, false)
     }
 
     pub fn query_context_filtered(
@@ -31,14 +31,13 @@ impl FsStore {
         request: QueryContextRequest,
         mut allow_path: impl FnMut(&str) -> bool,
     ) -> Result<QueryContext, String> {
-        self.query_context_with_filter(request, &mut allow_path, QUERY_RESULT_LIMIT_MAX, true)
+        self.query_context_with_filter(request, &mut allow_path, true)
     }
 
     fn query_context_with_filter(
         &self,
         request: QueryContextRequest,
         mut allow_path: impl FnMut(&str) -> bool,
-        search_top_k: u32,
         filter_outputs: bool,
     ) -> Result<QueryContext, String> {
         if request.depth > 2 {
@@ -47,23 +46,24 @@ impl FsStore {
         let namespace = normalize_memory_namespace(request.namespace.as_deref())?;
         let budget_chars = budget_chars(request.budget_tokens);
         let query_text = context_query_text(&request.task, &request.entities)?;
-        let mut search_hits = self.search_nodes(SearchNodesRequest {
+        let search_request = SearchNodesRequest {
             database_id: request.database_id.clone(),
             query_text,
             prefix: Some(namespace.clone()),
-            top_k: search_top_k,
+            top_k: CONTEXT_SEARCH_LIMIT,
             preview_mode: Some(SearchPreviewMode::Light),
-        })?;
-        if filter_outputs {
-            search_hits.retain(|hit| allow_path(&hit.path));
-            search_hits.truncate(CONTEXT_SEARCH_LIMIT as usize);
-        }
+        };
+        let (search_hits, search_scan_truncated) = if filter_outputs {
+            self.search_nodes_filtered(search_request, &mut allow_path)?
+        } else {
+            (self.search_nodes(search_request)?, false)
+        };
         let paths = ordered_context_candidate_paths(&namespace, &search_hits);
 
         self.read_conn(|conn| {
             let mut nodes = Vec::new();
             let mut used_chars = 0usize;
-            let mut truncated = false;
+            let mut truncated = search_scan_truncated;
             for path in paths {
                 if !allow_path(&path) {
                     continue;
@@ -164,6 +164,81 @@ impl FsStore {
                 evidence,
                 truncated,
             })
+        })
+    }
+
+    // Candidate-source filtering happens before cross-source reranking so sparse access filters
+    // receive the same ranking treatment as an unfiltered candidate set.
+    fn search_nodes_filtered(
+        &self,
+        request: SearchNodesRequest,
+        allow_path: &mut impl FnMut(&str) -> bool,
+    ) -> Result<(Vec<SearchNodeHit>, bool), String> {
+        let prefix = request
+            .prefix
+            .as_ref()
+            .map(|value| normalize_node_path(value, true))
+            .transpose()?;
+        let plan = build_search_query_plan(&request.query_text)
+            .ok_or_else(|| "query_text must not be empty".to_string())?;
+        self.read_conn(|conn| {
+            let top_k = capped_query_limit(request.top_k);
+            let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
+            let (mut candidates, mut truncated) =
+                if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates) {
+                    let filtered = load_ranked_fts_candidates_filtered(
+                        conn,
+                        &plan,
+                        prefix.as_deref(),
+                        top_k,
+                        allow_path,
+                    )?;
+                    (
+                        filtered
+                            .items
+                            .into_iter()
+                            .map(|candidate| (candidate.row_id, candidate))
+                            .collect::<BTreeMap<_, _>>(),
+                        filtered.truncated,
+                    )
+                } else {
+                    (BTreeMap::new(), false)
+                };
+            if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
+                let filtered = load_content_substring_candidates_filtered(
+                    conn,
+                    &plan,
+                    prefix.as_deref(),
+                    top_k,
+                    allow_path,
+                )?;
+                truncated |= filtered.truncated;
+                for candidate in filtered.items {
+                    candidates.entry(candidate.row_id).or_insert(candidate);
+                }
+            }
+            let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
+                let filtered = load_path_candidates_filtered(
+                    conn,
+                    &plan.path_terms,
+                    prefix.as_deref(),
+                    top_k,
+                    allow_path,
+                )?;
+                truncated |= filtered.truncated;
+                filtered.items
+            } else {
+                Vec::new()
+            };
+            let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
+                rerank_candidates(candidates, &plan, path_hits)
+            } else {
+                sort_candidates(candidates.into_values().collect())
+            };
+            let top_k_len = usize::try_from(top_k).map_err(|error| error.to_string())?;
+            ranked.truncate(top_k_len);
+            build_previews_for_hits(conn, &mut ranked, &plan, preview_mode)?;
+            Ok((finalize_hits(ranked, top_k), truncated))
         })
     }
 

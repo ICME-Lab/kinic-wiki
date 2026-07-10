@@ -47,8 +47,9 @@ use crate::{
     },
     fs_search::{
         SearchCandidate, build_previews_for_hits, build_search_query_plan, finalize_hits,
-        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
-        path_match_score, rerank_candidates, sort_candidates,
+        load_content_substring_candidates, load_content_substring_candidates_filtered,
+        load_path_candidates, load_path_candidates_filtered, load_ranked_fts_candidates,
+        load_ranked_fts_candidates_filtered, path_match_score, rerank_candidates, sort_candidates,
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},

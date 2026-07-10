@@ -3,18 +3,15 @@
 // Why: Mechanical split out of fs_store.rs; a child module keeps private access.
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SyncCursorPolicy {
-    Returned,
-    Scanned,
-}
+const SYNC_INTERNAL_SCAN_BATCH_SIZE: i64 = 100;
+const SYNC_INTERNAL_SCAN_BATCH_LEN: usize = 100;
 
 impl FsStore {
     pub fn export_snapshot(
         &self,
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse, String> {
-        self.export_snapshot_with_filter(request, |_| true, SyncCursorPolicy::Returned)
+        self.export_snapshot_with_filter(request, |_| true, false)
     }
 
     pub fn export_snapshot_filtered(
@@ -22,14 +19,14 @@ impl FsStore {
         request: ExportSnapshotRequest,
         mut allow_path: impl FnMut(&str) -> bool,
     ) -> Result<ExportSnapshotResponse, String> {
-        self.export_snapshot_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+        self.export_snapshot_with_filter(request, &mut allow_path, true)
     }
 
     fn export_snapshot_with_filter(
         &self,
         request: ExportSnapshotRequest,
         mut allow_path: impl FnMut(&str) -> bool,
-        cursor_policy: SyncCursorPolicy,
+        filter_revision_changes: bool,
     ) -> Result<ExportSnapshotResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -59,13 +56,13 @@ impl FsStore {
                     prefix: prefix.clone(),
                 },
             };
-            if cursor_policy == SyncCursorPolicy::Returned
+            if !filter_revision_changes
                 && request.snapshot_revision.is_some()
                 && has_prefix_changes_after_revision(conn, &prefix, snapshot.revision)?
             {
                 return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
             }
-            if cursor_policy == SyncCursorPolicy::Scanned
+            if filter_revision_changes
                 && request.snapshot_revision.is_some()
                 && has_allowed_changes_after_revision(
                     conn,
@@ -76,16 +73,23 @@ impl FsStore {
             {
                 return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
             }
-            let page = load_snapshot_paths_page(conn, &prefix, cursor.as_deref(), limit + 1)?;
-            let page_had_more = page.len() > limit as usize;
+            let allowed_limit = usize::try_from(limit + 1).map_err(|error| error.to_string())?;
+            let mut paths = load_allowed_sync_paths(
+                cursor.as_deref(),
+                allowed_limit,
+                &mut allow_path,
+                |scan_cursor, batch_size| {
+                    load_snapshot_paths_page(conn, &prefix, scan_cursor, batch_size)
+                },
+            )?;
+            let limit = usize::try_from(limit).map_err(|error| error.to_string())?;
+            let limit_had_more = paths.len() > limit;
+            if limit_had_more {
+                paths.truncate(limit);
+            }
             let mut nodes = Vec::new();
-            let mut scan_cursor = cursor;
             let mut used_bytes = sync_response_base_bytes("");
-            for path in page.into_iter().take(limit as usize) {
-                if !allow_path(&path) {
-                    scan_cursor = Some(path);
-                    continue;
-                }
+            for path in paths {
                 let node = load_snapshot_node(conn, &path, snapshot.revision)?;
                 let item_bytes = estimated_node_response_bytes(&node);
                 if !sync_item_fits_budget(used_bytes, item_bytes) {
@@ -95,20 +99,15 @@ impl FsStore {
                     return Ok(ExportSnapshotResponse {
                         snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                         snapshot_session_id: None,
-                        next_cursor: sync_next_cursor(
-                            &nodes,
-                            scan_cursor.as_deref(),
-                            cursor_policy,
-                        ),
+                        next_cursor: nodes.last().map(PageCursorPath::cursor_path),
                         nodes,
                     });
                 }
                 used_bytes = used_bytes.saturating_add(item_bytes);
-                scan_cursor = Some(path);
                 nodes.push(node);
             }
-            let next_cursor = if page_had_more {
-                sync_next_cursor(&nodes, scan_cursor.as_deref(), cursor_policy)
+            let next_cursor = if limit_had_more {
+                nodes.last().map(PageCursorPath::cursor_path)
             } else {
                 None
             };
@@ -125,7 +124,7 @@ impl FsStore {
         &self,
         request: FetchUpdatesRequest,
     ) -> Result<FetchUpdatesResponse, String> {
-        self.fetch_updates_with_filter(request, |_| true, SyncCursorPolicy::Returned)
+        self.fetch_updates_with_filter(request, |_| true)
     }
 
     pub fn fetch_updates_filtered(
@@ -133,14 +132,13 @@ impl FsStore {
         request: FetchUpdatesRequest,
         mut allow_path: impl FnMut(&str) -> bool,
     ) -> Result<FetchUpdatesResponse, String> {
-        self.fetch_updates_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+        self.fetch_updates_with_filter(request, &mut allow_path)
     }
 
     fn fetch_updates_with_filter(
         &self,
         request: FetchUpdatesRequest,
         mut allow_path: impl FnMut(&str) -> bool,
-        cursor_policy: SyncCursorPolicy,
     ) -> Result<FetchUpdatesResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -200,23 +198,30 @@ impl FsStore {
             }
             let mut changed_nodes = Vec::new();
             let mut removed_paths = Vec::new();
-            let paths = load_changed_paths_page(
-                conn,
-                known_snapshot.revision,
-                target_snapshot.revision,
-                &prefix,
+            let allowed_limit = usize::try_from(limit + 1).map_err(|error| error.to_string())?;
+            let mut paths = load_allowed_sync_paths(
                 cursor.as_deref(),
-                limit + 1,
+                allowed_limit,
+                &mut allow_path,
+                |scan_cursor, batch_size| {
+                    load_changed_paths_page(
+                        conn,
+                        known_snapshot.revision,
+                        target_snapshot.revision,
+                        &prefix,
+                        scan_cursor,
+                        batch_size,
+                    )
+                },
             )?;
-            let limit_had_more = paths.len() > limit as usize;
+            let limit = usize::try_from(limit).map_err(|error| error.to_string())?;
+            let limit_had_more = paths.len() > limit;
+            if limit_had_more {
+                paths.truncate(limit);
+            }
             let mut next_cursor = None;
             let mut used_bytes = sync_response_base_bytes(&target_snapshot_revision);
-            let mut scan_cursor = cursor;
-            for path in paths.into_iter().take(limit as usize) {
-                if !allow_path(&path) {
-                    scan_cursor = Some(path);
-                    continue;
-                }
+            for path in paths {
                 if load_path_last_change_revision(conn, &path)? > target_snapshot.revision {
                     return Err(
                         "target_snapshot_revision is no longer current for changed path"
@@ -232,33 +237,17 @@ impl FsStore {
                     if changed_nodes.is_empty() && removed_paths.is_empty() {
                         return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
                     }
-                    next_cursor = sync_update_next_cursor(
-                        &changed_nodes,
-                        &removed_paths,
-                        scan_cursor.as_deref(),
-                        cursor_policy,
-                    );
+                    next_cursor = last_sync_response_path(&changed_nodes, &removed_paths);
                     break;
                 }
                 used_bytes = used_bytes.saturating_add(item_bytes);
                 match current_node {
-                    Some(node) => {
-                        scan_cursor = Some(node.path.clone());
-                        changed_nodes.push(node);
-                    }
-                    None => {
-                        scan_cursor = Some(path.clone());
-                        removed_paths.push(path);
-                    }
+                    Some(node) => changed_nodes.push(node),
+                    None => removed_paths.push(path),
                 }
             }
             if next_cursor.is_none() && limit_had_more {
-                next_cursor = sync_update_next_cursor(
-                    &changed_nodes,
-                    &removed_paths,
-                    scan_cursor.as_deref(),
-                    cursor_policy,
-                );
+                next_cursor = last_sync_response_path(&changed_nodes, &removed_paths);
             }
             Ok(FetchUpdatesResponse {
                 snapshot_revision: target_snapshot_revision,
@@ -270,27 +259,36 @@ impl FsStore {
     }
 }
 
-fn sync_next_cursor(
-    nodes: &[Node],
-    scan_cursor: Option<&str>,
-    cursor_policy: SyncCursorPolicy,
-) -> Option<String> {
-    match cursor_policy {
-        SyncCursorPolicy::Returned => nodes.last().map(PageCursorPath::cursor_path),
-        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
+// Denied rows are consumed only inside the server. The returned paths are safe to reuse as
+// client-visible cursors because every one passed the caller's access predicate.
+fn load_allowed_sync_paths(
+    cursor: Option<&str>,
+    allowed_limit: usize,
+    allow_path: &mut impl FnMut(&str) -> bool,
+    mut load_page: impl FnMut(Option<&str>, i64) -> Result<Vec<String>, String>,
+) -> Result<Vec<String>, String> {
+    let mut allowed_paths = Vec::with_capacity(allowed_limit);
+    let mut scan_cursor = cursor.map(str::to_string);
+    while allowed_paths.len() < allowed_limit {
+        let page = load_page(scan_cursor.as_deref(), SYNC_INTERNAL_SCAN_BATCH_SIZE)?;
+        let page_len = page.len();
+        if page_len == 0 {
+            break;
+        }
+        for path in page {
+            scan_cursor = Some(path.clone());
+            if allow_path(&path) {
+                allowed_paths.push(path);
+                if allowed_paths.len() == allowed_limit {
+                    break;
+                }
+            }
+        }
+        if page_len < SYNC_INTERNAL_SCAN_BATCH_LEN {
+            break;
+        }
     }
-}
-
-fn sync_update_next_cursor(
-    changed_nodes: &[Node],
-    removed_paths: &[String],
-    scan_cursor: Option<&str>,
-    cursor_policy: SyncCursorPolicy,
-) -> Option<String> {
-    match cursor_policy {
-        SyncCursorPolicy::Returned => last_sync_response_path(changed_nodes, removed_paths),
-        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
-    }
+    Ok(allowed_paths)
 }
 
 fn last_sync_response_path(changed_nodes: &[Node], removed_paths: &[String]) -> Option<String> {

@@ -9,6 +9,8 @@ use vfs_types::{NodeKind, SearchNodeHit, SearchPreview, SearchPreviewField, Sear
 use crate::fs_helpers::{file_search_title, prefix_filter_sql_for_column};
 
 const SEARCH_CANDIDATE_MULTIPLIER: u32 = 4;
+const FILTERED_SEARCH_SCAN_LIMIT: i64 = 1_000;
+const FILTERED_SEARCH_SCAN_PAGE_SIZE: i64 = 100;
 const FTS_RANK_SCALE: f32 = 10_000.0;
 const PATH_EXACT_SCORE: f32 = -600_000_000.0;
 const BASENAME_EXACT_SCORE: f32 = -500_000_000.0;
@@ -48,6 +50,11 @@ pub(crate) struct SearchCandidate {
     pub(crate) preview: Option<SearchPreview>,
     pub(crate) match_reasons: BTreeSet<String>,
     pub(crate) has_content_match: bool,
+}
+
+pub(crate) struct FilteredSearchCandidates<T> {
+    pub(crate) items: Vec<T>,
+    pub(crate) truncated: bool,
 }
 
 pub(crate) fn build_search_query_plan(query_text: &str) -> Option<SearchQueryPlan> {
@@ -101,52 +108,95 @@ pub(crate) fn load_ranked_fts_candidates(
     let limit = candidate_limit(top_k);
     let mut candidates = BTreeMap::new();
     for query in [&plan.exact_fts, &plan.recall_fts].into_iter().flatten() {
-        let mut values = vec![crate::sqlite::types::Value::from(query.clone())];
-        let (scope_sql, scope_values) = non_root_prefix(prefix)
-            .map(|prefix| prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1))
-            .unwrap_or_else(|| (String::new(), Vec::new()));
-        values.extend(scope_values);
-        let sql = format!(
-            "SELECT fs_nodes.id,
-                    fs_nodes.path,
-                    fs_nodes.kind,
-                    bm25(fs_nodes_fts, 0.1, 2.0, 1.0) AS rank
-             FROM fs_nodes_fts
-             JOIN fs_nodes ON fs_nodes.id = fs_nodes_fts.rowid
-             WHERE fs_nodes_fts MATCH ?1{}
-             ORDER BY rank ASC, fs_nodes.path ASC
-             LIMIT {limit}",
-            scope_sql
-        );
-        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        let rows = crate::sqlite::query_map(
-            &mut stmt,
-            crate::sqlite::params_from_values(&values),
-            |row| {
-                Ok((
-                    crate::sqlite::row_get::<i64>(row, 0)?,
-                    crate::sqlite::row_get::<String>(row, 1)?,
-                    crate::sqlite::row_get::<String>(row, 2)?,
-                    crate::sqlite::row_get::<f64>(row, 3)? as f32,
-                ))
+        for candidate in load_ranked_fts_query_candidates_page(conn, query, prefix, limit, 0)? {
+            candidates.entry(candidate.row_id).or_insert(candidate);
+        }
+    }
+    Ok(candidates.into_values().collect())
+}
+
+pub(crate) fn load_ranked_fts_candidates_filtered(
+    conn: &Connection,
+    plan: &SearchQueryPlan,
+    prefix: Option<&str>,
+    top_k: i64,
+    allow_path: &mut impl FnMut(&str) -> bool,
+) -> Result<FilteredSearchCandidates<SearchCandidate>, String> {
+    let target = candidate_limit(top_k);
+    let mut candidates = BTreeMap::new();
+    let mut source_truncated = false;
+    for query in [&plan.exact_fts, &plan.recall_fts].into_iter().flatten() {
+        let filtered = collect_filtered_candidates(
+            target,
+            allow_path,
+            |candidate: &SearchCandidate| candidate.path.as_str(),
+            |limit, offset| {
+                load_ranked_fts_query_candidates_page(conn, query, prefix, limit, offset)
             },
-        )
-        .map_err(|error| error.to_string())?;
-        for (row_id, path, kind, rank) in rows {
-            let kind = node_kind_from_db(&kind).map_err(|error| error.to_string())?;
-            candidates.entry(row_id).or_insert_with(|| SearchCandidate {
+        )?;
+        source_truncated |= filtered.truncated;
+        for candidate in filtered.items {
+            candidates.entry(candidate.row_id).or_insert(candidate);
+        }
+    }
+    Ok(FilteredSearchCandidates {
+        truncated: source_truncated,
+        items: candidates.into_values().collect(),
+    })
+}
+
+fn load_ranked_fts_query_candidates_page(
+    conn: &Connection,
+    query: &str,
+    prefix: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SearchCandidate>, String> {
+    let mut values = vec![crate::sqlite::types::Value::from(query.to_string())];
+    let (scope_sql, scope_values) = non_root_prefix(prefix)
+        .map(|prefix| prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1))
+        .unwrap_or_else(|| (String::new(), Vec::new()));
+    values.extend(scope_values);
+    let sql = format!(
+        "SELECT fs_nodes.id,
+                fs_nodes.path,
+                fs_nodes.kind,
+                bm25(fs_nodes_fts, 0.1, 2.0, 1.0) AS rank
+         FROM fs_nodes_fts
+         JOIN fs_nodes ON fs_nodes.id = fs_nodes_fts.rowid
+         WHERE fs_nodes_fts MATCH ?1{}
+         ORDER BY rank ASC, fs_nodes.path ASC
+         LIMIT {limit} OFFSET {offset}",
+        scope_sql
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    let rows = crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| {
+            Ok((
+                crate::sqlite::row_get::<i64>(row, 0)?,
+                crate::sqlite::row_get::<String>(row, 1)?,
+                crate::sqlite::row_get::<String>(row, 2)?,
+                crate::sqlite::row_get::<f64>(row, 3)? as f32,
+            ))
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    rows.into_iter()
+        .map(|(row_id, path, kind, rank)| {
+            Ok(SearchCandidate {
                 row_id,
                 path,
-                kind,
+                kind: node_kind_from_db(&kind).map_err(|error| error.to_string())?,
                 score: rank * FTS_RANK_SCALE,
                 snippet: None,
                 preview: None,
                 match_reasons: BTreeSet::from(["content_fts".to_string()]),
                 has_content_match: true,
-            });
-        }
-    }
-    Ok(candidates.into_values().collect())
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn load_path_candidates(
@@ -154,6 +204,31 @@ pub(crate) fn load_path_candidates(
     terms: &[String],
     prefix: Option<&str>,
     top_k: i64,
+) -> Result<Vec<SearchPathHit>, String> {
+    load_path_candidates_page(conn, terms, prefix, candidate_limit(top_k), 0)
+}
+
+pub(crate) fn load_path_candidates_filtered(
+    conn: &Connection,
+    terms: &[String],
+    prefix: Option<&str>,
+    top_k: i64,
+    allow_path: &mut impl FnMut(&str) -> bool,
+) -> Result<FilteredSearchCandidates<SearchPathHit>, String> {
+    collect_filtered_candidates(
+        candidate_limit(top_k),
+        allow_path,
+        |candidate: &SearchPathHit| candidate.path.as_str(),
+        |limit, offset| load_path_candidates_page(conn, terms, prefix, limit, offset),
+    )
+}
+
+fn load_path_candidates_page(
+    conn: &Connection,
+    terms: &[String],
+    prefix: Option<&str>,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<SearchPathHit>, String> {
     let mut sql = String::from(
         "SELECT id, path, kind, instr(lower(path), ?1) AS first_match_position, length(path) AS path_length
@@ -173,8 +248,7 @@ pub(crate) fn load_path_candidates(
         values.extend(scope_values);
     }
     sql.push_str(&format!(
-        " ORDER BY first_match_position ASC, path_length ASC, path ASC LIMIT {}",
-        candidate_limit(top_k)
+        " ORDER BY first_match_position ASC, path_length ASC, path ASC LIMIT {limit} OFFSET {offset}"
     ));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     crate::sqlite::query_map(
@@ -201,6 +275,37 @@ pub(crate) fn load_content_substring_candidates(
     prefix: Option<&str>,
     top_k: i64,
 ) -> Result<Vec<SearchCandidate>, String> {
+    load_content_substring_candidates_page(conn, plan, prefix, candidate_limit(top_k), 0)
+}
+
+pub(crate) fn load_content_substring_candidates_filtered(
+    conn: &Connection,
+    plan: &SearchQueryPlan,
+    prefix: Option<&str>,
+    top_k: i64,
+    allow_path: &mut impl FnMut(&str) -> bool,
+) -> Result<FilteredSearchCandidates<SearchCandidate>, String> {
+    if !plan.has_cjk {
+        return Ok(FilteredSearchCandidates {
+            items: Vec::new(),
+            truncated: false,
+        });
+    }
+    collect_filtered_candidates(
+        candidate_limit(top_k),
+        allow_path,
+        |candidate: &SearchCandidate| candidate.path.as_str(),
+        |limit, offset| load_content_substring_candidates_page(conn, plan, prefix, limit, offset),
+    )
+}
+
+fn load_content_substring_candidates_page(
+    conn: &Connection,
+    plan: &SearchQueryPlan,
+    prefix: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SearchCandidate>, String> {
     if !plan.has_cjk {
         return Ok(Vec::new());
     }
@@ -214,9 +319,8 @@ pub(crate) fn load_content_substring_candidates(
          FROM fs_nodes
          WHERE instr(content, ?1) > 0{}
          ORDER BY path ASC
-         LIMIT {}",
-        scope_sql,
-        candidate_limit(top_k)
+         LIMIT {limit} OFFSET {offset}",
+        scope_sql
     );
     let mut candidates = Vec::new();
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
@@ -245,6 +349,48 @@ pub(crate) fn load_content_substring_candidates(
         });
     }
     Ok(candidates)
+}
+
+// Filtered search cannot express an arbitrary Rust predicate in SQL. Page through each ranked
+// source until it yields the normal candidate target, reaches the source end, or hits the cap.
+fn collect_filtered_candidates<T>(
+    target: i64,
+    allow_path: &mut impl FnMut(&str) -> bool,
+    candidate_path: impl Fn(&T) -> &str,
+    mut load_page: impl FnMut(i64, i64) -> Result<Vec<T>, String>,
+) -> Result<FilteredSearchCandidates<T>, String> {
+    let target = usize::try_from(target).map_err(|error| error.to_string())?;
+    let mut items = Vec::with_capacity(target);
+    let mut offset = 0_i64;
+    let mut exhausted = false;
+    while items.len() < target && offset < FILTERED_SEARCH_SCAN_LIMIT {
+        let limit = FILTERED_SEARCH_SCAN_PAGE_SIZE.min(FILTERED_SEARCH_SCAN_LIMIT - offset);
+        let page = load_page(limit, offset)?;
+        let page_len = i64::try_from(page.len()).map_err(|error| error.to_string())?;
+        if page_len == 0 {
+            exhausted = true;
+            break;
+        }
+        offset = offset.saturating_add(page_len);
+        for candidate in page {
+            if allow_path(candidate_path(&candidate)) {
+                items.push(candidate);
+                if items.len() == target {
+                    break;
+                }
+            }
+        }
+        if page_len < limit {
+            exhausted = true;
+            break;
+        }
+    }
+    let truncated = if items.len() < target && !exhausted && offset >= FILTERED_SEARCH_SCAN_LIMIT {
+        !load_page(1, offset)?.is_empty()
+    } else {
+        false
+    };
+    Ok(FilteredSearchCandidates { items, truncated })
 }
 
 fn non_root_prefix(prefix: Option<&str>) -> Option<&str> {

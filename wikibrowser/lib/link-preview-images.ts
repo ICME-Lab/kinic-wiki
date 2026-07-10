@@ -6,6 +6,7 @@ export const LINK_PREVIEW_IMAGE_CACHE_CONTROL = "public, max-age=300, s-maxage=8
 export const LINK_PREVIEW_IMAGE_CONTENT_TYPE = "image/png";
 const LINK_PREVIEW_PENDING_TTL_MS = 10 * 60 * 1000;
 const LINK_PREVIEW_PENDING_CACHE_CONTROL = "no-store";
+const LINK_PREVIEW_FALLBACK_CACHE_CONTROL = "no-store";
 
 export type LinkPreviewImageObject = {
   body: ReadableStream<Uint8Array> | null;
@@ -101,7 +102,7 @@ export async function readCachedDatabaseLinkPreviewImage(
 ): Promise<Response> {
   const runtime = bucket === undefined ? await linkPreviewRuntime() : null;
   const store = bucket === undefined ? (runtime?.bucket ?? null) : bucket;
-  if (!store) return staticImageRedirect(request, fallbackPath);
+  if (!store) return temporaryStaticImageRedirect(request, fallbackPath);
   const object = await store.get(databaseLinkPreviewImageKey(databaseId));
   if (!object?.body) {
     await bestEffortEnqueueDatabaseLinkPreview(store, databaseId, {
@@ -109,7 +110,7 @@ export async function readCachedDatabaseLinkPreviewImage(
       canisterId: options.canisterId ?? runtime?.canisterId ?? "",
       nowMs: options.nowMs
     });
-    return staticImageRedirect(request, fallbackPath);
+    return temporaryStaticImageRedirect(request, fallbackPath);
   }
   const headers = new Headers();
   object.writeHttpMetadata?.(headers);
@@ -168,6 +169,15 @@ function isQueueableDatabaseId(databaseId: string): boolean {
   return databaseId.length > 0 && databaseId.length <= 128;
 }
 
-function staticImageRedirect(request: Request, fallbackPath: "/opengraph-image.png" | "/twitter-image.png"): Response {
-  return Response.redirect(new URL(fallbackPath, request.url), 308);
+function temporaryStaticImageRedirect(
+  request: Request,
+  fallbackPath: "/opengraph-image.png" | "/twitter-image.png"
+): Response {
+  return new Response(null, {
+    status: 307,
+    headers: {
+      Location: new URL(fallbackPath, request.url).toString(),
+      "Cache-Control": LINK_PREVIEW_FALLBACK_CACHE_CONTROL
+    }
+  });
 }
