@@ -11,9 +11,11 @@ struct AppConfiguration: Equatable, Sendable {
     let identityProvider: URL
     let derivationOrigin: String
     let authOrigin: URL
+    let paymentBaseURL: URL
     let callbackDomain: String
     let appGroupId: String?
     let keychainAccessGroup: String?
+    let iapProductIds: [String]
 
     var icClientConfiguration: ICClientConfiguration {
         ICClientConfiguration(
@@ -28,27 +30,50 @@ struct AppConfiguration: Equatable, Sendable {
         authOrigin.appending(path: "api/source-capture/trigger")
     }
 
+    var iapActivateDatabaseURL: URL {
+        paymentBaseURL.appending(path: "iap/activate-database")
+    }
+
+    var iapPurchaseIntentURL: URL {
+        paymentBaseURL.appending(path: "iap/purchase-intents")
+    }
+
     static let preview = AppConfiguration(
         canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         apiBaseURL: URL(string: "https://icp0.io")!,
         identityProvider: URL(string: "https://id.ai/#authorize")!,
         derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
         authOrigin: URL(string: "https://wiki.kinic.xyz")!,
+        paymentBaseURL: URL(string: "https://payment.kinic.xyz")!,
         callbackDomain: "wiki.kinic.xyz",
         appGroupId: nil,
-        keychainAccessGroup: nil
+        keychainAccessGroup: nil,
+        iapProductIds: ["xyz.kinic.dbcredits.small", "xyz.kinic.dbcredits.medium", "xyz.kinic.dbcredits.large"]
     )
 
     static func liveFromBundle(_ bundle: Bundle = .main) -> AppConfiguration {
-        AppConfiguration(
+        let authOrigin = bundle.requiredURL("KINIC_AUTH_ORIGIN")
+        return AppConfiguration(
             canisterId: bundle.requiredString("KINIC_CANISTER_ID"),
             apiBaseURL: bundle.requiredURL("KINIC_API_BASE_URL"),
             identityProvider: bundle.requiredURL("KINIC_IDENTITY_PROVIDER"),
             derivationOrigin: bundle.requiredString("KINIC_DERIVATION_ORIGIN"),
-            authOrigin: bundle.requiredURL("KINIC_AUTH_ORIGIN"),
+            authOrigin: authOrigin,
+            paymentBaseURL: bundle.optionalURL("KINIC_PAYMENT_BASE_URL") ?? URL(string: "https://payment.kinic.xyz")!,
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
-            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP")
+            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
+            iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS"))
         )
+    }
+
+    private static func iapProductIds(from value: String?) -> [String] {
+        guard let value else {
+            return []
+        }
+        return value
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }

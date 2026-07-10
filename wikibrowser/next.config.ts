@@ -1,3 +1,7 @@
+// Where: wikibrowser/next.config.ts
+// What: Configure the Next.js application and its Cloudflare-backed public environment.
+// Why: Keep build behavior explicit, including globally disabling unused image transforms.
+
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +22,9 @@ const wranglerVars = readWranglerPublicVars();
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
+  images: {
+    unoptimized: true
+  },
   typescript: {
     ignoreBuildErrors: true
   },

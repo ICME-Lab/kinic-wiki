@@ -1,0 +1,45 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-payment",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "payment.kinic.xyz",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_IC_HOST": "https://icp0.io",
+    "APP_STORE_ENVIRONMENT": "Production",
+    "APP_STORE_BUNDLE_ID": "xyz.kinic.ios.KinicWiki",
+    "APP_STORE_NOTIFICATION_ROOT_SHA256": "REPLACE_WITH_APP_STORE_NOTIFICATION_ROOT_SHA256",
+    "IAP_PRODUCT_CATALOG_JSON": "{\"xyz.kinic.dbcredits.small\":\"400000000000\",\"xyz.kinic.dbcredits.medium\":\"1200000000000\",\"xyz.kinic.dbcredits.large\":\"4000000000000\"}"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kinic-payment",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "IAP_GLOBAL_RATE_LIMITER",
+      "namespace_id": "REPLACE_WITH_IAP_GLOBAL_RATE_LIMIT_NAMESPACE_ID",
+      "simple": { "limit": 300, "period": 60 }
+    },
+    {
+      "name": "IAP_PRINCIPAL_RATE_LIMITER",
+      "namespace_id": "REPLACE_WITH_IAP_PRINCIPAL_RATE_LIMIT_NAMESPACE_ID",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ]
+}

@@ -194,6 +194,7 @@ export function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): Cycle
   return {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     billingAuthorityId: raw.billing_authority_id,
+    iapAuthorityId: raw.iap_authority_id,
     cyclesPerKinic: raw.cycles_per_kinic.toString(),
     minUpdateCycles: raw.min_update_cycles.toString(),
     topUp: {

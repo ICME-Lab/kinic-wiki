@@ -32,12 +32,22 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig,
     kinic_ledger_canister_id: idl.Text,
-    billing_authority_id: idl.Text
+    billing_authority_id: idl.Text,
+    iap_authority_id: idl.Text
   });
   const CyclesBillingConfigUpdate = idl.Record({
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
-    top_up: CyclesTopUpConfig
+    top_up: CyclesTopUpConfig,
+    iap_authority_id: idl.Text
+  });
+  const DatabaseCyclesIapGrantRequest = idl.Record({
+    database_id: idl.Text,
+    amount_cycles: idl.Nat64,
+    external_payment_id: idl.Text,
+    provider: idl.Text,
+    product_id: idl.Text,
+    purchaser_principal: idl.Text
   });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,
@@ -526,6 +536,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
+    grant_database_cycles_from_iap: idl.Func([DatabaseCyclesIapGrantRequest], [ResultCyclesPurchase], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),

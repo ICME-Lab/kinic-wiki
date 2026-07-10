@@ -143,6 +143,7 @@ export type UpdateDatabaseMetadataRequest = DatabaseMetadata & {
 export type CyclesBillingConfig = {
   kinicLedgerCanisterId: string;
   billingAuthorityId: string;
+  iapAuthorityId: string;
   cyclesPerKinic: string;
   minUpdateCycles: string;
   topUp: {

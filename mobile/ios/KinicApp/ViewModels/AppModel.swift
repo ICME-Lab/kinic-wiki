@@ -6,6 +6,7 @@ import Foundation
 import ICNativeClient
 import Observation
 import os
+import StoreKit
 
 enum AppTab: Hashable {
     case home
@@ -75,15 +76,18 @@ enum PendingSubmissionDatabaseResolution: Equatable, Sendable {
 final class AppModel {
     private let authService: KinicAuthService
     private let client: KinicICClient
+    private let creditStore: any DatabaseCreditStoreProtocol
     private let shareInbox: ShareInbox
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
+    private var databaseCreditTransactionUpdatesTask: Task<Void, Never>?
     private var session: ICAuthSession?
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
     private var searchRequestID: Int
     private var databaseManagementRequestID: Int
     private var deepLinkResolveRequestID: Int
+    private var isRecoveringDatabaseCredits: Bool
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
@@ -122,6 +126,8 @@ final class AppModel {
     var selectedBrowseNodePath: String?
     var documentNode: VFSNode?
     var cyclesBillingConfig: CyclesBillingConfig?
+    var databaseCreditProducts: [DatabaseCreditProduct]
+    var pendingCreatedDatabase: CreatedDatabase?
     var databaseMembers: [DatabaseMember]
     var databaseMembersDatabaseId: String?
     var databaseCycleEntries: [DatabaseCycleEntry]
@@ -138,6 +144,7 @@ final class AppModel {
     var browseError: String?
     var documentError: String?
     var cyclesConfigError: String?
+    var databaseCreditError: String?
     var databaseMetadataError: String?
     var databaseMembersError: String?
     var databaseCyclesHistoryError: String?
@@ -149,12 +156,14 @@ final class AppModel {
     var isLoadingBrowsePath: Bool
     var isLoadingDocument: Bool
     var isLoadingCyclesConfig: Bool
+    var isLoadingDatabaseCreditProducts: Bool
     var isLoadingDatabaseMembers: Bool
     var isLoadingDatabaseCycleEntries: Bool
     var isLoadingDatabasePendingPurchases: Bool
     var isSearching: Bool
     var isSigningIn: Bool
     var isCreatingDatabase: Bool
+    var isPurchasingDatabaseCredits: Bool
     var isUpdatingDatabaseMetadata: Bool
     var databaseAccessBusyAction: DatabaseAccessBusyAction?
     var isSubmitting: Bool
@@ -216,19 +225,37 @@ final class AppModel {
         return session != nil || publicBrowseDatabaseIds.contains(databaseId) || directBrowseDatabaseIds.contains(databaseId)
     }
 
+    var databaseCreditTargetId: String? {
+        if let pendingCreatedDatabase {
+            return pendingCreatedDatabase.databaseId
+        }
+        if let selectedBrowseDatabase,
+           selectedBrowseDatabase.role.canManageDatabase {
+            return selectedBrowseDatabase.databaseId
+        }
+        if let selectedDatabase,
+           selectedDatabase.role.canManageDatabase {
+            return selectedDatabase.databaseId
+        }
+        return nil
+    }
+
     init(
         configuration: AppConfiguration,
         authService: KinicAuthService,
         client: KinicICClient,
+        creditStore: (any DatabaseCreditStoreProtocol)? = nil,
         shareInbox: ShareInbox,
         settingsStore: SharedDefaultsStore
     ) {
         self.configuration = configuration
         self.authService = authService
         self.client = client
+        self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration, settingsStore: settingsStore)
         self.shareInbox = shareInbox
         self.settingsStore = settingsStore
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
+        databaseCreditTransactionUpdatesTask = nil
         selectedDatabaseId = settingsStore.databaseId
         selectedBrowseDatabaseId = settingsStore.browseDatabaseId
         isDarkAppearanceEnabled = settingsStore.isDarkAppearanceEnabled
@@ -253,6 +280,8 @@ final class AppModel {
         selectedBrowseNodePath = nil
         documentNode = nil
         cyclesBillingConfig = nil
+        databaseCreditProducts = []
+        pendingCreatedDatabase = nil
         databaseMembers = []
         databaseMembersDatabaseId = nil
         databaseCycleEntries = []
@@ -271,9 +300,11 @@ final class AppModel {
         searchRequestID = 0
         databaseManagementRequestID = 0
         deepLinkResolveRequestID = 0
+        isRecoveringDatabaseCredits = false
         browseError = nil
         documentError = nil
         cyclesConfigError = nil
+        databaseCreditError = nil
         databaseMetadataError = nil
         databaseMembersError = nil
         databaseCyclesHistoryError = nil
@@ -285,12 +316,14 @@ final class AppModel {
         isLoadingBrowsePath = false
         isLoadingDocument = false
         isLoadingCyclesConfig = false
+        isLoadingDatabaseCreditProducts = false
         isLoadingDatabaseMembers = false
         isLoadingDatabaseCycleEntries = false
         isLoadingDatabasePendingPurchases = false
         isSearching = false
         isSigningIn = false
         isCreatingDatabase = false
+        isPurchasingDatabaseCredits = false
         isUpdatingDatabaseMetadata = false
         databaseAccessBusyAction = nil
         isSubmitting = false
@@ -602,6 +635,9 @@ final class AppModel {
         resetDatabaseManagementState()
         cyclesBillingConfig = nil
         cyclesConfigError = nil
+        databaseCreditProducts = []
+        pendingCreatedDatabase = nil
+        databaseCreditError = nil
         databaseMetadataError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
@@ -635,9 +671,16 @@ final class AppModel {
         }
     }
 
+    func startLoadDatabaseCreditProductsIfNeeded() {
+        Task {
+            await loadDatabaseCreditProductsIfNeeded()
+        }
+    }
+
     func startLoadDatabaseManagementDetails(databaseId: String) {
         Task {
             await loadDatabaseManagementDetails(databaseId: databaseId)
+            await recoverPendingDatabaseCreditPurchases()
         }
     }
 
@@ -663,6 +706,33 @@ final class AppModel {
         Task {
             await createDatabase(name: name)
         }
+    }
+
+    func startPurchaseDatabaseCredits(productId: String) {
+        Task {
+            await purchaseDatabaseCredits(productId: productId)
+        }
+    }
+
+    func startRecoverPendingDatabaseCreditPurchases() {
+        Task {
+            await recoverPendingDatabaseCreditPurchases()
+        }
+    }
+
+    func startDatabaseCreditTransactionObserver() {
+        guard databaseCreditTransactionUpdatesTask == nil else {
+            return
+        }
+        databaseCreditTransactionUpdatesTask = Task { [weak self] in
+            for await _ in Transaction.updates {
+                await self?.recoverPendingDatabaseCreditPurchases()
+            }
+        }
+    }
+
+    func appDidBecomeActive() {
+        startRecoverPendingDatabaseCreditPurchases()
     }
 
     func updateDatabaseMetadata(databaseId: String, name: String, description: String, tagsInput: String, llmSummary: String) async -> Bool {
@@ -849,6 +919,7 @@ final class AppModel {
             logger.info("Kinic sign in succeeded principal=\(self.session?.principal ?? "", privacy: .public)")
             await refreshDatabases()
             await loadBrowsePath(currentPath)
+            await recoverPendingDatabaseCreditPurchases()
             await submitNextPendingURL()
         } catch {
             statusMessage = error.localizedDescription
@@ -877,6 +948,7 @@ final class AppModel {
             let created = try await client.createDatabase(name: trimmedName, session: session)
             await refreshDatabases(selectFirstIfNeeded: false)
             if created.initialFreeGrantApplied || created.status == .active {
+                pendingCreatedDatabase = nil
                 setSelectedDatabase(created.databaseId)
                 setSelectedBrowseDatabase(created.databaseId)
                 statusMessage = nil
@@ -885,7 +957,9 @@ final class AppModel {
                     await submitNextPendingURL()
                 }
             } else {
-                statusMessage = "Database created pending. Fund it from the web dashboard before capture."
+                pendingCreatedDatabase = created
+                statusMessage = "Database created pending. Add database credits to activate it."
+                await loadDatabaseCreditProductsIfNeeded()
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -968,9 +1042,12 @@ final class AppModel {
             }
             if currentSession != nil {
                 await loadCyclesBillingConfigIfNeeded()
+                await loadDatabaseCreditProductsIfNeeded()
             } else {
                 cyclesBillingConfig = nil
                 cyclesConfigError = nil
+                databaseCreditProducts = []
+                databaseCreditError = nil
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -1186,6 +1263,99 @@ final class AppModel {
             cyclesConfigLastRefreshed = Date()
         } catch {
             cyclesConfigError = error.localizedDescription
+        }
+    }
+
+    private func loadDatabaseCreditProductsIfNeeded() async {
+        guard databaseCreditProducts.isEmpty, !configuration.iapProductIds.isEmpty else {
+            return
+        }
+        guard !isLoadingDatabaseCreditProducts else {
+            return
+        }
+        guard session != nil else {
+            databaseCreditProducts = []
+            return
+        }
+        isLoadingDatabaseCreditProducts = true
+        databaseCreditError = nil
+        defer {
+            isLoadingDatabaseCreditProducts = false
+        }
+        do {
+            databaseCreditProducts = try await creditStore.loadProducts()
+        } catch {
+            databaseCreditError = error.localizedDescription
+        }
+    }
+
+    private func purchaseDatabaseCredits(productId: String) async {
+        guard !isPurchasingDatabaseCredits else {
+            return
+        }
+        guard let databaseId = databaseCreditTargetId else {
+            databaseCreditError = "Select a database to fund."
+            return
+        }
+        guard let session else {
+            databaseCreditError = "Sign in before adding database credits."
+            return
+        }
+        isPurchasingDatabaseCredits = true
+        databaseCreditError = nil
+        defer {
+            isPurchasingDatabaseCredits = false
+        }
+        do {
+            let activation = try await creditStore.purchaseAndActivate(
+                productId: productId,
+                databaseId: databaseId,
+                purchaserPrincipal: session.principal
+            )
+            await applyDatabaseCreditActivation(activation)
+        } catch {
+            databaseCreditError = error.localizedDescription
+        }
+    }
+
+    private func recoverPendingDatabaseCreditPurchases() async {
+        guard !isRecoveringDatabaseCredits, !isPurchasingDatabaseCredits else {
+            return
+        }
+        guard let session else {
+            return
+        }
+        isRecoveringDatabaseCredits = true
+        defer {
+            isRecoveringDatabaseCredits = false
+        }
+        let result = await creditStore.recoverPendingDatabaseCreditPurchases(purchaserPrincipal: session.principal)
+        for activation in result.activations {
+            await applyDatabaseCreditActivation(activation)
+        }
+        databaseCreditError = Self.databaseCreditRecoveryError(result.failures)
+    }
+
+    static func databaseCreditRecoveryError(_ failures: [DatabaseCreditRecoveryFailure]) -> String? {
+        guard let first = failures.first else {
+            return nil
+        }
+        let remaining = failures.count - 1
+        if remaining == 0 {
+            return first.message
+        }
+        return "\(first.message) (\(remaining) more transaction\(remaining == 1 ? "" : "s") failed.)"
+    }
+
+    private func applyDatabaseCreditActivation(_ activation: DatabaseCreditActivation) async {
+        pendingCreatedDatabase = nil
+        await refreshDatabases(selectFirstIfNeeded: false)
+        setSelectedDatabase(activation.databaseId)
+        setSelectedBrowseDatabase(activation.databaseId)
+        statusMessage = "Database credits added."
+        await loadBrowsePath("/")
+        if !pendingURLs.isEmpty {
+            await submitNextPendingURL()
         }
     }
 

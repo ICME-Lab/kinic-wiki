@@ -3,6 +3,7 @@ packages:
   - skill-registry-web
   - workers/wiki-mcp
   - workers/wiki-generator
+  - workers/payment
   - extensions/wiki-clipper
   - tools/candid
 
@@ -21,6 +22,27 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - postcss@8.5.10
   - ws@8.21.0
+  - typescript@7.0.2
+  - '@typescript/typescript-aix-ppc64@7.0.2'
+  - '@typescript/typescript-darwin-arm64@7.0.2'
+  - '@typescript/typescript-darwin-x64@7.0.2'
+  - '@typescript/typescript-freebsd-arm64@7.0.2'
+  - '@typescript/typescript-freebsd-x64@7.0.2'
+  - '@typescript/typescript-linux-arm@7.0.2'
+  - '@typescript/typescript-linux-arm64@7.0.2'
+  - '@typescript/typescript-linux-loong64@7.0.2'
+  - '@typescript/typescript-linux-mips64el@7.0.2'
+  - '@typescript/typescript-linux-ppc64@7.0.2'
+  - '@typescript/typescript-linux-riscv64@7.0.2'
+  - '@typescript/typescript-linux-s390x@7.0.2'
+  - '@typescript/typescript-linux-x64@7.0.2'
+  - '@typescript/typescript-netbsd-arm64@7.0.2'
+  - '@typescript/typescript-netbsd-x64@7.0.2'
+  - '@typescript/typescript-openbsd-arm64@7.0.2'
+  - '@typescript/typescript-openbsd-x64@7.0.2'
+  - '@typescript/typescript-sunos-x64@7.0.2'
+  - '@typescript/typescript-win32-arm64@7.0.2'
+  - '@typescript/typescript-win32-x64@7.0.2'
 
 overrides:
   '@babel/core': 7.29.6

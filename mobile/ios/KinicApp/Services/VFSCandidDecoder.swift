@@ -118,6 +118,7 @@ enum VFSCandidDecoder {
         return CyclesBillingConfig(
             kinicLedgerCanisterId: try text(fields, "kinic_ledger_canister_id"),
             billingAuthorityId: try text(fields, "billing_authority_id"),
+            iapAuthorityId: try text(fields, "iap_authority_id"),
             cyclesPerKinic: try nat64(fields, "cycles_per_kinic"),
             minUpdateCycles: try nat64(fields, "min_update_cycles"),
             topUp: CyclesTopUpConfig(

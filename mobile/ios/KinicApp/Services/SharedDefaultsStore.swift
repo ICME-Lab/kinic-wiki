@@ -4,6 +4,16 @@
 
 import Foundation
 
+struct PendingDatabaseCreditPurchase: Codable, Equatable, Sendable {
+    let appAccountToken: String
+    let databaseId: String
+    let purchaserPrincipal: String
+    let productId: String
+    let expiresAtMs: Int64
+    let transactionId: String?
+    let transactionJWS: String?
+}
+
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
@@ -11,6 +21,7 @@ struct SharedDefaultsStore: @unchecked Sendable {
     private static let showPublicBrowseDatabasesKey = "kinic.browse-show-public-databases.v1"
     private static let showPurchasedBrowseDatabasesKey = "kinic.browse-show-purchased-databases.v1"
     private static let writableDatabasesKey = "kinic.writable-databases.v1"
+    private static let pendingDatabaseCreditPurchasesKey = "kinic.pending-database-credit-purchases.v1"
     private let defaults: UserDefaults
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
@@ -83,6 +94,36 @@ struct SharedDefaultsStore: @unchecked Sendable {
                 return
             }
             defaults.set(data, forKey: Self.writableDatabasesKey)
+        }
+    }
+
+    var pendingDatabaseCreditPurchases: [PendingDatabaseCreditPurchase] {
+        get {
+            guard let data = defaults.data(forKey: Self.pendingDatabaseCreditPurchasesKey),
+                  let purchases = try? decoder.decode([PendingDatabaseCreditPurchase].self, from: data) else {
+                return []
+            }
+            return purchases
+        }
+        nonmutating set {
+            guard let data = try? encoder.encode(newValue) else {
+                defaults.removeObject(forKey: Self.pendingDatabaseCreditPurchasesKey)
+                return
+            }
+            defaults.set(data, forKey: Self.pendingDatabaseCreditPurchasesKey)
+        }
+    }
+
+    func upsertPendingDatabaseCreditPurchase(_ purchase: PendingDatabaseCreditPurchase) {
+        var purchases = pendingDatabaseCreditPurchases
+        purchases.removeAll { $0.appAccountToken == purchase.appAccountToken }
+        purchases.append(purchase)
+        pendingDatabaseCreditPurchases = purchases
+    }
+
+    func removePendingDatabaseCreditPurchase(appAccountToken: String) {
+        pendingDatabaseCreditPurchases = pendingDatabaseCreditPurchases.filter {
+            $0.appAccountToken != appAccountToken
         }
     }
 

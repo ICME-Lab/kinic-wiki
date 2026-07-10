@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "types": ["node"],
+    "typeRoots": ["../wiki-generator/node_modules/@types"],
+    "paths": {
+      "@icp-sdk/core": ["../wiki-generator/node_modules/@icp-sdk/core/lib/esm/index.d.ts"],
+      "@icp-sdk/core/*": ["../wiki-generator/node_modules/@icp-sdk/core/lib/esm/*/index.d.ts"]
+    },
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": ["worker-configuration.d.ts", "src/**/*.ts", "src/**/*.d.ts"]
+}

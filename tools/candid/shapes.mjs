@@ -32,7 +32,8 @@ export const expectedTypes = {
       min_update_cycles: "nat64",
       top_up: "CyclesTopUpConfig",
       kinic_ledger_canister_id: "text",
-      billing_authority_id: "text"
+      billing_authority_id: "text",
+      iap_authority_id: "text"
     }
   },
   CyclesBillingConfigUpdate: {
@@ -40,7 +41,8 @@ export const expectedTypes = {
     fields: {
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
-      top_up: "CyclesTopUpConfig"
+      top_up: "CyclesTopUpConfig",
+      iap_authority_id: "text"
     }
   },
   CyclesTopUpConfig: {
@@ -100,6 +102,17 @@ export const expectedTypes = {
       database_id: "text",
       payment_amount_e8s: "nat64",
       min_expected_cycles: "nat64"
+    }
+  },
+  DatabaseCyclesIapGrantRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      amount_cycles: "nat64",
+      external_payment_id: "text",
+      provider: "text",
+      product_id: "text",
+      purchaser_principal: "text"
     }
   },
   MarketCreateListingRequest: {
@@ -699,25 +712,25 @@ export const didTypeAliases = {
   ResultDeleteNode: "Result_5",
   ResultCyclesBillingConfig: "Result_9",
   ResultInitialFreeDatabaseGrantStatus: "Result_10",
-  ResultLinks: "Result_12",
-  ResultChildren: "Result_13",
-  ResultCyclesEntries: "Result_14",
-  ResultCyclesPendingPurchases: "Result_15",
-  ResultMembers: "Result_16",
-  ResultDatabases: "Result_17",
-  ResultNat64: "Result_19",
-  ResultMarketListing: "Result_20",
-  ResultMarketListingDetail: "Result_21",
-  ResultMarketEntitlementPage: "Result_22",
-  ResultMarketListings: "Result_23",
-  ResultMarketListingPage: "Result_24",
-  ResultMarketOrderPage: "Result_25",
-  ResultMarketPurchasePreview: "Result_26",
-  ResultMarketOrder: "Result_27",
-  ResultMemoryManifest: "Result_28",
-  ResultMkdirNode: "Result_29",
-  ResultMoveNode: "Result_30",
-  ResultCyclesPurchase: "Result_31",
+  ResultCyclesPurchase: "Result_12",
+  ResultLinks: "Result_13",
+  ResultChildren: "Result_14",
+  ResultCyclesEntries: "Result_15",
+  ResultCyclesPendingPurchases: "Result_16",
+  ResultMembers: "Result_17",
+  ResultDatabases: "Result_18",
+  ResultNat64: "Result_20",
+  ResultMarketListing: "Result_21",
+  ResultMarketListingDetail: "Result_22",
+  ResultMarketEntitlementPage: "Result_23",
+  ResultMarketListings: "Result_24",
+  ResultMarketListingPage: "Result_25",
+  ResultMarketOrderPage: "Result_26",
+  ResultMarketPurchasePreview: "Result_27",
+  ResultMarketOrder: "Result_28",
+  ResultMemoryManifest: "Result_29",
+  ResultMkdirNode: "Result_30",
+  ResultMoveNode: "Result_31",
   ResultQueryContext: "Result_32",
   ResultIndexSqlJsonQuery: "Result_33",
   ResultNode: "Result_34",
@@ -749,6 +762,7 @@ export const expectedMethods = {
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   get_initial_free_database_grant_status: { input: [], output: "ResultInitialFreeDatabaseGrantStatus", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
+  grant_database_cycles_from_iap: { input: ["DatabaseCyclesIapGrantRequest"], output: "ResultCyclesPurchase", mode: "update" },
   update_database_metadata: { input: ["UpdateDatabaseMetadataRequest"], output: "ResultDatabaseMetadata", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },

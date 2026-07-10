@@ -240,6 +240,7 @@ fn explicit_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
         cycles_per_kinic: 1_000,
         min_update_cycles: 1_000_000,
         top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
@@ -436,6 +437,7 @@ fn cycles_top_up_skips_when_disabled() {
             .expect("service should be installed")
             .update_cycles_billing_config(
                 CyclesBillingConfigUpdate {
+                    iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                     cycles_per_kinic: 1_000,
                     min_update_cycles: 1,
                     top_up: test_cycles_top_up_config(false, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
@@ -762,6 +764,7 @@ fn update_cycles_billing_config_accepts_record_argument() {
     let _caller = AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
 
     update_cycles_billing_config(CyclesBillingConfigUpdate {
+        iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
         cycles_per_kinic: 469_000_000_000,
         min_update_cycles: 2_000_000,
         top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
@@ -1048,6 +1051,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
             .expect("service should be installed")
             .update_cycles_billing_config(
                 CyclesBillingConfigUpdate {
+                    iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                     cycles_per_kinic: 100_000_000,
                     min_update_cycles: 1,
                     top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
@@ -1086,6 +1090,7 @@ fn purchase_database_cycles_uses_current_config_amount() {
             .expect("service should be installed")
             .update_cycles_billing_config(
                 CyclesBillingConfigUpdate {
+                    iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                     cycles_per_kinic: 234_500_000_000,
                     min_update_cycles: 2,
                     top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
@@ -1800,6 +1805,7 @@ fn install_low_balance_default_service() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
+                iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 3_000_000_000,
                 top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),

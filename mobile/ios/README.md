@@ -16,7 +16,7 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
-- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
+- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. iOS App Store IAP can activate a pending DB or top up an owner-managed active DB. KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
 
@@ -54,6 +54,13 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 ## Runtime target
 
 iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
+
+The app reads Payment Worker and StoreKit settings from the same xcconfig:
+
+- `KINIC_PAYMENT_BASE_URL`: Payment Worker origin, default `https://payment.kinic.xyz`
+- `KINIC_IAP_PRODUCT_IDS`: comma-separated consumable credit pack product IDs
+
+Purchase flow: create DB first, keep it `pending` when no free grant applies, create a Payment Worker purchase intent, pass its `appAccountToken` to StoreKit 2, post `{ databaseId, purchaserPrincipal, transactionJWS }` to `/iap/activate-database`, finish the StoreKit transaction only after the worker returns `fulfilled`.
 
 ## Verification
 
