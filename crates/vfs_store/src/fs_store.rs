@@ -1132,11 +1132,13 @@ fn has_allowed_changes_after_revision(
     }
     sql.push_str(" ORDER BY path ASC");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    let mut rows = stmt
-        .query(crate::sqlite::params_from_values(&values))
-        .map_err(|error| error.to_string())?;
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let path = crate::sqlite::row_get::<String>(row, 0).map_err(|error| error.to_string())?;
+    let paths = crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| crate::sqlite::row_get::<String>(row, 0),
+    )
+    .map_err(|error| error.to_string())?;
+    for path in paths {
         if allow_path(&path) {
             return Ok(true);
         }
