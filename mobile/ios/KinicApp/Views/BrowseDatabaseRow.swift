@@ -26,8 +26,11 @@ struct BrowseDatabaseRow: View {
 
                     Spacer(minLength: 8)
 
-                    if isPublicReadable || isPurchased {
+                    if database.status == .pending || isPublicReadable || isPurchased {
                         HStack(spacing: 6) {
+                            if database.status == .pending {
+                                browseBadge("Pending")
+                            }
                             if isPublicReadable {
                                 browseBadge("Public")
                             }

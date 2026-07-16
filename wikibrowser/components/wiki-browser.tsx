@@ -2,32 +2,28 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import Image from "next/image";
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Settings, Share2, Trash2, Wallet, X } from "lucide-react";
+import type { FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useAppPathname, useAppSearchParams } from "@/lib/app-router";
+import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
-import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
-import { SourceCapturePanel } from "@/components/source-capture-panel";
-import { QueryPanel } from "@/components/query-panel";
+import { GraphPanel } from "@/components/graph-panel";
+import { SearchPanel } from "@/components/search-panel";
 import { PanelHeader } from "@/components/panel";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { WikiNavigationLink, WikiNavigationProvider, useWikiNavigation } from "@/components/wiki-navigation";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
+import { databaseCyclesDisabledReason } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
+import { hrefForCanonicalDatabaseRoute, hrefForPath, parentPath, parseWikiRoute } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
-import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
-import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
-import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
+import { parseSearchOptions } from "@/lib/search-options";
+import { databaseRouteBase } from "@/lib/share-links";
+import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
-import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
+import { folderIndexPath, isReservedFolderIndexName } from "@/lib/folder-index";
+import { wikiSeoTitle } from "@/lib/wiki-seo";
 import {
   errorHint,
   errorMessage,
@@ -38,7 +34,6 @@ import {
   parseModeTab,
   readIdentityMode as resolveReadIdentityMode,
   ApiError,
-  STORE_ROOT_PATHS,
   type ModeTab,
   type PathLoadState,
   type ViewMode
@@ -48,17 +43,8 @@ import { ExplorerActionError, ExplorerCreateForm, ExplorerHeaderActions, Explore
 import { TopBar, databaseListWarning, mergeDatabaseSummaries, withCurrentDatabase } from "@/components/wiki-browser/top-bar";
 const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
-const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
 const EMPTY_DATABASE_SUMMARIES: DatabaseSummary[] = [];
 const EMPTY_PUBLIC_DATABASE_IDS: ReadonlySet<string> = new Set<string>();
-const GraphPanel = dynamic(() => import("@/components/graph-panel").then((module) => module.GraphPanel), {
-  ssr: false,
-  loading: () => <p className="min-h-0 flex-1 p-5 text-sm text-muted">Loading graph view...</p>
-});
-const SearchPanel = dynamic(() => import("@/components/search-panel").then((module) => module.SearchPanel), {
-  ssr: false,
-  loading: () => <p className="min-h-0 flex-1 p-5 text-sm text-muted">Loading search...</p>
-});
 
 type BrowserLoadState<T> = PathLoadState<T> & {
   requestKey: string;
@@ -76,11 +62,19 @@ type DatabaseDirectoryState = {
 };
 
 export function WikiBrowser() {
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  return (
+    <WikiNavigationProvider>
+      <WikiBrowserContent />
+    </WikiNavigationProvider>
+  );
+}
+
+function WikiBrowserContent() {
+  const pathname = useAppPathname();
+  const searchParams = useAppSearchParams();
+  const { navigate, setDirty } = useWikiNavigation();
   const routeState = useMemo(() => parseWikiRoute(pathname), [pathname]);
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const databaseId = routeState.databaseId ?? "";
   const isSearchPage = useMemo(() => isBrowserSearchPathname(canisterId, databaseId, pathname), [canisterId, databaseId, pathname]);
   const isGraphPage = useMemo(() => isBrowserGraphPathname(canisterId, databaseId, pathname), [canisterId, databaseId, pathname]);
@@ -236,8 +230,8 @@ export function WikiBrowser() {
 
   useEffect(() => {
     if (!canonicalRouteHref) return;
-    router.replace(canonicalRouteHref);
-  }, [canonicalRouteHref, router]);
+    navigate(canonicalRouteHref, { guard: false, replace: true });
+  }, [canonicalRouteHref, navigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -416,7 +410,11 @@ export function WikiBrowser() {
   const noteRole = inferNoteRole(selectedPath);
   const authPrompt = authPromptMode(readIdentity, currentNode.error || currentChildren.error);
   const activeEditState = view === "edit" ? editState : EMPTY_EDIT_STATE;
-  const canLeaveDirtyEdit = useCallback(() => !activeEditState.dirty || window.confirm(UNSAVED_MARKDOWN_MESSAGE), [activeEditState.dirty]);
+  useLayoutEffect(() => {
+    setDirty(activeEditState.dirty);
+    return () => setDirty(false);
+  }, [activeEditState.dirty, setDirty]);
+  const canLeaveDirtyEdit = useCallback(() => !activeEditState.dirty || window.confirm("You have unsaved Markdown changes. Leave edit mode?"), [activeEditState.dirty]);
   const guardedLogout = useCallback(() => {
     if (canLeaveDirtyEdit()) {
       void logout();
@@ -424,6 +422,17 @@ export function WikiBrowser() {
   }, [canLeaveDirtyEdit, logout]);
   const databaseOptions = useMemo(() => withCurrentDatabase(databases, databaseId), [databaseId, databases]);
   const currentDatabase = useMemo(() => databaseOptions.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databaseOptions]);
+  useEffect(() => {
+    const databaseTitle = currentDatabase?.metadata.name.trim() || databaseId || "Kinic Wiki";
+    const isToolPage = isSearchPage || isGraphPage || isHelpPage;
+    const title = isToolPage
+      ? `Kinic Wiki: ${databaseTitle}`
+      : wikiSeoTitle(databaseTitle, selectedPath, currentFolderIndexNode.data ?? currentNode.data);
+    const canonicalHref = isToolPage
+      ? databaseRouteBase(databaseId)
+      : hrefForPath(canisterId, databaseId, selectedPath);
+    updateClientDocumentMetadata(title, canonicalHref);
+  }, [canisterId, currentDatabase?.metadata.name, currentFolderIndexNode.data, currentNode.data, databaseId, isGraphPage, isHelpPage, isSearchPage, selectedPath]);
   const currentDatabaseCycleReason = useMemo(
     () => readIdentity && currentDatabaseRole ? databaseCyclesDisabledReason(currentDatabase, cyclesConfig) : null,
     [cyclesConfig, currentDatabase, currentDatabaseRole, readIdentity]
@@ -477,9 +486,9 @@ export function WikiBrowser() {
     });
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
-    router.replace(hrefForPath(canisterId, databaseId, nextPath, "edit", tab));
+    navigate(hrefForPath(canisterId, databaseId, nextPath, "edit", tab), { guard: false, replace: true });
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, navigate, readIdentity, setEditState, tab]);
   const createFolderNode = useCallback(async (directoryPath: string, folderName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (!readIdentity) throw new Error("Login with Internet Identity to create folders.");
@@ -493,9 +502,9 @@ export function WikiBrowser() {
     });
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
-    router.replace(hrefForPath(canisterId, databaseId, nextPath, undefined, tab));
+    navigate(hrefForPath(canisterId, databaseId, nextPath, undefined, tab), { guard: false, replace: true });
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, navigate, readIdentity, setEditState, tab]);
   const renameExplorerNode = useCallback(async (target: ChildNode, nextName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (!readIdentity) throw new Error("Login with Internet Identity to rename nodes.");
@@ -517,9 +526,9 @@ export function WikiBrowser() {
     });
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
-    router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab));
+    navigate(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab), { guard: false, replace: true });
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, navigate, readIdentity, setEditState, tab, view]);
   const moveExplorerNode = useCallback(async (target: ChildNode, targetDirectory: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (!readIdentity) throw new Error("Login with Internet Identity to move nodes.");
@@ -539,9 +548,9 @@ export function WikiBrowser() {
     });
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
-    router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab));
+    navigate(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab), { guard: false, replace: true });
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, navigate, readIdentity, setEditState, tab, view]);
   const deleteExplorerNode = useCallback(async (target: ChildNode) => {
     if (!canLeaveDirtyEdit()) return false;
     if (!readIdentity) throw new Error("Login with Internet Identity to delete nodes.");
@@ -571,10 +580,10 @@ export function WikiBrowser() {
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
     if (selectedPath === target.path) {
-      router.replace(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Knowledge", undefined, tab));
+      navigate(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Knowledge", undefined, tab), { guard: false, replace: true });
     }
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readPrincipal, router, selectedPath, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, navigate, readIdentity, readPrincipal, selectedPath, setEditState, tab]);
 
   async function submitExplorerCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -793,7 +802,7 @@ export function WikiBrowser() {
                   if (nextView !== "edit" && !canLeaveDirtyEdit()) {
                     return;
                   }
-                  router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
+                  navigate(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab), { guard: false, replace: true });
                 }}
                 isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
                 canEditDirectory={currentNode.data?.kind === "folder"}
@@ -815,7 +824,6 @@ export function WikiBrowser() {
                 onNodeSaved={refreshSelectedNodeContext}
                 onFolderIndexSaved={refreshSelectedFolderIndex}
                 onEditStateChange={setEditState}
-                tab={tab}
               />
             </>
           )}
@@ -893,13 +901,13 @@ function ModeTabs({
     <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
       <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-[11px]">
         {SIDEBAR_TABS.map((value) => (
-          <Link
+          <WikiNavigationLink
             key={value}
             href={hrefForPath(canisterId, databaseId, selectedPath, undefined, value)}
             className={`rounded-xl px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-white hover:text-accentText"}`}
           >
             {tabLabel(value)}
-          </Link>
+          </WikiNavigationLink>
         ))}
       </div>
     </nav>
@@ -916,6 +924,22 @@ function tabLabel(tab: ModeTab): string {
   if (tab === "query") return "query";
   if (tab === "source-capture") return "capture";
   return tab;
+}
+
+function updateClientDocumentMetadata(title: string, canonicalHref: string): void {
+  document.title = title;
+  const canonicalUrl = new URL(canonicalHref, window.location.origin).href;
+  const canonicals = document.querySelectorAll<HTMLLinkElement>('link[rel="canonical"]');
+  if (canonicals.length === 0) {
+    const canonical = document.createElement("link");
+    canonical.rel = "canonical";
+    canonical.href = canonicalUrl;
+    document.head.append(canonical);
+    return;
+  }
+  canonicals.forEach((canonical) => {
+    canonical.href = canonicalUrl;
+  });
 }
 
 function authPromptMode(readIdentity: Identity | null, loadError: string | null): "private" | null {
@@ -997,10 +1021,10 @@ function looksLikeFilePath(path: string): boolean {
 
 function validateCanisterText(canisterId: string): string | null {
   if (!canisterId) {
-    return "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured";
+    return "VITE_KINIC_WIKI_CANISTER_ID is not configured";
   }
   if (!/^[a-z0-9-]+$/i.test(canisterId)) {
-    return "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID contains unsupported characters";
+    return "VITE_KINIC_WIKI_CANISTER_ID contains unsupported characters";
   }
   return null;
 }

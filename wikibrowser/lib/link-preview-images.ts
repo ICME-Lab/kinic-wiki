@@ -42,30 +42,11 @@ export type LinkPreviewQueue = {
   send: (message: LinkPreviewQueueMessage) => Promise<unknown>;
 };
 
-type LinkPreviewRuntime = {
-  bucket: LinkPreviewImageBucket | null;
-  queue: LinkPreviewQueue | null;
-  canisterId: string;
-};
-
 export type LinkPreviewReadOptions = {
   queue?: LinkPreviewQueue | null;
   canisterId?: string;
   nowMs?: number;
 };
-
-type CloudflareContextModule = {
-  getCloudflareContext: (options: { async: true }) => Promise<{ env: CloudflareEnv }>;
-};
-
-declare global {
-  interface CloudflareEnv {
-    LINK_PREVIEW_IMAGES?: LinkPreviewImageBucket;
-    LINK_PREVIEW_QUEUE?: LinkPreviewQueue;
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID?: string;
-    KINIC_WIKI_CANISTER_ID?: string;
-  }
-}
 
 export function databaseLinkPreviewImageKey(databaseId: string): string {
   return `db-link-preview/v1/${encodeURIComponent(databaseId.trim())}.png`;
@@ -75,24 +56,6 @@ export function pendingDatabaseLinkPreviewImageKey(databaseId: string): string {
   return `db-link-preview/pending/v1/${encodeURIComponent(databaseId.trim())}.json`;
 }
 
-export async function linkPreviewImageBucket(): Promise<LinkPreviewImageBucket | null> {
-  return (await linkPreviewRuntime())?.bucket ?? null;
-}
-
-async function linkPreviewRuntime(): Promise<LinkPreviewRuntime | null> {
-  try {
-    const cloudflare: CloudflareContextModule = await import("@opennextjs/cloudflare");
-    const context = await cloudflare.getCloudflareContext({ async: true });
-    return {
-      bucket: context.env.LINK_PREVIEW_IMAGES ?? null,
-      queue: context.env.LINK_PREVIEW_QUEUE ?? null,
-      canisterId: context.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? context.env.KINIC_WIKI_CANISTER_ID ?? ""
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function readCachedDatabaseLinkPreviewImage(
   request: Request,
   databaseId: string,
@@ -100,14 +63,13 @@ export async function readCachedDatabaseLinkPreviewImage(
   bucket?: LinkPreviewImageBucket | null,
   options: LinkPreviewReadOptions = {}
 ): Promise<Response> {
-  const runtime = bucket === undefined ? await linkPreviewRuntime() : null;
-  const store = bucket === undefined ? (runtime?.bucket ?? null) : bucket;
+  const store = bucket ?? null;
   if (!store) return temporaryStaticImageRedirect(request, fallbackPath);
   const object = await store.get(databaseLinkPreviewImageKey(databaseId));
   if (!object?.body) {
     await bestEffortEnqueueDatabaseLinkPreview(store, databaseId, {
-      queue: options.queue ?? runtime?.queue ?? null,
-      canisterId: options.canisterId ?? runtime?.canisterId ?? "",
+      queue: options.queue ?? null,
+      canisterId: options.canisterId ?? "",
       nowMs: options.nowMs
     });
     return temporaryStaticImageRedirect(request, fallbackPath);

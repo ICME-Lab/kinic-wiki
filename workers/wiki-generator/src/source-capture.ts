@@ -5,6 +5,7 @@ import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
+import { parseOutputLanguage } from "./output-language.js";
 import { validateSourceRootPath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
 import type { SourceCaptureRequest, SourceCaptureTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
@@ -79,7 +80,8 @@ export function parseSourceCaptureRequest(node: WikiNode): SourceCaptureRequest 
   if (document.fields.schema_version !== "1") return null;
   const status = sourceCaptureStatus(document.fields.status);
   const url = document.fields.url;
-  if (!status || !url) return null;
+  const outputLanguage = parseOutputLanguage(document.fields.output_language);
+  if (!status || !url || !outputLanguage) return null;
   return {
     path: node.path,
     etag: node.etag,
@@ -87,6 +89,7 @@ export function parseSourceCaptureRequest(node: WikiNode): SourceCaptureRequest 
     url,
     requestedBy: document.fields.requested_by ?? "",
     requestedAt: document.fields.requested_at ?? "",
+    outputLanguage,
     claimedAt: document.fields.claimed_at ?? null,
     sourcePath: document.fields.source_path,
     targetPath: document.fields.target_path,
@@ -108,18 +111,34 @@ export async function processSourceCaptureRequest(
   request: SourceCaptureRequest,
   sessionNonce: string
 ): Promise<void> {
+  await processAuthorizedSourceCaptureRequest(env, vfs, config, databaseId, request, {
+    kind: "session",
+    nonce: sessionNonce
+  });
+}
+
+type SourceCaptureAuthorization = { kind: "session"; nonce: string };
+
+async function processAuthorizedSourceCaptureRequest(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  config: WorkerConfig,
+  databaseId: string,
+  request: SourceCaptureRequest,
+  authorization: SourceCaptureAuthorization
+): Promise<void> {
   let current: SourceCaptureRequest | null = request;
   try {
     current = await claimSourceCaptureRequest(vfs, databaseId, request);
     if (!current) return;
-    if (!sessionNonce) {
+    if (!authorization.nonce) {
       await bestEffortWriteRequestState(vfs, databaseId, current, { status: "failed", targetPath: null, error: "sessionNonce is required" });
       return;
     }
     let sourceAck: WriteNodeAck | null = null;
     if (current.status === "fetching") {
       try {
-        await vfs.checkSourceCaptureTriggerSession(databaseId, current.path, sessionNonce);
+        await vfs.checkSourceCaptureTriggerSession(databaseId, current.path, authorization.nonce);
       } catch (error) {
         await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", targetPath: null, error: errorMessage(error) });
         return;
@@ -140,7 +159,8 @@ export async function processSourceCaptureRequest(
         sourcePath: sourceAck.path,
         sourceEtag: sourceAck.etag,
         requestPath: current.path,
-        sessionNonce
+        outputLanguage: current.outputLanguage,
+        sessionNonce: authorization.nonce
       });
     } catch (error) {
       await writeRequestState(vfs, databaseId, current, {
@@ -153,6 +173,14 @@ export async function processSourceCaptureRequest(
     if (!queued) {
       const job = await loadJob(env.DB, databaseId, sourceAck.path);
       if (job?.status === "completed") {
+        if (!job.target_path) {
+          await writeRequestState(vfs, databaseId, current, {
+            status: "failed",
+            targetPath: null,
+            error: "completed source generation job is missing target_path"
+          });
+          return;
+        }
         await writeRequestState(vfs, databaseId, current, { status: "completed", targetPath: job.target_path, error: null });
         return;
       }
@@ -160,7 +188,7 @@ export async function processSourceCaptureRequest(
     await writeRequestState(vfs, databaseId, current, { status: "generating", error: null });
   } catch (error) {
     if (isEtagMismatch(error)) {
-      await reprocessLatestIfRecoverable(env, vfs, config, databaseId, request.path, sessionNonce);
+      await reprocessLatestIfRecoverable(env, vfs, config, databaseId, request.path, authorization);
       return;
     }
     await writeLatestRequestState(vfs, databaseId, (current ?? request).path, { status: "failed", targetPath: null, error: errorMessage(error) });
@@ -281,6 +309,7 @@ async function writeRequestState(
     url: request.url,
     requested_by: request.requestedBy,
     requested_at: request.requestedAt,
+    output_language: request.outputLanguage,
     claimed_at: updates.claimedAt !== undefined ? updates.claimedAt : updates.status === "fetching" ? new Date().toISOString() : request.claimedAt,
     source_path: updates.sourcePath === undefined ? request.sourcePath : updates.sourcePath,
     target_path: updates.targetPath === undefined ? request.targetPath : updates.targetPath,
@@ -304,6 +333,7 @@ async function writeRequestState(
     url: request.url,
     requestedBy: request.requestedBy,
     requestedAt: request.requestedAt,
+    outputLanguage: request.outputLanguage,
     claimedAt: fields.claimed_at,
     sourcePath: fields.source_path,
     targetPath: fields.target_path,
@@ -341,11 +371,11 @@ async function reprocessLatestIfRecoverable(
   config: WorkerConfig,
   databaseId: string,
   requestPath: string,
-  sessionNonce: string
+  authorization: SourceCaptureAuthorization
 ): Promise<void> {
   const latest = await readSourceCaptureRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status !== "source_written") return;
-  await processSourceCaptureRequest(env, vfs, config, databaseId, latest, sessionNonce);
+  await processAuthorizedSourceCaptureRequest(env, vfs, config, databaseId, latest, authorization);
 }
 
 async function writeLatestRequestState(
@@ -502,6 +532,7 @@ function requestMetadataJson(request: SourceCaptureRequest, fields: Record<strin
   metadata.request_type = "source_capture";
   metadata.url = request.url;
   metadata.status = fields.status;
+  metadata.output_language = request.outputLanguage;
   metadata.source_path = fields.source_path;
   metadata.target_path = fields.target_path;
   return JSON.stringify(metadata);

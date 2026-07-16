@@ -6,10 +6,10 @@ import Foundation
 
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
-    private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
     private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
     private static let showPublicBrowseDatabasesKey = "kinic.browse-show-public-databases.v1"
     private static let showPurchasedBrowseDatabasesKey = "kinic.browse-show-purchased-databases.v1"
+    private static let wikiOutputLanguageKey = "kinic.wiki-output-language.v1"
     private static let writableDatabasesKey = "kinic.writable-databases.v1"
     private let defaults: UserDefaults
     private let decoder = JSONDecoder()
@@ -29,15 +29,6 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.databaseIdKey)
-        }
-    }
-
-    var browseDatabaseId: String {
-        get {
-            defaults.string(forKey: Self.browseDatabaseIdKey) ?? ""
-        }
-        nonmutating set {
-            defaults.set(newValue, forKey: Self.browseDatabaseIdKey)
         }
     }
 
@@ -65,6 +56,19 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.showPurchasedBrowseDatabasesKey)
+        }
+    }
+
+    var wikiOutputLanguage: WikiOutputLanguage {
+        get {
+            guard let value = defaults.string(forKey: Self.wikiOutputLanguageKey),
+                  let language = WikiOutputLanguage(rawValue: value) else {
+                return .english
+            }
+            return language
+        }
+        nonmutating set {
+            defaults.set(newValue.rawValue, forKey: Self.wikiOutputLanguageKey)
         }
     }
 

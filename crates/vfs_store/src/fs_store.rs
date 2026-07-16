@@ -47,9 +47,8 @@ use crate::{
     },
     fs_search::{
         SearchCandidate, build_previews_for_hits, build_search_query_plan, finalize_hits,
-        load_content_substring_candidates, load_content_substring_candidates_filtered,
-        load_path_candidates, load_path_candidates_filtered, load_ranked_fts_candidates,
-        load_ranked_fts_candidates_filtered, path_match_score, rerank_candidates, sort_candidates,
+        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
+        path_match_score, rerank_candidates, sort_candidates,
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
@@ -983,6 +982,37 @@ fn path_in_prefix(path: &str, prefix: &str) -> bool {
     prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
+fn page_nodes_by_limit_and_budget(
+    nodes: &mut Vec<Node>,
+    limit: i64,
+) -> Result<Option<String>, String> {
+    let limit_had_more = nodes.len() > limit as usize;
+    if limit_had_more {
+        nodes.truncate(limit as usize);
+    }
+    let mut used_bytes = sync_response_base_bytes("");
+    let mut keep_len = 0_usize;
+    for node in nodes.iter() {
+        let item_bytes = estimated_node_response_bytes(node);
+        if !sync_item_fits_budget(used_bytes, item_bytes) {
+            if keep_len == 0 {
+                return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
+            }
+            break;
+        }
+        used_bytes = used_bytes.saturating_add(item_bytes);
+        keep_len += 1;
+    }
+    let budget_had_more = keep_len < nodes.len();
+    if budget_had_more {
+        nodes.truncate(keep_len);
+    }
+    if limit_had_more || budget_had_more {
+        return Ok(nodes.last().map(PageCursorPath::cursor_path));
+    }
+    Ok(None)
+}
+
 fn sync_item_fits_budget(used_bytes: usize, item_bytes: usize) -> bool {
     used_bytes.saturating_add(item_bytes) <= SYNC_RESPONSE_BYTE_BUDGET
 }
@@ -1021,12 +1051,13 @@ impl PageCursorPath for String {
     }
 }
 
-fn load_snapshot_paths_page(
+fn load_snapshot_nodes_page(
     conn: &Connection,
     prefix: &str,
     cursor: Option<&str>,
+    snapshot_revision: i64,
     limit: i64,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<Node>, String> {
     let mut sql = String::from("SELECT path FROM fs_nodes WHERE 1 = 1");
     let mut values = Vec::new();
     if prefix != "/" {
@@ -1043,23 +1074,30 @@ fn load_snapshot_paths_page(
     sql.push_str(&format!(" ORDER BY path ASC LIMIT ?{index}"));
     values.push(crate::sqlite::types::Value::from(limit));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    crate::sqlite::query_map(
+    let paths = crate::sqlite::query_map(
         &mut stmt,
         crate::sqlite::params_from_values(&values),
         |row| crate::sqlite::row_get::<String>(row, 0),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    load_snapshot_nodes(conn, &paths, snapshot_revision)
 }
 
-fn load_snapshot_node(
+fn load_snapshot_nodes(
     conn: &Connection,
-    path: &str,
+    paths: &[String],
     snapshot_revision: i64,
-) -> Result<Node, String> {
-    if load_path_last_change_revision(conn, path)? > snapshot_revision {
-        return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+) -> Result<Vec<Node>, String> {
+    let mut nodes = Vec::with_capacity(paths.len());
+    for path in paths {
+        if load_path_last_change_revision(conn, path)? > snapshot_revision {
+            return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+        }
+        let node = load_node(conn, path)?
+            .ok_or_else(|| SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string())?;
+        nodes.push(node);
     }
-    load_node(conn, path)?.ok_or_else(|| SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string())
+    Ok(nodes)
 }
 
 fn load_changed_paths_page(
@@ -1115,35 +1153,6 @@ fn has_prefix_changes_after_revision(
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     crate::sqlite::statement_exists(&mut stmt, crate::sqlite::params_from_values(&values))
         .map_err(|error| error.to_string())
-}
-
-fn has_allowed_changes_after_revision(
-    conn: &Connection,
-    prefix: &str,
-    snapshot_revision: i64,
-    mut allow_path: impl FnMut(&str) -> bool,
-) -> Result<bool, String> {
-    let mut sql = String::from("SELECT DISTINCT path FROM fs_change_log WHERE revision > ?1");
-    let mut values = vec![crate::sqlite::types::Value::from(snapshot_revision)];
-    if prefix != "/" {
-        let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
-        sql.push_str(&scope_sql);
-        values.extend(scope_values);
-    }
-    sql.push_str(" ORDER BY path ASC");
-    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    let paths = crate::sqlite::query_map(
-        &mut stmt,
-        crate::sqlite::params_from_values(&values),
-        |row| crate::sqlite::row_get::<String>(row, 0),
-    )
-    .map_err(|error| error.to_string())?;
-    for path in paths {
-        if allow_path(&path) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn load_path_last_change_revision(conn: &Connection, path: &str) -> Result<i64, String> {

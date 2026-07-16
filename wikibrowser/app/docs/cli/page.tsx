@@ -1,11 +1,10 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { Bot, CheckCircle2, Database, Layers3, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki CLI",
   description: "Install and use kinic-vfs-cli from npm for Kinic Wiki database and Skill Registry workflows.",
   openGraph: {

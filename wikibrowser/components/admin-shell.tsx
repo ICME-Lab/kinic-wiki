@@ -4,8 +4,8 @@
 // What: renders the common navigation sidebar for admin-style pages.
 // Why: marketplace filters belong to marketplace content; cross-page navigation belongs to one shell.
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { AppLink as Link } from "@/components/app-link";
+import { useAppPathname } from "@/lib/app-router";
 import { type ReactNode, useState } from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { BookOpen, ChevronDown, FileText, LayoutDashboard, PanelLeft, PowerOff, Store, type LucideIcon, UserRound, Wallet } from "lucide-react";
@@ -41,7 +41,7 @@ const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
 ];
 
 export function AdminShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   if (!isAdminShellPath(pathname)) return <>{children}</>;
 
   const sidebar = <AdminSidebar key={pathname} pathname={pathname} />;

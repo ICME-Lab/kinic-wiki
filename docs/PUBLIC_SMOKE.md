@@ -49,8 +49,8 @@ Start the Browser with local env values:
 
 ```bash
 cd wikibrowser
-NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011 \
-NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID="$CANISTER_ID" \
+VITE_WIKI_IC_HOST=http://127.0.0.1:8011 \
+VITE_KINIC_WIKI_CANISTER_ID="$CANISTER_ID" \
 pnpm dev
 ```
 

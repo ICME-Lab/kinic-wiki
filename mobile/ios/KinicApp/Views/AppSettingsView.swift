@@ -7,12 +7,51 @@ import SwiftUI
 struct AppSettingsView: View {
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var didCopyPrincipal = false
+
+    private var account: InternetIdentityPresentation {
+        InternetIdentityPresentation(principal: model.isSignedIn ? model.principalText : nil)
+    }
 
     var body: some View {
         Form {
+            if let principal = account.principal {
+                Section("Account") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Principal")
+                            .font(.subheadline)
+
+                        Text(principal)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+
+                        Button(
+                            didCopyPrincipal ? "Principal copied" : "Copy principal",
+                            systemImage: didCopyPrincipal ? "checkmark" : "doc.on.doc",
+                            action: copyPrincipal
+                        )
+                        .labelStyle(.iconOnly)
+                    }
+                }
+            }
+
             Section("Appearance") {
                 Toggle("Dark Mode", isOn: $model.isDarkAppearanceEnabled)
                     .tint(KinicDesign.hotPink)
+            }
+
+            Section {
+                Picker("Output Language", selection: $model.wikiOutputLanguage) {
+                    ForEach(WikiOutputLanguage.allCases) { language in
+                        Text(language.displayName)
+                            .tag(language)
+                    }
+                }
+            } header: {
+                Text("Generation")
+            } footer: {
+                Text("New captures generate wiki pages in this language.")
             }
 
             Section("Browse") {
@@ -38,6 +77,14 @@ struct AppSettingsView: View {
     private func close() {
         model.setDarkAppearanceEnabled(model.isDarkAppearanceEnabled)
         dismiss()
+    }
+
+    private func copyPrincipal() {
+        guard let principal = account.principal else {
+            return
+        }
+        UIPasteboard.general.string = principal
+        didCopyPrincipal = true
     }
 }
 

@@ -332,7 +332,13 @@ final class ShareViewController: UIViewController {
     }
 
     private func updateSaveButton() {
-        saveButton.isEnabled = selectedDatabaseId != nil
+        guard selectedDatabaseId != nil else {
+            saveButton.isEnabled = false
+            saveButton.configuration?.title = "Save"
+            return
+        }
+        saveButton.isEnabled = true
+        saveButton.configuration?.title = "Save"
     }
 
     private func showResult(_ result: ShareCaptureResult) {
@@ -341,17 +347,8 @@ final class ShareViewController: UIViewController {
         refreshButton.isHidden = true
         saveButton.isHidden = true
         doneButton.isHidden = false
-        switch result {
-        case .saved:
-            titleLabel.text = "Capture started"
-            messageLabel.text = "KinicWiki is generating the source capture."
-        case let .queued(reason):
-            titleLabel.text = "Saved for later"
-            messageLabel.text = reason
-        case let .failed(message):
-            titleLabel.text = "Could not complete capture"
-            messageLabel.text = message
-        }
+        titleLabel.text = result.shareExtensionTitleText
+        messageLabel.text = result.shareExtensionMessageText
     }
 
     private func showFailure(_ error: Error) {
@@ -369,7 +366,7 @@ final class ShareViewController: UIViewController {
             return
         }
         settingsStore?.databaseId = selectedDatabaseId
-        let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.displayTitle ?? selectedDatabaseId
+        let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.shareSelectionTitleText ?? "Untitled database"
         titleLabel.text = "Saving to KinicWiki..."
         messageLabel.text = "Saving to \(databaseTitle)."
         activityIndicator.startAnimating()
@@ -424,13 +421,16 @@ extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
         let database = databases[indexPath.row]
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
         cell.textLabel?.font = .preferredFont(forTextStyle: .headline)
-        cell.textLabel?.text = database.displayTitle
+        cell.textLabel?.text = database.shareSelectionTitleText
         cell.detailTextLabel?.font = .preferredFont(forTextStyle: .footnote)
         cell.detailTextLabel?.textColor = KinicDesign.uiBodyGray
         cell.detailTextLabel?.numberOfLines = 2
-        cell.detailTextLabel?.text = "\(database.role.displayName) - \(database.databaseId)"
+        cell.detailTextLabel?.text = database.shareSelectionDetailText
         cell.tintColor = KinicDesign.uiHotPink
-        cell.accessoryType = database.databaseId == selectedDatabaseId ? .checkmark : .none
+        cell.imageView?.image = database.databaseId == selectedDatabaseId
+            ? UIImage(systemName: "checkmark.circle.fill")
+            : UIImage(systemName: "circle")
+        cell.imageView?.tintColor = KinicDesign.uiHotPink
         return cell
     }
 

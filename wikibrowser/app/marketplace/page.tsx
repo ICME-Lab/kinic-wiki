@@ -1,8 +1,7 @@
-import type { Metadata } from "next";
 import { Suspense } from "react";
 import { MarketplaceClient } from "./marketplace-client";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Marketplace",
   description: "Browse paid Kinic Wiki database access listings."
 };
@@ -10,7 +9,7 @@ export const metadata: Metadata = {
 export default function MarketplacePage() {
   return (
     <Suspense fallback={<MarketplaceLoadingState />}>
-      <MarketplaceClient canisterId={process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID || ""} />
+      <MarketplaceClient canisterId={import.meta.env.VITE_KINIC_WIKI_CANISTER_ID || ""} />
     </Suspense>
   );
 }

@@ -158,7 +158,7 @@ jobs:
         run: npm run lint
       - name: Run typecheck
         run: pnpm typecheck
-      - name: Build static export
+      - name: Build TanStack Start app
         run: pnpm build
       - name: Build Cloudflare Worker
         run: pnpm build:worker
@@ -250,6 +250,8 @@ jobs:
         run: pnpm typecheck
       - name: Build
         run: pnpm build
+      - name: Build Cloudflare Worker
+        run: pnpm build:worker
 
   rust-check:
     needs: changes

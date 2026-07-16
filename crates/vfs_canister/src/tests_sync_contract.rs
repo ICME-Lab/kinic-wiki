@@ -469,6 +469,27 @@ fn exported_candid_matches_checked_in_vfs_did() {
 }
 
 #[test]
+fn abandoned_source_capture_queries_are_not_public() {
+    let generated = super::candid_interface();
+    let checked_in = include_str!("../vfs.did");
+
+    for method in [
+        "list_my_source_capture_requests",
+        "get_my_source_capture_url_state",
+        "list_recoverable_source_capture_requests",
+    ] {
+        assert!(
+            !generated.contains(method),
+            "generated Candid exposes {method}"
+        );
+        assert!(
+            !checked_in.contains(method),
+            "checked-in Candid exposes {method}"
+        );
+    }
+}
+
+#[test]
 fn mkdir_node_request_type_is_fixed_at_interface_boundary() {
     let generated = super::candid_interface();
     let checked_in = include_str!("../vfs.did");

@@ -146,6 +146,7 @@ EOF
 
 printf 'Archiving %s %s (%s) for App Store Connect (%s)...\n' "$bundle_id" "$marketing_version" "$build_number" "$distribution"
 xcodebuild archive \
+  -quiet \
   -project "$project" \
   -scheme "$scheme" \
   -configuration "$configuration" \
@@ -172,6 +173,7 @@ extension_privacy="$archive_path/Products/Applications/KinicWikiApp.app/PlugIns/
 
 printf 'Uploading archive to TestFlight...\n'
 xcodebuild -exportArchive \
+  -quiet \
   -archivePath "$archive_path" \
   -exportPath "$export_path" \
   -exportOptionsPlist "$export_options" \

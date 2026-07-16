@@ -74,7 +74,7 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
       details: [
         {
           appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-          paths: ["/*"]
+          paths: ["NOT /cycles", "NOT /cycles/*", "/*"]
         }
       ]
     },
@@ -233,10 +233,10 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 
 await withEnv(
   {
-    NEXT_PUBLIC_ENABLE_LOCAL_II_E2E: "1",
-    NEXT_PUBLIC_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
-    NEXT_PUBLIC_WIKI_IC_HOST: "http://127.0.0.1:8011"
+    VITE_ENABLE_LOCAL_II_E2E: "1",
+    VITE_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
+    VITE_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    VITE_WIKI_IC_HOST: "http://127.0.0.1:8011"
   },
   async () => {
     const response = nativeAuthRouteModule.GET();
@@ -266,7 +266,7 @@ await withEnv({}, async () => {
 
 await withEnv(
   {
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
     KINIC_WIKI_GENERATOR_URL: "https://worker.example",
     KINIC_WIKI_WORKER_TOKEN: "secret-token"
   },
@@ -484,13 +484,19 @@ await withEnv(
   });
 }
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
+await withEnv({}, async () => {
+  const missingCanister = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
+  assert.equal(missingCanister.status, 503);
+  assert.match(await missingCanister.text(), /KINIC_WIKI_CANISTER_ID is not configured/);
+});
+
+await withEnv({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
   const missingKey = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
   assert.equal(missingKey.status, 503);
   assert.match(await missingKey.text(), /DEEPSEEK_API_KEY is not configured/);
 });
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY: "deepseek-key" }, async () => {
+await withEnv({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY: "deepseek-key" }, async () => {
   const forbidden = await queryAnswerRouteModule.POST(queryAnswerRequest("https://evil.example"));
   assert.equal(forbidden.status, 403);
   const localForbidden = await queryAnswerRouteModule.POST(queryAnswerRequest("http://localhost:3000"));
@@ -641,13 +647,13 @@ async function withMockFetch(handler, run) {
 
 async function withEnv(values, run) {
   const keys = [
-    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID",
+    "VITE_KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
-    "NEXT_PUBLIC_ENABLE_LOCAL_II_E2E",
-    "NEXT_PUBLIC_II_PROVIDER_URL",
-    "NEXT_PUBLIC_WIKI_IC_HOST",
+    "VITE_ENABLE_LOCAL_II_E2E",
+    "VITE_II_PROVIDER_URL",
+    "VITE_WIKI_IC_HOST",
     "DEEPSEEK_API_KEY",
     "KINIC_WIKI_WORKER_MODEL"
   ];

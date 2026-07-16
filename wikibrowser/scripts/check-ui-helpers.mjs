@@ -33,19 +33,19 @@ const {
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
-const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/routes/__root.tsx", import.meta.url), "utf8");
 const homePageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const adminRouteShellSource = readFileSync(new URL("../app/admin-route-shell.tsx", import.meta.url), "utf8");
 const marketplaceLayoutSource = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const marketplaceListingDetailSource = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
 const dashboardClientSource = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
-const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
+const databaseLayoutSource = ["../src/routes/db.$databaseId.tsx", "../app/db/[databaseId]/[[...segments]]/page.tsx"].map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
 const linkPreviewRegenerateRoutePath = new URL("../app/api/link-preview/regenerate/route.ts", import.meta.url);
 const linkPreviewImagePath = new URL("../app/link-preview-image.tsx", import.meta.url);
 const openGraphImagePath = new URL("../app/opengraph-image.tsx", import.meta.url);
 const twitterImagePath = new URL("../app/twitter-image.tsx", import.meta.url);
-const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image/route.ts", import.meta.url), "utf8");
-const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image/route.ts", import.meta.url), "utf8");
+const databaseOpenGraphImageSource = readFileSync(new URL("../src/routes/db.$databaseId.opengraph-image.ts", import.meta.url), "utf8");
+const databaseTwitterImageSource = readFileSync(new URL("../src/routes/db.$databaseId.twitter-image.ts", import.meta.url), "utf8");
 const linkPreviewGeneratorSource = readFileSync(new URL("./generate-link-preview-images.mjs", import.meta.url), "utf8");
 const sourceCapturePanelSource = readFileSync(new URL("../components/source-capture-panel.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
@@ -54,6 +54,7 @@ const markdownPreviewSource = readFileSync(new URL("../components/markdown-previ
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
 const wikiBrowserFiles = [
+  "../components/wiki-navigation.tsx",
   "../components/wiki-browser.tsx",
   "../components/wiki-browser/explorer-pane.tsx",
   "../components/wiki-browser/top-bar.tsx"
@@ -101,7 +102,7 @@ assert.match(wikiBrowserSource, /lg:col-start-3 lg:row-start-1 lg:justify-end/);
 assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline"/);
 assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
 assert.match(wikiBrowserSource, /hrefForCanonicalDatabaseRoute\(pathname, searchParams\.toString\(\)\)/);
-assert.match(wikiBrowserSource, /router\.replace\(canonicalRouteHref\)/);
+assert.match(wikiBrowserSource, /navigate\(canonicalRouteHref, \{ guard: false, replace: true \}\)/);
 assert.doesNotMatch(wikiBrowserSource, /publicDatabasesLoaded && Boolean\(readIdentity\) && memberDatabasesLoaded/);
 assert.doesNotMatch(wikiBrowserSource, /router\.replace\("\/dashboard"\)/);
 assert.match(wikiBrowserSource, /<Network size=\{18\} aria-hidden \/>/);
@@ -145,11 +146,9 @@ assert.match(inspectorSource, /label="database_id"/);
 assert.match(inspectorSource, /label="created_at"/);
 assert.match(inspectorSource, /label="metadata_json"/);
 assert.match(layoutSource, /title: "Kinic Wiki AI Memory"/);
-assert.match(layoutSource, /description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management\."/);
-assert.match(layoutSource, /metadataBase: new URL\("https:\/\/wiki\.kinic\.xyz"\)/);
-assert.match(layoutSource, /openGraph:/);
-assert.match(layoutSource, /twitter:/);
-assert.match(layoutSource, /card: "summary_large_image"/);
+assert.match(layoutSource, /content: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management\."/);
+assert.match(layoutSource, /property: "og:title"/);
+assert.match(layoutSource, /name: "twitter:card", content: "summary_large_image"/);
 assert.match(homePageSource, /url: "\/opengraph-image\.png"/);
 assert.match(homePageSource, /width: 1200/);
 assert.match(homePageSource, /height: 630/);
@@ -172,24 +171,22 @@ assert.equal(existsSync(linkPreviewRegenerateRoutePath), false);
 assert.equal(existsSync(linkPreviewImagePath), false);
 assert.equal(existsSync(openGraphImagePath), false);
 assert.equal(existsSync(twitterImagePath), false);
-assert.match(linkPreviewGeneratorSource, /next\/og\.js/);
+assert.match(linkPreviewGeneratorSource, /@vercel\/og/);
 assert.match(linkPreviewGeneratorSource, /ImageResponse/);
 assert.match(linkPreviewGeneratorSource, /wranglerObjectPutArgs/);
 assert.doesNotMatch(`${homePageSource}\n${databaseOpenGraphImageSource}\n${databaseTwitterImageSource}`, /next\/og|ImageResponse/);
-assert.match(databaseLayoutSource, /generateMetadata/);
-assert.match(databaseLayoutSource, /loadDatabasePreview/);
-assert.match(databaseLayoutSource, /databasePreviewTitle/);
+assert.match(databaseLayoutSource, /wikiDatabaseHead/);
 assert.match(databaseLayoutSource, /<div className="wiki-seo-region">/);
 assert.doesNotMatch(databaseLayoutSource, /aria-hidden="true" className="wiki-seo-region"|inert/);
 assert.match(globalsCss, /\.wiki-seo-region\s*\{\s*display: block;/);
 assert.match(globalsCss, /@media \(scripting: enabled\)/);
 assert.doesNotMatch(globalsCss, /\.wiki-seo-region\s*\{[^}]*left: -10000px|\.wiki-seo-region\s*\{[^}]*width: 1px|\.wiki-seo-region\s*\{[^}]*height: 1px/);
-assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/opengraph-image`/);
-assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/twitter-image`/);
-assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/opengraph-image\.png"\)/);
+assert.match(databaseLayoutSource, /`\$\{databaseRouteBase\(databaseId\)\}\/opengraph-image`/);
+assert.match(databaseLayoutSource, /`\$\{databaseRouteBase\(databaseId\)\}\/twitter-image`/);
+assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(params\.databaseId\), "\/opengraph-image\.png"/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
-assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/twitter-image\.png"\)/);
+assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(params\.databaseId\), "\/twitter-image\.png"/);
 assert.doesNotMatch(databaseTwitterImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseTwitterImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
 assert.deepEqual(

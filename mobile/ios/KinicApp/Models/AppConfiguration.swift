@@ -28,6 +28,21 @@ struct AppConfiguration: Equatable, Sendable {
         authOrigin.appending(path: "api/source-capture/trigger")
     }
 
+    func databaseFundingURL(databaseId: String) -> URL {
+        let cyclesURL = authOrigin.appending(path: "cycles")
+        guard var components = URLComponents(url: cyclesURL, resolvingAgainstBaseURL: false) else {
+            preconditionFailure("KINIC_AUTH_ORIGIN must be a valid absolute URL")
+        }
+        components.queryItems = [
+            URLQueryItem(name: "database_id", value: databaseId),
+            URLQueryItem(name: "status", value: DatabaseStatus.pending.rawValue)
+        ]
+        guard let url = components.url else {
+            preconditionFailure("Database funding URL must be representable")
+        }
+        return url
+    }
+
     static let preview = AppConfiguration(
         canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         apiBaseURL: URL(string: "https://icp0.io")!,

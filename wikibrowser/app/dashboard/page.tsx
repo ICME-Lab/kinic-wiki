@@ -1,9 +1,8 @@
-import type { Metadata } from "next";
 import { Suspense } from "react";
 import { DashboardHomeClient } from "./dashboard-home-client";
 import { AdminContent } from "@/components/admin-shell";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Database Dashboard",
   description: "Browse, create, fund, and manage Kinic Wiki canister databases.",
   openGraph: {

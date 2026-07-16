@@ -31,7 +31,14 @@ type VfsActor = {
   write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
 };
 
+const DEFAULT_WIKI_IC_HOST = "https://icp0.io";
 const actorCache = new Map<string, Promise<VfsActor>>();
+
+function wikiIcHost(): string {
+  const viteHost = import.meta.env?.VITE_WIKI_IC_HOST;
+  if (viteHost) return viteHost;
+  return typeof process !== "undefined" ? process.env.VITE_WIKI_IC_HOST ?? DEFAULT_WIKI_IC_HOST : DEFAULT_WIKI_IC_HOST;
+}
 
 export function validateCanisterId(canisterId: string): Principal | string {
   try {
@@ -120,7 +127,7 @@ export async function mkdirNodeAuthenticated(canisterId: string, identity: Ident
 
 async function createVfsActor(canisterId: string): Promise<VfsActor> {
   const principal = principalOrThrow(canisterId);
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const cacheKey = `${host}\n${canisterId}`;
   const cached = actorCache.get(cacheKey);
   if (cached) return cached;
@@ -131,7 +138,7 @@ async function createVfsActor(canisterId: string): Promise<VfsActor> {
 
 async function createAuthenticatedActor(canisterId: string, identity: Identity): Promise<VfsActor> {
   const principal = principalOrThrow(canisterId);
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const agent = HttpAgent.createSync({ host, identity });
   if (isLocalHost(host)) await agent.fetchRootKey();
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), { agent, canisterId: principal });
@@ -152,7 +159,7 @@ async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
     return await operation();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+    const host = wikiIcHost();
     const publicError = classifyApiError(error, host);
     throw new ApiError(publicError.error, 502, publicError.hint, publicError.code);
   }

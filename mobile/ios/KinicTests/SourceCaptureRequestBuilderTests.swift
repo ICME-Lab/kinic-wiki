@@ -23,7 +23,53 @@ struct SourceCaptureRequestBuilderTests {
         #expect(request.requestPath == "/Sources/source-capture-requests/1700000000000-00000000-0000-4000-8000-000000000000.md")
         #expect(request.content.contains("kind: kinic.source_capture_request"))
         #expect(request.content.contains("url: \"https:\\/\\/example.com\\/page\""))
-        #expect(request.metadataJson == "{\"request_type\":\"source_capture\",\"url\":\"https:\\/\\/example.com\\/page\"}")
+        #expect(request.content.contains("output_language: \"en\""))
+        #expect(request.outputLanguage == .english)
+        #expect(request.metadataJson == "{\"output_language\":\"en\",\"request_type\":\"source_capture\",\"url\":\"https:\\/\\/example.com\\/page\"}")
+    }
+
+    @Test
+    func includesSelectedOutputLanguage() throws {
+        let request = try SourceCaptureRequestBuilder.request(
+            url: URL(string: "https://example.com/page")!,
+            databaseId: "db_demo",
+            requestedBy: "aaaaa-aa",
+            outputLanguage: .japanese
+        )
+
+        #expect(request.outputLanguage == .japanese)
+        #expect(request.content.contains("output_language: \"ja\""))
+        #expect(request.metadataJson.contains("\"output_language\":\"ja\""))
+    }
+
+    @Test
+    func englishRequestMatchesLegacyNodeWithoutOutputLanguage() throws {
+        let request = try SourceCaptureRequestBuilder.request(
+            url: URL(string: "https://example.com/page")!,
+            databaseId: "db_demo",
+            requestedBy: "aaaaa-aa"
+        )
+        let legacyContent = request.content.replacingOccurrences(of: "\noutput_language: \"en\"\n", with: "\n")
+        let legacyMetadataJson = request.metadataJson.replacingOccurrences(of: "\"output_language\":\"en\",", with: "")
+        let existing = VFSNode(
+            path: request.requestPath,
+            kind: .file,
+            content: legacyContent,
+            metadataJson: legacyMetadataJson,
+            etag: "legacy-etag",
+            createdAt: 1,
+            updatedAt: 1
+        )
+
+        #expect(isSameSourceCaptureRequest(existing, request))
+        let japaneseRequest = try SourceCaptureRequestBuilder.request(
+            url: request.normalizedURL,
+            databaseId: request.databaseId,
+            requestedBy: "aaaaa-aa",
+            requestId: request.requestId,
+            outputLanguage: .japanese
+        )
+        #expect(!isSameSourceCaptureRequest(existing, japaneseRequest))
     }
 
     @Test

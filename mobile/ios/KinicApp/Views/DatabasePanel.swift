@@ -26,7 +26,7 @@ struct DatabasePanel: View {
             }
         } content: {
             VStack(alignment: .leading, spacing: 14) {
-                if model.databases.isEmpty {
+                if model.captureDatabaseCandidates.isEmpty {
                     ContentUnavailableView(
                         model.isSignedIn ? "No writable databases" : "Sign in to load databases",
                         systemImage: "externaldrive",
@@ -35,7 +35,7 @@ struct DatabasePanel: View {
                     .frame(maxWidth: .infinity)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.databases) { database in
+                        ForEach(model.captureDatabaseCandidates) { database in
                             databaseButton(database)
                         }
                     }
@@ -50,6 +50,13 @@ struct DatabasePanel: View {
                 onCreate: createDatabase
             )
             .presentationDetents([.medium])
+        }
+        .sheet(item: $model.pendingDatabaseActivation) { activation in
+            PendingDatabaseFundingSheet(
+                activation: activation,
+                onFundingPageReturned: model.startRefreshDatabases
+            )
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -77,8 +84,13 @@ struct DatabasePanel: View {
 
     private func databaseButton(_ database: DatabaseSummary) -> some View {
         let isSelected = model.selectedDatabaseId == database.databaseId
+        let isPending = database.status == .pending
         return Button {
-            model.selectDatabase(database.databaseId)
+            if isPending {
+                model.presentFunding(for: database)
+            } else {
+                model.selectDatabase(database.databaseId)
+            }
         } label: {
             HStack(alignment: .center, spacing: 10) {
                 BrowseDatabaseRow(
@@ -89,9 +101,9 @@ struct DatabasePanel: View {
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isPending ? "arrow.up.right.square" : isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.headline)
-                    .foregroundStyle(isSelected ? KinicDesign.hotPink : KinicDesign.bodyGray)
+                    .foregroundStyle(isSelected || isPending ? KinicDesign.hotPink : KinicDesign.bodyGray)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, 12)
@@ -109,18 +121,35 @@ struct DatabasePanel: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(databaseAccessibilityLabel(database))
-        .accessibilityValue(isSelected ? "Selected" : "Not selected")
-        .accessibilityHint("Sets the source capture database")
+        .accessibilityLabel(Self.databaseAccessibilityLabel(
+            database,
+            isPublicReadable: model.isPublicBrowseDatabase(database.databaseId),
+            isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
+        ))
+        .accessibilityValue(Self.databaseAccessibilityValue(database, isSelected: isSelected))
+        .accessibilityHint(Self.databaseAccessibilityHint(database))
     }
 
-    private func databaseAccessibilityLabel(_ database: DatabaseSummary) -> String {
+    nonisolated static func databaseAccessibilityLabel(
+        _ database: DatabaseSummary,
+        isPublicReadable: Bool,
+        isPurchased: Bool
+    ) -> String {
         let badges = [
-            model.isPublicBrowseDatabase(database.databaseId) ? "Public" : nil,
-            model.isPurchasedBrowseDatabase(database.databaseId) ? "Purchased" : nil
+            database.status == .pending ? "Pending" : nil,
+            isPublicReadable ? "Public" : nil,
+            isPurchased ? "Purchased" : nil
         ].compactMap { $0 }
         let badgeText = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
         return "\(database.displayTitle), \(database.role.displayName)\(badgeText)"
+    }
+
+    nonisolated static func databaseAccessibilityValue(_ database: DatabaseSummary, isSelected: Bool) -> String {
+        database.status == .pending ? "Pending activation" : isSelected ? "Selected" : "Not selected"
+    }
+
+    nonisolated static func databaseAccessibilityHint(_ database: DatabaseSummary) -> String {
+        database.status == .pending ? "Opens the web funding options" : "Sets the source capture database"
     }
 }
 

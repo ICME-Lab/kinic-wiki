@@ -7,8 +7,12 @@ import SwiftUI
 struct SessionPanel: View {
     @Bindable var model: AppModel
 
+    private var account: InternetIdentityPresentation {
+        InternetIdentityPresentation(principal: model.isSignedIn ? model.principalText : nil)
+    }
+
     var body: some View {
-        KinicPanel(title: "Principal", systemImage: "person.crop.circle") {
+        KinicPanel(title: account.compactPrincipal ?? "Not signed in", systemImage: "person.crop.circle") {
             if model.isSignedIn {
                 Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: model.signOut)
                     .labelStyle(.iconOnly)
@@ -16,14 +20,8 @@ struct SessionPanel: View {
                     .accessibilityLabel("Sign out")
             }
         } content: {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(model.principalText)
-                    .font(.subheadline)
-                    .foregroundStyle(KinicDesign.bodyGray)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if !model.isSignedIn {
+            if !model.isSignedIn {
+                VStack(alignment: .leading, spacing: 12) {
                     Button("Sign in with Internet Identity", systemImage: "person.crop.circle.badge.checkmark", action: model.startSignIn)
                         .labelStyle(.iconOnly)
                         .buttonStyle(KinicPrimaryButtonStyle())

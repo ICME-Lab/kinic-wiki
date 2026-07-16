@@ -1,13 +1,12 @@
 // Where: /docs/canister-api console guide.
 // What: documents direct ICP CLI calls to the Kinic Wiki canister API.
 // Why: developers need exact Candid call shapes for endpoint debugging.
-import type { Metadata } from "next";
 import { Braces, Database, KeyRound, ListTree, PencilLine, ShieldCheck, Unplug } from "lucide-react";
 import { CliGuideBlock } from "@/app/docs/cli/cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminPanel } from "@/components/admin-ui";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Canister API",
   description: "Direct ICP CLI calls for Kinic Wiki canister query and write endpoints.",
   openGraph: {

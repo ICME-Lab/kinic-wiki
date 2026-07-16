@@ -2,8 +2,6 @@
 // What: Server-render public wiki node content and page-level metadata.
 // Why: Crawlers and OGP consumers cannot see VFS content fetched only by the client WikiBrowser shell.
 
-import type { Metadata } from "next";
-import Link from "next/link";
 import { cache } from "react";
 import { ServerMarkdownPreview } from "@/components/server-markdown-preview";
 import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
@@ -29,11 +27,11 @@ type PublicNodePayload = {
 
 export const revalidate = 86_400;
 
-export async function generateMetadata({ params }: WikiDatabasePageProps): Promise<Metadata> {
+export async function generateMetadata({ params }: WikiDatabasePageProps): Promise<Record<string, unknown>> {
   const { databaseId, segments } = await params;
   const canonicalId = canonicalDatabaseId(databaseId);
   const route = wikiSeoRouteFromSegments(segments);
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const payload = route.indexable ? await loadPublicNodePayload(canisterId, canonicalId, route.nodePath) : emptyPublicNodePayload(null);
   const databaseTitle = payload.database?.metadata.name.trim() || canonicalId;
   const metadataNode = payload.folderIndexNode ?? payload.node;
@@ -83,11 +81,29 @@ export async function generateMetadata({ params }: WikiDatabasePageProps): Promi
 
 export default async function WikiDatabasePage({ params }: WikiDatabasePageProps) {
   const { databaseId, segments } = await params;
+  const data = await loadWikiDatabasePageData(databaseId, segments);
+  return <WikiDatabaseDocument data={data} />;
+}
+
+export type WikiDatabasePageData = {
+  canisterId: string;
+  databaseId: string;
+  route: ReturnType<typeof wikiSeoRouteFromSegments>;
+  payload: PublicNodePayload;
+};
+
+export async function loadWikiDatabasePageData(databaseId: string, segments?: string[]): Promise<WikiDatabasePageData> {
   const canonicalId = canonicalDatabaseId(databaseId);
   const route = wikiSeoRouteFromSegments(segments);
-  if (!route.indexable) return null;
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  if (!route.indexable) return { canisterId: "", databaseId: canonicalId, route, payload: emptyPublicNodePayload(null) };
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const payload = await loadPublicNodePayload(canisterId, canonicalId, route.nodePath);
+  return { canisterId, databaseId: canonicalId, route, payload };
+}
+
+export function WikiDatabaseDocument({ data }: { data: WikiDatabasePageData }) {
+  const { canisterId, databaseId: canonicalId, route, payload } = data;
+  if (!route.indexable) return null;
   const renderNode = payload.folderIndexNode ?? payload.node;
   if (!payload.database && !renderNode && payload.children.length === 0) return null;
   const summary = wikiSeoNodeSummary(payload.database, route.nodePath, renderNode, payload.children);
@@ -108,7 +124,7 @@ export default async function WikiDatabasePage({ params }: WikiDatabasePageProps
             <ul>
               {payload.children.map((child) => (
                 <li key={child.path}>
-                  <Link href={hrefForPath(canisterId, canonicalId, child.path)}>{child.name}</Link>
+                  <a href={hrefForPath(canisterId, canonicalId, child.path)}>{child.name}</a>
                 </li>
               ))}
             </ul>
@@ -117,6 +133,33 @@ export default async function WikiDatabasePage({ params }: WikiDatabasePageProps
       </div>
     </article>
   );
+}
+
+export function wikiDatabaseHead(data: WikiDatabasePageData) {
+  const { canisterId, databaseId, route, payload } = data;
+  const metadataNode = payload.folderIndexNode ?? payload.node;
+  const databaseTitle = payload.database?.metadata.name.trim() || databaseId;
+  const title = route.indexable ? wikiSeoTitle(databaseTitle, route.nodePath, metadataNode) : `Kinic Wiki: ${databaseTitle}`;
+  const description = route.indexable ? wikiSeoDescription(payload.database, metadataNode, payload.children) : "Use the Kinic Wiki browser tools for search, graph, and help views.";
+  const canonical = route.indexable ? hrefForPath(canisterId, databaseId, route.nodePath) : databaseRouteBase(databaseId);
+  const image = `${databaseRouteBase(databaseId)}/opengraph-image`;
+  return {
+    meta: [
+      { title },
+      { name: "description", content: description },
+      ...(!route.indexable ? [{ name: "robots", content: "noindex,follow" }] : []),
+      { property: "og:title", content: title },
+      { property: "og:description", content: description },
+      { property: "og:type", content: "article" },
+      { property: "og:url", content: canonical },
+      { property: "og:image", content: image },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: title },
+      { name: "twitter:description", content: description },
+      { name: "twitter:image", content: `${databaseRouteBase(databaseId)}/twitter-image` }
+    ],
+    links: [{ rel: "canonical", href: canonical }]
+  };
 }
 
 const loadPublicNodePayload = cache(async function loadPublicNodePayload(canisterId: string, databaseId: string, nodePath: string): Promise<PublicNodePayload> {

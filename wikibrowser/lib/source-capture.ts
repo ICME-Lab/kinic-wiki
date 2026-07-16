@@ -38,6 +38,7 @@ export async function createSourceCaptureRequest(canisterId: string, databaseId:
       `url: ${JSON.stringify(normalizedUrl)}`,
       `requested_by: ${JSON.stringify(requestedBy)}`,
       `requested_at: ${JSON.stringify(requestedAt)}`,
+      'output_language: "en"',
       "claimed_at: null",
       "source_path: null",
       "target_path: null",
@@ -48,7 +49,7 @@ export async function createSourceCaptureRequest(canisterId: string, databaseId:
       "# Source Capture Request",
       ""
     ].join("\n"),
-    metadataJson: JSON.stringify({ request_type: "source_capture", url: normalizedUrl }),
+    metadataJson: JSON.stringify({ request_type: "source_capture", url: normalizedUrl, output_language: "en" }),
     expectedEtag: null
   });
   const trigger = await triggerWorker(canisterId, databaseId, requestPath, session);

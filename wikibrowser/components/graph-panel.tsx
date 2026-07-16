@@ -2,7 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { GitBranch } from "lucide-react";
 import { displayPathForFolderIndex } from "@/lib/folder-index";
 import { hrefForGraph, hrefForPath } from "@/lib/paths";
@@ -100,22 +100,23 @@ export function GraphPanel({
               <span className="font-mono text-xs text-muted">{centerPath}</span>
               <span className="rounded-lg border border-line bg-white px-2 py-1 font-mono text-xs text-muted">{nodeCount} nodes</span>
               <span className="rounded-lg border border-line bg-white px-2 py-1 font-mono text-xs text-muted">{edgeCount} edges</span>
-              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 1 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 1)}>
+              <WikiNavigationLink className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 1 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 1)}>
                 depth 1
-              </Link>
-              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 2 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 2)}>
+              </WikiNavigationLink>
+              <WikiNavigationLink className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 2 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 2)}>
                 depth 2
-              </Link>
+              </WikiNavigationLink>
             </div>
           )}
-          {isFullGraph ? null : <Link className="rounded-lg border border-line bg-white px-2 py-1 no-underline" href={fullGraphHref}>Show database-wide graph</Link>}
+          {isFullGraph ? null : <WikiNavigationLink className="rounded-lg border border-line bg-white px-2 py-1 no-underline" href={fullGraphHref}>Show database-wide graph</WikiNavigationLink>}
           {truncated ? <p className="mt-2 text-sm text-muted">Limit reached. Showing first {GRAPH_LIMIT} links only.</p> : null}
         </div>
         <div className="rounded-2xl border border-line bg-paper p-4">
           {currentLinks.data?.length === 0 ? (
             <p className="text-sm text-muted">{isFullGraph ? "No indexed links found in this database." : "No indexed links around this page."}</p>
           ) : (
-            <svg className="h-[520px] w-full" viewBox="0 0 920 520" role="img" aria-label="Wiki link graph">
+            <svg className="h-[520px] w-full" viewBox="0 0 920 520">
+              <title>Wiki link graph</title>
               {currentLinks.data?.map((edge) => {
                 const source = graph.byPath.get(edge.sourcePath);
                 const target = graph.byPath.get(edge.targetPath);
@@ -123,12 +124,12 @@ export function GraphPanel({
                 return <line key={`${edge.sourcePath}-${edge.targetPath}-${edge.rawHref}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#e6e6e6" strokeWidth="1.2" />;
               })}
               {graph.nodes.map((node) => (
-                <Link key={node.path} href={hrefForPath(canisterId, databaseId, displayPathForFolderIndex(node.path))}>
+                <WikiNavigationLink key={node.path} href={hrefForPath(canisterId, databaseId, displayPathForFolderIndex(node.path))}>
                   <circle cx={node.x} cy={node.y} r={node.isCenter ? "16" : "12"} fill={node.isCenter ? "#ff2686" : "#000000"} />
                   <text x={node.x + 16} y={node.y + 4} className="fill-ink text-[11px]">
                     {shortName(displayPathForFolderIndex(node.path))}
                   </text>
-                </Link>
+                </WikiNavigationLink>
               ))}
             </svg>
           )}

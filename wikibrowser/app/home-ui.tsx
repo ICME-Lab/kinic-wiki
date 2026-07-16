@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, PlugZap, PowerOff, Settings, Share2, TerminalSquare, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { AdminNotice } from "@/components/admin-ui";

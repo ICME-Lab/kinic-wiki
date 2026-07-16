@@ -2,7 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
 import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
@@ -213,13 +213,13 @@ function TreeNode({
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
         {directoryIcon(canExpand, expanded)}
-        <Link
+        <WikiNavigationLink
           className="min-w-0 flex-1 truncate no-underline"
           href={hrefForPath(canisterId, databaseId, node.path)}
           aria-current={selected ? "page" : undefined}
         >
           {node.name}
-        </Link>
+        </WikiNavigationLink>
       </div>
       {expanded && canExpand ? (
         <ChildrenList

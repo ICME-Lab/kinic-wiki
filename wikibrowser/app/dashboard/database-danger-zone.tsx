@@ -5,6 +5,7 @@
 // Why: Delete needs stronger confirmation than ordinary ACL changes.
 
 import { useState } from "react";
+import { useModalDialog } from "@/components/use-modal-dialog";
 import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
@@ -79,16 +80,19 @@ function ConfirmDeleteDatabaseDialog(props: {
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const { dialogRef, handleCancel } = useModalDialog(props.onCancel, props.busy);
   const [typedDatabaseId, setTypedDatabaseId] = useState("");
   const deleteConfirmed = typedDatabaseId === props.databaseId;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
-      onMouseDown={(event) => {
-        if (!props.deleting && event.target === event.currentTarget) props.onCancel();
-      }}
+    <dialog
+      ref={dialogRef}
+      aria-modal="true"
+      aria-label="Delete database"
+      className="fixed inset-0 z-50 m-0 hidden h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-ink/30 px-4 open:flex"
+      onCancel={handleCancel}
     >
-      <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
+      <button aria-label="Close delete database dialog" className="absolute inset-0" disabled={props.deleting} tabIndex={-1} type="button" onClick={props.onCancel} />
+      <div className="relative z-10 w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">Delete database</h3>
         <p className="mt-3 text-sm leading-6 text-muted">
           Delete {props.databaseTitle}. This action is irreversible. Archive first if recovery is required.
@@ -103,6 +107,7 @@ function ConfirmDeleteDatabaseDialog(props: {
         <label className="mt-4 grid gap-1 text-sm">
           <span className="text-xs uppercase tracking-[0.12em] text-muted">Type database ID to confirm</span>
           <input
+            data-modal-initial-focus
             className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent"
             value={typedDatabaseId}
             onChange={(event) => setTypedDatabaseId(event.target.value)}
@@ -117,7 +122,7 @@ function ConfirmDeleteDatabaseDialog(props: {
           </ActionButton>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

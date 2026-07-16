@@ -81,10 +81,13 @@ targets:
       - KinicApp/Models/SearchNodeHit.swift
       - KinicApp/Models/SharedURLRecord.swift
       - KinicApp/Models/SourceCaptureRequest.swift
+      - KinicApp/Models/WikiOutputLanguage.swift
+      - KinicApp/Models/SourceCaptureHistory.swift
       - KinicApp/Services/KinicAuthSessionStore.swift
       - KinicApp/Services/KinicICClient.swift
       - KinicApp/Services/ShareCaptureSubmitter.swift
       - KinicApp/Services/ShareInbox.swift
+      - KinicApp/Services/SourceCaptureHistoryStore.swift
       - KinicApp/Services/SharedDefaultsStore.swift
       - KinicApp/Services/SourceCaptureRequestBuilder.swift
       - KinicApp/Services/SourceCaptureRequestError.swift

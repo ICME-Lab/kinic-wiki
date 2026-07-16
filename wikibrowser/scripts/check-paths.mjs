@@ -163,7 +163,7 @@ assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Knowledge/demo/index.md", "https://example.com"),
   null
 );
-assert.match(browserSource, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
+assert.match(browserSource, /VITE_KINIC_WIKI_CANISTER_ID/);
 assert.match(browserSource, /pathname === `\$\{databaseRouteBase\(databaseId\)\}\/search`/);
 assert.match(browserSource, /pathname === `\$\{databaseRouteBase\(databaseId\)\}\/help`/);
 

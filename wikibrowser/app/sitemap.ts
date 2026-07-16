@@ -2,7 +2,6 @@
 // What: Expose public discovery URLs for search engines.
 // Why: Crawlers need explicit entry points before they can follow server-rendered wiki node links.
 
-import type { MetadataRoute } from "next";
 import { publicDatabasePath } from "@/lib/share-links";
 import { listDatabasesPublic } from "@/lib/vfs-client";
 
@@ -11,10 +10,10 @@ const STATIC_PATHS = ["/", "/docs", "/docs/cli", "/docs/canister-api", "/docs/sk
 
 export const dynamic = "force-dynamic";
 
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+export default async function sitemap(): Promise<SitemapEntry[]> {
   const now = new Date();
   const staticEntries = STATIC_PATHS.map((path) => sitemapEntry(path, now, "weekly"));
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   if (!canisterId) return staticEntries;
   try {
     const databases = await listDatabasesPublic(canisterId);
@@ -27,7 +26,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 }
 
-function sitemapEntry(path: string, lastModified: Date, changeFrequency: "daily" | "weekly"): MetadataRoute.Sitemap[number] {
+export type SitemapEntry = { url: string; lastModified: Date; changeFrequency: "daily" | "weekly"; priority: number };
+
+function sitemapEntry(path: string, lastModified: Date, changeFrequency: "daily" | "weekly"): SitemapEntry {
   return {
     url: new URL(path, SITE_ORIGIN).toString(),
     lastModified,

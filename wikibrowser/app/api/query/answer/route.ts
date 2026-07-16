@@ -28,9 +28,7 @@ type RateLimitStore = {
 
 type CheckQueryAnswerSession = (canisterId: string, input: { databaseId: string; sessionNonce: string }) => Promise<{ principal: string }>;
 type FetchForAnswer = typeof fetch;
-type CloudflareContextModule = {
-  getCloudflareContext: (options: { async: true }) => Promise<{ env: CloudflareEnv }>;
-};
+type QueryAnswerEnv = Pick<CloudflareEnv, "DEEPSEEK_API_KEY" | "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_WORKER_MODEL" | "QUERY_ANSWER_RATE_LIMIT">;
 
 type QueryAnswerDeps = {
   checkSession: CheckQueryAnswerSession;
@@ -38,12 +36,6 @@ type QueryAnswerDeps = {
   fetchImpl: FetchForAnswer;
   timeoutMs: number;
 };
-
-declare global {
-  interface CloudflareEnv {
-    QUERY_ANSWER_RATE_LIMIT?: RateLimitStore;
-  }
-}
 
 const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
 const DEFAULT_MODEL = "deepseek-v4-flash";
@@ -75,7 +67,7 @@ export function OPTIONS(request: Request): Response {
   return new Response(null, { status: 204, headers: corsHeaders(origin) });
 }
 
-export async function POST(request: Request): Promise<Response> {
+export async function POST(request: Request, runtimeEnv: QueryAnswerEnv = process.env as unknown as QueryAnswerEnv): Promise<Response> {
   const origin = allowedOrigin(request);
   if (!origin) return jsonError("forbidden", 403);
   let input: AnswerRequest;
@@ -87,9 +79,9 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return jsonError("invalid JSON body", 400, origin);
   }
-  const canisterId = configuredCanisterId();
+  const canisterId = configuredCanisterId(runtimeEnv);
   if (!canisterId) return jsonError("KINIC_WIKI_CANISTER_ID is not configured", 503, origin);
-  const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
+  const apiKey = runtimeEnv.DEEPSEEK_API_KEY?.trim();
   if (!apiKey) return jsonError("DEEPSEEK_API_KEY is not configured", 503, origin);
   if (!input.sessionNonce) return jsonError("query answer session denied", 403, origin);
   const checkSession = testDeps?.checkSession ?? defaultCheckSession;
@@ -102,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return jsonError("query answer session denied", 403, origin);
   }
-  const rateStore = testDeps?.rateLimitStore ?? (await defaultRateLimitStore());
+  const rateStore = testDeps?.rateLimitStore ?? runtimeEnv.QUERY_ANSWER_RATE_LIMIT;
   if (!rateStore) return jsonError("QUERY_ANSWER_RATE_LIMIT is not configured", 503, origin);
   const limited = await rateLimit(rateStore, session.principal, input.databaseId);
   if (limited) return jsonError("rate limit exceeded", 429, origin);
@@ -114,7 +106,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const fetchImpl = testDeps?.fetchImpl ?? fetch;
     const timeoutMs = testDeps?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const rawAnswer = await callDeepSeek(input, apiKey, fetchImpl, timeoutMs);
+    const rawAnswer = await callDeepSeek(input, apiKey, fetchImpl, timeoutMs, runtimeEnv.KINIC_WIKI_WORKER_MODEL);
     const allowedPaths = new Set(input.context.map((item) => item.path));
     const citations = rawAnswer.citations.filter((path) => allowedPaths.has(path));
     const answer = rawAnswer.answer.slice(0, MAX_ANSWER_CHARS);
@@ -128,16 +120,6 @@ export async function POST(request: Request): Promise<Response> {
 async function defaultCheckSession(canisterId: string, input: { databaseId: string; sessionNonce: string }): Promise<{ principal: string }> {
   const vfsClient: { checkQueryAnswerSession: CheckQueryAnswerSession } = await import("@/lib/vfs-client");
   return vfsClient.checkQueryAnswerSession(canisterId, input);
-}
-
-async function defaultRateLimitStore(): Promise<RateLimitStore | null> {
-  try {
-    const cloudflare: CloudflareContextModule = await import("@opennextjs/cloudflare");
-    const context = await cloudflare.getCloudflareContext({ async: true });
-    return context.env.QUERY_ANSWER_RATE_LIMIT ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function parseAnswerRequest(value: unknown): AnswerRequest | string {
@@ -177,7 +159,7 @@ function parseContextItems(values: unknown[]): AnswerContext[] | string {
   return context;
 }
 
-async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: FetchForAnswer, timeoutMs: number): Promise<LlmAnswer> {
+async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: FetchForAnswer, timeoutMs: number, model?: string): Promise<LlmAnswer> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const promptInput = {
@@ -195,7 +177,7 @@ async function callDeepSeek(input: AnswerRequest, apiKey: string, fetchImpl: Fet
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: process.env.KINIC_WIKI_WORKER_MODEL || DEFAULT_MODEL,
+        model: model || DEFAULT_MODEL,
         max_tokens: 1_200,
         thinking: { type: "disabled" },
         response_format: { type: "json_object" },
@@ -275,8 +257,8 @@ function allowedOrigin(request: Request): string | null {
   return origin;
 }
 
-function configuredCanisterId(): string {
-  return (process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? process.env.KINIC_WIKI_CANISTER_ID ?? "").trim();
+function configuredCanisterId(runtimeEnv: QueryAnswerEnv): string {
+  return (runtimeEnv.KINIC_WIKI_CANISTER_ID ?? "").trim();
 }
 
 async function rateLimit(store: RateLimitStore, principal: string, databaseId: string): Promise<boolean> {

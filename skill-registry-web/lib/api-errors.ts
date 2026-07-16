@@ -35,8 +35,8 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
     return {
       error: "Cannot reach IC host",
       hint: local
-        ? "Check that the local replica or icp local network is running and that NEXT_PUBLIC_WIKI_IC_HOST points to it."
-        : "Check NEXT_PUBLIC_WIKI_IC_HOST and network connectivity to the IC gateway.",
+        ? "Check that the local replica or icp local network is running and that VITE_WIKI_IC_HOST points to it."
+        : "Check VITE_WIKI_IC_HOST and network connectivity to the IC gateway.",
       code: "ic_host_unreachable"
     };
   }

@@ -2,20 +2,23 @@
   "name": "kinic-skill-registry-web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "npm run typecheck && node ../scripts/next-with-ts5.cjs build && node scripts/normalize-typegen-tsconfig.mjs",
-    "lint": "node ../scripts/eslint-with-ts5.cjs .",
+    "dev": "vite dev --host 127.0.0.1 --port 3000",
+    "build": "npm run typecheck && vite build",
+    "lint": "oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --ignore-pattern dist --ignore-pattern src/routeTree.gen.ts --ignore-pattern lib/vfs-idl.ts --deny-warnings .",
     "test": "node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out lib/vfs-idl.ts --check && node scripts/check-skill-registry-web.mjs",
-    "typecheck": "node ../scripts/next-with-ts5.cjs typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
-    "normalize:typegen": "node scripts/normalize-typegen-tsconfig.mjs"
+    "build:worker": "VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai npm run build && node scripts/check-built-client-config.mjs 6emaw-iyaaa-aaaay-aacka-cai && wrangler deploy --dry-run",
+    "preview": "npm run build && vite preview --host 127.0.0.1 --port 3000"
   },
   "dependencies": {
     "@icp-sdk/auth": "5.0.0",
     "@icp-sdk/core": "^5.4.0",
+    "@tanstack/react-router": "1.170.18",
+    "@tanstack/react-start": "1.168.28",
     "lucide-react": "0.555.0",
-    "next": "16.2.6",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },
@@ -25,11 +28,14 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.4.22",
-    "eslint": "9.39.1",
-    "eslint-config-next": "16.2.4",
+    "@cloudflare/vite-plugin": "1.44.0",
+    "@vitejs/plugin-react": "6.0.3",
+    "oxlint": "1.74.0",
     "postcss": "8.5.12",
     "tailwindcss": "3.4.18",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite": "8.1.4",
+    "wrangler": "4.110.0"
   },
   "packageManager": "pnpm@11.0.8"
 }

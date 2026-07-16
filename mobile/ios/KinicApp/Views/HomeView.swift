@@ -56,6 +56,7 @@ private struct CaptureView: View {
                 VStack(spacing: 16) {
                     SessionPanel(model: model)
                     DatabasePanel(model: model)
+                    SourceCaptureHistoryPanel(model: model)
 
                     if let message = model.statusMessage {
                         StatusPanel(message: message)
@@ -101,6 +102,7 @@ private struct CaptureView: View {
         .task {
             model.refreshInbox()
             model.startRefreshDatabases()
+            model.startRefreshSourceCaptureHistory()
             model.autoSubmitPendingURL()
         }
     }

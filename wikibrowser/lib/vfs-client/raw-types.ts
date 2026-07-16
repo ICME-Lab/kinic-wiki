@@ -1,65 +1,7 @@
-import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
-import { Principal } from "@icp-sdk/core/principal";
-import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
-import { sortChildNodes } from "@/lib/child-sort";
-import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import type { SearchPreviewMode } from "@/lib/search-options";
-import { idlFactory } from "@/lib/vfs-idl";
+import { type RawSearchHit } from "@/lib/search-normalizer";
 import type {
-  CanisterHealth,
-  CyclesBillingConfig,
-  ChildNode,
-  DatabaseCycleEntry,
-  DatabaseCycleEntryPage,
-  DatabaseCyclesPendingPurchase,
-  DatabaseMetadata,
-  DeleteDatabaseRequest,
-  DeleteNodeRequest,
-  DeleteNodeResult,
-  DatabaseMember,
-  DatabaseRole,
-  DatabaseStatus,
-  DatabaseSummary,
-  InitialFreeDatabaseGrantStatus,
-  IndexSqlJsonQueryResult,
-  LinkEdge,
-  MarketCreateListingRequest,
-  MarketEntitlementPage,
-  MarketListing,
-  MarketListingDetail,
-  MarketListingPage,
-  MarketListingStatus,
-  MarketOrder,
-  MarketOrderPage,
-  MarketPurchasePreview,
-  MarketUpdateListingRequest,
-  UpdateDatabaseMetadataRequest,
-  MkdirNodeRequest,
-  MkdirNodeResult,
-  MoveNodeRequest,
-  MoveNodeResult,
-  NodeContext,
-  NodeEntryKind,
-  NodeKind,
-  QueryContext,
-  QueryAnswerSessionCheckRequest,
-  QueryAnswerSessionCheckResult,
-  QueryAnswerSessionRequest,
-  RecentNode,
-  SearchNodeHit,
-  SourceEvidence,
-  SourceRunSessionCheckRequest,
-  SourceCaptureTriggerSessionCheckRequest,
-  SourceCaptureTriggerSessionRequest,
-  WikiMetrics,
-  WikiMetricsPoint,
-  WikiNode,
-  WriteNodeRequest,
-  WriteNodeResult,
-  WriteSourceForGenerationRequest,
-  WriteSourceForGenerationResult
+  DatabaseStatus
 } from "@/lib/types";
-import { ApiError } from "@/lib/wiki-helpers";
 
 export type Variant = Record<string, null>;
 

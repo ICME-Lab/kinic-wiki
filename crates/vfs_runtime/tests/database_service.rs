@@ -947,7 +947,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             },
             3,
         )
-        .expect("invalid request node should write");
+        .expect("VFS should store source capture content without interpreting it");
     let invalid_frontmatter = service
         .check_source_capture_trigger_session(
             source_capture_session_check_request(
@@ -957,7 +957,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             ),
             101,
         )
-        .expect_err("invalid frontmatter should fail");
+        .expect_err("trigger authorization should reject invalid request frontmatter");
     assert!(invalid_frontmatter.contains("frontmatter"));
 
     let mismatch_path = "/Sources/source-capture-requests/mismatch.md";

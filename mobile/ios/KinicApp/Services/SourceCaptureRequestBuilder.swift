@@ -19,6 +19,7 @@ enum SourceCaptureRequestBuilder {
         requestId: String? = nil,
         now: Date = .now,
         uuid: UUID = UUID(),
+        outputLanguage: WikiOutputLanguage = .english,
         captureMetadata: ShareCaptureMetadata? = nil
     ) throws -> SourceCaptureRequest {
         let normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
@@ -39,6 +40,7 @@ enum SourceCaptureRequestBuilder {
             "url: \(jsonString(urlText))",
             "requested_by: \(jsonString(requestedBy))",
             "requested_at: \(jsonString(requestedAt))",
+            "output_language: \(jsonString(outputLanguage.rawValue))",
             "claimed_at: null",
             "source_path: null",
             "target_path: null",
@@ -55,7 +57,8 @@ enum SourceCaptureRequestBuilder {
         let content = (frontmatter + metadataFrontmatter + body).joined(separator: "\n")
         var metadataPayload = [
             "request_type": "source_capture",
-            "url": urlText
+            "url": urlText,
+            "output_language": outputLanguage.rawValue
         ]
         appendCaptureMetadata(captureMetadata, to: &metadataPayload)
         let metadata = try JSONSerialization.data(
@@ -69,7 +72,8 @@ enum SourceCaptureRequestBuilder {
             requestPath: requestPath,
             content: content,
             metadataJson: metadataJson,
-            normalizedURL: normalizedURL
+            normalizedURL: normalizedURL,
+            outputLanguage: outputLanguage
         )
     }
 

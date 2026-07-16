@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseSourceCaptureRequest, parseSourceCaptureTriggerInput, processSourceCaptureRequest, shouldProcessSourceCaptureRequest, triggerSourceCaptureRequest } from "../src/source-capture.js";
-import type { SourceQueueMessage, SourceCaptureRequest, WikiNode } from "../src/types.js";
-import { testEnv, TestQueue, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
+import type { OutputLanguage, SourceQueueMessage, SourceCaptureRequest, WikiNode } from "../src/types.js";
+import { testEnv, TestD1, TestQueue, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
 
 const node: WikiNode = {
   path: "/Sources/source-capture-requests/1.md",
@@ -37,7 +37,53 @@ test("valid queued request is parsed", () => {
   assert.equal(request.status, "queued");
   assert.equal(request.url, "https://example.com/a");
   assert.equal(request.finishedAt, null);
+  assert.equal(request.outputLanguage, "en");
   assert.equal(shouldProcessSourceCaptureRequest(request), true);
+});
+
+test("request output language accepts supported codes and rejects unknown codes", () => {
+  for (const language of ["en", "ja", "zh-Hans", "ko", "es", "fr", "de", "pt"]) {
+    const request = parseSourceCaptureRequest({
+      ...node,
+      content: node.content.replace("claimed_at: null", `output_language: ${JSON.stringify(language)}\nclaimed_at: null`)
+    });
+    assert.equal(request?.outputLanguage, language);
+  }
+  assert.equal(
+    parseSourceCaptureRequest({ ...node, content: node.content.replace("claimed_at: null", 'output_language: "invalid"\nclaimed_at: null') }),
+    null
+  );
+});
+
+test("supported output languages survive request state and source queue propagation", async () => {
+  const languages: OutputLanguage[] = ["en", "ja", "zh-Hans", "ko", "es", "fr", "de", "pt"];
+  for (const outputLanguage of languages) {
+    const sourcePath = `/Sources/web/language-${outputLanguage}.md`;
+    const vfs = new TestVfsClient();
+    const queue = new TestQueue();
+    vfs.sourceNodes.set(sourcePath, {
+      path: sourcePath,
+      kind: "source",
+      content: "source",
+      etag: `etag-${outputLanguage}`,
+      metadataJson: "{}"
+    });
+
+    await processSourceCaptureRequest(
+      testEnv(queue, new TestD1(null)),
+      vfs,
+      workerConfig(),
+      "db_1",
+      queuedRequest({ status: "source_written", sourcePath, outputLanguage }),
+      "session-1"
+    );
+
+    const message = sourceMessage(queue.messages[0]);
+    assert.equal(message.outputLanguage, outputLanguage);
+    assert.equal(vfs.lastRequest?.outputLanguage, outputLanguage);
+    assert.match(vfs.requestNode?.content ?? "", new RegExp(`output_language: ${JSON.stringify(outputLanguage)}`));
+    assert.equal(JSON.parse(vfs.requestNode?.metadataJson ?? "{}").output_language, outputLanguage);
+  }
 });
 
 test("completed request is not processed", () => {
@@ -109,6 +155,7 @@ test("queued source capture uses source write ack without reading source after w
   assert.equal(queue.messages.length, 1);
   const message = sourceMessage(queue.messages[0]);
   assert.equal(message.sourceEtag, "etag-source-write");
+  assert.equal(message.outputLanguage, "en");
   assert.equal(vfs.lastRequest?.status, "generating");
   assert.equal(vfs.lastRequest?.sourcePath, message.sourcePath);
   assert.equal(vfs.lastRequest?.finishedAt, null);
@@ -507,6 +554,7 @@ function queuedRequest(overrides: Partial<SourceCaptureRequest> = {}): SourceCap
     url: "https://example.com/a",
     requestedBy: "aaaaa-aa",
     requestedAt: "2026-05-12T00:00:00.000Z",
+    outputLanguage: "en",
     claimedAt: null,
     sourcePath: null,
     targetPath: null,
@@ -531,6 +579,7 @@ function requestNode(request: SourceCaptureRequest): WikiNode {
       `url: ${JSON.stringify(request.url)}`,
       `requested_by: ${JSON.stringify(request.requestedBy)}`,
       `requested_at: ${JSON.stringify(request.requestedAt)}`,
+      `output_language: ${JSON.stringify(request.outputLanguage)}`,
       `claimed_at: ${request.claimedAt === null ? "null" : JSON.stringify(request.claimedAt)}`,
       `source_path: ${request.sourcePath === null ? "null" : JSON.stringify(request.sourcePath)}`,
       `target_path: ${request.targetPath === null ? "null" : JSON.stringify(request.targetPath)}`,

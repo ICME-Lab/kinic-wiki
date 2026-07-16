@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
-const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
+const route = ["../src/routes/skills.$databaseId.tsx", "../app/skills/[databaseId]/page.tsx"].map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
 const adminHeader = readFileSync(new URL("../components/admin-header.tsx", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../app/skills/skill-registry-ui.tsx", import.meta.url), "utf8");
@@ -18,7 +18,7 @@ const inspector = readFileSync(new URL("../components/inspector.tsx", import.met
 const skillManifest = readFileSync(new URL("../lib/skill-manifest.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-assert.match(route, /params: Promise<\{ databaseId: string \}>/);
+assert.match(route, /createFileRoute\("\/skills\/\$databaseId"\)/);
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
 assert.match(adminHeader, /export function AdminHeader/);

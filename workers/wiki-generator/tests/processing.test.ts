@@ -3,7 +3,7 @@
 // Why: Optional worker log writes must not decide source generation status.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
+import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessage, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, SourceJob, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
 import { testEnv, TestQueue, TestR2Bucket, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
@@ -205,6 +205,31 @@ test("source capture queue message without nonce is invalid", async () => {
     "invalid"
   );
   assert.equal(parseQueueMessageEnvelope({ kind: "source", databaseId: "db_1", sourcePath: "", sourceEtag: "etag-source" }).kind, "invalid");
+  assert.deepEqual(
+    parseQueueMessageEnvelope({ kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" }),
+    {
+      kind: "valid",
+      message: {
+        kind: "source",
+        databaseId: "db_1",
+        sourcePath: "/Sources/a/a.md",
+        sourceEtag: "etag-source",
+        requestPath: undefined,
+        sessionNonce: undefined,
+        outputLanguage: "en"
+      }
+    }
+  );
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "source",
+      databaseId: "db_1",
+      sourcePath: "/Sources/a/a.md",
+      sourceEtag: "etag-source",
+      outputLanguage: "unsupported"
+    }).kind,
+    "invalid"
+  );
   assert.equal(
     parseQueueMessageEnvelope({
       kind: "source",
@@ -386,7 +411,7 @@ test("source queue accepts skill-run source paths before source lookup", async (
     { config: workerConfig(), vfs: sourceVfs() }
   );
 
-  assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'failed'")));
+  assert.ok(db.runs.some((run) => run.query.includes("UPDATE source_jobs") && run.query.includes("SET status = 'failed'")));
 });
 
 test("source queue uses source run session before DeepSeek", async () => {
@@ -413,7 +438,7 @@ test("source queue uses source run session before DeepSeek", async () => {
     assert.equal(writtenPages.length, 2);
     assert.equal(writtenPages[0]?.path, "/Knowledge/conversations/project-notes.md");
     assert.match(writtenPages[0]?.content ?? "", /## Summary/);
-    assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'completed'")));
+    assert.ok(db.runs.some((run) => run.query.includes("UPDATE source_jobs") && run.query.includes("SET status = 'completed'")));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -511,21 +536,99 @@ test("request-bound source queue throws when gate failure cannot be recorded", a
   }
 });
 
-test("failed status write after DeepSeek is non-retry", async () => {
+test("VFS failure after DeepSeek checkpoints generation and returns retry", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;
+  const db = new RecordingD1();
   globalThis.fetch = async (): Promise<Response> => {
     deepSeekCalls += 1;
     return Response.json({ choices: [{ message: { content: draftJson() } }] });
   };
   try {
-    await processSourceQueueMessageForTest(
-      { ...testEnv(new TestQueue()), DB: new FailingD1AfterFirstRun() },
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
       { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
       { config: workerConfig(), vfs: sourceVfs({ failDraftWrite: true }) }
     );
 
     assert.equal(deepSeekCalls, 1);
+    assert.equal(disposition.kind, "retry");
+    assert.ok(db.runs.some((run) => run.query.includes("SET status = 'generated'")));
+    assert.ok(db.runs.some((run) => run.query.includes("ELSE 'queued'")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("final VFS failure preserves the generated checkpoint for manual resume", async () => {
+  const originalFetch = globalThis.fetch;
+  const db = new RecordingD1();
+  globalThis.fetch = async (): Promise<Response> => Response.json({ choices: [{ message: { content: draftJson() } }] });
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ failDraftWrite: true }) },
+      { leaseOwner: "final-owner", attempts: 5 }
+    );
+
+    assert.equal(disposition.kind, "dead_letter");
+    assert.ok(db.runs.some((run) => run.query.includes("SET status = 'generated'")));
+    assert.ok(db.runs.some((run) => run.query.includes("CASE WHEN status = 'generated' THEN 'generated'")));
+    assert.equal(db.runs.some((run) => run.query.includes("SET status = 'failed'")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("VFS identity initialization failure happens before the D1 lease claim", async () => {
+  const db = new RecordingD1();
+  const env = { ...testEnv(new TestQueue()), DB: db, KINIC_WIKI_WORKER_IDENTITY_PEM: "invalid-pem" };
+
+  await assert.rejects(
+    processQueueMessage(env, { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" }),
+    /PEM|identity|private key/i
+  );
+
+  assert.equal(db.runs.length, 0);
+});
+
+test("generated checkpoint retry commits without another DeepSeek call", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  const writtenPages: WriteNodeRequest[] = [];
+  const db = new StaticJobD1({
+    database_id: "db_1",
+    source_path: "/Sources/a/a.md",
+    source_etag: "etag-source",
+    status: "generated",
+    target_path: null,
+    attempts: 1,
+    last_error: "VFS unavailable",
+    lease_owner: null,
+    lease_expires_at: null,
+    generated_target_path: "/Knowledge/conversations/project-notes.md",
+    generated_content: "# Project Notes\n\ncheckpointed",
+    generated_context_paths: "[]",
+    llm_duration_ms: 100,
+    updated_at: "2026-07-16T00:00:00.000Z"
+  });
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ writtenPages }) },
+      { leaseOwner: "retry-owner", attempts: 2 }
+    );
+
+    assert.equal(disposition.kind, "ack");
+    assert.equal(deepSeekCalls, 0);
+    assert.equal(writtenPages[0]?.path, "/Knowledge/conversations/project-notes.md");
+    assert.match(writtenPages[0]?.content ?? "", /checkpointed/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -547,7 +650,7 @@ test("missing queued source is recorded as failed", async () => {
     );
 
     assert.equal(deepSeekCalls, 0);
-    assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'failed'") && run.query.includes("target_path = NULL")));
+    assert.ok(db.runs.some((run) => run.query.includes("UPDATE source_jobs") && run.query.includes("SET status = 'failed'") && run.query.includes("target_path = NULL")));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -596,6 +699,12 @@ test("stale source etag message attaches request to newer completed job", async 
     target_path: "/Knowledge/conversations/new.md",
     attempts: 1,
     last_error: null,
+    lease_owner: null,
+    lease_expires_at: null,
+    generated_target_path: null,
+    generated_content: null,
+    generated_context_paths: null,
+    llm_duration_ms: null,
     updated_at: "2026-05-12T00:00:00.000Z"
   });
 
@@ -627,6 +736,12 @@ test("stale source etag message does not overwrite newer queued job", async () =
     target_path: null,
     attempts: 0,
     last_error: null,
+    lease_owner: null,
+    lease_expires_at: null,
+    generated_target_path: null,
+    generated_content: null,
+    generated_context_paths: null,
+    llm_duration_ms: null,
     updated_at: "2026-05-12T00:00:00.000Z"
   });
 
@@ -814,6 +929,13 @@ class RecordingD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    this.runs.push({ query: this.query, values: this.values });
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("ELSE 'processing'")) {
+      return claimedJob(this.values) as T;
+    }
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("RETURNING database_id")) {
+      return { database_id: this.values[0] } as T;
+    }
     return null;
   }
 
@@ -848,6 +970,20 @@ class StaticJobD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("ELSE 'processing'")) {
+      if (!this.job || this.job.database_id !== this.values[0] || this.job.source_path !== this.values[1] || this.job.source_etag !== this.values[2]) return null;
+      if (this.job.status !== "queued" && this.job.status !== "processing" && this.job.status !== "generated") return null;
+      return {
+        ...this.job,
+        status: this.job.status === "generated" ? "generated" : "processing",
+        lease_owner: this.values[3],
+        lease_expires_at: this.values[4],
+        updated_at: this.values[5]
+      } as T;
+    }
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("RETURNING database_id")) {
+      return { database_id: this.values[0] } as T;
+    }
     if (!this.query.includes("SELECT database_id, source_path, source_etag, status, target_path")) return null;
     if (this.job?.database_id !== this.values[0] || this.job.source_path !== this.values[1]) return null;
     return this.job as T;
@@ -857,6 +993,25 @@ class StaticJobD1Statement implements D1PreparedStatement {
     this.runs.push({ query: this.query, values: this.values });
     return { query: this.query, values: this.values };
   }
+}
+
+function claimedJob(values: D1Value[]): SourceJob {
+  return {
+    database_id: String(values[0]),
+    source_path: String(values[1]),
+    source_etag: String(values[2]),
+    status: "processing",
+    target_path: null,
+    attempts: 1,
+    last_error: null,
+    lease_owner: String(values[3]),
+    lease_expires_at: String(values[4]),
+    generated_target_path: null,
+    generated_content: null,
+    generated_context_paths: null,
+    llm_duration_ms: null,
+    updated_at: String(values[5])
+  };
 }
 
 class FailingD1AfterFirstRun implements D1Database {

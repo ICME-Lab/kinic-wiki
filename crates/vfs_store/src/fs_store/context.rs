@@ -23,60 +23,30 @@ impl FsStore {
     }
 
     pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
-        self.query_context_with_filter(request, |_| true, false)
-    }
-
-    pub fn query_context_filtered(
-        &self,
-        request: QueryContextRequest,
-        mut allow_path: impl FnMut(&str) -> bool,
-    ) -> Result<QueryContext, String> {
-        self.query_context_with_filter(request, &mut allow_path, true)
-    }
-
-    fn query_context_with_filter(
-        &self,
-        request: QueryContextRequest,
-        mut allow_path: impl FnMut(&str) -> bool,
-        filter_outputs: bool,
-    ) -> Result<QueryContext, String> {
         if request.depth > 2 {
             return Err("depth must be 0, 1, or 2".to_string());
         }
         let namespace = normalize_memory_namespace(request.namespace.as_deref())?;
         let budget_chars = budget_chars(request.budget_tokens);
         let query_text = context_query_text(&request.task, &request.entities)?;
-        let search_request = SearchNodesRequest {
+        let search_hits = self.search_nodes(SearchNodesRequest {
             database_id: request.database_id.clone(),
             query_text,
             prefix: Some(namespace.clone()),
             top_k: CONTEXT_SEARCH_LIMIT,
             preview_mode: Some(SearchPreviewMode::Light),
-        };
-        let (search_hits, search_scan_truncated) = if filter_outputs {
-            self.search_nodes_filtered(search_request, &mut allow_path)?
-        } else {
-            (self.search_nodes(search_request)?, false)
-        };
+        })?;
         let paths = ordered_context_candidate_paths(&namespace, &search_hits);
 
         self.read_conn(|conn| {
             let mut nodes = Vec::new();
             let mut used_chars = 0usize;
-            let mut truncated = search_scan_truncated;
+            let mut truncated = false;
             for path in paths {
-                if !allow_path(&path) {
-                    continue;
-                }
-                let Some(mut context) =
-                    load_node_context_for_memory(conn, &path, CONTEXT_LINK_LIMIT)?
+                let Some(context) = load_node_context_for_memory(conn, &path, CONTEXT_LINK_LIMIT)?
                 else {
                     continue;
                 };
-                if filter_outputs {
-                    retain_allowed_link_edges(&mut context.incoming_links, &mut allow_path);
-                    retain_allowed_link_edges(&mut context.outgoing_links, &mut allow_path);
-                }
                 let context_chars = estimate_node_context_chars(&context);
                 if !nodes.is_empty() && used_chars.saturating_add(context_chars) > budget_chars {
                     truncated = true;
@@ -100,9 +70,6 @@ impl FsStore {
                         request.depth,
                         capped_query_limit(CONTEXT_LINK_LIMIT),
                     )? {
-                        if filter_outputs && !link_edge_allowed(&edge, &mut allow_path) {
-                            continue;
-                        }
                         let key = (
                             edge.source_path.clone(),
                             edge.target_path.clone(),
@@ -131,10 +98,7 @@ impl FsStore {
             let evidence = if request.include_evidence {
                 let mut items = Vec::new();
                 for context in &nodes {
-                    let mut evidence = source_evidence_for_path(conn, &context.node.path)?;
-                    if filter_outputs {
-                        retain_allowed_source_evidence_refs(&mut evidence, &mut allow_path);
-                    }
+                    let evidence = source_evidence_for_path(conn, &context.node.path)?;
                     let evidence_chars = estimate_source_evidence_chars(&evidence);
                     if !items.is_empty() && used_chars.saturating_add(evidence_chars) > budget_chars
                     {
@@ -164,81 +128,6 @@ impl FsStore {
                 evidence,
                 truncated,
             })
-        })
-    }
-
-    // Candidate-source filtering happens before cross-source reranking so sparse access filters
-    // receive the same ranking treatment as an unfiltered candidate set.
-    fn search_nodes_filtered(
-        &self,
-        request: SearchNodesRequest,
-        allow_path: &mut impl FnMut(&str) -> bool,
-    ) -> Result<(Vec<SearchNodeHit>, bool), String> {
-        let prefix = request
-            .prefix
-            .as_ref()
-            .map(|value| normalize_node_path(value, true))
-            .transpose()?;
-        let plan = build_search_query_plan(&request.query_text)
-            .ok_or_else(|| "query_text must not be empty".to_string())?;
-        self.read_conn(|conn| {
-            let top_k = capped_query_limit(request.top_k);
-            let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
-            let (mut candidates, mut truncated) =
-                if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates) {
-                    let filtered = load_ranked_fts_candidates_filtered(
-                        conn,
-                        &plan,
-                        prefix.as_deref(),
-                        top_k,
-                        allow_path,
-                    )?;
-                    (
-                        filtered
-                            .items
-                            .into_iter()
-                            .map(|candidate| (candidate.row_id, candidate))
-                            .collect::<BTreeMap<_, _>>(),
-                        filtered.truncated,
-                    )
-                } else {
-                    (BTreeMap::new(), false)
-                };
-            if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
-                let filtered = load_content_substring_candidates_filtered(
-                    conn,
-                    &plan,
-                    prefix.as_deref(),
-                    top_k,
-                    allow_path,
-                )?;
-                truncated |= filtered.truncated;
-                for candidate in filtered.items {
-                    candidates.entry(candidate.row_id).or_insert(candidate);
-                }
-            }
-            let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
-                let filtered = load_path_candidates_filtered(
-                    conn,
-                    &plan.path_terms,
-                    prefix.as_deref(),
-                    top_k,
-                    allow_path,
-                )?;
-                truncated |= filtered.truncated;
-                filtered.items
-            } else {
-                Vec::new()
-            };
-            let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
-                rerank_candidates(candidates, &plan, path_hits)
-            } else {
-                sort_candidates(candidates.into_values().collect())
-            };
-            let top_k_len = usize::try_from(top_k).map_err(|error| error.to_string())?;
-            ranked.truncate(top_k_len);
-            build_previews_for_hits(conn, &mut ranked, &plan, preview_mode)?;
-            Ok((finalize_hits(ranked, top_k), truncated))
         })
     }
 
@@ -480,28 +369,4 @@ pub(crate) fn estimate_source_evidence_chars(evidence: &SourceEvidence) -> usize
                     + item.link_text.chars().count()
             })
             .sum::<usize>()
-}
-
-fn retain_allowed_link_edges(edges: &mut Vec<LinkEdge>, allow_path: &mut impl FnMut(&str) -> bool) {
-    edges.retain(|edge| link_edge_allowed(edge, allow_path));
-}
-
-fn link_edge_allowed(edge: &LinkEdge, allow_path: &mut impl FnMut(&str) -> bool) -> bool {
-    allow_path(&edge.source_path) && allow_path(&edge.target_path)
-}
-
-fn retain_allowed_source_evidence_refs(
-    evidence: &mut SourceEvidence,
-    allow_path: &mut impl FnMut(&str) -> bool,
-) {
-    evidence
-        .refs
-        .retain(|item| source_evidence_ref_allowed(item, allow_path));
-}
-
-fn source_evidence_ref_allowed(
-    item: &SourceEvidenceRef,
-    allow_path: &mut impl FnMut(&str) -> bool,
-) -> bool {
-    allow_path(&item.source_path) && allow_path(&item.via_path)
 }

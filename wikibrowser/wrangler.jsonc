@@ -2,17 +2,17 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-browser",
   "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2026-05-11",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-07-15",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "vars": {
-    "NEXT_PUBLIC_WIKI_IC_HOST": "https://icp0.io",
-    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
-    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
+  "observability": {
+    "enabled": true
   },
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
+  "vars": {
+    "VITE_WIKI_IC_HOST": "https://icp0.io",
+    "VITE_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
   },
   "r2_buckets": [
     {
@@ -32,12 +32,6 @@
     {
       "binding": "QUERY_ANSWER_RATE_LIMIT",
       "id": "72995eb374a14e71b1a35a545beca160"
-    }
-  ],
-  "services": [
-    {
-      "binding": "WORKER_SELF_REFERENCE",
-      "service": "kinic-wiki-browser"
     }
   ],
   "routes": [

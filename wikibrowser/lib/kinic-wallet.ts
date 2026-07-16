@@ -242,7 +242,7 @@ class KinicIcrcWallet extends IcrcWallet {
 
 function openOisyWallet(): Promise<KinicIcrcWallet> {
   return KinicIcrcWallet.connect({
-    url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
+    url: import.meta.env.VITE_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
     host: configuredIcHost()
   });
 }
@@ -536,15 +536,15 @@ function nowNs(): bigint {
 }
 
 function assertConfiguredCyclesCanister(canisterId: string): void {
-  const configured = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
-  if (!configured) throw new Error("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
+  const configured = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID;
+  if (!configured) throw new Error("VITE_KINIC_WIKI_CANISTER_ID is not configured");
   if (Principal.fromText(canisterId).toText() !== Principal.fromText(configured).toText()) {
-    throw new Error("VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
+    throw new Error("VFS canister does not match VITE_KINIC_WIKI_CANISTER_ID");
   }
 }
 
 async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spender: string): Promise<LedgerAllowance> {
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
   const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
   if (agent.isLocal()) await agent.fetchRootKey();
   const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
@@ -555,7 +555,7 @@ async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spend
 }
 
 async function getLedgerBalance(ledgerCanisterId: string, owner: string): Promise<bigint> {
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
   const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
   if (agent.isLocal()) await agent.fetchRootKey();
   const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
@@ -566,7 +566,7 @@ async function getLedgerBalance(ledgerCanisterId: string, owner: string): Promis
 }
 
 async function createLedgerActor(ledgerCanisterId: string, identity: Identity): Promise<LedgerActor> {
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
   const agent = HttpAgent.createSync({ identity, host });
   if (agent.isLocal()) await agent.fetchRootKey();
   return Actor.createActor<LedgerActor>(ledgerIdlFactory, {
@@ -735,7 +735,7 @@ async function decodeOisyCanisterReply({
   const responseArg = bytesFromUnknown(contentMap.arg, "wallet response argument");
   if (!sameBytes(base64ToUint8Array(arg), responseArg)) throw new Error("wallet response argument mismatch");
   const requestId = requestIdOf(contentMap);
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
   const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
   if (agent.isLocal()) await agent.fetchRootKey();
   if (!agent.rootKey) throw new Error("agent root key unavailable");

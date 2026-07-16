@@ -32,7 +32,7 @@ export function MetricsClient({ canisterId }: { canisterId: string }) {
       requestSeqRef.current += 1;
       setMetrics(null);
       setSeries([]);
-      setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured.");
+      setError("VITE_KINIC_WIKI_CANISTER_ID is not configured.");
       setLoadState("error");
       return;
     }
@@ -206,7 +206,8 @@ function MetricChart({ title, points, series }: { title: string; points: WikiMet
           })}
         </div>
         <div className="absolute bottom-7 left-12 right-0 top-0">
-          <svg className="size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`${title} chart`}>
+          <svg className="size-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <title>{title} chart</title>
             {gridTicks.map((tick, index) => {
               const tickMax = hasPositiveData ? yAxisMax : 1;
               const y = valueRatio(tick, tickMax) * 100;

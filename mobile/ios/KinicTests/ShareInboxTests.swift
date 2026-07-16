@@ -25,6 +25,22 @@ struct ShareInboxTests {
         #expect(pendingURLs.first?.url.absoluteString == "https://example.com/page")
         #expect(pendingURLs.first?.receivedAt == receivedAt)
         #expect(pendingURLs.first?.requestId == "1700000000000-00000000-0000-4000-8000-000000000000")
+        #expect(pendingURLs.first?.outputLanguage == .english)
+    }
+
+    @Test
+    func enqueuesAndLoadsOutputLanguage() throws {
+        let queueDirectory = makeQueueDirectory()
+        defer { removeQueueDirectory(queueDirectory) }
+
+        let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+        try inbox.enqueue(
+            URL(string: "https://example.com/page")!,
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            outputLanguage: .portuguese
+        )
+
+        #expect(try #require(inbox.loadPendingURLs().first).outputLanguage == .portuguese)
     }
 
     @Test
@@ -86,6 +102,7 @@ struct ShareInboxTests {
             requestedBy: "aaaaa-aa",
             now: receivedAt,
             uuid: uuid,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
         let pendingURL = PendingSharedURL(
@@ -93,6 +110,7 @@ struct ShareInboxTests {
             url: url,
             receivedAt: receivedAt,
             requestId: initialRequest.requestId,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
 
@@ -107,11 +125,13 @@ struct ShareInboxTests {
             requestedBy: "aaaaa-aa",
             requestId: initialRequest.requestId,
             now: retryAt,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
 
         #expect(retryRequest.content == initialRequest.content)
         #expect(retryRequest.metadataJson == initialRequest.metadataJson)
+        #expect(retryRequest.outputLanguage == .japanese)
         #expect(retryRequest.content.contains(receivedAt.formatted(.iso8601)))
         #expect(!retryRequest.content.contains(retryAt.formatted(.iso8601)))
         #expect(retryRequest.content != retryTimeRequest.content)
@@ -395,6 +415,27 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStorePersistsOutputLanguageAndDefaultsToEnglish() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(store.wikiOutputLanguage == .english)
+
+        for language in WikiOutputLanguage.allCases {
+            store.wikiOutputLanguage = language
+            #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).wikiOutputLanguage == language)
+        }
+
+        defaults.set("unsupported", forKey: "kinic.wiki-output-language.v1")
+        #expect(store.wikiOutputLanguage == .english)
+    }
+
+    @Test
     func sharedDefaultsStorePersistsBrowseDatabaseVisibilityToggles() throws {
         let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -526,6 +567,55 @@ struct ShareInboxTests {
         model.setShowPurchasedBrowseDatabases(true)
         #expect(store.showPublicBrowseDatabases == true)
         #expect(store.showPurchasedBrowseDatabases == true)
+    }
+
+    @MainActor
+    @Test
+    func appModelStartsBrowseWithoutRestoringAStoredDatabaseSelection() throws {
+        let suiteName = "kinic.app-model-browse-selection.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        defaults.set("db_first", forKey: "kinic.browse-database-id.v1")
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.selectedBrowseDatabaseId.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func appModelPersistsOutputLanguage() throws {
+        let suiteName = "kinic.app-model-output-language.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.wikiOutputLanguage == .english)
+        model.wikiOutputLanguage = .korean
+        #expect(store.wikiOutputLanguage == .korean)
     }
 
     @MainActor

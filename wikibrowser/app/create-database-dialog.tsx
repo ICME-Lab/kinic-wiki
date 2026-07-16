@@ -4,6 +4,7 @@
 
 import { Plus, X } from "lucide-react";
 import type { FormEvent } from "react";
+import { useModalDialog } from "@/components/use-modal-dialog";
 export function CreateDatabaseDialog({
   createDisabled,
   createLabel,
@@ -29,6 +30,7 @@ export function CreateDatabaseDialog({
   onChange: (value: string) => void;
   onSubmit: () => void;
 }) {
+  const { dialogRef, handleCancel } = useModalDialog(onCancel, creating, open);
   if (!open) return null;
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -38,13 +40,15 @@ export function CreateDatabaseDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
-      onMouseDown={(event) => {
-        if (!creating && event.target === event.currentTarget) onCancel();
-      }}
+    <dialog
+      ref={dialogRef}
+      aria-modal="true"
+      aria-label="Create database"
+      className="fixed inset-0 z-50 m-0 hidden h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-ink/30 px-4 open:flex"
+      onCancel={handleCancel}
     >
-      <form aria-modal="true" className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" role="dialog" onSubmit={submit}>
+      <button aria-label="Close create database dialog" className="absolute inset-0" disabled={creating} tabIndex={-1} type="button" onClick={onCancel} />
+      <form className="relative z-10 w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
@@ -61,6 +65,7 @@ export function CreateDatabaseDialog({
             Database name
           </label>
           <input
+            data-modal-initial-focus
             id="database-name-input"
             className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             maxLength={80}
@@ -87,6 +92,6 @@ export function CreateDatabaseDialog({
           </button>
         </div>
       </form>
-    </div>
+    </dialog>
   );
 }

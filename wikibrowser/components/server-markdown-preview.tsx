@@ -2,7 +2,6 @@
 // What: Render public Markdown into static HTML with safe links and images.
 // Why: Search crawlers need useful node content before the client browser fetches VFS data.
 
-import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeMarkdownImageSrc } from "@/lib/markdown-images";
@@ -35,16 +34,15 @@ export function ServerMarkdownPreview({
             );
           }
           return (
-            <Link href={wikiHref} {...props}>
+            <a href={wikiHref} {...props}>
               {children}
-            </Link>
+            </a>
           );
         },
         img({ src, alt, ...props }) {
           const safeSrc = safeMarkdownImageSrc(src);
           if (!safeSrc) return alt ? <span>{alt}</span> : null;
-          // Markdown may reference arbitrary HTTPS image hosts; next/image requires a host allowlist or fixed sizing.
-          // eslint-disable-next-line @next/next/no-img-element
+          // Markdown image hosts are user-controlled, so a fixed host allowlist is not applicable here.
           return <img src={safeSrc} alt={alt ?? ""} {...props} />;
         }
       }}

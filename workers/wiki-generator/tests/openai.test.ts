@@ -3,7 +3,7 @@
 // Why: The model boundary must stay schema-checked before rendering or writes.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deepSeekErrorMessage, generateDraft, parseDraftResponse, parseDraftText, validateDraftSources } from "../src/openai.js";
+import { DeepSeekRequestError, deepSeekErrorMessage, generateDraft, parseDraftResponse, parseDraftText, validateDraftSources } from "../src/openai.js";
 import type { WorkerConfig } from "../src/types.js";
 
 const draftJson = JSON.stringify({
@@ -81,8 +81,10 @@ test("generateDraft calls DeepSeek chat completions", async () => {
   const originalFetch = globalThis.fetch;
   let requestUrl = "";
   let requestBody: unknown = null;
+  let requestInit: RequestInit | undefined;
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     requestUrl = String(input);
+    requestInit = init;
     requestBody = JSON.parse(String(init?.body ?? "{}"));
     return Response.json({ choices: [{ message: { content: draftJson } }] });
   };
@@ -97,16 +99,69 @@ test("generateDraft calls DeepSeek chat completions", async () => {
       },
       [],
       config(),
-      "deepseek-key"
+      "deepseek-key",
+      "ja"
     );
 
     assert.equal(requestUrl, "https://api.deepseek.com/chat/completions");
+    assert.equal(requestInit?.redirect, "manual");
+    assert.ok(requestInit?.signal instanceof AbortSignal);
     assert.ok(isRecord(requestBody));
     assert.equal(requestBody.model, "deepseek-v4-flash");
     assert.deepEqual(requestBody.response_format, { type: "json_object" });
     assert.match(JSON.stringify(requestBody.messages), /pattern/);
     assert.match(JSON.stringify(requestBody.messages), /non-empty single-line strings/);
+    assert.match(JSON.stringify(requestBody.messages), /all generated prose in Japanese/);
     assert.equal(draft.slug, "project-notes");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("DeepSeek 429 is retryable and honors bounded Retry-After", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> =>
+    Response.json({ error: { message: "rate limited" } }, { status: 429, headers: { "retry-after": "900" } });
+  try {
+    await assert.rejects(
+      generateDraft(source(), [], config(), "deepseek-key"),
+      (error: unknown) =>
+        error instanceof DeepSeekRequestError &&
+        error.code === "deepseek_http_429" &&
+        error.retryable &&
+        error.retryAfterSeconds === 300 &&
+        error.message === "DeepSeek request failed: 429"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("DeepSeek 503 honors an HTTP-date Retry-After", async () => {
+  const retryAt = new Date(Date.now() + 120_000).toUTCString();
+  const error = await deepSeekFailure(503, retryAt);
+
+  assert.ok(error instanceof DeepSeekRequestError);
+  assert.equal(error.code, "deepseek_http_503");
+  assert.ok((error.retryAfterSeconds ?? 0) >= 118 && (error.retryAfterSeconds ?? 0) <= 120);
+});
+
+test("past and invalid Retry-After values fall back to jitter", async () => {
+  const past = await deepSeekFailure(429, "Wed, 21 Oct 2015 07:28:00 GMT");
+  const invalid = await deepSeekFailure(503, "later");
+
+  assert.ok(past instanceof DeepSeekRequestError && past.retryAfterSeconds === undefined);
+  assert.ok(invalid instanceof DeepSeekRequestError && invalid.retryAfterSeconds === undefined);
+});
+
+test("DeepSeek responses larger than 256 KiB are rejected before JSON parsing", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> => new Response("x".repeat(256 * 1024 + 1));
+  try {
+    await assert.rejects(
+      generateDraft(source(), [], config(), "deepseek-key"),
+      (error: unknown) => error instanceof DeepSeekRequestError && error.code === "deepseek_response_too_large" && error.retryable
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -149,6 +204,30 @@ function config(): WorkerConfig {
     maxSourceChars: 300_000,
     maxContextHits: 8,
     maxOutputTokens: 6_000
+  };
+}
+
+async function deepSeekFailure(status: number, retryAfter: string): Promise<unknown> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> =>
+    Response.json({ error: { message: "temporary" } }, { status, headers: { "retry-after": retryAfter } });
+  try {
+    await generateDraft(source(), [], config(), "deepseek-key");
+    throw new Error("DeepSeek failure expected");
+  } catch (error) {
+    return error;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+function source() {
+  return {
+    path: "/Sources/a/a.md",
+    kind: "source" as const,
+    content: "raw",
+    etag: "etag-1",
+    metadataJson: "{}"
   };
 }
 

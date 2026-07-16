@@ -3,14 +3,14 @@
 // Where: root wikibrowser layout.
 // What: renders the shared dashboard/cycles header with external wallet controls.
 // Why: external wallet funding stays separate from the sidebar App account controls.
-import { usePathname } from "next/navigation";
+import { useAppPathname } from "@/lib/app-router";
 import { AdminHeader } from "@/components/admin-header";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { WalletControls } from "./home-ui";
 import { connectedWalletPrincipal, useAppSession } from "./app-session-provider";
 
 export function AppHeader() {
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   const {
     connectWallet,
     disconnectWallet,
