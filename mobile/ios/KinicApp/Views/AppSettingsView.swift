@@ -18,20 +18,23 @@ struct AppSettingsView: View {
             if let principal = account.principal {
                 Section("Account") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Principal")
-                            .font(.subheadline)
+                        HStack(spacing: 0) {
+                            Text("Principal")
+                                .font(.subheadline)
+
+                            Button(
+                                didCopyPrincipal ? "Principal copied" : "Copy principal",
+                                systemImage: didCopyPrincipal ? "checkmark" : "doc.on.doc",
+                                action: copyPrincipal
+                            )
+                            .labelStyle(.iconOnly)
+                            .frame(minWidth: 44, minHeight: 44)
+                        }
 
                         Text(principal)
                             .font(.footnote.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-
-                        Button(
-                            didCopyPrincipal ? "Principal copied" : "Copy principal",
-                            systemImage: didCopyPrincipal ? "checkmark" : "doc.on.doc",
-                            action: copyPrincipal
-                        )
-                        .labelStyle(.iconOnly)
                     }
                 }
             }

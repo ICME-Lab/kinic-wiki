@@ -37,6 +37,15 @@ Create your first database at no cost. An initial usage grant is included so you
 
 wiki, knowledge, capture, links, notes, Internet Computer
 
+## What's New in 1.0.1
+
+- Capture history now shows recent saved links, their processing status, and retry actions when a capture needs attention.
+- Choose the language used for newly generated wiki pages.
+- Sort Browse items by name or modification date.
+- Resume activation of pending databases from a dedicated funding flow.
+- Improved Share Extension reliability, clearer database labels, and more private account presentation.
+- Refined the Home and Settings layout.
+
 ## Screenshot Story
 
 1. Your AI memory, organized

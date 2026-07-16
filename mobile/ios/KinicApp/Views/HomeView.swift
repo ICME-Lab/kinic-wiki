@@ -73,8 +73,15 @@ private struct CaptureView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                KinicHeaderTitle()
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarLeading) {
+                    KinicHeaderTitle()
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    KinicHeaderTitle()
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Ingest", systemImage: "link.badge.plus") {
