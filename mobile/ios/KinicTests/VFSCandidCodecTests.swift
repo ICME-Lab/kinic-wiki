@@ -81,6 +81,38 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func encodesQueryDatabaseSQLJSONArgs() {
+        let sql = "SELECT json_object('path', path) FROM fs_nodes LIMIT 1"
+        let data = VFSCandidEncoder.queryDatabaseSQLJSON(databaseId: "db_demo", sql: sql, limit: 1)
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.range(of: Data(sql.utf8)) != nil)
+        #expect(data.suffix(4) == Data([1, 0, 0, 0]))
+    }
+
+    @Test
+    func buildsExactSourceURLLookupSQL() {
+        let sql = VFSClient.sourceURLExistsSQL(normalizedURLs: ["https://example.com/?author=O'Reilly"])
+        #expect(sql.contains("path >= '/Sources/web/'"))
+        #expect(sql.contains("path < '/Sources/web0'"))
+        #expect(sql.contains("json_extract(metadata_json, '$.url') = 'https://example.com/?author=O''Reilly'"))
+        #expect(sql.contains("json_extract(metadata_json, '$.final_url') = 'https://example.com/?author=O''Reilly'"))
+        #expect(sql.hasSuffix("LIMIT 1"))
+    }
+
+    @Test
+    func sourceLookupIncludesWorkerURLNormalization() throws {
+        #expect(
+            try VFSClient.sourceLookupURLs(for: URL(string: "https://EXAMPLE.com:443")!)
+                == ["https://EXAMPLE.com:443", "https://example.com/"]
+        )
+        #expect(
+            try VFSClient.sourceLookupURLs(for: URL(string: "https://example.com/article#section")!)
+                == ["https://example.com/article"]
+        )
+    }
+
+    @Test
     func encodesListChildrenRequest() {
         let data = VFSCandidEncoder.listChildren(databaseId: "db_demo", path: "/Knowledge")
         #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
@@ -186,6 +218,14 @@ struct VFSCandidCodecTests {
         #expect(node.content == "kind: kinic.source_capture_request")
         #expect(node.metadataJson == "{\"request_type\":\"source_capture\",\"url\":\"https://example.com/page\"}")
         #expect(node.etag == "etag_1")
+    }
+
+    @Test
+    func decodesSQLJSONQueryRowsResult() throws {
+        let rows = try VFSCandidDecoder.decodeSQLJSONQueryRowsResult(
+            candidSQLJSONQueryOk(rows: ["{\"path\":\"/Sources/web/example.md\"}"])
+        )
+        #expect(rows == ["{\"path\":\"/Sources/web/example.md\"}"])
     }
 
     @Test
@@ -1971,6 +2011,116 @@ private func candidMarketEntitlementPageOk() -> Data {
     appendSigned(0, to: &data)
     appendVariantValue("Ok", cases: ["Ok", "Err"])
     appendPage()
+    return data
+}
+
+private func candidSQLJSONQueryOk(rows: [String]) -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeNat32: Int64 = -7
+    let typeText: Int64 = -15
+    let typeVec: Int64 = -19
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func fields(_ raw: [(String, Ref)]) -> [(String, Ref)] {
+        raw.sorted { label($0.0) < label($1.0) }
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = fields(raw)
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendRecord(_ raw: [(String, Ref)]) {
+        appendSigned(typeRecord, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVariant(_ raw: [(String, Ref)]) {
+        appendSigned(typeVariant, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVec(_ ref: Ref) {
+        appendSigned(typeVec, to: &data)
+        appendRef(ref)
+    }
+
+    func appendText(_ text: String) {
+        let bytes = Data(text.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    func appendNat32(_ value: UInt32) {
+        for offset in 0..<4 {
+            data.append(UInt8(truncatingIfNeeded: value >> UInt32(offset * 8)))
+        }
+    }
+
+    func appendVariantValue(_ selected: String, cases: [String]) {
+        let sorted = cases.sorted { label($0) < label($1) }
+        guard let index = sorted.firstIndex(of: selected) else {
+            preconditionFailure("unknown fixture variant case")
+        }
+        appendUnsigned(UInt64(index), to: &data)
+    }
+
+    appendUnsigned(3, to: &data)
+    appendVariant([
+        ("Ok", .table(1)),
+        ("Err", .primitive(typeText))
+    ])
+    appendRecord([
+        ("rows", .table(2)),
+        ("row_count", .primitive(typeNat32)),
+        ("limit", .primitive(typeNat32))
+    ])
+    appendVec(.primitive(typeText))
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendVariantValue("Ok", cases: ["Ok", "Err"])
+    for field in fields([
+        ("rows", .table(2)),
+        ("row_count", .primitive(typeNat32)),
+        ("limit", .primitive(typeNat32))
+    ]) {
+        switch field.0 {
+        case "rows":
+            appendUnsigned(UInt64(rows.count), to: &data)
+            rows.forEach(appendText)
+        case "row_count":
+            appendNat32(UInt32(rows.count))
+        case "limit":
+            appendNat32(1)
+        default:
+            preconditionFailure("unknown SQL JSON query field")
+        }
+    }
     return data
 }
 

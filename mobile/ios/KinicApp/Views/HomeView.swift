@@ -25,6 +25,14 @@ struct HomeView: View {
             .tag(AppTab.browse)
 
             NavigationStack {
+                AskAIView(appModel: model)
+            }
+            .tabItem {
+                Label("Ask AI", systemImage: "sparkles")
+            }
+            .tag(AppTab.askAI)
+
+            NavigationStack {
                 ManageView(model: model)
             }
             .tabItem {

@@ -8,6 +8,8 @@
 	<string>$(KINIC_API_BASE_URL)</string>
 	<key>KINIC_AUTH_ORIGIN</key>
 	<string>$(KINIC_AUTH_ORIGIN)</string>
+	<key>KINIC_ASK_AI_URL</key>
+	<string>$(KINIC_ASK_AI_URL)</string>
 	<key>KINIC_CALLBACK_DOMAIN</key>
 	<string>$(KINIC_CALLBACK_DOMAIN)</string>
 	<key>KINIC_CANISTER_ID</key>
@@ -27,9 +29,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>KinicWikiApp</string>
+	<string>KinicWiki</string>
 	<key>CFBundleDisplayName</key>
-	<string>KinicWikiApp</string>
+	<string>KinicWiki</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -44,7 +46,7 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>KinicWikiApp connects to a local development canister on this network.</string>
+	<string>KinicWiki connects to a local development canister on this network.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

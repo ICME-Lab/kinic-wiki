@@ -77,6 +77,65 @@ struct VFSClient: @unchecked Sendable {
         return try VFSCandidDecoder.decodeReadNodeResult(data)
     }
 
+    func sourceURLExists(databaseId: String, url: URL, session: ICAuthSession) async throws -> Bool {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let lookupURLs = try Self.sourceLookupURLs(for: url)
+        let data = try await client.queryRaw(
+            method: "query_database_sql_json",
+            arg: VFSCandidEncoder.queryDatabaseSQLJSON(
+                databaseId: databaseId,
+                sql: Self.sourceURLExistsSQL(normalizedURLs: lookupURLs),
+                limit: 1
+            ),
+            identity: session
+        )
+        return try !VFSCandidDecoder.decodeSQLJSONQueryRowsResult(data).isEmpty
+    }
+
+    static func sourceLookupURLs(for url: URL) throws -> [String] {
+        let normalizedURL = try URLNormalizer.normalizedHTTPURL(url)
+        var candidates = [normalizedURL.absoluteString]
+        guard var components = URLComponents(url: normalizedURL, resolvingAgainstBaseURL: false) else {
+            return candidates
+        }
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        if (components.scheme == "http" && components.port == 80)
+            || (components.scheme == "https" && components.port == 443) {
+            components.port = nil
+        }
+        if components.percentEncodedPath.isEmpty {
+            components.percentEncodedPath = "/"
+        }
+        if let workerNormalizedURL = components.url?.absoluteString,
+           !candidates.contains(workerNormalizedURL) {
+            candidates.append(workerNormalizedURL)
+        }
+        return candidates
+    }
+
+    static func sourceURLExistsSQL(normalizedURLs: [String]) -> String {
+        let urlConditions = normalizedURLs.map { normalizedURL in
+            let escapedURL = normalizedURL.replacingOccurrences(of: "'", with: "''")
+            return """
+            (json_extract(metadata_json, '$.url') = '\(escapedURL)'
+             OR json_extract(metadata_json, '$.final_url') = '\(escapedURL)')
+            """
+        }.joined(separator: "\n            OR ")
+        return """
+        SELECT json_object('path', path)
+        FROM fs_nodes
+        WHERE kind = 'source'
+          AND path >= '/Sources/web/'
+          AND path < '/Sources/web0'
+          AND json_valid(metadata_json)
+          AND (
+            \(urlConditions)
+          )
+        LIMIT 1
+        """
+    }
+
     func writeNode(
         databaseId: String,
         path: String,

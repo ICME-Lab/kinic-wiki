@@ -10,12 +10,132 @@ import os
 enum AppTab: Hashable {
     case home
     case browse
+    case askAI
     case manage
 }
 
 enum BrowseNavigationTarget: Equatable {
     case folder(String)
     case document(path: String, parentPath: String)
+}
+
+extension AppModel: AskAIKnowledgeProviding {
+    var selectedAskAIDatabaseId: String {
+        selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var selectedAskAIDatabaseTitle: String {
+        selectedBrowseDatabase?.displayTitle ?? selectedAskAIDatabaseId
+    }
+
+    var canAskAI: Bool {
+        canBrowse
+    }
+
+    var askAIDatabaseCandidates: [DatabaseSummary] {
+        browseListDatabases.filter { $0.status != .deleted }
+    }
+
+    func selectAskAIDatabase(_ databaseId: String) {
+        selectBrowseDatabase(databaseId)
+    }
+
+    func retrieveAskAISources(question: String, previousQuestion: String?) async throws -> [AskAIContextSource] {
+        let databaseId = selectedAskAIDatabaseId
+        guard !databaseId.isEmpty else {
+            throw AskAIKnowledgeError.missingDatabase
+        }
+        guard canAskAI else {
+            throw AskAIKnowledgeError.unavailableDatabase
+        }
+
+        let session = browseSession(for: databaseId)
+        let currentQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        var queries = [currentQuestion]
+        if let previousQuestion = previousQuestion?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !previousQuestion.isEmpty,
+           previousQuestion != currentQuestion {
+            queries.append("\(previousQuestion) \(currentQuestion)")
+        }
+
+        var hitsByPath: [String: SearchNodeHit] = [:]
+        for query in queries {
+            let hits = try await client.searchBrowseNodes(
+                databaseId: databaseId,
+                query: query,
+                prefix: nil,
+                limit: 8,
+                session: session
+            )
+            for hit in hits where hit.kind != .folder {
+                if let existing = hitsByPath[hit.path], existing.score <= hit.score {
+                    continue
+                }
+                hitsByPath[hit.path] = hit
+            }
+        }
+
+        let rankedHits = hitsByPath.values.sorted {
+            if $0.score != $1.score {
+                return $0.score < $1.score
+            }
+            return $0.path < $1.path
+        }
+
+        var contexts: [AskAIContextSource] = []
+        for hit in rankedHits.prefix(5) {
+            guard let node = try await client.readBrowseNode(
+                databaseId: databaseId,
+                path: hit.path,
+                session: session
+            ), node.kind != .folder else {
+                continue
+            }
+            let excerpt = Self.askAIExcerpt(for: hit, content: node.content)
+            let source = AskAISource(
+                id: "S\(contexts.count + 1)",
+                path: hit.path,
+                excerpt: excerpt,
+                score: hit.score,
+                matchReasons: hit.matchReasons
+            )
+            contexts.append(
+                AskAIContextSource(
+                    source: source,
+                    content: String(node.content.prefix(3_000))
+                )
+            )
+        }
+        return contexts
+    }
+
+    func openAskAISource(_ path: String) {
+        let databaseId = selectedAskAIDatabaseId
+        guard !databaseId.isEmpty else { return }
+        openBrowseDeepLink(databaseId: databaseId, nodePath: path)
+    }
+
+    private nonisolated static func askAIExcerpt(for hit: SearchNodeHit, content: String) -> String {
+        let candidate = hit.displayPreview.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !candidate.isEmpty {
+            return String(candidate.prefix(300))
+        }
+        return String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
+    }
+}
+
+enum AskAIKnowledgeError: Error, LocalizedError, Equatable {
+    case missingDatabase
+    case unavailableDatabase
+
+    var errorDescription: String? {
+        switch self {
+        case .missingDatabase:
+            "Select a database before asking a question."
+        case .unavailableDatabase:
+            "This database is not currently available to Ask AI."
+        }
+    }
 }
 
 enum AppOpenURLDestination: Equatable {

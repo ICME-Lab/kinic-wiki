@@ -14,6 +14,7 @@ struct AppConfiguration: Equatable, Sendable {
     let callbackDomain: String
     let appGroupId: String?
     let keychainAccessGroup: String?
+    let askAIURL: URL
 
     var icClientConfiguration: ICClientConfiguration {
         ICClientConfiguration(
@@ -51,7 +52,8 @@ struct AppConfiguration: Equatable, Sendable {
         authOrigin: URL(string: "https://wiki.kinic.xyz")!,
         callbackDomain: "wiki.kinic.xyz",
         appGroupId: nil,
-        keychainAccessGroup: nil
+        keychainAccessGroup: nil,
+        askAIURL: URL(string: "https://api.kinic.io/chat")!
     )
 
     static func liveFromBundle(_ bundle: Bundle = .main) -> AppConfiguration {
@@ -63,7 +65,8 @@ struct AppConfiguration: Equatable, Sendable {
             authOrigin: bundle.requiredURL("KINIC_AUTH_ORIGIN"),
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
-            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP")
+            keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
+            askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL")
         )
     }
 }

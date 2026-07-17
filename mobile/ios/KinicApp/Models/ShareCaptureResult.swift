@@ -28,7 +28,7 @@ enum ShareCaptureResult: Equatable, Sendable {
         case .saved:
             "KinicWiki is generating the source capture."
         case .savedPendingRetry:
-            "The request was saved, but capture could not start. Open KinicWikiApp and retry it from Capture history."
+            "The request was saved, but capture could not start. Open KinicWiki and retry it from Capture history."
         case let .queued(reason):
             reason
         case let .failed(message):

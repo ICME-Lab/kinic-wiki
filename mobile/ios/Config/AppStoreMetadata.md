@@ -25,6 +25,8 @@ With KinicWiki, you can:
 - Capture links from the iOS share sheet
 - Browse Knowledge, Memory, Sessions, Skills, and Sources
 - Search across your wiki
+- Ask questions using evidence from one selected database
+- See which documents were searched and used for an answer
 - Read Markdown documents
 - Choose and manage multiple databases
 - Control who can read or write each database
@@ -58,6 +60,9 @@ wiki, knowledge, capture, links, notes, Internet Computer
 
 - Uses Internet Identity for sign-in.
 - Stores pending shared URLs and selected database ID in the app group container.
+- Stores Ask AI conversation history on the device.
+- Sends Ask AI questions and relevant document excerpts to Kinic's AI service to generate answers.
+- Ask AI does not answer when the selected database has no supporting document.
 - Does not declare tracking.
 - Does not collect analytics in the native app.
 
