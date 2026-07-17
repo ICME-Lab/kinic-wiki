@@ -29,7 +29,7 @@
     "src/**/*.tsx",
     "**/*.ts",
     "**/*.tsx",
-    "cloudflare-env.d.ts"
+    "cloudflare-runtime.d.ts"
   ],
   "exclude": [
     "node_modules"
