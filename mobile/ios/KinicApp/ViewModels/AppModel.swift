@@ -40,7 +40,7 @@ extension AppModel: AskAIKnowledgeProviding {
         selectBrowseDatabase(databaseId)
     }
 
-    func retrieveAskAISources(question: String, previousQuestion: String?) async throws -> [AskAIContextSource] {
+    func retrieveAskAISources(queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
         let databaseId = selectedAskAIDatabaseId
         guard !databaseId.isEmpty else {
             throw AskAIKnowledgeError.missingDatabase
@@ -49,46 +49,52 @@ extension AppModel: AskAIKnowledgeProviding {
             throw AskAIKnowledgeError.unavailableDatabase
         }
 
+        let queries = Array(queryPlan.queries.prefix(AskAIQueryPlanner.maximumQueries))
+        guard !queries.isEmpty else {
+            return AskAIRetrievalResult(searchQueries: [], sources: [])
+        }
         let session = browseSession(for: databaseId)
-        let currentQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        var queries = [currentQuestion]
-        if let previousQuestion = previousQuestion?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !previousQuestion.isEmpty,
-           previousQuestion != currentQuestion {
-            queries.append("\(previousQuestion) \(currentQuestion)")
-        }
-
-        var hitsByPath: [String: SearchNodeHit] = [:]
-        for query in queries {
-            let hits = try await client.searchBrowseNodes(
-                databaseId: databaseId,
-                query: query,
-                prefix: nil,
-                limit: 8,
-                session: session
-            )
-            for hit in hits where hit.kind != .folder {
-                if let existing = hitsByPath[hit.path], existing.score <= hit.score {
-                    continue
+        let searchClient = client
+        let hitsByQuery = try await withThrowingTaskGroup(
+            of: (String, [SearchNodeHit]).self,
+            returning: [String: [SearchNodeHit]].self
+        ) { group in
+            for query in queries {
+                group.addTask {
+                    let hits = try await searchClient.searchBrowseNodes(
+                        databaseId: databaseId,
+                        query: query.text,
+                        prefix: nil,
+                        limit: AskAIRetrievalPlanner.searchLimitPerQuery,
+                        session: session
+                    )
+                    return (query.text, hits)
                 }
-                hitsByPath[hit.path] = hit
             }
-        }
-
-        let rankedHits = hitsByPath.values.sorted {
-            if $0.score != $1.score {
-                return $0.score < $1.score
+            var results: [String: [SearchNodeHit]] = [:]
+            for try await (query, hits) in group {
+                results[query] = hits
             }
-            return $0.path < $1.path
+            return results
         }
+        let rankedCandidates = AskAIRetrievalPlanner.rankedCandidates(
+            queryPlan: queryPlan,
+            hitsByQuery: hitsByQuery
+        )
 
         var contexts: [AskAIContextSource] = []
-        for hit in rankedHits.prefix(5) {
+        for candidate in rankedCandidates where contexts.count < AskAIRetrievalPlanner.maximumSources {
+            let hit = candidate.hit
             guard let node = try await client.readBrowseNode(
                 databaseId: databaseId,
                 path: hit.path,
                 session: session
-            ), node.kind != .folder else {
+            ), node.kind != .folder,
+            AskAIRetrievalPlanner.hasRequiredExactMatches(
+                queryPlan: queryPlan,
+                path: hit.path,
+                content: node.content
+            ) else {
                 continue
             }
             let excerpt = Self.askAIExcerpt(for: hit, content: node.content)
@@ -106,7 +112,7 @@ extension AppModel: AskAIKnowledgeProviding {
                 )
             )
         }
-        return contexts
+        return AskAIRetrievalResult(searchQueries: queries.map(\.text), sources: contexts)
     }
 
     func openAskAISource(_ path: String) {
@@ -1957,6 +1963,22 @@ final class AppModel {
             routes.append(BrowseFolderRoute(path: currentPath))
         }
         return routes
+    }
+
+    nonisolated static func browseNavigationRoutes(
+        for target: BrowseNavigationTarget,
+        includeDocument: Bool
+    ) -> [BrowseFolderRoute] {
+        switch target {
+        case let .folder(path):
+            return folderRoutes(to: path)
+        case let .document(path, parentPath):
+            var routes = folderRoutes(to: parentPath)
+            if includeDocument {
+                routes.append(.document(path: normalizedBrowsePath(path)))
+            }
+            return routes
+        }
     }
 
     nonisolated private static func decodedPathSegments(from url: URL) -> [String] {

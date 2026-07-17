@@ -1,101 +1,65 @@
 // Where: mobile/ios/KinicApp/Services/AskAIResponseDecoder.swift
-// What: Incrementally validates grounding headers before exposing streamed answer text.
-// Why: General or malformed model output must never flash briefly in the conversation.
+// What: Strictly validates a complete tagged answer and its cited source IDs.
+// Why: No model output reaches the conversation until both answer and citations are trustworthy.
 
 import Foundation
 
-struct AskAIResponseDecoder: Sendable {
-    private(set) var outcome = AskAIResponseOutcome.pending
-    private var headerBuffer = ""
-    private var answer = ""
-    private var sourceIDs: [String] = []
-    private var headersComplete = false
-
-    mutating func append(_ chunk: String, validSourceIDs: Set<String>) throws -> AskAIResponseOutcome {
-        if case .insufficient = outcome {
-            return outcome
+enum AskAIResponseDecoder {
+    static func decode(_ response: String, validSourceIDs: Set<String>) throws -> AskAIResponseOutcome {
+        guard response.components(separatedBy: "<sources>").count == 2,
+              response.components(separatedBy: "</sources>").count == 2,
+              response.components(separatedBy: "<answer>").count == 2,
+              response.components(separatedBy: "</answer>").count == 2,
+              let sourcesOpen = response.range(of: "<sources>"),
+              let sourcesClose = response.range(of: "</sources>"),
+              let answerOpen = response.range(of: "<answer>"),
+              let answerClose = response.range(of: "</answer>"),
+              sourcesOpen.upperBound <= sourcesClose.lowerBound,
+              sourcesClose.upperBound <= answerOpen.lowerBound,
+              answerOpen.upperBound <= answerClose.lowerBound,
+              response[..<sourcesOpen.lowerBound].allSatisfy(\Character.isWhitespace),
+              response[sourcesClose.upperBound..<answerOpen.lowerBound].allSatisfy(\Character.isWhitespace),
+              response[answerClose.upperBound...].allSatisfy(\Character.isWhitespace) else {
+            throw AskAIResponseError.invalidFormat
         }
 
-        if headersComplete {
-            answer += chunk
-            outcome = .supported(sourceIDs: sourceIDs, answer: answer)
-            return outcome
-        }
-
-        headerBuffer += chunk.replacing("\r\n", with: "\n")
-        guard let separator = headerBuffer.range(of: "\n\n") else {
-            return .pending
-        }
-
-        let header = String(headerBuffer[..<separator.lowerBound])
-        let body = String(headerBuffer[separator.upperBound...])
-        let lines = header.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard lines.count == 2,
-              lines[0].hasPrefix("GROUNDING:"),
-              lines[1].hasPrefix("SOURCES:") else {
-            throw AskAIResponseError.invalidGroundingHeaders
-        }
-
-        let grounding = lines[0].dropFirst("GROUNDING:".count).trimmingCharacters(in: .whitespaces)
-        let rawSources = lines[1].dropFirst("SOURCES:".count).trimmingCharacters(in: .whitespaces)
-        if grounding == "insufficient" {
-            guard rawSources.isEmpty else {
-                throw AskAIResponseError.invalidGroundingHeaders
-            }
-            outcome = .insufficient
-            return outcome
-        }
-
-        guard grounding == "supported" else {
-            throw AskAIResponseError.invalidGroundingHeaders
-        }
-        sourceIDs = rawSources
-            .split(separator: ",")
+        let rawSources = response[sourcesOpen.upperBound..<sourcesClose.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let answer = response[answerOpen.upperBound..<answerClose.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceIDs = rawSources
+            .split(separator: ",", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard !sourceIDs.isEmpty,
+
+        if answer.isEmpty {
+            guard rawSources.isEmpty else {
+                throw AskAIResponseError.emptyAnswer
+            }
+            return .insufficient
+        }
+        guard !rawSources.isEmpty,
+              !sourceIDs.contains(where: \.isEmpty),
               Set(sourceIDs).count == sourceIDs.count,
               sourceIDs.allSatisfy(validSourceIDs.contains) else {
             throw AskAIResponseError.invalidSources
         }
-
-        headersComplete = true
-        answer = body
-        outcome = .supported(sourceIDs: sourceIDs, answer: answer)
-        return outcome
-    }
-
-    mutating func finish() throws -> AskAIResponseOutcome {
-        switch outcome {
-        case .pending:
-            throw AskAIResponseError.incompleteResponse
-        case let .supported(sourceIDs, answer):
-            guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw AskAIResponseError.emptyAnswer
-            }
-            return .supported(sourceIDs: sourceIDs, answer: answer)
-        case .insufficient:
-            return .insufficient
-        }
+        return .supported(sourceIDs: sourceIDs, answer: answer)
     }
 }
 
 enum AskAIResponseError: Error, LocalizedError, Equatable {
-    case invalidGroundingHeaders
+    case invalidFormat
     case invalidSources
-    case incompleteResponse
     case emptyAnswer
 
     var errorDescription: String? {
         switch self {
-        case .invalidGroundingHeaders:
-            "Kinic AI returned an invalid grounding status."
+        case .invalidFormat:
+            "Kinic AI returned an invalid answer format."
         case .invalidSources:
             "Kinic AI referenced evidence that was not provided."
-        case .incompleteResponse:
-            "Kinic AI returned an incomplete response."
         case .emptyAnswer:
-            "Kinic AI returned an empty answer."
+            "Kinic AI returned sources without an answer."
         }
     }
 }

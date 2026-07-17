@@ -10,7 +10,7 @@ struct AskAISourcesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Sources")
+            Text("Sources cited by Kinic AI")
                 .font(.headline)
 
             ForEach(sources) { source in

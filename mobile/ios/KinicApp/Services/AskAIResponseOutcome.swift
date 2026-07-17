@@ -5,7 +5,6 @@
 import Foundation
 
 enum AskAIResponseOutcome: Equatable, Sendable {
-    case pending
     case supported(sourceIDs: [String], answer: String)
     case insufficient
 }

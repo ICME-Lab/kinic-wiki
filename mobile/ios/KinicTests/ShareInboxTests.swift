@@ -931,6 +931,43 @@ struct ShareInboxTests {
         #expect(BrowseFolderRoute.document(path: "/Knowledge/Page.md").path == "/Knowledge/Page.md")
     }
 
+    @Test
+    func buildsBrowseNavigationRoutesForSizeClass() {
+        let documentTarget = BrowseNavigationTarget.document(
+            path: "/Knowledge/Design/Page.md",
+            parentPath: "/Knowledge/Design"
+        )
+
+        #expect(AppModel.browseNavigationRoutes(
+            for: documentTarget,
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+            BrowseFolderRoute.document(path: "/Knowledge/Design/Page.md"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: documentTarget,
+            includeDocument: false
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: .folder("/Knowledge/Design"),
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: .document(path: "/Page.md", parentPath: "/"),
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute.document(path: "/Page.md"),
+        ])
+    }
+
     @MainActor
     @Test
     func emptyBrowseSearchQueryClearsResults() {

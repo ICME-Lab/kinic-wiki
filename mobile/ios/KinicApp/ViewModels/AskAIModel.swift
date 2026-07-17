@@ -9,9 +9,11 @@ import Observation
 @Observable
 final class AskAIModel {
     private let knowledgeProvider: AskAIKnowledgeProviding
-    private let client: AskAIStreaming
+    private let client: AskAICompleting
     private let store: AskAIConversationPersisting
+    private let generationTimeout: Duration
     @ObservationIgnored private var generationTask: Task<Void, Never>?
+    @ObservationIgnored private var generationTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     private var generationID: UUID?
 
@@ -27,12 +29,14 @@ final class AskAIModel {
 
     init(
         knowledgeProvider: AskAIKnowledgeProviding,
-        client: AskAIStreaming,
-        store: AskAIConversationPersisting
+        client: AskAICompleting,
+        store: AskAIConversationPersisting,
+        generationTimeout: Duration = .seconds(120)
     ) {
         self.knowledgeProvider = knowledgeProvider
         self.client = client
         self.store = store
+        self.generationTimeout = generationTimeout
     }
 
     convenience init(appModel: AppModel) {
@@ -69,6 +73,9 @@ final class AskAIModel {
         }
         do {
             conversations = try await store.load()
+            if recoverInterruptedGenerations() {
+                persistConversations()
+            }
         } catch {
             errorMessage = "Conversation history could not be loaded: \(error.localizedDescription)"
         }
@@ -156,13 +163,12 @@ final class AskAIModel {
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
 
         let history = conversation.messages
-        let previousQuestion = history.reversed().first(where: { $0.role == .user })?.text
         let userMessage = AskAIMessage(role: .user, text: question)
         let assistantID = UUID()
         let trace = [
             AskAITraceEvent(
                 stage: .searching,
-                title: "Searching \(conversation.databaseTitle)",
+                title: "Generating search queries",
                 detail: question,
                 isActive: true
             )
@@ -183,6 +189,7 @@ final class AskAIModel {
         draft = ""
         errorMessage = nil
         isGenerating = true
+        persistCurrentConversation()
 
         let requestID = UUID()
         generationID = requestID
@@ -191,15 +198,26 @@ final class AskAIModel {
                 requestID: requestID,
                 assistantID: assistantID,
                 question: question,
-                previousQuestion: previousQuestion,
                 history: history
             )
+        }
+        let timeout = generationTimeout
+        generationTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.timeoutGeneration(requestID: requestID, assistantID: assistantID)
         }
     }
 
     func cancelGeneration() {
         generationTask?.cancel()
         generationTask = nil
+        generationTimeoutTask?.cancel()
+        generationTimeoutTask = nil
         generationID = nil
         guard isGenerating else { return }
         isGenerating = false
@@ -225,24 +243,38 @@ final class AskAIModel {
         requestID: UUID,
         assistantID: UUID,
         question: String,
-        previousQuestion: String?,
         history: [AskAIMessage]
     ) async {
         do {
-            let contexts = try await knowledgeProvider.retrieveAskAISources(
+            let queryPrompt = AskAIQueryPlanner.buildPrompt(
+                databaseTitle: databaseTitle,
                 question: question,
-                previousQuestion: previousQuestion
+                history: history
+            )
+            let queryResponse = try await client.completeContent(
+                message: queryPrompt,
+                timeout: .seconds(30)
             )
             try Task.checkCancellation()
             guard generationID == requestID else { return }
+            let queryPlan = try AskAIQueryPlanner.parse(queryResponse)
+            let retrieval = try await knowledgeProvider.retrieveAskAISources(queryPlan: queryPlan)
+            try Task.checkCancellation()
+            guard generationID == requestID else { return }
+            let contexts = retrieval.sources
+            let searchDetail = retrieval.searchQueries.joined(separator: "\n")
 
             setTrace(
                 messageID: assistantID,
                 events: [
-                    AskAITraceEvent(stage: .searching, title: "Searched \(databaseTitle)", detail: question),
+                    AskAITraceEvent(
+                        stage: .searching,
+                        title: "Generated search queries",
+                        detail: searchDetail
+                    ),
                     AskAITraceEvent(
                         stage: .found,
-                        title: "Found \(contexts.count) relevant \(contexts.count == 1 ? "note" : "notes")",
+                        title: "Found \(contexts.count) matching \(contexts.count == 1 ? "note" : "notes")",
                         detail: contexts.map(\.source.path).joined(separator: "\n")
                     ),
                     AskAITraceEvent(
@@ -253,6 +285,7 @@ final class AskAIModel {
             )
             guard !contexts.isEmpty else {
                 completeAsInsufficient(messageID: assistantID, sources: [])
+                persistCurrentConversation()
                 finishGeneration(requestID: requestID)
                 return
             }
@@ -261,7 +294,7 @@ final class AskAIModel {
                 messageID: assistantID,
                 event: AskAITraceEvent(
                     stage: .verifying,
-                    title: "Checking whether the notes answer your question",
+                    title: "Preparing an answer from selected notes",
                     isActive: true
                 )
             )
@@ -271,22 +304,13 @@ final class AskAIModel {
                 history: history,
                 sources: contexts
             )
-            var decoder = AskAIResponseDecoder()
             let sourceByID = Dictionary(uniqueKeysWithValues: contexts.map { ($0.source.id, $0.source) })
-            let stream = await client.contentStream(message: prompt)
-            for try await chunk in stream {
-                try Task.checkCancellation()
-                guard generationID == requestID else { return }
-                let outcome = try decoder.append(chunk, validSourceIDs: Set(sourceByID.keys))
-                if case let .supported(sourceIDs, answer) = outcome {
-                    setGeneratingAnswer(
-                        messageID: assistantID,
-                        answer: answer,
-                        sources: sourceIDs.compactMap { sourceByID[$0] }
-                    )
-                }
-            }
-            let finalOutcome = try decoder.finish()
+            let response = try await client.completeContent(message: prompt, timeout: .seconds(90))
+            try Task.checkCancellation()
+            let finalOutcome = try AskAIResponseDecoder.decode(
+                response,
+                validSourceIDs: Set(sourceByID.keys)
+            )
             guard generationID == requestID else { return }
             switch finalOutcome {
             case let .supported(sourceIDs, answer):
@@ -297,8 +321,6 @@ final class AskAIModel {
                 )
             case .insufficient:
                 completeAsInsufficient(messageID: assistantID, sources: contexts.map(\.source))
-            case .pending:
-                throw AskAIResponseError.incompleteResponse
             }
             persistCurrentConversation()
             finishGeneration(requestID: requestID)
@@ -322,23 +344,6 @@ final class AskAIModel {
         }
     }
 
-    private func setGeneratingAnswer(messageID: UUID, answer: String, sources: [AskAISource]) {
-        updateMessage(id: messageID) { message in
-            message.text = answer
-            message.sources = sources
-            message.trace = message.trace.map { event in
-                var event = event
-                event.isActive = false
-                return event
-            }
-            if !message.trace.contains(where: { $0.stage == .generating }) {
-                message.trace.append(
-                    AskAITraceEvent(stage: .generating, title: "Writing from verified notes", isActive: true)
-                )
-            }
-        }
-    }
-
     private func completeSupported(messageID: UUID, answer: String, sources: [AskAISource]) {
         updateMessage(id: messageID) { message in
             message.text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -349,6 +354,13 @@ final class AskAIModel {
                 event.isActive = false
                 return event
             }
+            message.trace.append(
+                AskAITraceEvent(
+                    stage: .generating,
+                    title: "Answered with cited notes",
+                    detail: sources.map { "\($0.id): \($0.path)" }.joined(separator: "\n")
+                )
+            )
         }
     }
 
@@ -425,10 +437,53 @@ final class AskAIModel {
         }
     }
 
+    private func recoverInterruptedGenerations() -> Bool {
+        var recovered = false
+        for conversationIndex in conversations.indices {
+            for messageIndex in conversations[conversationIndex].messages.indices {
+                var message = conversations[conversationIndex].messages[messageIndex]
+                guard message.role == .assistant, message.state == .generating else {
+                    continue
+                }
+                message.state = .failed
+                message.text = "Generation was interrupted."
+                message.sources = []
+                message.trace = message.trace.map { event in
+                    var event = event
+                    event.isActive = false
+                    return event
+                }
+                conversations[conversationIndex].messages[messageIndex] = message
+                recovered = true
+            }
+        }
+        return recovered
+    }
+
+    private func timeoutGeneration(requestID: UUID, assistantID: UUID) {
+        guard generationID == requestID else { return }
+        generationTask?.cancel()
+        updateMessage(id: assistantID) { message in
+            message.state = .failed
+            message.text = "The answer took too long. Try again."
+            message.sources = []
+            message.trace = message.trace.map { event in
+                var event = event
+                event.isActive = false
+                return event
+            }
+        }
+        errorMessage = "Kinic AI did not finish within 120 seconds. Try again."
+        persistCurrentConversation()
+        finishGeneration(requestID: requestID)
+    }
+
     private func finishGeneration(requestID: UUID) {
         guard generationID == requestID else { return }
         generationID = nil
         generationTask = nil
+        generationTimeoutTask?.cancel()
+        generationTimeoutTask = nil
         isGenerating = false
     }
 }
