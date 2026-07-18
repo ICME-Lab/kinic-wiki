@@ -26,8 +26,9 @@ struct AskAIModelTests {
 
         #expect(await client.callCount == 2)
         let messages = await client.messages
-        #expect(messages[0].contains("Generate search queries"))
+        #expect(messages[0].contains("SEARCH QUERY REWRITER"))
         #expect(messages[1].contains("DATABASE SOURCES"))
+        #expect(knowledge.receivedDatabaseIds == ["db_test"])
         #expect(knowledge.receivedPlans.first?.queries.map(\.text) == [
             "x402 paid api route", "x402 有料 api ルート"
         ])
@@ -121,6 +122,76 @@ struct AskAIModelTests {
     }
 
     @Test
+    func databaseChangeDuringQueryGenerationStopsBeforeRetrieval() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>question</answer>", .milliseconds(80)),
+            .value("<sources>S1</sources><answer>Wrong database answer.</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Question"
+        model.send()
+        try await waitForCallCount(client, count: 1)
+        knowledge.selectedAskAIDatabaseId = "db_other"
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.state == .failed)
+        #expect(model.messages.last?.text == "Generation stopped.")
+        #expect(model.messages.last?.sources.isEmpty == true)
+    }
+
+    @Test
+    func databaseChangeDuringAnswerGenerationDiscardsCompletedResponse() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("<answer>question</answer>"),
+            .delayed("<sources>S1</sources><answer>Wrong database answer.</answer>", .milliseconds(80))
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Question"
+        model.send()
+        try await waitForCallCount(client, count: 2)
+        knowledge.selectedAskAIDatabaseId = "db_other"
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.receivedDatabaseIds == ["db_test"])
+        #expect(model.messages.last?.state == .failed)
+        #expect(model.messages.last?.text == "Generation stopped.")
+        #expect(model.messages.last?.text != "Wrong database answer.")
+        #expect(model.messages.last?.sources.isEmpty == true)
+    }
+
+    @Test
+    func openingSourceUsesCurrentConversationDatabase() async {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [])
+        let conversation = AskAIConversation(
+            databaseId: "db_history",
+            databaseTitle: "History DB"
+        )
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(savedConversations: [conversation])
+        )
+        await model.load()
+        model.selectConversation(conversation)
+        knowledge.selectedAskAIDatabaseId = "db_other"
+        let source = contextSource().source
+
+        model.openSource(source)
+
+        #expect(knowledge.openedDatabaseIds == ["db_history"])
+        #expect(knowledge.openedPaths == [source.path])
+    }
+
+    @Test
     func recentHistoryIsSentToQueryPlannerForReferenceResolution() async throws {
         let prior = AskAIConversation(
             databaseId: "db_test",
@@ -206,6 +277,14 @@ struct AskAIModelTests {
         #expect(!model.isGenerating)
     }
 
+    private func waitForCallCount(_ client: AskAICompletionStub, count: Int) async throws {
+        for _ in 0..<200 {
+            if await client.callCount == count { return }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        Issue.record("Expected \(count) Ask AI calls")
+    }
+
     private func waitForSavedMessage(_ store: AskAIStoreStub, state: AskAIMessageState) async throws {
         for _ in 0..<200 {
             if await store.savedConversations.first?.messages.last?.state == state { return }
@@ -236,7 +315,10 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var askAIDatabaseCandidates: [DatabaseSummary] = []
     let sources: [AskAIContextSource]
     private(set) var retrievalCallCount = 0
+    private(set) var receivedDatabaseIds: [String] = []
     private(set) var receivedPlans: [AskAIQueryPlan] = []
+    private(set) var openedDatabaseIds: [String] = []
+    private(set) var openedPaths: [String] = []
 
     init(sources: [AskAIContextSource]) {
         self.sources = sources
@@ -246,13 +328,17 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
         selectedAskAIDatabaseId = databaseId
     }
 
-    func retrieveAskAISources(queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
+    func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
         retrievalCallCount += 1
+        receivedDatabaseIds.append(databaseId)
         receivedPlans.append(queryPlan)
         return AskAIRetrievalResult(searchQueries: queryPlan.queries.map(\.text), sources: sources)
     }
 
-    func openAskAISource(_ path: String) { }
+    func openAskAISource(databaseId: String, path: String) {
+        openedDatabaseIds.append(databaseId)
+        openedPaths.append(path)
+    }
 }
 
 private actor AskAICompletionStub: AskAICompleting {

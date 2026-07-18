@@ -40,12 +40,12 @@ extension AppModel: AskAIKnowledgeProviding {
         selectBrowseDatabase(databaseId)
     }
 
-    func retrieveAskAISources(queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
-        let databaseId = selectedAskAIDatabaseId
+    func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else {
             throw AskAIKnowledgeError.missingDatabase
         }
-        guard canAskAI else {
+        guard isAskAIDatabaseAvailable(databaseId) else {
             throw AskAIKnowledgeError.unavailableDatabase
         }
 
@@ -115,10 +115,16 @@ extension AppModel: AskAIKnowledgeProviding {
         return AskAIRetrievalResult(searchQueries: queries.map(\.text), sources: contexts)
     }
 
-    func openAskAISource(_ path: String) {
-        let databaseId = selectedAskAIDatabaseId
+    func openAskAISource(databaseId: String, path: String) {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else { return }
         openBrowseDeepLink(databaseId: databaseId, nodePath: path)
+    }
+
+    private func isAskAIDatabaseAvailable(_ databaseId: String) -> Bool {
+        session != nil
+            || publicBrowseDatabaseIds.contains(databaseId)
+            || directBrowseDatabaseIds.contains(databaseId)
     }
 
     private nonisolated static func askAIExcerpt(for hit: SearchNodeHit, content: String) -> String {

@@ -33,7 +33,7 @@ struct AskAIDatabaseMenu: View {
                 appModel.selectedAskAIDatabaseTitle.isEmpty ? "Choose database" : appModel.selectedAskAIDatabaseTitle,
                 systemImage: "externaldrive"
             )
-            .lineLimit(1)
+            .labelStyle(.iconOnly)
         }
         .tint(KinicDesign.hotPink)
         .accessibilityHint("Selects the only database Ask AI may search")

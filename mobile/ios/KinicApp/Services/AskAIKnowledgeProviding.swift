@@ -12,6 +12,6 @@ protocol AskAIKnowledgeProviding: AnyObject {
     var askAIDatabaseCandidates: [DatabaseSummary] { get }
 
     func selectAskAIDatabase(_ databaseId: String)
-    func retrieveAskAISources(queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult
-    func openAskAISource(_ path: String)
+    func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult
+    func openAskAISource(databaseId: String, path: String)
 }

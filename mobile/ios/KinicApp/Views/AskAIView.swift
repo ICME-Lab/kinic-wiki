@@ -16,12 +16,22 @@ struct AskAIView: View {
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
-            .navigationTitle("Ask AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Text(
+                        appModel.selectedAskAIDatabaseTitle.isEmpty
+                            ? "Choose database"
+                            : appModel.selectedAskAIDatabaseTitle
+                    )
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityHidden(true)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("History", systemImage: "clock.arrow.circlepath") {

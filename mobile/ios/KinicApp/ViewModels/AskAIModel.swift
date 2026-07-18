@@ -196,6 +196,9 @@ final class AskAIModel {
         generationTask = Task {
             await generateAnswer(
                 requestID: requestID,
+                conversationID: conversation.id,
+                databaseID: conversation.databaseId,
+                databaseTitle: conversation.databaseTitle,
                 assistantID: assistantID,
                 question: question,
                 history: history
@@ -236,16 +239,25 @@ final class AskAIModel {
     }
 
     func openSource(_ source: AskAISource) {
-        knowledgeProvider.openAskAISource(source.path)
+        guard let databaseID = currentConversation?.databaseId else { return }
+        knowledgeProvider.openAskAISource(databaseId: databaseID, path: source.path)
     }
 
     private func generateAnswer(
         requestID: UUID,
+        conversationID: UUID,
+        databaseID: String,
+        databaseTitle: String,
         assistantID: UUID,
         question: String,
         history: [AskAIMessage]
     ) async {
         do {
+            guard continueGeneration(
+                requestID: requestID,
+                conversationID: conversationID,
+                databaseID: databaseID
+            ) else { return }
             let queryPrompt = AskAIQueryPlanner.buildPrompt(
                 databaseTitle: databaseTitle,
                 question: question,
@@ -256,11 +268,22 @@ final class AskAIModel {
                 timeout: .seconds(30)
             )
             try Task.checkCancellation()
-            guard generationID == requestID else { return }
+            guard continueGeneration(
+                requestID: requestID,
+                conversationID: conversationID,
+                databaseID: databaseID
+            ) else { return }
             let queryPlan = try AskAIQueryPlanner.parse(queryResponse)
-            let retrieval = try await knowledgeProvider.retrieveAskAISources(queryPlan: queryPlan)
+            let retrieval = try await knowledgeProvider.retrieveAskAISources(
+                databaseId: databaseID,
+                queryPlan: queryPlan
+            )
             try Task.checkCancellation()
-            guard generationID == requestID else { return }
+            guard continueGeneration(
+                requestID: requestID,
+                conversationID: conversationID,
+                databaseID: databaseID
+            ) else { return }
             let contexts = retrieval.sources
             let searchDetail = retrieval.searchQueries.joined(separator: "\n")
 
@@ -307,11 +330,15 @@ final class AskAIModel {
             let sourceByID = Dictionary(uniqueKeysWithValues: contexts.map { ($0.source.id, $0.source) })
             let response = try await client.completeContent(message: prompt, timeout: .seconds(90))
             try Task.checkCancellation()
+            guard continueGeneration(
+                requestID: requestID,
+                conversationID: conversationID,
+                databaseID: databaseID
+            ) else { return }
             let finalOutcome = try AskAIResponseDecoder.decode(
                 response,
                 validSourceIDs: Set(sourceByID.keys)
             )
-            guard generationID == requestID else { return }
             switch finalOutcome {
             case let .supported(sourceIDs, answer):
                 completeSupported(
@@ -325,10 +352,15 @@ final class AskAIModel {
             persistCurrentConversation()
             finishGeneration(requestID: requestID)
         } catch is CancellationError {
-            guard generationID == requestID else { return }
-            cancelGeneration()
+            if generationID == requestID {
+                cancelGeneration()
+            }
         } catch {
-            guard generationID == requestID else { return }
+            guard continueGeneration(
+                requestID: requestID,
+                conversationID: conversationID,
+                databaseID: databaseID
+            ) else { return }
             updateMessage(id: assistantID) { message in
                 message.state = .failed
                 message.text = "The answer could not be generated. Try again."
@@ -342,6 +374,22 @@ final class AskAIModel {
             persistCurrentConversation()
             finishGeneration(requestID: requestID)
         }
+    }
+
+    private func continueGeneration(
+        requestID: UUID,
+        conversationID: UUID,
+        databaseID: String
+    ) -> Bool {
+        let isCurrent = generationID == requestID
+            && currentConversation?.id == conversationID
+            && currentConversation?.databaseId == databaseID
+            && knowledgeProvider.selectedAskAIDatabaseId == databaseID
+        guard !isCurrent else { return true }
+        if generationID == requestID {
+            cancelGeneration()
+        }
+        return false
     }
 
     private func completeSupported(messageID: UUID, answer: String, sources: [AskAISource]) {
