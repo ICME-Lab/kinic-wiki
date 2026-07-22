@@ -173,6 +173,33 @@ struct AskAIRetrievalPlannerTests {
         #expect(candidates.map(\.matchedQueryCount) == [2, 2, 1])
     }
 
+    @Test
+    func retrievalVerifierPreservesExactMatchBehaviorAcrossActorBoundary() async {
+        let verifier = AskAIRetrievalVerifier()
+        let queryPlan = AskAIQueryPlan(
+            queries: [
+                .init(
+                    text: "ic-hono cloudflare workers compatibility",
+                    terms: ["ic-hono", "cloudflare", "workers", "compatibility"]
+                )
+            ]
+        )
+
+        let matches = await verifier.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            path: "/Knowledge/ic-hono.md",
+            content: "ic-hono does not provide full Cloudflare Workers compatibility."
+        )
+        let rejectsNoise = await verifier.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            path: "/Knowledge/other.md",
+            content: "An unrelated document about SwiftUI navigation."
+        )
+
+        #expect(matches)
+        #expect(!rejectsNoise)
+    }
+
     private func plan(_ query: String) -> AskAIQueryPlan {
         AskAIQueryPlan(queries: [.init(text: query, terms: query.split(separator: " ").map(String.init))])
     }

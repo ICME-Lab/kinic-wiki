@@ -20,7 +20,11 @@ struct AskAIEvidencePanel: View {
                         description: Text("Sources used by the latest answer appear here.")
                     )
                 } else {
-                    AskAISourcesView(sources: model.currentSources, openSource: model.openSource)
+                    AskAISourcesView(
+                        heading: "Sources cited by Kinic AI",
+                        sources: model.currentSources,
+                        openSource: model.openSource
+                    )
                 }
             }
             .padding(KinicDesign.screenPadding)

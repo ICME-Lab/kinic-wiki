@@ -90,7 +90,7 @@ extension AppModel: AskAIKnowledgeProviding {
                 path: hit.path,
                 session: session
             ), node.kind != .folder,
-            AskAIRetrievalPlanner.hasRequiredExactMatches(
+            await askAIRetrievalVerifier.hasRequiredExactMatches(
                 queryPlan: queryPlan,
                 path: hit.path,
                 content: node.content
@@ -236,6 +236,7 @@ enum SourceCaptureRetryError: Error, LocalizedError, Equatable {
 final class AppModel {
     private let authService: KinicAuthService
     private let client: KinicICClient
+    private let askAIRetrievalVerifier = AskAIRetrievalVerifier()
     private let shareInbox: ShareInbox
     private let sourceCaptureHistoryStore: SourceCaptureHistoryStore?
     private let settingsStore: SharedDefaultsStore

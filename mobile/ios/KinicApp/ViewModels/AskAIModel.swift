@@ -60,7 +60,11 @@ final class AskAIModel {
     }
 
     var currentSources: [AskAISource] {
-        messages.reversed().first(where: { !$0.sources.isEmpty })?.sources ?? []
+        guard let latestAssistant = messages.last(where: { $0.role == .assistant }),
+              latestAssistant.state == .complete else {
+            return []
+        }
+        return latestAssistant.sources
     }
 
     var databaseTitle: String {

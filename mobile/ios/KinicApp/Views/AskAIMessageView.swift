@@ -39,7 +39,13 @@ struct AskAIMessageView: View {
                 }
 
                 if !message.sources.isEmpty {
-                    AskAISourcesView(sources: message.sources, openSource: openSource)
+                    AskAISourcesView(
+                        heading: message.state == .insufficient
+                            ? "Possible sources"
+                            : "Sources cited by Kinic AI",
+                        sources: message.sources,
+                        openSource: openSource
+                    )
                 }
             }
         }

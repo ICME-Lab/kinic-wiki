@@ -9,6 +9,59 @@ import Testing
 @MainActor
 struct AskAIModelTests {
     @Test
+    func currentSourcesUsesOnlyLatestCompletedAssistantSources() {
+        let previousSource = contextSource(id: "S1").source
+        let latestSource = contextSource(id: "S2").source
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub()
+        )
+        model.currentConversation = AskAIConversation(
+            databaseId: "db_test",
+            databaseTitle: "Test DB",
+            messages: [
+                AskAIMessage(role: .assistant, text: "Previous", sources: [previousSource]),
+                AskAIMessage(role: .assistant, text: "Latest", sources: [latestSource])
+            ]
+        )
+
+        #expect(model.currentSources == [latestSource])
+    }
+
+    @Test(arguments: [
+        AskAIMessageState.generating,
+        AskAIMessageState.failed,
+        AskAIMessageState.insufficient
+    ])
+    func currentSourcesDoesNotFallBackFromAnIncompleteLatestAssistant(
+        _ latestState: AskAIMessageState
+    ) {
+        let previousSource = contextSource(id: "S1").source
+        let latestCandidate = contextSource(id: "S2").source
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub()
+        )
+        model.currentConversation = AskAIConversation(
+            databaseId: "db_test",
+            databaseTitle: "Test DB",
+            messages: [
+                AskAIMessage(role: .assistant, text: "Previous", sources: [previousSource]),
+                AskAIMessage(
+                    role: .assistant,
+                    text: "Latest",
+                    state: latestState,
+                    sources: [latestCandidate]
+                )
+            ]
+        )
+
+        #expect(model.currentSources.isEmpty)
+    }
+
+    @Test
     func successfulQuestionCallsChatExactlyTwiceAndPublishesValidatedAnswer() async throws {
         let source = contextSource()
         let knowledge = AskAIKnowledgeProviderStub(sources: [source])
@@ -609,10 +662,10 @@ struct AskAIModelTests {
         Issue.record("Expected \(count) history saves")
     }
 
-    private func contextSource() -> AskAIContextSource {
+    private func contextSource(id: String = "S1") -> AskAIContextSource {
         AskAIContextSource(
             source: AskAISource(
-                id: "S1",
+                id: id,
                 path: "/Knowledge/note.md",
                 excerpt: "Grounded fact",
                 score: -1,

@@ -5,12 +5,13 @@
 import SwiftUI
 
 struct AskAISourcesView: View {
+    let heading: String
     let sources: [AskAISource]
     let openSource: (AskAISource) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Sources cited by Kinic AI")
+            Text(heading)
                 .font(.headline)
 
             ForEach(sources) { source in
