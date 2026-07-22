@@ -12,7 +12,7 @@ allowBuilds:
   esbuild@0.27.3: true
   esbuild@0.28.1: true
   sharp: true
-  sharp@0.34.5: true
+  sharp@0.35.0: true
   unrs-resolver: true
   unrs-resolver@1.11.1: true
   workerd: true
@@ -24,8 +24,11 @@ minimumReleaseAgeExclude:
 
 overrides:
   '@babel/core': 7.29.6
+  '@hono/node-server': 2.0.10
   esbuild: 0.28.1
+  fast-uri: 3.1.4
   form-data: 4.0.6
-  js-yaml: 4.2.0
+  js-yaml: 4.3.0
   postcss: 8.5.12
+  sharp: 0.35.0
   ws: 8.21.0

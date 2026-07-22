@@ -156,7 +156,6 @@ final class AskAIModel {
         historyOperationID = nil
         self.historyScope = historyScope
         self.store = store
-        persistenceTask = nil
         conversations = []
         currentConversation = nil
         draft = ""

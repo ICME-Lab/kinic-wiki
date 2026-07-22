@@ -501,6 +501,41 @@ struct AskAIModelTests {
         #expect(model.errorMessage == nil)
     }
 
+    @Test
+    func reenteredPrincipalSaveWaitsForEarlierSaveToFinish() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let staleStoreA = AskAIControllableStoreStub(suspendsSave: true)
+        let currentConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Current A")
+        let currentStoreA = AskAIStoreStub(savedConversations: [currentConversation])
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: staleStoreA,
+            historyScope: scopeA
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForPendingSave(staleStoreA)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(to: scopeA, store: currentStoreA)
+        await model.load()
+        model.deleteAllConversations()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await currentStoreA.saveCount == 0)
+
+        await staleStoreA.resumeSave()
+        try await waitForSaveCount(currentStoreA, count: 1)
+
+        #expect(await currentStoreA.savedConversations.isEmpty)
+    }
+
     private func waitUntilFinished(_ model: AskAIModel) async throws {
         for _ in 0..<400 where model.isGenerating {
             try await Task.sleep(for: .milliseconds(5))
@@ -564,6 +599,14 @@ struct AskAIModelTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Expected the history save to finish")
+    }
+
+    private func waitForSaveCount(_ store: AskAIStoreStub, count: Int) async throws {
+        for _ in 0..<200 {
+            if await store.saveCount == count { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected \(count) history saves")
     }
 
     private func contextSource() -> AskAIContextSource {
@@ -752,6 +795,12 @@ private actor AskAIControllableStoreStub: AskAIConversationPersisting {
         let continuation = saveContinuation
         saveContinuation = nil
         continuation?.resume(throwing: AskAIStoreStubError.saveFailed)
+    }
+
+    func resumeSave() {
+        let continuation = saveContinuation
+        saveContinuation = nil
+        continuation?.resume()
     }
 
     func resumeReset() {
