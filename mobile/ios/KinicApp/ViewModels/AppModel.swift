@@ -335,6 +335,10 @@ final class AppModel {
         session?.principal ?? "Not signed in"
     }
 
+    var askAIHistoryScope: AskAIHistoryScope {
+        AskAIHistoryScope(principal: session?.principal)
+    }
+
     var isSignedIn: Bool {
         session != nil
     }

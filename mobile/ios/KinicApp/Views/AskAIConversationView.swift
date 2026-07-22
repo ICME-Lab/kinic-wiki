@@ -38,7 +38,11 @@ struct AskAIConversationView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let error = model.errorMessage {
+            if case let .failed(message) = model.loadState {
+                AskAIHistoryRecoveryView(model: model, message: message)
+                    .padding(.horizontal, KinicDesign.screenPadding)
+                    .padding(.top, 8)
+            } else if let error = model.errorMessage {
                 AskAIErrorBanner(message: error) {
                     model.errorMessage = nil
                 }

@@ -10,40 +10,48 @@ import Observation
 final class AskAIModel {
     private let knowledgeProvider: AskAIKnowledgeProviding
     private let client: AskAICompleting
-    private let store: AskAIConversationPersisting
+    private var store: AskAIConversationPersisting
     private let generationTimeout: Duration
     @ObservationIgnored private var generationTask: Task<Void, Never>?
     @ObservationIgnored private var generationTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var historyContextID = UUID()
+    @ObservationIgnored private var historyOperationID: UUID?
     private var generationID: UUID?
+    private(set) var historyScope: AskAIHistoryScope
 
     var conversations: [AskAIConversation] = []
     var currentConversation: AskAIConversation?
     var draft = ""
     var isGenerating = false
-    var isLoaded = false
+    var loadState: ConversationLoadState = .loading
     var errorMessage: String?
     var pendingDatabaseId: String?
     var pendingDatabaseTitle: String?
     var isConfirmingDatabaseChange = false
+    var isConfirmingHistoryReset = false
 
     init(
         knowledgeProvider: AskAIKnowledgeProviding,
         client: AskAICompleting,
         store: AskAIConversationPersisting,
+        historyScope: AskAIHistoryScope = .guest,
         generationTimeout: Duration = .seconds(120)
     ) {
         self.knowledgeProvider = knowledgeProvider
         self.client = client
         self.store = store
+        self.historyScope = historyScope
         self.generationTimeout = generationTimeout
     }
 
     convenience init(appModel: AppModel) {
+        let historyScope = appModel.askAIHistoryScope
         self.init(
             knowledgeProvider: appModel,
             client: AskAIClient(endpoint: appModel.configuration.askAIURL),
-            store: AskAIConversationStore.live()
+            store: AskAIConversationStore.live(scope: historyScope),
+            historyScope: historyScope
         )
     }
 
@@ -60,30 +68,111 @@ final class AskAIModel {
     }
 
     var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        loadState == .loaded
+            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !isGenerating
             && knowledgeProvider.canAskAI
             && currentConversation != nil
     }
 
     func load() async {
-        guard !isLoaded else {
+        guard loadState != .loaded else {
             syncSelectedDatabase()
             return
         }
+        loadState = .loading
+        errorMessage = nil
+        let operationID = UUID()
+        historyOperationID = operationID
+        let targetContextID = historyContextID
+        let targetStore = store
         do {
-            conversations = try await store.load()
-            if recoverInterruptedGenerations() {
+            let loadedConversations = try await targetStore.load()
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
+            historyOperationID = nil
+            conversations = loadedConversations
+            let recoveredInterruptedGenerations = recoverInterruptedGenerations()
+            loadState = .loaded
+            syncSelectedDatabase()
+            if recoveredInterruptedGenerations {
                 persistConversations()
             }
         } catch {
-            errorMessage = "Conversation history could not be loaded: \(error.localizedDescription)"
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
+            historyOperationID = nil
+            let message = "Conversation history could not be loaded: \(error.localizedDescription)"
+            conversations = []
+            currentConversation = nil
+            loadState = .failed(message)
         }
-        isLoaded = true
-        syncSelectedDatabase()
+    }
+
+    func retryHistoryLoad() async {
+        guard case .failed = loadState else { return }
+        await load()
+    }
+
+    func resetHistoryAfterLoadFailure() async {
+        guard case .failed = loadState else { return }
+        let operationID = UUID()
+        historyOperationID = operationID
+        let targetContextID = historyContextID
+        let targetStore = store
+        loadState = .loading
+        do {
+            try await targetStore.resetAfterLoadFailure()
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
+            historyOperationID = nil
+            conversations = []
+            currentConversation = nil
+            loadState = .loaded
+            syncSelectedDatabase()
+        } catch {
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
+            historyOperationID = nil
+            loadState = .failed("Conversation history could not be reset: \(error.localizedDescription)")
+        }
+    }
+
+    func changeHistoryScope(
+        to historyScope: AskAIHistoryScope,
+        store: AskAIConversationPersisting
+    ) {
+        guard historyScope != self.historyScope else { return }
+        cancelGeneration(persistFailure: false)
+        historyContextID = UUID()
+        historyOperationID = nil
+        self.historyScope = historyScope
+        self.store = store
+        persistenceTask = nil
+        conversations = []
+        currentConversation = nil
+        draft = ""
+        loadState = .loading
+        errorMessage = nil
+        pendingDatabaseId = nil
+        pendingDatabaseTitle = nil
+        isConfirmingDatabaseChange = false
+        isConfirmingHistoryReset = false
     }
 
     func syncSelectedDatabase() {
+        guard loadState == .loaded else {
+            currentConversation = nil
+            return
+        }
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
         guard currentConversation?.databaseId != databaseId else {
             return
@@ -144,17 +233,22 @@ final class AskAIModel {
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
-        conversations.removeAll { $0.id == conversation.id }
         if currentConversation?.id == conversation.id {
-            newConversation()
+            cancelGeneration(persistFailure: false)
+            currentConversation = nil
+        }
+        conversations.removeAll { $0.id == conversation.id }
+        if currentConversation == nil {
+            startEmptyConversation()
         }
         persistConversations()
     }
 
     func deleteAllConversations() {
-        cancelGeneration()
+        cancelGeneration(persistFailure: false)
         conversations = []
-        newConversation()
+        currentConversation = nil
+        startEmptyConversation()
         persistConversations()
     }
 
@@ -217,6 +311,10 @@ final class AskAIModel {
     }
 
     func cancelGeneration() {
+        cancelGeneration(persistFailure: true)
+    }
+
+    private func cancelGeneration(persistFailure: Bool) {
         generationTask?.cancel()
         generationTask = nil
         generationTimeoutTask?.cancel()
@@ -234,7 +332,9 @@ final class AskAIModel {
                     return event
                 }
             }
-            persistCurrentConversation()
+            if persistFailure {
+                persistCurrentConversation()
+            }
         }
     }
 
@@ -464,6 +564,19 @@ final class AskAIModel {
         AskAIConversation(databaseId: databaseId, databaseTitle: title)
     }
 
+    private func startEmptyConversation() {
+        let databaseId = knowledgeProvider.selectedAskAIDatabaseId
+        guard !databaseId.isEmpty else {
+            currentConversation = nil
+            return
+        }
+        currentConversation = makeConversation(
+            databaseId: databaseId,
+            title: knowledgeProvider.selectedAskAIDatabaseTitle
+        )
+        errorMessage = nil
+    }
+
     private func persistCurrentConversation() {
         guard let conversation = currentConversation, !conversation.messages.isEmpty else { return }
         conversations.removeAll { $0.id == conversation.id }
@@ -473,16 +586,24 @@ final class AskAIModel {
     }
 
     private func persistConversations() {
+        guard loadState == .loaded else { return }
         let snapshot = conversations
         let previousTask = persistenceTask
+        let targetContextID = historyContextID
+        let targetStore = store
         persistenceTask = Task {
             await previousTask?.value
             do {
-                try await store.save(snapshot)
+                try await targetStore.save(snapshot)
             } catch {
+                guard historyContextID == targetContextID else { return }
                 errorMessage = "Conversation history could not be saved: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func isCurrentHistoryOperation(contextID: UUID, operationID: UUID) -> Bool {
+        historyContextID == contextID && historyOperationID == operationID
     }
 
     private func recoverInterruptedGenerations() -> Bool {

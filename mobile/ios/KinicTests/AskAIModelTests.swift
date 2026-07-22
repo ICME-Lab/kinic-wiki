@@ -270,6 +270,237 @@ struct AskAIModelTests {
         #expect(model.messages.last?.sources.isEmpty == true)
     }
 
+    @Test
+    func loadFailureBlocksSendingAndSavingUntilRetrySucceeds() async throws {
+        let sentinel = AskAIConversation(databaseId: "db_test", databaseTitle: "Sentinel")
+        let store = AskAIStoreStub(savedConversations: [sentinel], loadFailuresRemaining: 1)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: store
+        )
+
+        await model.load()
+        model.draft = "Must not send"
+        model.send()
+
+        guard case .failed = model.loadState else {
+            Issue.record("Expected a failed history load state")
+            return
+        }
+        #expect(!model.canSend)
+        #expect(await store.saveCount == 0)
+        #expect(await store.savedConversations.map(\.id) == [sentinel.id])
+
+        await model.retryHistoryLoad()
+        model.draft = "Allowed after retry"
+
+        #expect(model.loadState == .loaded)
+        #expect(model.canSend)
+        #expect(model.conversations.map(\.id) == [sentinel.id])
+    }
+
+    @Test
+    func resetAfterLoadFailureUsesExplicitStoreRecovery() async {
+        let sentinel = AskAIConversation(databaseId: "db_test", databaseTitle: "Sentinel")
+        let store = AskAIStoreStub(savedConversations: [sentinel], loadFailuresRemaining: 1)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: store
+        )
+
+        await model.load()
+        await model.resetHistoryAfterLoadFailure()
+
+        #expect(model.loadState == .loaded)
+        #expect(model.conversations.isEmpty)
+        #expect(await store.resetCount == 1)
+        #expect(await store.savedConversations.isEmpty)
+    }
+
+    @Test
+    func deletingActiveConversationDuringGenerationDoesNotReinsertIt() async throws {
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let store = AskAIStoreStub()
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: store
+        )
+        await model.load()
+        model.draft = "Question"
+        model.send()
+        try await waitForCallCount(client, count: 1)
+        let deleted = try #require(model.currentConversation)
+
+        model.deleteConversation(deleted)
+        try await waitForConversationToDisappear(store, id: deleted.id)
+
+        #expect(!model.conversations.contains { $0.id == deleted.id })
+        #expect(model.currentConversation?.id != deleted.id)
+        #expect(!(await store.savedConversations.contains { $0.id == deleted.id }))
+        #expect(await client.cancellationCount == 1)
+    }
+
+    @Test
+    func changingPrincipalScopeClearsHistoryAndKeepsDelayedWorkInOldStore() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let storeA = AskAIStoreStub()
+        let storeB = AskAIStoreStub()
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: storeA,
+            historyScope: scopeA
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForCallCount(client, count: 1)
+        let conversationA = try #require(model.currentConversation)
+
+        model.changeHistoryScope(to: scopeB, store: storeB)
+
+        #expect(model.conversations.isEmpty)
+        #expect(model.currentConversation == nil)
+        #expect(model.draft.isEmpty)
+        #expect(model.loadState == .loading)
+
+        await model.load()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(model.loadState == .loaded)
+        #expect(!model.conversations.contains { $0.id == conversationA.id })
+        #expect(!(await storeB.savedConversations.contains { $0.id == conversationA.id }))
+        #expect(await client.cancellationCount == 1)
+    }
+
+    @Test
+    func staleLoadSuccessCannotOverwriteReenteredPrincipalContext() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let staleConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Stale A")
+        let currentConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Current A")
+        let staleStoreA = AskAIControllableStoreStub(suspendsLoad: true)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: staleStoreA,
+            historyScope: scopeA
+        )
+        let staleLoadTask = Task { await model.load() }
+        try await waitForPendingLoad(staleStoreA)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(
+            to: scopeA,
+            store: AskAIStoreStub(savedConversations: [currentConversation])
+        )
+        await model.load()
+
+        await staleStoreA.resumeLoad(with: [staleConversation])
+        await staleLoadTask.value
+
+        #expect(model.loadState == .loaded)
+        #expect(model.conversations.map(\.id) == [currentConversation.id])
+    }
+
+    @Test
+    func staleLoadFailureCannotFailReenteredPrincipalContext() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let currentConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Current A")
+        let staleStoreA = AskAIControllableStoreStub(suspendsLoad: true)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: staleStoreA,
+            historyScope: scopeA
+        )
+        let staleLoadTask = Task { await model.load() }
+        try await waitForPendingLoad(staleStoreA)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(
+            to: scopeA,
+            store: AskAIStoreStub(savedConversations: [currentConversation])
+        )
+        await model.load()
+
+        await staleStoreA.failLoad()
+        await staleLoadTask.value
+
+        #expect(model.loadState == .loaded)
+        #expect(model.conversations.map(\.id) == [currentConversation.id])
+    }
+
+    @Test
+    func staleResetCannotClearReenteredPrincipalContext() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let currentConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Current A")
+        let staleStoreA = AskAIControllableStoreStub(loadFails: true, suspendsReset: true)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: staleStoreA,
+            historyScope: scopeA
+        )
+        await model.load()
+        let staleResetTask = Task { await model.resetHistoryAfterLoadFailure() }
+        try await waitForPendingReset(staleStoreA)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(
+            to: scopeA,
+            store: AskAIStoreStub(savedConversations: [currentConversation])
+        )
+        await model.load()
+
+        await staleStoreA.resumeReset()
+        await staleResetTask.value
+
+        #expect(model.loadState == .loaded)
+        #expect(model.conversations.map(\.id) == [currentConversation.id])
+    }
+
+    @Test
+    func staleSaveFailureCannotSetErrorInReenteredPrincipalContext() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let staleStoreA = AskAIControllableStoreStub(suspendsSave: true)
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: staleStoreA,
+            historyScope: scopeA
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForPendingSave(staleStoreA)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(to: scopeA, store: AskAIStoreStub())
+        await model.load()
+
+        await staleStoreA.failSave()
+        try await waitForSaveCompletion(staleStoreA)
+
+        #expect(model.loadState == .loaded)
+        #expect(model.errorMessage == nil)
+    }
+
     private func waitUntilFinished(_ model: AskAIModel) async throws {
         for _ in 0..<400 where model.isGenerating {
             try await Task.sleep(for: .milliseconds(5))
@@ -291,6 +522,48 @@ struct AskAIModelTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Expected a saved \(state.rawValue) message")
+    }
+
+    private func waitForConversationToDisappear(_ store: AskAIStoreStub, id: UUID) async throws {
+        for _ in 0..<200 {
+            let saveCount = await store.saveCount
+            let containsConversation = await store.savedConversations.contains { $0.id == id }
+            if saveCount >= 2, !containsConversation { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected deleted conversation to stay absent")
+    }
+
+    private func waitForPendingLoad(_ store: AskAIControllableStoreStub) async throws {
+        for _ in 0..<200 {
+            if await store.hasPendingLoad { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected a pending history load")
+    }
+
+    private func waitForPendingReset(_ store: AskAIControllableStoreStub) async throws {
+        for _ in 0..<200 {
+            if await store.hasPendingReset { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected a pending history reset")
+    }
+
+    private func waitForPendingSave(_ store: AskAIControllableStoreStub) async throws {
+        for _ in 0..<200 {
+            if await store.hasPendingSave { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected a pending history save")
+    }
+
+    private func waitForSaveCompletion(_ store: AskAIControllableStoreStub) async throws {
+        for _ in 0..<200 {
+            if await store.saveCompletionCount == 1 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected the history save to finish")
     }
 
     private func contextSource() -> AskAIContextSource {
@@ -380,11 +653,115 @@ private actor AskAICompletionStub: AskAICompleting {
 
 private actor AskAIStoreStub: AskAIConversationPersisting {
     private(set) var savedConversations: [AskAIConversation]
+    private var loadFailuresRemaining: Int
+    private(set) var saveCount = 0
+    private(set) var resetCount = 0
 
-    init(savedConversations: [AskAIConversation] = []) {
+    init(savedConversations: [AskAIConversation] = [], loadFailuresRemaining: Int = 0) {
         self.savedConversations = savedConversations
+        self.loadFailuresRemaining = loadFailuresRemaining
     }
 
-    func load() async throws -> [AskAIConversation] { savedConversations }
-    func save(_ conversations: [AskAIConversation]) async throws { savedConversations = conversations }
+    func load() async throws -> [AskAIConversation] {
+        if loadFailuresRemaining > 0 {
+            loadFailuresRemaining -= 1
+            throw AskAIStoreStubError.loadFailed
+        }
+        return savedConversations
+    }
+
+    func save(_ conversations: [AskAIConversation]) async throws {
+        saveCount += 1
+        savedConversations = conversations
+    }
+
+    func resetAfterLoadFailure() async throws {
+        resetCount += 1
+        savedConversations = []
+    }
+}
+
+private actor AskAIControllableStoreStub: AskAIConversationPersisting {
+    private let loadFails: Bool
+    private let suspendsLoad: Bool
+    private let suspendsSave: Bool
+    private let suspendsReset: Bool
+    private var loadContinuation: CheckedContinuation<[AskAIConversation], any Error>?
+    private var saveContinuation: CheckedContinuation<Void, any Error>?
+    private var resetContinuation: CheckedContinuation<Void, any Error>?
+    private(set) var saveCompletionCount = 0
+
+    init(
+        loadFails: Bool = false,
+        suspendsLoad: Bool = false,
+        suspendsSave: Bool = false,
+        suspendsReset: Bool = false
+    ) {
+        self.loadFails = loadFails
+        self.suspendsLoad = suspendsLoad
+        self.suspendsSave = suspendsSave
+        self.suspendsReset = suspendsReset
+    }
+
+    var hasPendingLoad: Bool { loadContinuation != nil }
+    var hasPendingSave: Bool { saveContinuation != nil }
+    var hasPendingReset: Bool { resetContinuation != nil }
+
+    func load() async throws -> [AskAIConversation] {
+        if suspendsLoad {
+            return try await withCheckedThrowingContinuation { continuation in
+                loadContinuation = continuation
+            }
+        }
+        if loadFails {
+            throw AskAIStoreStubError.loadFailed
+        }
+        return []
+    }
+
+    func save(_ conversations: [AskAIConversation]) async throws {
+        defer { saveCompletionCount += 1 }
+        if suspendsSave {
+            try await withCheckedThrowingContinuation { continuation in
+                saveContinuation = continuation
+            }
+        }
+    }
+
+    func resetAfterLoadFailure() async throws {
+        if suspendsReset {
+            try await withCheckedThrowingContinuation { continuation in
+                resetContinuation = continuation
+            }
+        }
+    }
+
+    func resumeLoad(with conversations: [AskAIConversation]) {
+        let continuation = loadContinuation
+        loadContinuation = nil
+        continuation?.resume(returning: conversations)
+    }
+
+    func failLoad() {
+        let continuation = loadContinuation
+        loadContinuation = nil
+        continuation?.resume(throwing: AskAIStoreStubError.loadFailed)
+    }
+
+    func failSave() {
+        let continuation = saveContinuation
+        saveContinuation = nil
+        continuation?.resume(throwing: AskAIStoreStubError.saveFailed)
+    }
+
+    func resumeReset() {
+        let continuation = resetContinuation
+        resetContinuation = nil
+        continuation?.resume()
+    }
+}
+
+private enum AskAIStoreStubError: Error {
+    case loadFailed
+    case saveFailed
 }

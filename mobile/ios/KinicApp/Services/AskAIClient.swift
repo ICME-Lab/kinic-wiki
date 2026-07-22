@@ -76,13 +76,13 @@ actor AskAIClient: AskAICompleting {
     static func parseSSE(_ body: String) throws -> String {
         var content = ""
         var receivedEvent = false
-        var reachedTerminator = false
+        var reachedDone = false
 
         for rawLine in body.split(omittingEmptySubsequences: false, whereSeparator: \Character.isNewline) {
             let line = String(rawLine).trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
-            if reachedTerminator {
+            if reachedDone {
                 let trailingLine = line.trimmingCharacters(in: CharacterSet.whitespaces)
-                guard trailingLine.isEmpty || trailingLine == "data: [DONE]" else {
+                guard trailingLine.isEmpty else {
                     throw AskAIClientError.invalidResponse
                 }
                 continue
@@ -94,7 +94,7 @@ actor AskAIClient: AskAICompleting {
             receivedEvent = true
             let payload = line.dropFirst(5).trimmingCharacters(in: CharacterSet.whitespaces)
             if payload == "[DONE]" {
-                reachedTerminator = true
+                reachedDone = true
                 continue
             }
 
@@ -110,8 +110,17 @@ actor AskAIClient: AskAICompleting {
                     throw AskAIClientError.responseTooLarge
                 }
             }
-            if event.finishReason != nil {
-                reachedTerminator = true
+            if let finishReason = event.finishReason {
+                switch finishReason {
+                case "stop":
+                    break
+                case "length":
+                    throw AskAIClientError.truncatedResponse
+                case "content_filter":
+                    throw AskAIClientError.contentFiltered
+                default:
+                    throw AskAIClientError.invalidResponse
+                }
             } else if event.content == nil {
                 throw AskAIClientError.invalidResponse
             }
@@ -119,6 +128,9 @@ actor AskAIClient: AskAICompleting {
 
         guard receivedEvent, !content.isEmpty else {
             throw AskAIClientError.invalidResponse
+        }
+        guard reachedDone else {
+            throw AskAIClientError.incompleteStream
         }
         return content
     }
@@ -148,6 +160,9 @@ private struct AskAIEvent: Decodable {
 
 enum AskAIClientError: Error, LocalizedError, Equatable {
     case invalidResponse
+    case incompleteStream
+    case truncatedResponse
+    case contentFiltered
     case responseTooLarge
     case timeout
     case http(status: Int, message: String)
@@ -156,6 +171,12 @@ enum AskAIClientError: Error, LocalizedError, Equatable {
         switch self {
         case .invalidResponse:
             "Kinic AI returned an invalid network response."
+        case .incompleteStream:
+            "Kinic AI stopped before the response was complete. Try again."
+        case .truncatedResponse:
+            "Kinic AI reached its response limit before finishing. Try a narrower question."
+        case .contentFiltered:
+            "Kinic AI could not return this response because it was filtered."
         case .responseTooLarge:
             "Kinic AI returned more data than Ask AI can safely process."
         case .timeout:

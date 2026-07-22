@@ -31,9 +31,49 @@ struct AskAIClientTests {
     }
 
     @Test
-    func acceptsFinishReasonAsTerminator() throws {
+    func acceptsStopFinishReasonFollowedByDone() throws {
         let body = "data: {\"content\":\"final\",\"finish_reason\":\"stop\"}\ndata: [DONE]\n"
         #expect(try AskAIClient.parseSSE(body) == "final")
+    }
+
+    @Test
+    func rejectsContentEndingAtEOFWithoutDone() {
+        let body = "data: {\"content\":\"partial\"}\n"
+        #expect(throws: AskAIClientError.incompleteStream) {
+            try AskAIClient.parseSSE(body)
+        }
+    }
+
+    @Test
+    func rejectsStopFinishReasonWithoutDone() {
+        let body = "data: {\"content\":\"partial\",\"finish_reason\":\"stop\"}\n"
+        #expect(throws: AskAIClientError.incompleteStream) {
+            try AskAIClient.parseSSE(body)
+        }
+    }
+
+    @Test
+    func rejectsLengthFinishReason() {
+        let body = "data: {\"content\":\"partial\",\"finish_reason\":\"length\"}\ndata: [DONE]\n"
+        #expect(throws: AskAIClientError.truncatedResponse) {
+            try AskAIClient.parseSSE(body)
+        }
+    }
+
+    @Test
+    func rejectsContentFilterFinishReason() {
+        let body = "data: {\"content\":\"partial\",\"finish_reason\":\"content_filter\"}\ndata: [DONE]\n"
+        #expect(throws: AskAIClientError.contentFiltered) {
+            try AskAIClient.parseSSE(body)
+        }
+    }
+
+    @Test(arguments: ["", "unknown"])
+    func rejectsEmptyAndUnknownFinishReasons(_ finishReason: String) {
+        let body = "data: {\"content\":\"partial\",\"finish_reason\":\"\(finishReason)\"}\ndata: [DONE]\n"
+        #expect(throws: AskAIClientError.invalidResponse) {
+            try AskAIClient.parseSSE(body)
+        }
     }
 
     @Test(arguments: [

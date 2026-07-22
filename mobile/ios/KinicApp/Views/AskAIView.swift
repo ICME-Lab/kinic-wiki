@@ -57,13 +57,42 @@ struct AskAIView: View {
             } message: {
                 Text("A conversation uses evidence from one database only.")
             }
-            .task {
+            .confirmationDialog(
+                "Reset local history?",
+                isPresented: $model.isConfirmingHistoryReset,
+                titleVisibility: .visible
+            ) {
+                Button("Reset local history", role: .destructive, action: resetHistory)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The unreadable history will be archived on this device before a new empty history is created.")
+            }
+            .task(id: appModel.askAIHistoryScope) {
+                let historyScope = appModel.askAIHistoryScope
+                model.changeHistoryScope(
+                    to: historyScope,
+                    store: AskAIConversationStore.live(scope: historyScope)
+                )
                 appModel.startRefreshDatabases()
                 await model.load()
+            }
+            .onChange(of: appModel.askAIHistoryScope) {
+                let historyScope = appModel.askAIHistoryScope
+                isShowingHistory = false
+                model.changeHistoryScope(
+                    to: historyScope,
+                    store: AskAIConversationStore.live(scope: historyScope)
+                )
             }
             .onChange(of: appModel.selectedBrowseDatabaseId) {
                 model.syncSelectedDatabase()
             }
+    }
+
+    private func resetHistory() {
+        Task {
+            await model.resetHistoryAfterLoadFailure()
+        }
     }
 }
 
