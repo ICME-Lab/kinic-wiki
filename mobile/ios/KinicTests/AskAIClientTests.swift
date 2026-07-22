@@ -45,9 +45,17 @@ struct AskAIClientTests {
     }
 
     @Test
-    func rejectsStopFinishReasonWithoutDone() {
-        let body = "data: {\"content\":\"partial\",\"finish_reason\":\"stop\"}\n"
-        #expect(throws: AskAIClientError.incompleteStream) {
+    func acceptsStopFinishReasonWithoutDone() throws {
+        let body = "data: {\"content\":\"final\",\"finish_reason\":\"stop\"}\n"
+        #expect(try AskAIClient.parseSSE(body) == "final")
+    }
+
+    @Test(arguments: [
+        "data: {\"content\":\"final\",\"finish_reason\":\"stop\"}\ndata: {\"content\":\"extra\"}\n",
+        "data: {\"content\":\"final\",\"finish_reason\":\"stop\"}\ndata: {\"finish_reason\":\"unknown\"}\n",
+    ])
+    func rejectsEventsAfterStopFinishReason(_ body: String) {
+        #expect(throws: AskAIClientError.invalidResponse) {
             try AskAIClient.parseSSE(body)
         }
     }

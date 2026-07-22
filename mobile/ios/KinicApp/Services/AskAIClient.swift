@@ -76,15 +76,18 @@ actor AskAIClient: AskAICompleting {
     static func parseSSE(_ body: String) throws -> String {
         var content = ""
         var receivedEvent = false
-        var reachedDone = false
+        var reachedCompletion = false
+        var receivedDone = false
 
         for rawLine in body.split(omittingEmptySubsequences: false, whereSeparator: \Character.isNewline) {
             let line = String(rawLine).trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
-            if reachedDone {
+            if reachedCompletion {
                 let trailingLine = line.trimmingCharacters(in: CharacterSet.whitespaces)
-                guard trailingLine.isEmpty else {
+                if trailingLine.isEmpty { continue }
+                guard trailingLine == "data: [DONE]", !receivedDone else {
                     throw AskAIClientError.invalidResponse
                 }
+                receivedDone = true
                 continue
             }
             guard !line.isEmpty else { continue }
@@ -94,7 +97,8 @@ actor AskAIClient: AskAICompleting {
             receivedEvent = true
             let payload = line.dropFirst(5).trimmingCharacters(in: CharacterSet.whitespaces)
             if payload == "[DONE]" {
-                reachedDone = true
+                reachedCompletion = true
+                receivedDone = true
                 continue
             }
 
@@ -113,7 +117,7 @@ actor AskAIClient: AskAICompleting {
             if let finishReason = event.finishReason {
                 switch finishReason {
                 case "stop":
-                    break
+                    reachedCompletion = true
                 case "length":
                     throw AskAIClientError.truncatedResponse
                 case "content_filter":
@@ -129,7 +133,7 @@ actor AskAIClient: AskAICompleting {
         guard receivedEvent, !content.isEmpty else {
             throw AskAIClientError.invalidResponse
         }
-        guard reachedDone else {
+        guard reachedCompletion else {
             throw AskAIClientError.incompleteStream
         }
         return content

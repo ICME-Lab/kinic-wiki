@@ -29,13 +29,26 @@ struct AskAIDatabaseMenu: View {
                 }
             }
         } label: {
-            Label(
-                appModel.selectedAskAIDatabaseTitle.isEmpty ? "Choose database" : appModel.selectedAskAIDatabaseTitle,
-                systemImage: "externaldrive"
-            )
-            .labelStyle(.iconOnly)
+            Label {
+                Text(selectedDatabaseTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } icon: {
+                Image(systemName: "externaldrive")
+            }
+            .labelStyle(.titleAndIcon)
+            .frame(maxWidth: 240, alignment: .leading)
+            .layoutPriority(1)
         }
         .tint(KinicDesign.hotPink)
+        .accessibilityLabel("Database: \(selectedDatabaseTitle)")
         .accessibilityHint("Selects the only database Ask AI may search")
+    }
+
+    private var selectedDatabaseTitle: String {
+        appModel.selectedAskAIDatabaseTitle.isEmpty
+            ? "Choose database"
+            : appModel.selectedAskAIDatabaseTitle
     }
 }

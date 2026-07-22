@@ -22,17 +22,6 @@ struct AskAIView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    Text(
-                        appModel.selectedAskAIDatabaseTitle.isEmpty
-                            ? "Choose database"
-                            : appModel.selectedAskAIDatabaseTitle
-                    )
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .accessibilityHidden(true)
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
