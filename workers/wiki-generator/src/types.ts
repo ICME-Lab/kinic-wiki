@@ -151,6 +151,8 @@ export type SourceJob = {
   lease_owner: string | null;
   lease_expires_at: string | null;
   generated_target_path: string | null;
+  generated_target_etag: string | null;
+  generated_target_observed: number;
   generated_content: string | null;
   generated_context_paths: string | null;
   llm_duration_ms: number | null;

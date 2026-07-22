@@ -2,7 +2,7 @@
 // What: Manual and queued generation workflows.
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
 import { loadConfig } from "./config.js";
-import { checkpointGenerated, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
+import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
 import {
   databaseLinkPreviewImageKey,
   generateDatabaseLinkPreviewImage,
@@ -201,15 +201,17 @@ async function processSourceQueueMessage(
           }),
         message.outputLanguage ?? DEFAULT_OUTPUT_LANGUAGE
       );
+      const content = generated.content;
+      if (new TextEncoder().encode(content).byteLength > 256 * 1024) {
+        throw new GeneratedArtifactError("generated Markdown exceeded 256 KiB");
+      }
       artifact = {
         targetPath: generated.targetPath,
-        content: generated.content,
+        expectedTargetEtag: undefined,
+        content,
         contextPaths: generated.contextHits.map((hit) => hit.path),
         llmDurationMs: generated.llmDurationMs
       };
-      if (new TextEncoder().encode(artifact.content).byteLength > 256 * 1024) {
-        throw new GeneratedArtifactError("generated Markdown exceeded 256 KiB");
-      }
       await checkpointGenerated(env.DB, message, execution.leaseOwner, artifact);
     } catch (error) {
       if (isPermanentGenerationError(error)) {
@@ -226,25 +228,59 @@ async function processSourceQueueMessage(
     }
   }
 
-  try {
-    await writeGeneratedPage(vfs, message.databaseId, artifact.targetPath, artifact.content, message.sourcePath);
-    if (message.requestPath) {
-      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, artifact.targetPath);
+  if (artifact.expectedTargetEtag === undefined) {
+    try {
+      artifact =
+        claim.kind === "resume"
+          ? await recoverGeneratedTargetSnapshot(env.DB, vfs, message, execution.leaseOwner, artifact)
+          : await captureGeneratedTargetSnapshot(env.DB, vfs, message, execution.leaseOwner, artifact);
+    } catch (error) {
+      return handleSourceCommitError(env, vfs, message, execution, error);
     }
-    await markCompleted(env.DB, message, execution.leaseOwner, artifact.targetPath);
-    await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, artifact.targetPath, message.sourcePath);
-    return { kind: "ack" };
-  } catch (error) {
-    if (execution.attempts >= 5) {
-      await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
-      if (message.requestPath) {
-        await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, errorMessage(error));
-      }
-      return { kind: "dead_letter", code: "source_commit_transient", message: errorMessage(error) };
-    }
-    await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
-    return retryDisposition("source_commit_transient", errorMessage(error), execution.attempts);
   }
+
+  try {
+    await writeGeneratedPage(vfs, message.databaseId, artifact, message.sourcePath);
+  } catch (error) {
+    return handleSourceCommitError(env, vfs, message, execution, error);
+  }
+
+  try {
+    await markCompleted(env.DB, message, execution.leaseOwner, artifact.targetPath);
+  } catch (error) {
+    let job;
+    try {
+      job = await loadJob(env.DB, message.databaseId, message.sourcePath);
+    } catch {
+      return {
+        kind: "reschedule",
+        delaySeconds: 30,
+        code: "source_completion_unknown",
+        message: errorMessage(error)
+      };
+    }
+    if (job?.source_etag !== message.sourceEtag || job.status !== "completed" || job.target_path !== artifact.targetPath) {
+      return handleSourceCommitError(env, vfs, message, execution, error);
+    }
+  }
+
+  if (message.requestPath) {
+    try {
+      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, artifact.targetPath);
+    } catch (error) {
+      if (execution.attempts >= 5) {
+        return {
+          kind: "reschedule",
+          delaySeconds: 30,
+          code: "source_request_completion_transient",
+          message: errorMessage(error)
+        };
+      }
+      return retryDisposition("source_request_completion_transient", errorMessage(error), execution.attempts);
+    }
+  }
+  await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, artifact.targetPath, message.sourcePath);
+  return { kind: "ack" };
 }
 
 async function processLinkPreviewQueueMessage(env: RuntimeEnv, message: LinkPreviewQueueMessage, context?: QueueProcessContext): Promise<void> {
@@ -481,18 +517,89 @@ async function readRequiredSource(vfs: VfsClient, databaseId: string, sourcePath
   return source;
 }
 
-async function writeGeneratedPage(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
-  const existing = await vfs.readNode(databaseId, targetPath);
-  ensureTargetCanBeWritten(existing?.content ?? null, targetPath, sourcePath);
-  await ensureParentFolders(vfs, databaseId, targetPath);
+async function writeGeneratedPage(
+  vfs: VfsClient,
+  databaseId: string,
+  artifact: GeneratedArtifact,
+  sourcePath: string
+): Promise<void> {
+  const existing = await vfs.readNode(databaseId, artifact.targetPath);
+  if (existing?.kind === "file" && existing.content === artifact.content) return;
+  if (artifact.expectedTargetEtag === undefined) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before snapshot: ${artifact.targetPath}`);
+  }
+  if ((existing?.etag ?? null) !== artifact.expectedTargetEtag) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before commit: ${artifact.targetPath}`);
+  }
+  ensureTargetCanBeWritten(existing?.content ?? null, artifact.targetPath, sourcePath);
+  await ensureParentFolders(vfs, databaseId, artifact.targetPath);
   await vfs.writeNode({
     databaseId,
-    path: targetPath,
+    path: artifact.targetPath,
     kind: "file",
-    content,
+    content: artifact.content,
     metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath }),
-    expectedEtag: existing?.etag ?? null
+    expectedEtag: artifact.expectedTargetEtag
   });
+}
+
+async function captureGeneratedTargetSnapshot(
+  db: D1Database,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  owner: string,
+  artifact: GeneratedArtifact
+): Promise<GeneratedArtifact> {
+  const existing = await vfs.readNode(message.databaseId, artifact.targetPath);
+  try {
+    ensureTargetCanBeWritten(existing?.content ?? null, artifact.targetPath, message.sourcePath);
+  } catch (error) {
+    throw new GeneratedCheckpointConflictError(errorMessage(error));
+  }
+  const expectedTargetEtag = existing?.etag ?? null;
+  await checkpointGeneratedTarget(db, message, owner, expectedTargetEtag);
+  return { ...artifact, expectedTargetEtag };
+}
+
+async function recoverGeneratedTargetSnapshot(
+  db: D1Database,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  owner: string,
+  artifact: GeneratedArtifact
+): Promise<GeneratedArtifact> {
+  const existing = await vfs.readNode(message.databaseId, artifact.targetPath);
+  if (existing?.kind === "file" && existing.content === artifact.content) return artifact;
+  if (existing) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before snapshot: ${artifact.targetPath}`);
+  }
+  await checkpointGeneratedTarget(db, message, owner, null);
+  return { ...artifact, expectedTargetEtag: null };
+}
+
+async function handleSourceCommitError(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  execution: QueueExecution,
+  error: unknown
+): Promise<QueueDisposition> {
+  if (error instanceof GeneratedCheckpointConflictError) {
+    await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+    if (message.requestPath) {
+      await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, errorMessage(error));
+    }
+    return { kind: "dead_letter", code: "source_checkpoint_conflict", message: errorMessage(error) };
+  }
+  if (execution.attempts >= 5) {
+    await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+    if (message.requestPath) {
+      await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, errorMessage(error));
+    }
+    return { kind: "dead_letter", code: "source_commit_transient", message: errorMessage(error) };
+  }
+  await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+  return retryDisposition("source_commit_transient", errorMessage(error), execution.attempts);
 }
 
 async function appendWorkerLog(vfs: VfsClient, databaseId: string, targetRoot: string, targetPath: string, sourcePath: string): Promise<void> {
@@ -582,6 +689,7 @@ type GeneratedPage = {
 
 class SourceValidationError extends Error {}
 class GeneratedArtifactError extends Error {}
+class GeneratedCheckpointConflictError extends Error {}
 
 function isPermanentGenerationError(error: unknown): boolean {
   return (

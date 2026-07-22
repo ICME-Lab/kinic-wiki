@@ -7,10 +7,12 @@ import type { RuntimeEnv } from "./env.js";
 const LEASE_MS = 5 * 60 * 1000;
 const SOURCE_JOB_COLUMNS = `database_id, source_path, source_etag, status, target_path,
   attempts, last_error, lease_owner, lease_expires_at, generated_target_path,
-  generated_content, generated_context_paths, llm_duration_ms, updated_at`;
+  generated_target_etag, generated_target_observed, generated_content,
+  generated_context_paths, llm_duration_ms, updated_at`;
 
 export type GeneratedArtifact = {
   targetPath: string;
+  expectedTargetEtag: string | null | undefined;
   content: string;
   contextPaths: string[];
   llmDurationMs: number;
@@ -122,6 +124,8 @@ export async function checkpointGenerated(
       `UPDATE source_jobs
        SET status = 'generated',
            generated_target_path = ?4,
+           generated_target_etag = NULL,
+           generated_target_observed = 0,
            generated_content = ?5,
            generated_context_paths = ?6,
            llm_duration_ms = ?7,
@@ -145,13 +149,36 @@ export async function checkpointGenerated(
   if (!updated) throw new Error("source generation checkpoint lease was lost");
 }
 
+export async function checkpointGeneratedTarget(
+  db: D1Database,
+  message: SourceQueueMessage,
+  owner: string,
+  expectedTargetEtag: string | null,
+  now = new Date()
+): Promise<void> {
+  const updated = await db
+    .prepare(
+      `UPDATE source_jobs
+       SET generated_target_etag = ?4,
+           generated_target_observed = 1,
+           updated_at = ?5
+       WHERE database_id = ?1 AND source_path = ?2 AND source_etag = ?3
+         AND status = 'generated' AND lease_owner = ?6
+       RETURNING database_id`
+    )
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, expectedTargetEtag, now.toISOString(), owner)
+    .first<{ database_id: string }>();
+  if (!updated) throw new Error("source generation target checkpoint lease was lost");
+}
+
 export async function markCompleted(db: D1Database, message: SourceQueueMessage, owner: string, targetPath: string, now = new Date()): Promise<void> {
   const updated = await db
     .prepare(
       `UPDATE source_jobs
        SET status = 'completed', target_path = ?4, last_error = NULL,
            lease_owner = NULL, lease_expires_at = NULL,
-           generated_target_path = NULL, generated_content = NULL,
+           generated_target_path = NULL, generated_target_etag = NULL,
+           generated_target_observed = 0, generated_content = NULL,
            generated_context_paths = NULL, updated_at = ?5
        WHERE database_id = ?1 AND source_path = ?2 AND source_etag = ?3
          AND status = 'generated' AND lease_owner = ?6
@@ -195,7 +222,8 @@ export async function markFailed(
       `UPDATE source_jobs
        SET status = 'failed', target_path = NULL, last_error = ?4,
            lease_owner = NULL, lease_expires_at = NULL,
-           generated_target_path = NULL, generated_content = NULL,
+           generated_target_path = NULL, generated_target_etag = NULL,
+           generated_target_observed = 0, generated_content = NULL,
            generated_context_paths = NULL, llm_duration_ms = NULL, updated_at = ?5
        WHERE database_id = ?1 AND source_path = ?2 AND source_etag = ?3
          AND status IN ('processing', 'generated') AND lease_owner = ?6
@@ -211,13 +239,15 @@ async function upsertQueuedJob(db: D1Database, message: SourceQueueMessage): Pro
     .prepare(
       `INSERT INTO source_jobs
        (database_id, source_path, source_etag, status, target_path, attempts, last_error,
-        lease_owner, lease_expires_at, generated_target_path, generated_content,
-        generated_context_paths, llm_duration_ms, updated_at)
-       VALUES (?1, ?2, ?3, 'queued', NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?4)
+        lease_owner, lease_expires_at, generated_target_path, generated_target_etag,
+        generated_target_observed, generated_content, generated_context_paths,
+        llm_duration_ms, updated_at)
+       VALUES (?1, ?2, ?3, 'queued', NULL, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, ?4)
        ON CONFLICT(database_id, source_path)
        DO UPDATE SET source_etag = excluded.source_etag, status = 'queued', target_path = NULL,
                      attempts = 0, last_error = NULL, lease_owner = NULL, lease_expires_at = NULL,
-                     generated_target_path = NULL, generated_content = NULL,
+                     generated_target_path = NULL, generated_target_etag = NULL,
+                     generated_target_observed = 0, generated_content = NULL,
                      generated_context_paths = NULL, llm_duration_ms = NULL,
                      updated_at = excluded.updated_at
        WHERE source_jobs.source_etag <> excluded.source_etag OR source_jobs.status = 'failed'`
@@ -241,6 +271,7 @@ function artifactFromJob(job: SourceJob): GeneratedArtifact {
   }
   return {
     targetPath: job.generated_target_path,
+    expectedTargetEtag: job.generated_target_observed === 1 ? job.generated_target_etag : undefined,
     content: job.generated_content,
     contextPaths,
     llmDurationMs: job.llm_duration_ms

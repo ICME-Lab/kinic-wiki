@@ -3,7 +3,7 @@
 // Why: Only valid queued request nodes should enter the worker source capture path.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseSourceCaptureRequest, parseSourceCaptureTriggerInput, processSourceCaptureRequest, shouldProcessSourceCaptureRequest, triggerSourceCaptureRequest } from "../src/source-capture.js";
+import { markSourceCaptureRequestFailed, parseSourceCaptureRequest, parseSourceCaptureTriggerInput, processSourceCaptureRequest, shouldProcessSourceCaptureRequest, triggerSourceCaptureRequest } from "../src/source-capture.js";
 import type { OutputLanguage, SourceQueueMessage, SourceCaptureRequest, WikiNode } from "../src/types.js";
 import { testEnv, TestD1, TestQueue, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
 
@@ -90,6 +90,22 @@ test("completed request is not processed", () => {
   const request = parseSourceCaptureRequest({ ...node, content: node.content.replace("status: queued", "status: completed") });
   assert.ok(request);
   assert.equal(shouldProcessSourceCaptureRequest(request), false);
+});
+
+test("completed request cannot be downgraded to failed", async () => {
+  const vfs = new TestVfsClient();
+  vfs.requestNode = {
+    ...node,
+    content: node.content
+      .replace("status: queued", "status: completed")
+      .replace("target_path: null", 'target_path: "/Knowledge/conversations/a.md"')
+  };
+
+  await markSourceCaptureRequestFailed(vfs, "db_1", node.path, "late failure");
+
+  assert.equal(vfs.lastRequest, null);
+  assert.match(vfs.requestNode?.content ?? "", /status: completed/);
+  assert.match(vfs.requestNode?.content ?? "", /target_path: "\/Knowledge\/conversations\/a.md"/);
 });
 
 test("fresh fetching and generating requests are treated as already accepted", () => {

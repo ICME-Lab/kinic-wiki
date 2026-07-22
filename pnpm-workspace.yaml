@@ -12,6 +12,7 @@ allowBuilds:
   esbuild@0.27.3: true
   esbuild@0.28.1: true
   sharp: true
+  sharp@0.34.5: true
   sharp@0.35.0: true
   unrs-resolver: true
   unrs-resolver@1.11.1: true
@@ -22,6 +23,10 @@ minimumReleaseAgeExclude:
   - postcss@8.5.10
   - ws@8.21.0
 
+peerDependencyRules:
+  allowedVersions:
+    'tailwindcss-animate>tailwindcss': 3.4.18
+
 overrides:
   '@babel/core': 7.29.6
   '@hono/node-server': 2.0.10
@@ -31,4 +36,6 @@ overrides:
   js-yaml: 4.3.0
   postcss: 8.5.12
   sharp: 0.35.0
+  'kinic-wiki-generator>wrangler': 4.107.0
+  'kinic-wiki-mcp>wrangler': 4.107.0
   ws: 8.21.0
