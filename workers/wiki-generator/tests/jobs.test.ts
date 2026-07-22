@@ -3,7 +3,7 @@
 // Why: Retries must not reprocess an unchanged completed source.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkpointGenerated, claimSourceJob, markCompleted, shouldSkipJob } from "../src/jobs.js";
+import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, markCompleted, shouldSkipJob } from "../src/jobs.js";
 import type { SourceJob, SourceQueueMessage } from "../src/types.js";
 
 const completedJob: SourceJob = {
@@ -17,6 +17,8 @@ const completedJob: SourceJob = {
   lease_owner: null,
   lease_expires_at: null,
   generated_target_path: null,
+  generated_target_etag: null,
+  generated_target_observed: 0,
   generated_content: null,
   generated_context_paths: null,
   llm_duration_ms: null,
@@ -70,6 +72,8 @@ test("generated checkpoint resumes without regeneration", async () => {
     lease_owner: "owner-2",
     lease_expires_at: "2026-07-16T00:11:00.000Z",
     generated_target_path: "/Knowledge/conversations/project.md",
+    generated_target_etag: "etag-old-target",
+    generated_target_observed: 1,
     generated_content: "# Project",
     generated_context_paths: '["/Knowledge/context.md"]',
     llm_duration_ms: 1234
@@ -80,8 +84,36 @@ test("generated checkpoint resumes without regeneration", async () => {
     kind: "resume",
     artifact: {
       targetPath: "/Knowledge/conversations/project.md",
+      expectedTargetEtag: "etag-old-target",
       content: "# Project",
       contextPaths: ["/Knowledge/context.md"],
+      llmDurationMs: 1234
+    }
+  });
+});
+
+test("generated checkpoint without a target snapshot also resumes without regeneration", async () => {
+  const generated: SourceJob = {
+    ...completedJob,
+    status: "generated",
+    target_path: null,
+    lease_owner: "owner-2",
+    lease_expires_at: "2026-07-16T00:11:00.000Z",
+    generated_target_path: "/Knowledge/conversations/project.md",
+    generated_target_observed: 0,
+    generated_content: "# Project",
+    generated_context_paths: "[]",
+    llm_duration_ms: 1234
+  };
+  const db = new ScriptedD1([generated]);
+
+  assert.deepEqual(await claimSourceJob(db, sourceMessage(), "owner-2", new Date("2026-07-16T00:06:00.000Z")), {
+    kind: "resume",
+    artifact: {
+      targetPath: "/Knowledge/conversations/project.md",
+      expectedTargetEtag: undefined,
+      content: "# Project",
+      contextPaths: [],
       llmDurationMs: 1234
     }
   });
@@ -97,6 +129,7 @@ test("wrong etag is superseded and wrong checkpoint owner is rejected", async ()
   await assert.rejects(
     checkpointGenerated(checkpointDb, sourceMessage(), "wrong-owner", {
       targetPath: "/Knowledge/conversations/project.md",
+      expectedTargetEtag: null,
       content: "# Project",
       contextPaths: [],
       llmDurationMs: 1
@@ -112,6 +145,15 @@ test("completion clears checkpoint content but retains LLM duration", async () =
 
   assert.match(db.queries[0] ?? "", /generated_content = NULL/);
   assert.doesNotMatch(db.queries[0] ?? "", /llm_duration_ms = NULL/);
+});
+
+test("target snapshot is appended to an existing generated checkpoint", async () => {
+  const db = new ScriptedD1([{ database_id: "db_1" }]);
+
+  await checkpointGeneratedTarget(db, sourceMessage(), "owner-1", "etag-target");
+
+  assert.match(db.queries[0] ?? "", /generated_target_etag = \?4/);
+  assert.match(db.queries[0] ?? "", /generated_target_observed = 1/);
 });
 
 function sourceMessage(): SourceQueueMessage {

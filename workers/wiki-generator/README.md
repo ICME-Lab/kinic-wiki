@@ -17,7 +17,7 @@ DeepSeek requests use a 180-second timeout, manual redirect handling, and a 256 
 
 `source_jobs` uses a five-minute execution lease keyed by the Cloudflare Queue message ID. The lease is acquired with an atomic D1 compare-and-set, so duplicate deliveries do not make concurrent paid LLM calls for the same source etag. A duplicate with an active lease is copied back to the primary Queue with a delay derived from the lease expiry; the original delivery is acknowledged only after that delayed send succeeds.
 
-After DeepSeek succeeds, generated Markdown is checkpointed in D1 with status `generated` before VFS commit. A VFS or completion-state failure retries from that checkpoint without calling DeepSeek again. Exhausting commit retries leaves the checkpoint in `generated`; after inspecting the sanitized failure Queue entry, an authorized manual `/run` requeue resumes the commit without another DeepSeek call. Permanent authorization, source, configuration, and generated-schema failures become terminal `failed` jobs. Transient provider, D1, and VFS failures retry with bounded backoff.
+After DeepSeek succeeds, generated Markdown is checkpointed in D1 with status `generated` before reading the target from VFS. The observed target ETag is then appended to that checkpoint before commit. A VFS or completion-state failure retries from the saved Markdown without calling DeepSeek again. Resume skips a target that already matches the checkpoint, writes over the unchanged observed ETag, and stops with `source_checkpoint_conflict` if the target changed after the snapshot. If target observation was interrupted, resume only writes when the target is still absent or accepts an exact content match; a different existing target requires manual resolution. Exhausting commit retries leaves the checkpoint in `generated`; after inspecting the sanitized failure Queue entry, an authorized manual `/run` requeue resumes the commit without another DeepSeek call. Permanent authorization, source, configuration, and generated-schema failures become terminal `failed` jobs. Transient provider, D1, and VFS failures retry with bounded backoff.
 
 Cloudflare automatic dead-letter forwarding is intentionally disabled because original Queue messages can carry session nonces. On the fifth failed application attempt, the Worker publishes a sanitized diagnostic to `kinic-wiki-generation-failures` and acknowledges the original message only after that send succeeds.
 
@@ -66,6 +66,8 @@ pnpm exec wrangler secret put KINIC_WIKI_WORKER_IDENTITY_PEM
 ```
 
 After `d1 create`, copy the returned database id into `wrangler.jsonc`.
+
+Migration `0003_source_job_target_snapshot.sql` must be applied before deploying the Worker that reads the target snapshot columns. Pause the source Queue consumer while applying the migration and deploying the Worker. Existing `generated` checkpoints have no target snapshot, so they resume conservatively: an absent target or exact content match is accepted, while a different existing target stops for manual resolution.
 
 The source Queue starts with `max_batch_size = 4`, `max_batch_timeout = 1`, `max_concurrency = 5`, and `max_retries = 5`. During incidents, pause the source Queue consumer first. To reduce pressure, lower `max_concurrency` from 5 to 2 and then 1 without changing batch size at the same time.
 

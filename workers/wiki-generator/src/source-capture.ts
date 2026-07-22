@@ -208,6 +208,7 @@ export async function markSourceCaptureRequestFailed(vfs: VfsClient, databaseId:
   if (!node) return;
   const request = parseSourceCaptureRequest(node);
   if (!request) return;
+  if (request.status === "completed") return;
   await writeRequestState(vfs, databaseId, request, { status: "failed", targetPath: null, error });
 }
 
