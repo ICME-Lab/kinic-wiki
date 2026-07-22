@@ -8,7 +8,7 @@ export type WalletRuntime = {
 };
 
 export function configuredIcHost(): string {
-  return process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  return import.meta.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
 }
 
 export function isLocalIcHost(host: string): boolean {

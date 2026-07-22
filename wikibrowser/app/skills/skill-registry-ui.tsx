@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, CheckCircle2, ExternalLink, PlayCircle, ShieldCheck, XCircle } from "lucide-react";
 import { hrefForPath } from "@/lib/paths";
 import type { CatalogSkill, CatalogSummary } from "@/lib/skill-registry-catalog";

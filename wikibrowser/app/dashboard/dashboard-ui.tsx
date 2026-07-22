@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, Share2, Wallet } from "lucide-react";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
+import { useModalDialog } from "@/components/use-modal-dialog";
 import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRoleFromValue, isBusyGrant, isBusyRevoke, principalDisplayName, type BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
@@ -472,6 +473,7 @@ export function DatabaseMetadataDialog(props: {
   onCancel: () => void;
   onSubmit: (metadata: DatabaseMetadata) => void;
 }) {
+  const { dialogRef, handleCancel } = useModalDialog(props.onCancel, props.busy);
   const [name, setName] = useState(props.metadata.name);
   const [description, setDescription] = useState(props.metadata.description);
   const [llmSummary, setLlmSummary] = useState(props.metadata.llmSummary ?? "");
@@ -490,17 +492,20 @@ export function DatabaseMetadataDialog(props: {
     });
   }
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
-      onMouseDown={(event) => {
-        if (!props.busy && event.target === event.currentTarget) props.onCancel();
-      }}
+    <dialog
+      ref={dialogRef}
+      aria-modal="true"
+      aria-label="Edit database metadata"
+      className="fixed inset-0 z-50 m-0 hidden h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-ink/30 px-4 open:flex"
+      onCancel={handleCancel}
     >
-      <form className="w-full max-w-xl rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
+      <button aria-label="Close database metadata dialog" className="absolute inset-0" disabled={props.busy} tabIndex={-1} type="button" onClick={props.onCancel} />
+      <form className="relative z-10 w-full max-w-xl rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
         <h3 className="text-lg font-semibold text-ink">Database metadata</h3>
         <label className="mt-4 grid gap-1 text-sm">
           <span className="text-xs uppercase tracking-[0.12em] text-muted">Name</span>
           <input
+            data-modal-initial-focus
             className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
             maxLength={80}
             type="text"
@@ -529,7 +534,7 @@ export function DatabaseMetadataDialog(props: {
           </ActionButton>
         </div>
       </form>
-    </div>
+    </dialog>
   );
 }
 
@@ -768,18 +773,21 @@ function GrantForm({ busy, busyAction, onGrant }: { busy: boolean; busyAction: B
 }
 
 function ConfirmAclDialog(props: { action: PendingAclAction; busy: boolean; busyAction: BusyAction | null; onCancel: () => void; onConfirm: () => void }) {
+  const { dialogRef, handleCancel } = useModalDialog(props.onCancel, props.busy);
   const confirmBusy =
     props.action.kind === "grant" && props.action.role
       ? isBusyGrant(props.busyAction, props.action.principalText, props.action.role)
       : isBusyRevoke(props.busyAction, props.action.principalText);
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
-      onMouseDown={(event) => {
-        if (!props.busy && event.target === event.currentTarget) props.onCancel();
-      }}
+    <dialog
+      ref={dialogRef}
+      aria-modal="true"
+      aria-label="Confirm access change"
+      className="fixed inset-0 z-50 m-0 hidden h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-ink/30 px-4 open:flex"
+      onCancel={handleCancel}
     >
-      <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
+      <button aria-label="Close access confirmation dialog" className="absolute inset-0" disabled={props.busy} tabIndex={-1} type="button" onClick={props.onCancel} />
+      <div className="relative z-10 w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">{props.action.title}</h3>
         <p className="mt-3 text-sm leading-6 text-muted">{props.action.message}</p>
         <p className="mt-3 break-all rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-ink">{principalDisplayName(props.action.principalText)}</p>
@@ -792,7 +800,7 @@ function ConfirmAclDialog(props: { action: PendingAclAction; busy: boolean; busy
           </ActionButton>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

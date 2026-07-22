@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
-const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
+const route = ["../src/routes/skills.$databaseId.tsx", "../app/skills/[databaseId]/page.tsx"].map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
 const adminHeader = readFileSync(new URL("../components/admin-header.tsx", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../app/skills/skill-registry-ui.tsx", import.meta.url), "utf8");
@@ -18,7 +18,7 @@ const inspector = readFileSync(new URL("../components/inspector.tsx", import.met
 const skillManifest = readFileSync(new URL("../lib/skill-manifest.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-assert.match(route, /params: Promise<\{ databaseId: string \}>/);
+assert.match(route, /createFileRoute\("\/skills\/\$databaseId"\)/);
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
 assert.match(adminHeader, /export function AdminHeader/);
@@ -144,25 +144,11 @@ async function importSkillRegistryPackageForTest(relativePath) {
   const source = readFileSync(sourcePath, "utf8")
     .replace(/^import .+;\n/gm, "")
     .concat("\nexport { markdownPackageLinks, cleanSkillId, normalizeManifestForSkill };\n");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }
 
 async function importSkillManifestForTest(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }

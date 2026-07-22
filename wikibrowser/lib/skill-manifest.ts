@@ -63,7 +63,7 @@ export function isSkillRegistryPath(path: string): boolean {
   return path === "/Skills" || path.startsWith("/Skills/");
 }
 
-export function isPublicSkillRegistryPath(path: string): boolean {
+export function isPublicSkillRegistryPath(_path: string): boolean {
   return false;
 }
 

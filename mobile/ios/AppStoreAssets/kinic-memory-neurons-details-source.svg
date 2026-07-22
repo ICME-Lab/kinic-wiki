@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <defs>
+    <linearGradient id="topShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#020611" stop-opacity="0.98"/>
+      <stop offset="0.28" stop-color="#020611" stop-opacity="0.58"/>
+      <stop offset="0.56" stop-color="#020611" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="edgeShade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#01040d" stop-opacity="0.62"/>
+      <stop offset="0.5" stop-color="#01040d" stop-opacity="0"/>
+      <stop offset="1" stop-color="#01040d" stop-opacity="0.45"/>
+    </linearGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="#020611"/>
+  <image
+    href="kinic-memory-neurons-header.png"
+    x="0"
+    y="0"
+    width="1080"
+    height="1920"
+    preserveAspectRatio="xMidYMid slice"
+  />
+  <rect width="1080" height="1920" fill="url(#topShade)"/>
+  <rect width="1080" height="1920" fill="url(#edgeShade)"/>
+  <svg x="86" y="92" width="520" height="146" viewBox="56 48 520 146">
+    <image
+      href="kinic-memory-neurons-header.png"
+      x="0"
+      y="0"
+      width="1672"
+      height="941"
+    />
+  </svg>
+</svg>

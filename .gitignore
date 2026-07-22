@@ -52,6 +52,8 @@ __pycache__/
 # Frontend build and test artifacts
 **/.next/
 **/.open-next/
+**/.tmp-test/
+**/dist/
 **/.wrangler/
 **/.turbo/
 **/out/
@@ -90,7 +92,6 @@ __pycache__/
 /artifacts/
 /outputs/
 extensions/wiki-clipper/release/
-/skill-registry-web/next-env.d.ts
 /npm/kinic-vfs-cli/vendor/
 
 # Keep ic-hybrid-sqlite as its own repo for now

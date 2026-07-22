@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeMarkdownImageSrc } from "@/lib/markdown-images";
@@ -33,15 +33,14 @@ export function MarkdownPreview({
             if (!wikiHref) {
               return <a href={href} {...props}>{children}</a>;
             }
-            return <Link href={wikiHref} {...props}>{children}</Link>;
+            return <WikiNavigationLink href={wikiHref} {...props}>{children}</WikiNavigationLink>;
           },
           img({ src, alt, ...props }) {
             const safeSrc = safeMarkdownImageSrc(src);
             if (!safeSrc) {
               return alt ? <span className="text-xs text-muted">{alt}</span> : null;
             }
-            // Markdown may reference arbitrary HTTPS image hosts; next/image requires a host allowlist or fixed sizing.
-            // eslint-disable-next-line @next/next/no-img-element
+            // Markdown image hosts are user-controlled, so a fixed host allowlist is not applicable here.
             return <img src={safeSrc} alt={alt ?? ""} {...props} />;
           }
         }}
@@ -77,9 +76,9 @@ function TrustBanner({
       {storePath ? (
         <p className="mt-2 truncate font-mono text-xs">
           store{" "}
-          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Knowledge/index.md", storePath) ?? "#"}>
+          <WikiNavigationLink className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Knowledge/index.md", storePath) ?? "#"}>
             {storePath}
-          </Link>
+          </WikiNavigationLink>
         </p>
       ) : null}
     </section>

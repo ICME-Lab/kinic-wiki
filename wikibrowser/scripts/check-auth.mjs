@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const {
   AUTH_CLIENT_CREATE_OPTIONS,
@@ -11,6 +11,16 @@ const {
   derivationOriginUrl
 } = await importTs("../lib/auth.ts");
 
+const wranglerSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+const serverEntrySource = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
+
+assert.match(wranglerSource, /"main"\s*:\s*"src\/server\.ts"/);
+assert.match(wranglerSource, /"pattern"\s*:\s*"kinic\.xyz"/);
+assert.match(wranglerSource, /"pattern"\s*:\s*"wiki\.kinic\.xyz"/);
+assert.match(serverEntrySource, /url\.hostname === "kinic\.xyz"/);
+assert.match(serverEntrySource, /url\.hostname = "wiki\.kinic\.xyz"/);
+assert.match(serverEntrySource, /Response\.redirect\(url, 308\)/);
+
 assert.equal(DELEGATION_TTL_NS, 30n * 24n * 3_600_000_000_000n);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.idleTimeout, 30 * 24 * 60 * 60 * 1000);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.disableDefaultIdleCallback, true);
@@ -18,19 +28,19 @@ assert.equal(identityProviderUrl(), MAINNET_II_PROVIDER_URL);
 assert.equal(DERIVATION_ORIGIN, "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io");
 assert.equal(derivationOriginUrl({ hostname: "wiki.kinic.xyz", origin: "https://wiki.kinic.xyz" }), DERIVATION_ORIGIN);
 
-const originalWikiHost = process.env.NEXT_PUBLIC_WIKI_IC_HOST;
-const originalCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
-const originalIiProviderUrl = process.env.NEXT_PUBLIC_II_PROVIDER_URL;
-const originalLocalIiE2e = process.env.NEXT_PUBLIC_ENABLE_LOCAL_II_E2E;
-process.env.NEXT_PUBLIC_II_PROVIDER_URL = "http://id.ai.localhost:8011";
+const originalWikiHost = process.env.VITE_WIKI_IC_HOST;
+const originalCanisterId = process.env.VITE_KINIC_WIKI_CANISTER_ID;
+const originalIiProviderUrl = process.env.VITE_II_PROVIDER_URL;
+const originalLocalIiE2e = process.env.VITE_ENABLE_LOCAL_II_E2E;
+process.env.VITE_II_PROVIDER_URL = "http://id.ai.localhost:8011";
 assert.equal(identityProviderUrl(), MAINNET_II_PROVIDER_URL);
-process.env.NEXT_PUBLIC_WIKI_IC_HOST = "http://127.0.0.1:8011";
-process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "tz2ag-zx777-77776-aaabq-cai";
+process.env.VITE_WIKI_IC_HOST = "http://127.0.0.1:8011";
+process.env.VITE_KINIC_WIKI_CANISTER_ID = "tz2ag-zx777-77776-aaabq-cai";
 assert.equal(
   derivationOriginUrl({ hostname: "127.0.0.1", origin: "http://127.0.0.1:3100" }),
   DERIVATION_ORIGIN
 );
-process.env.NEXT_PUBLIC_ENABLE_LOCAL_II_E2E = "1";
+process.env.VITE_ENABLE_LOCAL_II_E2E = "1";
 assert.equal(identityProviderUrl(), "http://id.ai.localhost:8011");
 assert.equal(
   derivationOriginUrl({ hostname: "mobile.local", origin: "https://mobile.local" }),
@@ -48,29 +58,22 @@ assert.equal(
   derivationOriginUrl({ hostname: "localhost", origin: "http://localhost:3010" }),
   "http://tz2ag-zx777-77776-aaabq-cai.localhost:8011"
 );
-process.env.NEXT_PUBLIC_WIKI_IC_HOST = "https://icp0.io";
+process.env.VITE_WIKI_IC_HOST = "https://icp0.io";
 assert.equal(
   derivationOriginUrl({ hostname: "127.0.0.1", origin: "http://127.0.0.1:3100" }),
   DERIVATION_ORIGIN
 );
-restoreEnv("NEXT_PUBLIC_WIKI_IC_HOST", originalWikiHost);
-restoreEnv("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID", originalCanisterId);
-restoreEnv("NEXT_PUBLIC_II_PROVIDER_URL", originalIiProviderUrl);
-restoreEnv("NEXT_PUBLIC_ENABLE_LOCAL_II_E2E", originalLocalIiE2e);
+restoreEnv("VITE_WIKI_IC_HOST", originalWikiHost);
+restoreEnv("VITE_KINIC_WIKI_CANISTER_ID", originalCanisterId);
+restoreEnv("VITE_II_PROVIDER_URL", originalIiProviderUrl);
+restoreEnv("VITE_ENABLE_LOCAL_II_E2E", originalLocalIiE2e);
 
 console.log("Auth checks OK");
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
   const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }
 
 function restoreEnv(name, value) {

@@ -1,68 +1,18 @@
-import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
-import { Principal } from "@icp-sdk/core/principal";
-import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
-import { sortChildNodes } from "@/lib/child-sort";
-import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import type { SearchPreviewMode } from "@/lib/search-options";
-import { idlFactory } from "@/lib/vfs-idl";
+import { type Identity } from "@icp-sdk/core/agent";
 import type {
-  CanisterHealth,
   CyclesBillingConfig,
-  ChildNode,
   DatabaseCycleEntry,
   DatabaseCycleEntryPage,
   DatabaseCyclesPendingPurchase,
-  DatabaseMetadata,
-  DeleteDatabaseRequest,
-  DeleteNodeRequest,
-  DeleteNodeResult,
-  DatabaseMember,
-  DatabaseRole,
-  DatabaseStatus,
   DatabaseSummary,
   InitialFreeDatabaseGrantStatus,
   IndexSqlJsonQueryResult,
-  LinkEdge,
-  MarketCreateListingRequest,
-  MarketEntitlementPage,
-  MarketListing,
-  MarketListingDetail,
-  MarketListingPage,
-  MarketListingStatus,
-  MarketOrder,
-  MarketOrderPage,
-  MarketPurchasePreview,
-  MarketUpdateListingRequest,
-  UpdateDatabaseMetadataRequest,
-  MkdirNodeRequest,
-  MkdirNodeResult,
-  MoveNodeRequest,
-  MoveNodeResult,
-  NodeContext,
-  NodeEntryKind,
-  NodeKind,
-  QueryContext,
-  QueryAnswerSessionCheckRequest,
-  QueryAnswerSessionCheckResult,
-  QueryAnswerSessionRequest,
-  RecentNode,
-  SearchNodeHit,
-  SourceEvidence,
-  SourceRunSessionCheckRequest,
-  SourceCaptureTriggerSessionCheckRequest,
-  SourceCaptureTriggerSessionRequest,
   WikiMetrics,
-  WikiMetricsPoint,
-  WikiNode,
-  WriteNodeRequest,
-  WriteNodeResult,
-  WriteSourceForGenerationRequest,
-  WriteSourceForGenerationResult
+  WikiMetricsPoint
 } from "@/lib/types";
-import { ApiError } from "@/lib/wiki-helpers";
 
-import type { CreateDatabaseResult, DatabaseCyclesPurchaseRequest, RawCanisterHealth, RawChild, RawCreateDatabaseResult, RawCyclesBillingConfig, RawDatabaseCycleEntry, RawDatabaseCycleEntryPage, RawDatabaseCyclesPendingPurchase, RawDatabaseMember, RawDatabaseMetadata, RawDatabaseSummary, RawDeleteDatabaseRequest, RawDeleteNodeRequest, RawDeleteNodeResult, RawIndexSqlJsonQueryResult, RawInitialFreeDatabaseGrantStatus, RawLinkEdge, RawMarketCategoryGraph, RawMarketCategoryGraphEdge, RawMarketCategoryGraphNode, RawMarketCreateListingRequest, RawMarketEntitlement, RawMarketEntitlementPage, RawMarketListing, RawMarketListingDetail, RawMarketListingPage, RawMarketListingPreview, RawMarketListingStatus, RawMarketListingVerifiedStats, RawMarketListingView, RawMarketOrder, RawMarketOrderPage, RawMarketPreviewExcerpt, RawMarketPurchasePreview, RawMarketPurchaseRequest, RawMarketUpdateListingRequest, RawMkdirNodeRequest, RawMkdirNodeResult, RawMoveNodeRequest, RawMoveNodeResult, RawNode, RawNodeContext, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionCheckResult, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceEvidenceRef, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, RawWikiMetrics, RawWikiMetricsPoint, RawWriteNodeRequest, RawWriteNodeResult, RawWriteSourceForGenerationRequest, RawWriteSourceForGenerationResult, Variant, VfsActor } from "./raw-types";
-import { callVfs, createAuthenticatedActor, createReadActor, createVfsActor, normalizeDatabaseSummary, normalizeIndexSqlJsonQueryResult, normalizeWikiMetrics, normalizeWikiMetricsPoint, rawDatabaseCycleCursor, rawOptionalText, rawTextCursor, throwCanisterError } from "./actor";
+import type { RawCyclesBillingConfig, RawDatabaseCycleEntry, RawDatabaseCycleEntryPage, RawDatabaseCyclesPendingPurchase, RawInitialFreeDatabaseGrantStatus } from "./raw-types";
+import { callVfs, createAuthenticatedActor, createReadActor, createVfsActor, normalizeDatabaseSummary, normalizeIndexSqlJsonQueryResult, normalizeWikiMetrics, normalizeWikiMetricsPoint, rawDatabaseCycleCursor, throwCanisterError } from "./actor";
 export async function getCyclesBillingConfig(canisterId: string): Promise<CyclesBillingConfig> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);

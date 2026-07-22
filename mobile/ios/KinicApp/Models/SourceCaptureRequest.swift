@@ -11,4 +11,5 @@ struct SourceCaptureRequest: Equatable, Sendable {
     let content: String
     let metadataJson: String
     let normalizedURL: URL
+    let outputLanguage: WikiOutputLanguage
 }

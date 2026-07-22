@@ -1,13 +1,12 @@
 // Where: /docs/canister-api console guide.
 // What: documents direct ICP CLI calls to the Kinic Wiki canister API.
 // Why: developers need exact Candid call shapes for endpoint debugging.
-import type { Metadata } from "next";
 import { Braces, Database, KeyRound, ListTree, PencilLine, ShieldCheck, Unplug } from "lucide-react";
 import { CliGuideBlock } from "@/app/docs/cli/cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminPanel } from "@/components/admin-ui";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Canister API",
   description: "Direct ICP CLI calls for Kinic Wiki canister query and write endpoints.",
   openGraph: {
@@ -21,7 +20,7 @@ export const metadata: Metadata = {
 };
 
 const wikiCanisterId = "6emaw-iyaaa-aaaay-aacka-cai";
-const publicDatabaseId = "db_kva4v2twg6jv";
+const publicDatabaseIdPlaceholder = "<public-database-id>";
 
 const healthCommands = [
   String.raw`icp canister call ${wikiCanisterId} canister_health '()' --query -n ic -o candid`
@@ -40,13 +39,13 @@ const sqlCommands = [
 
 const anonymousSqlCommands = [
   String.raw`icp canister call ${wikiCanisterId} query_database_sql_json \
-  '("${publicDatabaseId}", "SELECT json_object('\''path'\'', path) FROM fs_nodes LIMIT 20", 20 : nat32)' \
+  '("${publicDatabaseIdPlaceholder}", "SELECT json_object('\''path'\'', path) FROM fs_nodes LIMIT 20", 20 : nat32)' \
   --query -n ic --identity anonymous -o candid`
 ];
 
 const anonymousReadNodeCommands = [
   String.raw`icp canister call ${wikiCanisterId} read_node \
-  '("${publicDatabaseId}", "/Sources")' \
+  '("${publicDatabaseIdPlaceholder}", "/Sources")' \
   --query -n ic --identity anonymous -o candid`
 ];
 
@@ -76,7 +75,7 @@ const writeNodesCommands = [
 const callFields = [
   { label: "Mainnet canister", value: wikiCanisterId, mono: true },
   { label: "Public read means", value: "anonymous principal has Reader role", mono: false },
-  { label: "Anonymous-readable DB", value: publicDatabaseId, mono: true },
+  { label: "Anonymous-readable DB", value: "Use a database ID returned by list_databases as anonymous.", mono: false },
   { label: "Anonymous principal", value: "2vxsx-fae", mono: true },
   { label: "Network flag", value: "-n ic for direct canister-principal calls", mono: true }
 ];

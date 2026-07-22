@@ -5,7 +5,18 @@ import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { identityFromPem } from "./identity-pem.js";
 import { idlFactory } from "./vfs-idl.js";
-import type { ExportSnapshotPage, FetchUpdatesPage, MkdirNodeRequest, NodeKind, SearchNodeHit, WikiNode, WorkerConfig, WriteNodeAck, WriteNodeRequest } from "./types.js";
+import type {
+  ExportSnapshotPage,
+  FetchUpdatesPage,
+  MkdirNodeRequest,
+  NodeKind,
+  PublicDatabaseSummary,
+  SearchNodeHit,
+  WikiNode,
+  WorkerConfig,
+  WriteNodeAck,
+  WriteNodeRequest
+} from "./types.js";
 
 type Variant = Record<string, null>;
 
@@ -43,6 +54,20 @@ type RawFetchUpdatesPage = {
   next_cursor: [] | [string];
 };
 
+type RawDatabaseMetadata = {
+  name: string;
+  description: string;
+  llm_summary: [] | [string];
+  tags_json: string;
+};
+
+type RawDatabaseSummary = {
+  database_id: string;
+  name: string;
+  metadata: [] | [RawDatabaseMetadata];
+  status: Variant;
+};
+
 type RawWriteNodeRequest = {
   database_id: string;
   path: string;
@@ -77,6 +102,7 @@ type RawMkdirNodeResult = {
 type Result<T> = { Ok: T } | { Err: string };
 
 type VfsActor = {
+  list_databases: () => Promise<Result<RawDatabaseSummary[]>>;
   check_database_write_cycles: (databaseId: string) => Promise<Result<null>>;
   check_source_run_session: (request: {
     database_id: string;
@@ -118,6 +144,7 @@ type VfsActor = {
 };
 
 export type VfsClient = {
+  listPublicDatabases(): Promise<PublicDatabaseSummary[]>;
   checkDatabaseWriteCycles(databaseId: string): Promise<void>;
   checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void>;
   checkSourceCaptureTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
@@ -140,6 +167,7 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
     canisterId: Principal.fromText(config.canisterId)
   });
   return {
+    listPublicDatabases: async () => normalizeDatabaseSummaries(await unwrap(actor.list_databases())),
     checkDatabaseWriteCycles: async (databaseId) => {
       await unwrap(actor.check_database_write_cycles(databaseId));
     },
@@ -206,6 +234,20 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
   };
 }
 
+export async function createAnonymousVfsClient(config: WorkerConfig): Promise<Pick<VfsClient, "listPublicDatabases">> {
+  const agent = HttpAgent.createSync({ host: config.icHost });
+  if (isLocalHost(config.icHost)) {
+    await agent.fetchRootKey();
+  }
+  const actor = Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
+    agent,
+    canisterId: Principal.fromText(config.canisterId)
+  });
+  return {
+    listPublicDatabases: async () => normalizeDatabaseSummaries(await unwrap(actor.list_databases()))
+  };
+}
+
 export async function ensureParentFolders(vfs: VfsClient, databaseId: string, path: string): Promise<void> {
   const segments = path.split("/").filter(Boolean);
   let current = "";
@@ -253,6 +295,26 @@ function normalizeSearchHit(raw: RawSearchNodeHit): SearchNodeHit {
     snippet: raw.snippet[0] ?? null,
     previewExcerpt: raw.preview[0]?.excerpt[0] ?? null
   };
+}
+
+function normalizeDatabaseSummaries(raw: RawDatabaseSummary[]): PublicDatabaseSummary[] {
+  return raw.map((database) => {
+    const metadata = database.metadata[0];
+    const title = metadata?.name.trim() || database.name.trim() || database.database_id;
+    return {
+      databaseId: database.database_id,
+      title,
+      description: metadata?.description.trim() ?? "",
+      status: normalizeDatabaseStatus(database.status)
+    };
+  });
+}
+
+function normalizeDatabaseStatus(status: Variant): PublicDatabaseSummary["status"] {
+  if ("Active" in status) return "active";
+  if ("Pending" in status) return "pending";
+  if ("Deleted" in status) return "deleted";
+  throw new Error("unknown database status");
 }
 
 function normalizeExportSnapshotPage(raw: RawExportSnapshotPage): ExportSnapshotPage {

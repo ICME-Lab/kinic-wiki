@@ -7,6 +7,20 @@ Cloudflare Worker for turning evidence sources into review-ready wiki pages.
 Generation uses DeepSeek Chat Completions with `deepseek-v4-flash`.
 Set `DEEPSEEK_API_KEY` as a Cloudflare secret. `KINIC_WIKI_WORKER_TOKEN` protects `POST /run` and `POST /source-capture`; it is not an LLM API key.
 
+The Queue consumer runs ordinary Workers only; Dynamic Workers are not required. A batch contains at most four messages and only `source` generation messages run concurrently. Source capture and link-preview work stay sequential within each invocation to keep large HTML and image buffers out of the shared 128 MB isolate heap.
+
+The initial production envelope is five Queue consumer invocations with up to four concurrent source generations each, or at most 20 in-flight LLM requests. Queue autoscaling, mixed message batches, DeepSeek rate limits, D1, and VFS can lower the effective concurrency.
+
+DeepSeek requests use a 180-second timeout, manual redirect handling, and a 256 KiB response limit. Source text, prompts, generated content, session nonces, and secrets are excluded from Queue failure diagnostics and structured logs.
+
+## Generation retries and checkpoints
+
+`source_jobs` uses a five-minute execution lease keyed by the Cloudflare Queue message ID. The lease is acquired with an atomic D1 compare-and-set, so duplicate deliveries do not make concurrent paid LLM calls for the same source etag. A duplicate with an active lease is copied back to the primary Queue with a delay derived from the lease expiry; the original delivery is acknowledged only after that delayed send succeeds.
+
+After DeepSeek succeeds, generated Markdown is checkpointed in D1 with status `generated` before reading the target from VFS. The observed target ETag is then appended to that checkpoint before commit. A VFS or completion-state failure retries from the saved Markdown without calling DeepSeek again. Resume skips a target that already matches the checkpoint, writes over the unchanged observed ETag, and stops with `source_checkpoint_conflict` if the target changed after the snapshot. If target observation was interrupted, resume only writes when the target is still absent or accepts an exact content match; a different existing target requires manual resolution. Exhausting commit retries leaves the checkpoint in `generated`; after inspecting the sanitized failure Queue entry, an authorized manual `/run` requeue resumes the commit without another DeepSeek call. Permanent authorization, source, configuration, and generated-schema failures become terminal `failed` jobs. Transient provider, D1, and VFS failures retry with bounded backoff.
+
+Cloudflare automatic dead-letter forwarding is intentionally disabled because original Queue messages can carry session nonces. On the fifth failed application attempt, the Worker publishes a sanitized diagnostic to `kinic-wiki-generation-failures` and acknowledges the original message only after that send succeeds.
+
 ## Source Capture
 
 The worker processes explicit `/Sources/source-capture-requests` `kinic.source_capture_request` nodes.
@@ -29,6 +43,7 @@ For each queued request it:
 
 If a generated source path already exists, the worker writes the next available ASCII suffix such as `stem-2.md` and records that actual path in the request node. Evidence nodes are not overwritten by a repeated URL capture.
 Failed requests are terminal. To run capture again, submit a new request for the same URL; immutable source path allocation keeps the new capture separate from the failed request.
+Automatic source-capture recovery and scheduled recovery scans are not part of this Worker. Operational recovery uses the sanitized failure Queue and an explicit manual requeue.
 
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
 Use the exact PEM output from `icp identity export <identity-name>`.
@@ -42,6 +57,7 @@ The `source_capture` rename is a breaking operational boundary. Drain old `url_i
 
 ```bash
 pnpm exec wrangler queues create kinic-wiki-generation
+pnpm exec wrangler queues create kinic-wiki-generation-failures
 pnpm exec wrangler d1 create kinic-wiki-generator
 pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote
 pnpm exec wrangler secret put DEEPSEEK_API_KEY
@@ -50,6 +66,12 @@ pnpm exec wrangler secret put KINIC_WIKI_WORKER_IDENTITY_PEM
 ```
 
 After `d1 create`, copy the returned database id into `wrangler.jsonc`.
+
+Migration `0003_source_job_target_snapshot.sql` must be applied before deploying the Worker that reads the target snapshot columns. Pause the source Queue consumer while applying the migration and deploying the Worker. Existing `generated` checkpoints have no target snapshot, so they resume conservatively: an absent target or exact content match is accepted, while a different existing target stops for manual resolution.
+
+The source Queue starts with `max_batch_size = 4`, `max_batch_timeout = 1`, `max_concurrency = 5`, and `max_retries = 5`. During incidents, pause the source Queue consumer first. To reduce pressure, lower `max_concurrency` from 5 to 2 and then 1 without changing batch size at the same time.
+
+Monitor Queue backlog age, retry rate, failure Queue depth, DeepSeek 429/5xx rate, LLM and end-to-end p95 latency, and D1/VFS failures. Keep the initial settings unchanged for the first 100 production jobs or 24 hours.
 
 ## Browser Source Capture Integration
 

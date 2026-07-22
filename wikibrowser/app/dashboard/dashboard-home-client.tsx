@@ -2,9 +2,9 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import type { AuthClient } from "@icp-sdk/auth/client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useAppNavigate, useAppSearchParams } from "@/lib/app-router";
 import { toast } from "sonner";
 import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
@@ -25,9 +25,9 @@ type FundingProvider = "oisy" | "plug" | "ii";
 const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
 export function DashboardHomeClient() {
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
+  const router = useAppNavigate();
+  const searchParams = useAppSearchParams();
   const refreshSeqRef = useRef(0);
   const fundingToastKeyRef = useRef<string | null>(null);
   const {
@@ -61,7 +61,7 @@ export function DashboardHomeClient() {
       const refreshSeq = (refreshSeqRef.current += 1);
       const isCurrentRefresh = () => refreshSeq === refreshSeqRef.current;
       if (!canisterId) {
-        setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured.");
+        setError("VITE_KINIC_WIKI_CANISTER_ID is not configured.");
         setLoadState("error");
         return;
       }
@@ -394,5 +394,9 @@ function errorMessage(cause: unknown): string {
 function databaseNameError(databaseName: string): string | null {
   if (databaseName.length === 0) return "Database name is required.";
   if ([...databaseName].length > 80) return "Database name must be 1..80 characters.";
-  return /[\u0000-\u001f\u007f]/.test(databaseName) ? "Database name may not contain control characters." : null;
+  const containsControlCharacter = [...databaseName].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f);
+  });
+  return containsControlCharacter ? "Database name may not contain control characters." : null;
 }

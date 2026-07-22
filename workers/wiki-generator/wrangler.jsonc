@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-generator",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-12",
   "compatibility_flags": ["nodejs_compat"],
@@ -29,18 +30,30 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "LINK_PREVIEW_IMAGES",
+      "bucket_name": "kinic-wiki-link-preview-images"
+    }
+  ],
   "queues": {
     "producers": [
       {
         "binding": "WIKI_GENERATION_QUEUE",
         "queue": "kinic-wiki-generation"
+      },
+      {
+        "binding": "WIKI_GENERATION_DLQ",
+        "queue": "kinic-wiki-generation-failures"
       }
     ],
     "consumers": [
       {
         "queue": "kinic-wiki-generation",
-        "max_batch_size": 5,
-        "max_batch_timeout": 30
+        "max_batch_size": 4,
+        "max_batch_timeout": 1,
+        "max_concurrency": 5,
+        "max_retries": 5
       }
     ]
   }

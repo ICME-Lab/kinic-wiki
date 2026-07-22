@@ -2,7 +2,7 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-management-ui";
@@ -42,7 +42,7 @@ const DEFAULT_ACTION: ActionDraft = {
 };
 
 export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const refreshSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
@@ -61,7 +61,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
       const refreshSeq = (refreshSeqRef.current += 1);
       const isCurrentRefresh = () => refreshSeq === refreshSeqRef.current;
       if (!canisterId) {
-        setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured.");
+        setError("VITE_KINIC_WIKI_CANISTER_ID is not configured.");
         setLoadState("error");
         return;
       }

@@ -51,6 +51,7 @@ struct ShareInbox: @unchecked Sendable {
                     receivedAt: record.receivedAt,
                     requestId: requestId,
                     databaseId: databaseId?.isEmpty == false ? databaseId : nil,
+                    outputLanguage: record.outputLanguage ?? .english,
                     captureMetadata: record.captureMetadata
                 )
             }
@@ -68,6 +69,7 @@ struct ShareInbox: @unchecked Sendable {
         receivedAt: Date = .now,
         requestId: String? = nil,
         databaseId: String? = nil,
+        outputLanguage: WikiOutputLanguage = .english,
         captureMetadata: ShareCaptureMetadata? = nil
     ) throws {
         let id = UUID().uuidString.lowercased()
@@ -84,6 +86,7 @@ struct ShareInbox: @unchecked Sendable {
             receivedAt: receivedAt,
             requestId: resolvedRequestId,
             databaseId: trimmedDatabaseId?.isEmpty == false ? trimmedDatabaseId : nil,
+            outputLanguage: outputLanguage,
             captureMetadata: captureMetadata
         )
         let data = try encoder.encode(record)

@@ -6,6 +6,25 @@ import { Actor } from "@icp-sdk/core/agent";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
+  const DatabaseStatus = idl.Variant({ Active: idl.Null, Deleted: idl.Null, Pending: idl.Null });
+  const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
+  const DatabaseMetadata = idl.Record({
+    name: idl.Text,
+    description: idl.Text,
+    llm_summary: idl.Opt(idl.Text),
+    tags_json: idl.Text
+  });
+  const DatabaseSummary = idl.Record({
+    database_id: idl.Text,
+    metadata: idl.Opt(DatabaseMetadata),
+    name: idl.Text,
+    role: DatabaseRole,
+    status: DatabaseStatus,
+    logical_size_bytes: idl.Nat64,
+    cycles_balance: idl.Opt(idl.Nat64),
+    cycles_suspended_at_ms: idl.Opt(idl.Int64),
+    deleted_at_ms: idl.Opt(idl.Int64)
+  });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     updated_at: idl.Int64,
@@ -96,6 +115,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const MkdirNodeResult = idl.Record({ created: idl.Bool, path: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
+  const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
@@ -104,6 +124,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultUnit = idl.Variant({ Ok: idl.Null, Err: idl.Text });
 
   return idl.Service({
+    list_databases: idl.Func([], [ResultDatabases], ["query"]),
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_source_capture_trigger_session: idl.Func([SourceCaptureTriggerSessionCheckRequest], [ResultUnit], ["query"]),

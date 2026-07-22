@@ -192,14 +192,14 @@ if ! icp canister install "$II_FRONTEND_CANISTER_ID" \
 fi
 
 {
-  printf 'NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011\n'
-  printf 'NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
-  printf 'NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1\n'
-  printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
+  printf 'VITE_WIKI_IC_HOST=http://127.0.0.1:8011\n'
+  printf 'VITE_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
+  printf 'VITE_ENABLE_LOCAL_II_E2E=1\n'
+  printf 'VITE_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
 } > "$ENV_FILE"
 
 printf 'Wrote %s\n' "$ENV_FILE"
-printf 'NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
-printf 'NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1\n'
-printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
+printf 'VITE_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
+printf 'VITE_ENABLE_LOCAL_II_E2E=1\n'
+printf 'VITE_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
 printf 'For manual localhost testing, run: cp wikibrowser/.env.e2e.local wikibrowser/.env.local && pnpm -C wikibrowser dev\n'

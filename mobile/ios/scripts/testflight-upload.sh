@@ -32,7 +32,7 @@ asc_key_path="${ASC_KEY_PATH:-}"
 asc_key_id="${ASC_KEY_ID:-}"
 asc_issuer_id="${ASC_ISSUER_ID:-}"
 mode="upload"
-distribution="internal-only"
+distribution="external"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -43,8 +43,8 @@ usage() {
   cat <<'EOF'
 Usage:
   KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh
-  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --external
-  mobile/ios/scripts/testflight-upload.sh --external
+  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --internal-only
+  mobile/ios/scripts/testflight-upload.sh --internal-only
   mobile/ios/scripts/testflight-upload.sh --validate-only
 
 Environment:
@@ -63,8 +63,8 @@ Environment:
     KINIC_IOS_ENV_FILE          Overrides the default env file loading.
 
 Options:
-    --external                  Upload a build that can be assigned to external TestFlight groups.
-    --internal-only             Upload an internal-only TestFlight build. This is the default.
+    --external                  Upload a build that can be assigned to external TestFlight groups. This is the default.
+    --internal-only             Upload an internal-only TestFlight build.
 EOF
 }
 
@@ -146,6 +146,7 @@ EOF
 
 printf 'Archiving %s %s (%s) for App Store Connect (%s)...\n' "$bundle_id" "$marketing_version" "$build_number" "$distribution"
 xcodebuild archive \
+  -quiet \
   -project "$project" \
   -scheme "$scheme" \
   -configuration "$configuration" \
@@ -172,6 +173,7 @@ extension_privacy="$archive_path/Products/Applications/KinicWikiApp.app/PlugIns/
 
 printf 'Uploading archive to TestFlight...\n'
 xcodebuild -exportArchive \
+  -quiet \
   -archivePath "$archive_path" \
   -exportPath "$export_path" \
   -exportOptionsPlist "$export_options" \

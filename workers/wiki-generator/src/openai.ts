@@ -2,7 +2,7 @@
 // What: DeepSeek Chat Completions integration and draft schema validation.
 // Why: The model only produces structured JSON; worker code performs all writes.
 import { buildWikiDraftSystemPrompt } from "./wiki-skill.js";
-import type { SearchNodeHit, WikiDraft, WikiDraftItem, WikiNode, WorkerConfig } from "./types.js";
+import type { OutputLanguage, SearchNodeHit, WikiDraft, WikiDraftItem, WikiNode, WorkerConfig } from "./types.js";
 
 type DeepSeekChatCompletion = {
   choices?: DeepSeekChoice[];
@@ -15,6 +15,8 @@ type DeepSeekChoice = {
 };
 
 const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
+const DEEPSEEK_TIMEOUT_MS = 180_000;
+const MAX_DEEPSEEK_RESPONSE_BYTES = 256 * 1024;
 
 type DraftSectionKey = "key_facts" | "decisions" | "open_questions" | "follow_ups";
 type DraftLabelKey = "summary" | "key_facts" | "decisions" | "open_questions" | "follow_ups" | "related_context" | "provenance" | "none";
@@ -26,8 +28,33 @@ export class DraftValidationError extends Error {
   }
 }
 
-export async function generateDraft(source: WikiNode, contextHits: SearchNodeHit[], config: WorkerConfig, deepSeekApiKey: string): Promise<WikiDraft> {
-  return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config), config, deepSeekApiKey), source.path);
+export class DeepSeekRequestError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable: boolean,
+    readonly retryAfterSeconds?: number
+  ) {
+    super(message);
+    this.name = "DeepSeekRequestError";
+  }
+}
+
+export class DeepSeekResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DeepSeekResponseError";
+  }
+}
+
+export async function generateDraft(
+  source: WikiNode,
+  contextHits: SearchNodeHit[],
+  config: WorkerConfig,
+  deepSeekApiKey: string,
+  outputLanguage: OutputLanguage = "en"
+): Promise<WikiDraft> {
+  return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config, outputLanguage), config, deepSeekApiKey), source.path);
 }
 
 export async function requestDeepSeekDraft(
@@ -35,30 +62,54 @@ export async function requestDeepSeekDraft(
   config: WorkerConfig,
   deepSeekApiKey: string
 ): Promise<unknown> {
-  const response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deepSeekApiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: config.maxOutputTokens,
-      response_format: { type: "json_object" },
-      messages
-    })
-  });
-  if (!response.ok) {
-    throw new Error(await deepSeekErrorMessageFromResponse(response));
+  let response: Response;
+  try {
+    response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${deepSeekApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: config.maxOutputTokens,
+        response_format: { type: "json_object" },
+        messages
+      }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(DEEPSEEK_TIMEOUT_MS)
+    });
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+    throw new DeepSeekRequestError(timedOut ? "deepseek_timeout" : "deepseek_network", timedOut ? "DeepSeek request timed out" : "DeepSeek request failed", true);
   }
-  return response.json();
+  const text = await readBoundedResponseText(response);
+  if (!response.ok) {
+    const retryable = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500;
+    throw new DeepSeekRequestError(
+      `deepseek_http_${response.status}`,
+      deepSeekRequestFailureMessage(text, response),
+      retryable,
+      retryable ? retryAfterSeconds(response.headers.get("retry-after")) : undefined
+    );
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new DeepSeekResponseError("DeepSeek response is not valid JSON");
+  }
 }
 
-function draftMessages(source: WikiNode, contextHits: SearchNodeHit[], config: WorkerConfig): { role: "system" | "user"; content: string }[] {
+function draftMessages(
+  source: WikiNode,
+  contextHits: SearchNodeHit[],
+  config: WorkerConfig,
+  outputLanguage: OutputLanguage
+): { role: "system" | "user"; content: string }[] {
   return [
     {
       role: "system",
-      content: `${buildWikiDraftSystemPrompt()}\nReturn only a JSON object that matches this schema: ${JSON.stringify(wikiDraftSchema())}`
+      content: `${buildWikiDraftSystemPrompt(outputLanguage)}\nReturn only a JSON object that matches this schema: ${JSON.stringify(wikiDraftSchema())}`
     },
     {
       role: "user",
@@ -151,15 +202,15 @@ function wikiDraftSchema(): object {
   };
 }
 
-async function deepSeekErrorMessageFromResponse(response: Response): Promise<string> {
-  const text = await response.text();
-  let body: unknown = null;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    return `DeepSeek request failed: ${response.status} ${response.statusText || "non-JSON response"}`.trim();
+function deepSeekRequestFailureMessage(text: string, response: Response): string {
+  if (text) {
+    try {
+      JSON.parse(text);
+    } catch {
+      return `DeepSeek request failed: ${response.status} ${response.statusText || "non-JSON response"}`.trim();
+    }
   }
-  return deepSeekErrorMessage(body);
+  return `DeepSeek request failed: ${response.status} ${response.statusText}`.trim();
 }
 
 export function deepSeekErrorMessage(body: unknown): string {
@@ -174,7 +225,7 @@ export function deepSeekErrorMessage(body: unknown): string {
 
 function extractDeepSeekResponseText(body: unknown): string {
   if (!isDeepSeekChatCompletion(body)) {
-    throw new Error("DeepSeek response shape is invalid");
+    throw new DeepSeekResponseError("DeepSeek response shape is invalid");
   }
   for (const choice of body.choices ?? []) {
     const content = choice.message?.content;
@@ -182,7 +233,53 @@ function extractDeepSeekResponseText(body: unknown): string {
       return content;
     }
   }
-  throw new Error("DeepSeek response did not include text");
+  throw new DeepSeekResponseError("DeepSeek response did not include text");
+}
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null && Number(declaredLength) > MAX_DEEPSEEK_RESPONSE_BYTES) {
+    throw new DeepSeekRequestError("deepseek_response_too_large", "DeepSeek response exceeded 256 KiB", true);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_DEEPSEEK_RESPONSE_BYTES) {
+        await reader.cancel("response too large");
+        throw new DeepSeekRequestError("deepseek_response_too_large", "DeepSeek response exceeded 256 KiB", true);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    if (!Number.isSafeInteger(seconds) || seconds < 1) return undefined;
+    return Math.min(seconds, 300);
+  }
+  const retryAtMs = Date.parse(value);
+  if (!Number.isFinite(retryAtMs)) return undefined;
+  const seconds = Math.ceil((retryAtMs - Date.now()) / 1000);
+  if (seconds < 1) return undefined;
+  return Math.min(seconds, 300);
 }
 
 function isDeepSeekChatCompletion(value: unknown): value is DeepSeekChatCompletion {

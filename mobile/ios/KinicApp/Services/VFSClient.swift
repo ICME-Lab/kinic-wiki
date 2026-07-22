@@ -77,6 +77,31 @@ struct VFSClient: @unchecked Sendable {
         return try VFSCandidDecoder.decodeReadNodeResult(data)
     }
 
+    func writeNode(
+        databaseId: String,
+        path: String,
+        kind: VFSNodeKind,
+        content: String,
+        metadataJson: String,
+        expectedEtag: String?,
+        session: ICAuthSession
+    ) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "write_node",
+            arg: VFSCandidEncoder.writeNode(
+                databaseId: databaseId,
+                path: path,
+                kind: kind,
+                content: content,
+                metadataJson: metadataJson,
+                expectedEtag: expectedEtag
+            ),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeWriteNodeResult(data)
+    }
+
     func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
         if let session {
             try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
@@ -221,15 +246,6 @@ struct VFSClient: @unchecked Sendable {
             )
             try VFSCandidDecoder.decodeWriteNodesResult(writeData)
         }
-        let authorizeData = try await client.callRaw(
-            method: "authorize_source_capture_trigger_session",
-            arg: VFSCandidEncoder.authorizeSourceCaptureTriggerSession(
-                databaseId: request.databaseId,
-                sessionNonce: sessionNonce
-            ),
-            identity: session
-        )
-        try VFSCandidDecoder.decodeUnitResult(authorizeData)
         return CaptureSubmission(
             databaseId: request.databaseId,
             requestPath: request.requestPath,
@@ -241,6 +257,15 @@ struct VFSClient: @unchecked Sendable {
 
     func triggerSourceCapture(databaseId: String, requestPath: String, sessionNonce: String, session: ICAuthSession) async throws {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let authorizeData = try await client.callRaw(
+            method: "authorize_source_capture_trigger_session",
+            arg: VFSCandidEncoder.authorizeSourceCaptureTriggerSession(
+                databaseId: databaseId,
+                sessionNonce: sessionNonce
+            ),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(authorizeData)
         let trigger = await triggerWorker(
             databaseId: databaseId,
             requestPath: requestPath,
@@ -263,11 +288,42 @@ private func childSort(_ left: ChildNode, _ right: ChildNode) -> Bool {
     return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
 }
 
-private func isSameSourceCaptureRequest(_ existing: VFSNode, _ request: SourceCaptureRequest) -> Bool {
-    existing.path == request.requestPath
-        && existing.kind == .file
-        && existing.content == request.content
-        && existing.metadataJson == request.metadataJson
+func isSameSourceCaptureRequest(_ existing: VFSNode, _ request: SourceCaptureRequest) -> Bool {
+    guard existing.path == request.requestPath, existing.kind == .file else {
+        return false
+    }
+    if existing.content == request.content, existing.metadataJson == request.metadataJson {
+        return true
+    }
+    guard request.outputLanguage == .english,
+          let legacyContent = legacyEnglishSourceCaptureContent(request.content),
+          let legacyMetadataJson = legacyEnglishSourceCaptureMetadata(request.metadataJson) else {
+        return false
+    }
+    return existing.content == legacyContent && existing.metadataJson == legacyMetadataJson
+}
+
+private func legacyEnglishSourceCaptureContent(_ content: String) -> String? {
+    let field = "\noutput_language: \"en\"\n"
+    guard let range = content.range(of: field) else {
+        return nil
+    }
+    var legacy = content
+    legacy.replaceSubrange(range, with: "\n")
+    return legacy
+}
+
+private func legacyEnglishSourceCaptureMetadata(_ metadataJson: String) -> String? {
+    guard let data = metadataJson.data(using: .utf8),
+          var metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          metadata["output_language"] as? String == WikiOutputLanguage.english.rawValue else {
+        return nil
+    }
+    metadata.removeValue(forKey: "output_language")
+    guard let legacyData = try? JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]) else {
+        return nil
+    }
+    return String(data: legacyData, encoding: .utf8)
 }
 
 private extension VFSClient {

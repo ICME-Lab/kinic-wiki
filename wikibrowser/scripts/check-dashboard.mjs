@@ -4,7 +4,9 @@ import { assertNoAppBalanceSurface, readProjectFile } from "./check-helpers.mjs"
 const dashboardClient = readProjectFile("../app/dashboard/dashboard-client.tsx");
 const dashboardUi = readProjectFile("../app/dashboard/dashboard-ui.tsx");
 const dashboardHome = readProjectFile("../app/dashboard/dashboard-home-client.tsx");
+const databaseDangerZone = readProjectFile("../app/dashboard/database-danger-zone.tsx");
 const createDialog = readProjectFile("../app/create-database-dialog.tsx");
+const modalDialog = readProjectFile("../components/use-modal-dialog.ts");
 const appSession = readProjectFile("../app/app-session-provider.tsx");
 const adminShell = readProjectFile("../components/admin-shell.tsx");
 const profile = readProjectFile("../app/profile/profile-client.tsx");
@@ -40,6 +42,11 @@ assertNoAppBalanceSurface(dashboardHome);
 assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
 assertNoAppBalanceSurface(createDialog);
 assert.doesNotMatch(createDialog, /app-balance|Payment source|CreateDatabasePaymentSource|PaymentSourceOption|paymentSource|paymentSources|onPaymentSourceChange/);
+assert.doesNotMatch(createDialog, /<dialog\s+open/);
+assert.doesNotMatch(dashboardUi, /<dialog\s+open/);
+assert.doesNotMatch(databaseDangerZone, /<dialog\s+open/);
+assert.match(modalDialog, /dialog\.showModal\(\)/);
+assert.match(modalDialog, /previousFocus\?\.isConnected/);
 
 assert.match(appSession, /getConnectedWalletKinicBalance/);
 assertNoAppBalanceSurface(appSession);

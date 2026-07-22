@@ -31,6 +31,22 @@ struct DatabaseSummary: Codable, Identifiable, Equatable, Sendable {
     var displayTitle: String {
         title.isEmpty ? databaseId : title
     }
+
+    var shareSelectionDetailText: String {
+        "\(role.displayName) · \(shareSelectionDatabaseIdText)"
+    }
+
+    var shareSelectionTitleText: String {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedTitle.isEmpty ? "Untitled database" : trimmedTitle
+    }
+
+    private var shareSelectionDatabaseIdText: String {
+        guard databaseId.count > 18 else {
+            return databaseId
+        }
+        return "\(databaseId.prefix(8))…\(databaseId.suffix(6))"
+    }
 }
 
 struct DatabaseMetadata: Codable, Equatable, Sendable {
