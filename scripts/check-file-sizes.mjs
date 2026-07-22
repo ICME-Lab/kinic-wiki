@@ -18,6 +18,8 @@ const RATCHET = new Map([
   ["crates/vfs_store/tests/fs_store_sync.rs", 1574],
   ["crates/vfs_cli_app/src/skill_registry_tests.rs", 2027],
   ["workers/wiki-mcp/src/index.ts", 1256],
+  // Retry-safety scenarios intentionally share one D1/VFS fixture suite; freeze its current size until the suite is split by behavior.
+  ["workers/wiki-generator/tests/processing.test.ts", 1429],
 ]);
 
 const files = execSync("git ls-files '*.rs' '*.ts' '*.tsx'", { encoding: "utf8" })
