@@ -30,6 +30,26 @@ struct AskAIRetrievalPlannerTests {
         #expect(prompt.contains("database name as a search term"))
     }
 
+    @Test
+    func queryPromptKeepsLatestTurnsWhenAnOlderAssistantMessageExceedsHistoryBudget() {
+        let history = [
+            AskAIMessage(role: .user, text: "old topic"),
+            AskAIMessage(role: .assistant, text: "OLD-BEGIN " + String(repeating: "x", count: 7_000)),
+            AskAIMessage(role: .user, text: "LATEST-USER follow-up"),
+            AskAIMessage(role: .assistant, text: "LATEST-ASSISTANT context")
+        ]
+
+        let prompt = AskAIQueryPlanner.buildPrompt(
+            databaseTitle: "Test DB",
+            question: "What about that?",
+            history: history
+        )
+
+        #expect(prompt.contains("USER: LATEST-USER follow-up"))
+        #expect(prompt.contains("ASSISTANT: LATEST-ASSISTANT context"))
+        #expect(!prompt.contains("OLD-BEGIN"))
+    }
+
     @Test(arguments: [
         "Kakuyomu 小説 ルーム",
         "カオマンガイ 材料",
@@ -200,16 +220,96 @@ struct AskAIRetrievalPlannerTests {
         #expect(!rejectsNoise)
     }
 
+    @Test
+    func evidenceWindowIncludesLateQueryTermsWithoutSearchPreview() {
+        let queryPlan = plan("x402 paid api route")
+        let content = String(repeating: "unrelated introduction ", count: 220)
+            + "x402 paid api route requires PAYMENT-SIGNATURE for the supported answer."
+        let evidence = AskAIRetrievalPlanner.prepareEvidence(
+            queryPlan: queryPlan,
+            hit: hit(path: "/Knowledge/payments.md", score: -1),
+            content: content
+        )
+
+        #expect(evidence.content.count <= AskAIRetrievalPlanner.maximumContextCharactersPerSource)
+        #expect(evidence.content.contains("PAYMENT-SIGNATURE for the supported answer"))
+        #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            path: "/Knowledge/payments.md",
+            content: "\(evidence.excerpt)\n\(evidence.content)"
+        ))
+        let prompt = AskAIPromptBuilder.build(
+            databaseTitle: "Payments",
+            question: "How is the route authenticated?",
+            history: [],
+            sources: [
+                AskAIContextSource(
+                    source: AskAISource(
+                        id: "S1",
+                        path: "/Knowledge/payments.md",
+                        excerpt: evidence.excerpt,
+                        score: -1,
+                        matchReasons: ["content_fts"]
+                    ),
+                    content: evidence.content
+                )
+            ]
+        )
+        #expect(prompt.contains("PAYMENT-SIGNATURE for the supported answer"))
+    }
+
+    @Test
+    func evidenceWindowPrefersSearchPreviewOverEarlierQueryMatch() {
+        let queryPlan = plan("alpha beta")
+        let preview = "alpha beta preview-adjacent supported answer"
+        let content = "EARLY alpha beta marker "
+            + String(repeating: "filler ", count: 700)
+            + preview
+        let evidence = AskAIRetrievalPlanner.prepareEvidence(
+            queryPlan: queryPlan,
+            hit: hit(path: "/Knowledge/preview.md", score: -1, previewExcerpt: preview),
+            content: content
+        )
+
+        #expect(evidence.content.contains("preview-adjacent supported answer"))
+        #expect(!evidence.content.contains("EARLY alpha beta marker"))
+        #expect(evidence.excerpt == preview)
+    }
+
+    @Test
+    func preparedPromptEvidenceRejectsMatchesOutsideSelectedWindow() {
+        let queryPlan = plan("alpha beta")
+        let preview = "selected preview with unrelated evidence"
+        let content = "alpha beta only appears here "
+            + String(repeating: "filler ", count: 700)
+            + preview
+        let evidence = AskAIRetrievalPlanner.prepareEvidence(
+            queryPlan: queryPlan,
+            hit: hit(path: "/Knowledge/note.md", score: -1, previewExcerpt: preview),
+            content: content
+        )
+
+        #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            path: "/Knowledge/note.md",
+            content: "\(evidence.excerpt)\n\(evidence.content)"
+        ))
+    }
+
     private func plan(_ query: String) -> AskAIQueryPlan {
         AskAIQueryPlan(queries: [.init(text: query, terms: query.split(separator: " ").map(String.init))])
     }
 
-    private func hit(path: String, score: Float) -> SearchNodeHit {
+    private func hit(
+        path: String,
+        score: Float,
+        previewExcerpt: String? = nil
+    ) -> SearchNodeHit {
         SearchNodeHit(
             path: path,
             kind: .file,
             snippet: nil,
-            previewExcerpt: nil,
+            previewExcerpt: previewExcerpt,
             matchReasons: ["content_fts"],
             score: score
         )

@@ -545,9 +545,10 @@ struct AskAIModelTests {
 
         model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
         model.changeHistoryScope(to: scopeA, store: AskAIStoreStub())
-        await model.load()
+        let reenteredLoad = Task { await model.load() }
 
         await staleStoreA.failSave()
+        await reenteredLoad.value
         try await waitForSaveCompletion(staleStoreA)
 
         #expect(model.loadState == .loaded)
@@ -577,16 +578,85 @@ struct AskAIModelTests {
 
         model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
         model.changeHistoryScope(to: scopeA, store: currentStoreA)
-        await model.load()
-        model.deleteAllConversations()
+        let reenteredLoad = Task { await model.load() }
         try await Task.sleep(for: .milliseconds(20))
 
         #expect(await currentStoreA.saveCount == 0)
 
         await staleStoreA.resumeSave()
+        await reenteredLoad.value
+        model.deleteAllConversations()
         try await waitForSaveCount(currentStoreA, count: 1)
 
         #expect(await currentStoreA.savedConversations.isEmpty)
+    }
+
+    @Test
+    func reenteredPrincipalLoadWaitsForEarlierSaveOnSharedBacking() async throws {
+        let scopeA = AskAIHistoryScope(principal: "aaaaa-aa")
+        let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
+        let backingA = AskAISharedStoreBacking(suspendsNextSave: true)
+        let firstStoreA = AskAISharedStoreHandle(backing: backingA)
+        let reenteredStoreA = AskAISharedStoreHandle(backing: backingA)
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: firstStoreA,
+            historyScope: scopeA
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForPendingSave(backingA)
+        let savedConversationID = try #require(model.currentConversation?.id)
+
+        model.changeHistoryScope(to: scopeB, store: AskAIStoreStub())
+        model.changeHistoryScope(to: scopeA, store: reenteredStoreA)
+        let reenteredLoad = Task { await model.load() }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await backingA.loadCount == 1)
+
+        await backingA.resumeSave()
+        await reenteredLoad.value
+
+        #expect(await backingA.loadCount == 2)
+        #expect(model.conversations.map(\.id) == [savedConversationID])
+    }
+
+    @Test
+    func resetWaitsForPendingSaveBeforeClearingSharedBacking() async throws {
+        let backing = AskAISharedStoreBacking(suspendsNextSave: true)
+        let store = AskAISharedStoreHandle(backing: backing)
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: store
+        )
+        await model.load()
+        model.draft = "Question"
+        model.send()
+        try await waitForPendingSave(backing)
+        model.loadState = .failed("Injected load failure")
+        model.cancelGeneration()
+
+        let reset = Task { await model.resetHistoryAfterLoadFailure() }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await backing.resetCount == 0)
+
+        await backing.resumeSave()
+        await reset.value
+
+        #expect(await backing.resetCount == 1)
+        #expect(await backing.savedConversations.isEmpty)
+        #expect(model.loadState == .loaded)
     }
 
     private func waitUntilFinished(_ model: AskAIModel) async throws {
@@ -644,6 +714,14 @@ struct AskAIModelTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         Issue.record("Expected a pending history save")
+    }
+
+    private func waitForPendingSave(_ backing: AskAISharedStoreBacking) async throws {
+        for _ in 0..<200 {
+            if await backing.hasPendingSave { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected a pending shared-backing save")
     }
 
     private func waitForSaveCompletion(_ store: AskAIControllableStoreStub) async throws {
@@ -774,6 +852,66 @@ private actor AskAIStoreStub: AskAIConversationPersisting {
     func resetAfterLoadFailure() async throws {
         resetCount += 1
         savedConversations = []
+    }
+}
+
+private actor AskAISharedStoreBacking {
+    private var shouldSuspendSave: Bool
+    private var saveContinuation: CheckedContinuation<Void, Never>?
+    private(set) var savedConversations: [AskAIConversation] = []
+    private(set) var loadCount = 0
+    private(set) var resetCount = 0
+
+    init(suspendsNextSave: Bool) {
+        shouldSuspendSave = suspendsNextSave
+    }
+
+    var hasPendingSave: Bool { saveContinuation != nil }
+
+    func load() -> [AskAIConversation] {
+        loadCount += 1
+        return savedConversations
+    }
+
+    func save(_ conversations: [AskAIConversation]) async {
+        if shouldSuspendSave {
+            shouldSuspendSave = false
+            await withCheckedContinuation { continuation in
+                saveContinuation = continuation
+            }
+        }
+        savedConversations = conversations
+    }
+
+    func reset() {
+        resetCount += 1
+        savedConversations = []
+    }
+
+    func resumeSave() {
+        let continuation = saveContinuation
+        saveContinuation = nil
+        continuation?.resume()
+    }
+}
+
+private actor AskAISharedStoreHandle: AskAIConversationPersisting {
+    private let backing: AskAISharedStoreBacking
+
+    init(backing: AskAISharedStoreBacking) {
+        self.backing = backing
+    }
+
+    func load() async throws -> [AskAIConversation] {
+        await backing.load()
+    }
+
+    func save(_ conversations: [AskAIConversation]) async throws {
+        await backing.save(conversations)
+    }
+
+    func resetAfterLoadFailure() async throws {
+        await backing.reset()
     }
 }
 

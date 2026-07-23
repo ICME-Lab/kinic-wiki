@@ -90,7 +90,13 @@ final class AskAIModel {
         historyOperationID = operationID
         let targetContextID = historyContextID
         let targetStore = store
+        let persistenceBarrier = persistenceTask
         do {
+            await persistenceBarrier?.value
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
             let loadedConversations = try await targetStore.load()
             guard isCurrentHistoryOperation(
                 contextID: targetContextID,
@@ -128,8 +134,14 @@ final class AskAIModel {
         historyOperationID = operationID
         let targetContextID = historyContextID
         let targetStore = store
+        let persistenceBarrier = persistenceTask
         loadState = .loading
         do {
+            await persistenceBarrier?.value
+            guard isCurrentHistoryOperation(
+                contextID: targetContextID,
+                operationID: operationID
+            ) else { return }
             try await targetStore.resetAfterLoadFailure()
             guard isCurrentHistoryOperation(
                 contextID: targetContextID,

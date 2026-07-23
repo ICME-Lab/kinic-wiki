@@ -16,12 +16,10 @@ enum AskAIPromptBuilder {
         history: [AskAIMessage],
         sources: [AskAIContextSource]
     ) -> String {
-        let recentHistory = history.suffix(6)
-            .map { message in
-                "\(message.role == .user ? "USER" : "ASSISTANT"): \(message.text)"
-            }
-            .joined(separator: "\n")
-            .bounded(to: maximumHistoryCharacters)
+        let recentHistory = AskAIHistoryFormatter.format(
+            history,
+            maximumCharacters: maximumHistoryCharacters
+        )
 
         let boundedQuestion = question.bounded(to: maximumQuestionCharacters)
         let prefix = """
@@ -62,7 +60,9 @@ enum AskAIPromptBuilder {
             let separatorLength = sourceBlocks.isEmpty ? 0 : 2
             let available = max(0, remainingContext - header.count - footer.count - separatorLength)
             guard available > 0 else { break }
-            let body = contextSource.content.bounded(to: min(3_000, available))
+            let body = contextSource.content.bounded(
+                to: min(AskAIRetrievalPlanner.maximumContextCharactersPerSource, available)
+            )
             let block = "\(header)\(body)\(footer)"
             sourceBlocks.append(block)
             remainingContext -= block.count + separatorLength

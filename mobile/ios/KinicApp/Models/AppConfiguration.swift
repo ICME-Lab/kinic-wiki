@@ -6,6 +6,8 @@ import Foundation
 import ICNativeClient
 
 struct AppConfiguration: Equatable, Sendable {
+    static let privacyPolicyURL = URL(string: "https://wiki.kinic.xyz/privacy-policy")!
+
     let canisterId: String
     let apiBaseURL: URL
     let identityProvider: URL

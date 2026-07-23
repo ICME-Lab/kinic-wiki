@@ -15,12 +15,10 @@ enum AskAIQueryPlanner {
         question: String,
         history: [AskAIMessage]
     ) -> String {
-        let recentHistory = history.suffix(6)
-            .map { message in
-                "\(message.role == .user ? "USER" : "ASSISTANT"): \(message.text)"
-            }
-            .joined(separator: "\n")
-            .boundedAskAIText(to: maximumHistoryCharacters)
+        let recentHistory = AskAIHistoryFormatter.format(
+            history,
+            maximumCharacters: maximumHistoryCharacters
+        )
         let boundedQuestion = question.boundedAskAIText(to: maximumQuestionCharacters)
 
         return """

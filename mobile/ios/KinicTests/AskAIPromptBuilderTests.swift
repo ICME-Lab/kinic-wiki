@@ -71,4 +71,25 @@ struct AskAIPromptBuilderTests {
         #expect(!prompt.contains(String(longQuestion.prefix(AskAIPromptBuilder.maximumQuestionCharacters + 1))))
         #expect(prompt.contains("END SOURCE S1"))
     }
+
+    @Test
+    func keepsLatestTurnsWhenAnOlderAssistantMessageExceedsHistoryBudget() {
+        let history = [
+            AskAIMessage(role: .user, text: "old topic"),
+            AskAIMessage(role: .assistant, text: "OLD-BEGIN " + String(repeating: "x", count: 7_000)),
+            AskAIMessage(role: .user, text: "LATEST-USER follow-up"),
+            AskAIMessage(role: .assistant, text: "LATEST-ASSISTANT context")
+        ]
+
+        let prompt = AskAIPromptBuilder.build(
+            databaseTitle: "Test DB",
+            question: "Current question",
+            history: history,
+            sources: []
+        )
+
+        #expect(prompt.contains("USER: LATEST-USER follow-up"))
+        #expect(prompt.contains("ASSISTANT: LATEST-ASSISTANT context"))
+        #expect(!prompt.contains("OLD-BEGIN"))
+    }
 }

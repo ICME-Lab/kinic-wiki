@@ -89,26 +89,32 @@ extension AppModel: AskAIKnowledgeProviding {
                 databaseId: databaseId,
                 path: hit.path,
                 session: session
-            ), node.kind != .folder,
-            await askAIRetrievalVerifier.hasRequiredExactMatches(
+            ), node.kind != .folder else {
+                continue
+            }
+            let evidence = AskAIRetrievalPlanner.prepareEvidence(
+                queryPlan: queryPlan,
+                hit: hit,
+                content: node.content
+            )
+            guard await askAIRetrievalVerifier.hasRequiredExactMatches(
                 queryPlan: queryPlan,
                 path: hit.path,
-                content: node.content
+                content: "\(evidence.excerpt)\n\(evidence.content)"
             ) else {
                 continue
             }
-            let excerpt = Self.askAIExcerpt(for: hit, content: node.content)
             let source = AskAISource(
                 id: "S\(contexts.count + 1)",
                 path: hit.path,
-                excerpt: excerpt,
+                excerpt: evidence.excerpt,
                 score: hit.score,
                 matchReasons: hit.matchReasons
             )
             contexts.append(
                 AskAIContextSource(
                     source: source,
-                    content: String(node.content.prefix(3_000))
+                    content: evidence.content
                 )
             )
         }
@@ -125,14 +131,6 @@ extension AppModel: AskAIKnowledgeProviding {
         session != nil
             || publicBrowseDatabaseIds.contains(databaseId)
             || directBrowseDatabaseIds.contains(databaseId)
-    }
-
-    private nonisolated static func askAIExcerpt(for hit: SearchNodeHit, content: String) -> String {
-        let candidate = hit.displayPreview.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !candidate.isEmpty {
-            return String(candidate.prefix(300))
-        }
-        return String(content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
     }
 }
 

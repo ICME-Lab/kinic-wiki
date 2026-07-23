@@ -8,6 +8,12 @@ import NaturalLanguage
 enum AskAIRetrievalPlanner {
     static let searchLimitPerQuery: UInt32 = 8
     static let maximumSources = 5
+    static let maximumContextCharactersPerSource = 3_000
+
+    struct PreparedEvidence: Equatable, Sendable {
+        let excerpt: String
+        let content: String
+    }
 
     struct Candidate: Equatable, Sendable {
         let hit: SearchNodeHit
@@ -109,6 +115,24 @@ enum AskAIRetrievalPlanner {
         }
     }
 
+    static func prepareEvidence(
+        queryPlan: AskAIQueryPlan,
+        hit: SearchNodeHit,
+        content: String
+    ) -> PreparedEvidence {
+        let preview = [hit.previewExcerpt, hit.snippet]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+            ?? ""
+        let anchor = previewRange(preview, in: content)
+            ?? narrowestRequiredQueryRange(queryPlan: queryPlan, in: content)
+        let window = contextWindow(in: content, around: anchor)
+        let excerpt = preview.isEmpty
+            ? String(window.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
+            : String(preview.prefix(300))
+        return PreparedEvidence(excerpt: excerpt, content: window)
+    }
+
     static func semanticTokens(in value: String) -> [String] {
         let normalizedValue = normalize(value)
         guard !normalizedValue.isEmpty else { return [] }
@@ -159,6 +183,97 @@ enum AskAIRetrievalPlanner {
             .lowercased(with: Locale(identifier: "en_US_POSIX"))
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private static func previewRange(_ preview: String, in content: String) -> Range<String.Index>? {
+        guard !preview.isEmpty else { return nil }
+        return content.range(of: preview, options: evidenceSearchOptions)
+    }
+
+    private static func narrowestRequiredQueryRange(
+        queryPlan: AskAIQueryPlan,
+        in content: String
+    ) -> Range<String.Index>? {
+        var bestRange: Range<String.Index>?
+        var bestLength: Int?
+
+        for query in queryPlan.queries {
+            let tokens = Array(Set(semanticTokens(in: query.text)))
+            let requiredCount = requiredMatchCount(for: tokens.count)
+            guard requiredCount > 0 else { continue }
+
+            var occurrences: [(range: Range<String.Index>, token: String)] = []
+            for token in tokens {
+                occurrences.append(contentsOf: ranges(of: token, in: content).map { ($0, token) })
+            }
+            occurrences.sort { left, right in
+                if left.range.lowerBound != right.range.lowerBound {
+                    return left.range.lowerBound < right.range.lowerBound
+                }
+                return left.range.upperBound < right.range.upperBound
+            }
+
+            var left = 0
+            var tokenCounts: [String: Int] = [:]
+            for right in occurrences.indices {
+                tokenCounts[occurrences[right].token, default: 0] += 1
+                while left <= right, tokenCounts.count >= requiredCount {
+                    let candidate = occurrences[left].range.lowerBound..<occurrences[right].range.upperBound
+                    let length = content.distance(from: candidate.lowerBound, to: candidate.upperBound)
+                    if bestLength.map({ length < $0 }) ?? true {
+                        bestRange = candidate
+                        bestLength = length
+                    }
+                    let leftToken = occurrences[left].token
+                    if tokenCounts[leftToken] == 1 {
+                        tokenCounts.removeValue(forKey: leftToken)
+                    } else {
+                        tokenCounts[leftToken, default: 0] -= 1
+                    }
+                    left += 1
+                }
+            }
+        }
+        return bestRange
+    }
+
+    private static func ranges(of value: String, in content: String) -> [Range<String.Index>] {
+        guard !value.isEmpty else { return [] }
+        var results: [Range<String.Index>] = []
+        var searchStart = content.startIndex
+        while searchStart < content.endIndex,
+              let range = content.range(
+                  of: value,
+                  options: evidenceSearchOptions,
+                  range: searchStart..<content.endIndex
+              ) {
+            results.append(range)
+            searchStart = range.upperBound
+        }
+        return results
+    }
+
+    private static func contextWindow(
+        in content: String,
+        around anchor: Range<String.Index>?
+    ) -> String {
+        let limit = maximumContextCharactersPerSource
+        guard content.count > limit else { return content }
+        guard let anchor else { return String(content.prefix(limit)) }
+
+        let anchorStart = content.distance(from: content.startIndex, to: anchor.lowerBound)
+        let anchorEnd = content.distance(from: content.startIndex, to: anchor.upperBound)
+        let anchorMiddle = anchorStart + ((anchorEnd - anchorStart) / 2)
+        let startOffset = min(max(0, anchorMiddle - (limit / 2)), content.count - limit)
+        let start = content.index(content.startIndex, offsetBy: startOffset)
+        let end = content.index(start, offsetBy: limit)
+        return String(content[start..<end])
+    }
+
+    private static let evidenceSearchOptions: String.CompareOptions = [
+        .caseInsensitive,
+        .diacriticInsensitive,
+        .widthInsensitive
+    ]
 
     private static func compoundKind(for value: String) -> CompoundKind? {
         guard !value.isEmpty else { return nil }

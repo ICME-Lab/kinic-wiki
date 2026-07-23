@@ -35,11 +35,12 @@ struct AskAIComposerView: View {
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
 
             Label(
-                "Your question and relevant notes are sent to Kinic AI.",
+                "Your question, recent conversation, and relevant notes are sent to Kinic AI, then deleted after processing.",
                 systemImage: "lock.shield"
             )
             .font(.footnote)
             .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)

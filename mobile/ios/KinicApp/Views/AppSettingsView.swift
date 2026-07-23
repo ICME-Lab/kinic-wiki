@@ -67,6 +67,10 @@ struct AppSettingsView: View {
                         model.startRefreshDatabases()
                     }
             }
+
+            Section("Privacy") {
+                Link("Privacy Policy", destination: AppConfiguration.privacyPolicyURL)
+            }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
