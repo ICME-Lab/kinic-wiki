@@ -125,9 +125,9 @@ describe("wiki mcp worker", () => {
       maxQueryLimit: 100,
       budgetUnit: "approx_chars_from_tokens"
     });
-    mocks.queryContext.mockResolvedValue({
+    mocks.queryContext.mockImplementation(async (_runtimeEnv: unknown, input: { namespace: string }) => ({
       task: "agent",
-      namespace: "/Knowledge",
+      namespace: input.namespace,
       truncated: false,
       nodes: [
         {
@@ -171,7 +171,7 @@ describe("wiki mcp worker", () => {
           matchReasons: ["content"]
         }
       ]
-    });
+    }));
     mocks.queryDatabaseSqlJson.mockResolvedValue({
       rows: [
         JSON.stringify({
@@ -273,6 +273,28 @@ describe("wiki mcp worker", () => {
       });
       expect(tool.outputSchema).toMatchObject({ type: "object" });
     }
+  });
+
+  it("accepts the documented list limit through MCP JSON-RPC", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "tools/call",
+      params: {
+        name: "list",
+        arguments: { database_id: "db_alpha", prefix: "/", recursive: false, limit: 99 }
+      }
+    });
+    const text = response.result.content[0].text as string;
+    const parsed = JSON.parse(text);
+
+    expect(parsed.metadata).toMatchObject({
+      database_id: "db_alpha",
+      prefix: "/",
+      recursive: false,
+      limit: 99
+    });
+    expect(response.result.structuredContent).toEqual(parsed);
   });
 
   it("ranks public databases by metadata text", async () => {
@@ -516,6 +538,27 @@ describe("wiki mcp worker", () => {
     expect(mocks.readNode).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
   });
 
+  it("fetches search result public urls without changing the input schema", async () => {
+    const publicUrl = "https://wiki.kinic.test/db/db_alpha/Knowledge/index.md";
+    const foreignUrl = "https://example.com/db/db_alpha/Knowledge/index.md";
+
+    await expect(fetchManySearchResults(env, { ids: [publicUrl, foreignUrl] })).resolves.toMatchObject({
+      results: [
+        {
+          id: publicUrl,
+          title: "index",
+          metadata: { path: "/Knowledge/index.md" }
+        },
+        {
+          id: foreignUrl,
+          error: "invalid search result id",
+          is_error: true
+        }
+      ]
+    });
+    expect(mocks.readNode).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
+  });
+
   it("fetches multiple valid result ids with one restricted SQL query", async () => {
     const firstId = encodeSearchResultId({
       version: 1,
@@ -618,7 +661,7 @@ describe("wiki mcp worker", () => {
   it("returns task-scoped context with defaults", async () => {
     await expect(queryTaskContext(env, { database_id: "db_alpha", task: "agent" })).resolves.toEqual({
       task: "agent",
-      namespace: "/Knowledge",
+      namespace: "/",
       truncated: false,
       nodes: [
         {
@@ -668,6 +711,26 @@ describe("wiki mcp worker", () => {
         }
       ]
     });
+    expect(mocks.queryContext).toHaveBeenCalledWith(env, {
+      databaseId: "db_alpha",
+      task: "agent",
+      entities: [],
+      namespace: "/",
+      budgetTokens: 2000,
+      includeEvidence: true,
+      depth: 1
+    });
+  });
+
+  it("preserves an explicit context namespace", async () => {
+    await expect(
+      queryTaskContext(env, {
+        database_id: "db_alpha",
+        task: "agent",
+        namespace: "/Knowledge"
+      })
+    ).resolves.toMatchObject({ namespace: "/Knowledge" });
+
     expect(mocks.queryContext).toHaveBeenCalledWith(env, {
       databaseId: "db_alpha",
       task: "agent",
@@ -730,9 +793,61 @@ describe("wiki mcp worker", () => {
     });
 
     const text = response.result.content[0].text as string;
-    const parsed = JSON.parse(text);
-    expect(parsed).toEqual({ results: [{ id: "bad", error: "invalid search result id", is_error: true }] });
-    expect(response.result.structuredContent).toEqual(parsed);
+    expect(text).toBe("Result 1\nError: invalid search result id");
+    expect(response.result.structuredContent).toEqual({
+      results: [{ id: "bad", error: "invalid search result id", is_error: true }]
+    });
+  });
+
+  it("returns fetch_many page text as explicit model-facing content", async () => {
+    const publicUrl = "https://wiki.kinic.test/db/db_alpha/Knowledge/index.md";
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name: "fetch_many", arguments: { ids: [publicUrl] } }
+    });
+
+    const text = response.result.content[0].text as string;
+    expect(text).toContain("Path: /Knowledge/index.md");
+    expect(text).toContain("Content:\nAgent memory body");
+    expect(response.result.structuredContent).toMatchObject({
+      results: [{ id: publicUrl, text: "Agent memory body", metadata: { path: "/Knowledge/index.md" } }]
+    });
+  });
+
+  it("returns known-path page text as explicit model-facing content", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: { name: "read_path", arguments: { database_id: "db_alpha", path: "/Knowledge/index.md" } }
+    });
+
+    expect(response.result.content[0].text).toContain("Path: /Knowledge/index.md");
+    expect(response.result.content[0].text).toContain("Content:\nAgent memory body");
+    expect(response.result.structuredContent).toMatchObject({
+      text: "Agent memory body",
+      metadata: { path: "/Knowledge/index.md" }
+    });
+  });
+
+  it("returns batch path text as explicit model-facing content", async () => {
+    const response = await postMcp({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "read_paths",
+        arguments: { database_id: "db_alpha", paths: ["/Knowledge/a.md", "/Knowledge/b.md"] }
+      }
+    });
+
+    expect(response.result.content[0].text).toContain("Path: /Knowledge/a.md");
+    expect(response.result.content[0].text).toContain("Content:\nBody A");
+    expect(response.result.content[0].text).toContain("Path: /Knowledge/b.md");
+    expect(response.result.content[0].text).toContain("Content:\nBody B");
+    expect(response.result.structuredContent.results).toHaveLength(2);
   });
 
   it("omits structuredContent from tool errors", async () => {

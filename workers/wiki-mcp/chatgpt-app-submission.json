@@ -107,50 +107,50 @@
   },
   "test_cases": [
     {
-      "description": "Discover the public wiki database relevant to a knowledge task.",
-      "user_prompt": "Find a public Kinic Wiki database about agent memory workflows.",
+      "description": "Discover the official public Kinic Wiki database by its stable name.",
+      "user_prompt": "Use only KinicWiki's find_databases tool to find the public Kinic Wiki database named \"KINIC-WIKI\". Return its exact name, database id, and public link.",
       "file_attachment_urls": null,
       "tools_triggered": "find_databases",
-      "expected_output": "Returns matching public database metadata with names, descriptions, tags, URLs, and ranking scores.",
+      "expected_output": "Returns the KINIC-WIKI database with its database id and public link.",
       "expected_output_url": null
     },
     {
-      "description": "Answer a normal question from task-scoped wiki context.",
-      "user_prompt": "Using the Kinic Wiki database I selected, summarize what the project says about source evidence.",
+      "description": "Answer a normal question from whole-database task-scoped context.",
+      "user_prompt": "Using Kinic Wiki database db_kva4v2twg6jv, use only the context tool once with task-scoped context across the whole database to summarize how the browser clipper stores captured pages. Include the exact supporting wiki paths in the answer.",
       "file_attachment_urls": null,
       "tools_triggered": "context",
-      "expected_output": "Returns an answer grounded in public context nodes and notes whether the returned context was truncated.",
+      "expected_output": "Explains the browser clipper workflow from public wiki nodes and identifies the supporting wiki paths.",
       "expected_output_url": null
     },
     {
-      "description": "Search broadly and fetch multiple candidate nodes for evidence review.",
-      "user_prompt": "Search this public wiki for clipper usage notes and read the strongest candidates.",
+      "description": "Search the fixed public database and read the strongest matching pages.",
+      "user_prompt": "In Kinic Wiki database db_kva4v2twg6jv, call search once for \"clipper usage\" with prefix / and limit 3. Then call fetch_many once for the first two results. Do not pass ChatGPT citation tokens such as turn0file0. Instead, pass each result's exact public URL, constructing it as https://wiki.kinic.xyz/db/db_kva4v2twg6jv{path} from its metadata path if needed. Use no other tools. Summarize those pages and identify their exact wiki paths.",
       "file_attachment_urls": null,
       "tools_triggered": "search, fetch_many",
-      "expected_output": "Returns search candidates, reads selected public nodes, and reports any item-level errors or truncation.",
+      "expected_output": "Summarizes the relevant clipper usage guidance from the strongest public wiki pages and identifies those pages.",
       "expected_output_url": null
     },
     {
-      "description": "List a database prefix and batch-read known paths.",
-      "user_prompt": "List the top-level public wiki inventory, then read these two known Knowledge paths together.",
+      "description": "List the fixed database root and batch-read two explicit public paths.",
+      "user_prompt": "In Kinic Wiki database db_kva4v2twg6jv, use only list and then read_paths: list the top-level inventory under /, then read /Wiki/operators/browser-and-clipper.md and /Wiki/operators/index.md together. Briefly summarize each page after reading them.",
       "file_attachment_urls": null,
       "tools_triggered": "list, read_paths",
-      "expected_output": "Returns node inventory without content, then returns public node bodies for known paths with batch metadata.",
+      "expected_output": "Shows the top-level public inventory and summarizes the two requested operator pages.",
       "expected_output_url": null
     },
     {
-      "description": "Inspect database capabilities and read one known path.",
-      "user_prompt": "Show the public wiki database manifest, then read this known Knowledge node path.",
+      "description": "Inspect the fixed database capabilities and read one explicit public path.",
+      "user_prompt": "Use only memory_manifest and then read_path to show the public manifest for Kinic Wiki database db_kva4v2twg6jv, then read and briefly summarize /Wiki/architecture/code-map.md.",
       "file_attachment_urls": null,
       "tools_triggered": "memory_manifest, read_path",
-      "expected_output": "Returns public database roots, capabilities, limits, write policy, and the requested public node text.",
+      "expected_output": "Explains the database's public capabilities and read-only policy, then summarizes the requested code map page.",
       "expected_output_url": null
     }
   ],
   "negative_test_cases": [
     {
       "description": "Do not trigger for write or delete requests.",
-      "user_prompt": "Delete this wiki node and replace it with my edited version.",
+      "user_prompt": "Delete this record and replace it with my edited version.",
       "file_attachment_urls": null,
       "tools_triggered": null,
       "expected_output": "The app should not be invoked because it only supports anonymous read-only public wiki access.",
@@ -158,7 +158,7 @@
     },
     {
       "description": "Do not trigger for private database or credential requests.",
-      "user_prompt": "Use my private credentials to open a non-public Kinic Wiki database.",
+      "user_prompt": "Use my password and API token to open a private, non-public database.",
       "file_attachment_urls": null,
       "tools_triggered": null,
       "expected_output": "The app should not be invoked because private access and credentials are outside its supported workflows.",

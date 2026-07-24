@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SupportRouteImport } from './routes/support'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as ProfileRouteImport } from './routes/profile'
@@ -44,6 +45,11 @@ import { Route as ApiSourceRunRouteImport } from './routes/api.source.run'
 import { Route as ApiSourceCaptureTriggerRouteImport } from './routes/api.source-capture.trigger'
 import { Route as ApiQueryAnswerRouteImport } from './routes/api.query.answer'
 
+const SupportRoute = SupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
   path: '/sitemap.xml',
@@ -235,6 +241,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
@@ -268,6 +275,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -304,6 +312,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
@@ -342,6 +351,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/robots.txt'
     | '/sitemap.xml'
+    | '/support'
     | '/.well-known/apple-app-site-association'
     | '/db/$databaseId'
     | '/docs/canister-api'
@@ -375,6 +385,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/robots.txt'
     | '/sitemap.xml'
+    | '/support'
     | '/.well-known/apple-app-site-association'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -410,6 +421,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/robots.txt'
     | '/sitemap.xml'
+    | '/support'
     | '/.well-known/apple-app-site-association'
     | '/db/$databaseId'
     | '/docs/canister-api'
@@ -447,6 +459,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  SupportRoute: typeof SupportRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
   DbDatabaseIdRoute: typeof DbDatabaseIdRouteWithChildren
   SkillsDatabaseIdRoute: typeof SkillsDatabaseIdRoute
@@ -457,6 +470,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/support': {
+      id: '/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof SupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sitemap.xml': {
       id: '/sitemap.xml'
       path: '/sitemap.xml'
@@ -789,6 +809,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  SupportRoute: SupportRoute,
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
   DbDatabaseIdRoute: DbDatabaseIdRouteWithChildren,

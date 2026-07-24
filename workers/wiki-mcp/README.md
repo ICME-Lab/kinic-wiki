@@ -14,7 +14,7 @@ Canonical documentation: `../../docs/mcp.md`.
 
 - `find_databases`: discover public databases from public metadata.
 - `search`: search one public database with canister FTS and selectable preview mode.
-- `fetch_many`: read 1 to 10 search result nodes by opaque ids.
+- `fetch_many`: read 1 to 10 search result nodes by exact opaque ids or public URLs returned by `search`.
 - `read_path`: read one known VFS path without a search result id.
 - `read_paths`: read up to 10 known VFS paths with one restricted SQL query.
 - `list`: list node inventory under a prefix without content.

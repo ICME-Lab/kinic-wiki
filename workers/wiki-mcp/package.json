@@ -6,6 +6,7 @@
   "scripts": {
     "build": "wrangler deploy --dry-run --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
+    "review:smoke": "node scripts/check-submission-cases.mjs",
     "test": "node scripts/check-candid-drift.mjs && vitest run",
     "typecheck": "tsc --noEmit"
   },

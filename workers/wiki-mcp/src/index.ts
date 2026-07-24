@@ -51,7 +51,7 @@ const MAX_FETCH_TEXT_CHARS = 40_000;
 const MIN_SQL_FETCH_TEXT_CHARS = 8_000;
 const SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS = 220_000;
 const DEFAULT_PREFIX = "/";
-const DEFAULT_CONTEXT_NAMESPACE = "/Knowledge";
+const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
 const MCP_TOOL_NAMES = [
   "find_databases",
@@ -359,14 +359,14 @@ export function createServer(env: RuntimeEnv): McpServer {
     "fetch_many",
     {
       description:
-        "Fetch full text for up to 10 Kinic Wiki search result ids. Use after candidate search for broad or list questions, including for a single strongest result id. Item-level errors are returned without failing the whole call.",
+        "Fetch full text for up to 10 Kinic Wiki search results. Pass each result's exact id or public url from search. Never pass ChatGPT citation tokens such as turn0file0. If ChatGPT hides an id behind a citation token, construct the public url as https://wiki.kinic.xyz/db/{database_id}{path} from that result's metadata. Use after candidate search for broad or list questions, including for a single strongest result. Item-level errors are returned without failing the whole call.",
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
       },
       outputSchema: fetchManyOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
-    async ({ ids }) => toToolResult(await fetchManySearchResults(env, { ids }))
+    async ({ ids }) => toFetchManyToolResult(await fetchManySearchResults(env, { ids }))
   );
 
   server.registerTool(
@@ -380,7 +380,7 @@ export function createServer(env: RuntimeEnv): McpServer {
       outputSchema: fetchedNodeOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
-    async ({ database_id, path }) => toToolResult(await readPath(env, { database_id, path }))
+    async ({ database_id, path }) => toFetchedNodeToolResult(await readPath(env, { database_id, path }))
   );
 
   server.registerTool(
@@ -395,7 +395,7 @@ export function createServer(env: RuntimeEnv): McpServer {
       outputSchema: readPathsOutputSchema,
       annotations: TOOL_ANNOTATIONS
     },
-    async ({ database_id, paths }) => toToolResult(await readPaths(env, { database_id, paths }))
+    async ({ database_id, paths }) => toReadPathsToolResult(await readPaths(env, { database_id, paths }))
   );
 
   server.registerTool(
@@ -582,7 +582,7 @@ export async function fetchManySearchResults(env: RuntimeEnv, input: FetchManyIn
   const results: Array<Record<string, unknown> | null> = [];
   const validItems: ValidFetchManyItem[] = [];
   for (const [index, id] of ids.entries()) {
-    const decoded = decodeSearchResultId(id);
+    const decoded = decodeSearchResultReference(env, id);
     if (!decoded) {
       results[index] = fetchItemError(id, "invalid search result id");
     } else if (decoded.canister_id !== canisterId) {
@@ -739,19 +739,41 @@ export function decodeSearchResultId(id: string): SearchResultId | null {
   };
 }
 
-async function fetchSearchResultItem(env: RuntimeEnv, id: string, canisterId: string) {
-  const decoded = decodeSearchResultId(id);
-  if (!decoded) {
-    return fetchItemError(id, "invalid search result id");
+function decodeSearchResultReference(env: RuntimeEnv, reference: string): SearchResultId | null {
+  const encoded = decodeSearchResultId(reference);
+  if (encoded) {
+    return encoded;
   }
-  if (decoded.canister_id !== canisterId) {
-    return fetchItemError(id, "search result id is for another canister");
+
+  try {
+    const url = new URL(reference);
+    if (url.origin !== new URL(publicOrigin(env)).origin) {
+      return null;
+    }
+    const segments = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+    if (segments[0] !== "db" || segments.length < 3) {
+      return null;
+    }
+    return {
+      version: 1,
+      canister_id: resolveCanisterId(env),
+      database_id: segments[1],
+      path: `/${segments.slice(2).join("/")}`
+    };
+  } catch {
+    return null;
   }
-  const node = await readNode(env, decoded.database_id, decoded.path);
+}
+
+async function fetchSearchResultItem(env: RuntimeEnv, item: ValidFetchManyItem) {
+  const node = await readNode(env, item.decoded.database_id, item.decoded.path);
   if (!node) {
-    return fetchItemError(id, "node not found");
+    return fetchItemError(item.id, "node not found");
   }
-  return fetchedNode(env, id, decoded.database_id, node);
+  return fetchedNode(env, item.id, item.decoded.database_id, node);
 }
 
 function groupFetchManyItemsByDatabase(items: ValidFetchManyItem[]): Map<string, ValidFetchManyItem[]> {
@@ -767,7 +789,7 @@ function groupFetchManyItemsByDatabase(items: ValidFetchManyItem[]): Map<string,
 async function fillFetchManyGroup(env: RuntimeEnv, group: ValidFetchManyItem[], results: Array<Record<string, unknown> | null>) {
   if (group.length === 1) {
     const [item] = group;
-    results[item.index] = await fetchSearchResultItem(env, item.id, item.decoded.canister_id);
+    results[item.index] = await fetchSearchResultItem(env, item);
     return;
   }
 
@@ -1205,6 +1227,68 @@ function toToolResult(payload: Record<string, unknown> | ToolErrorResult) {
   return isToolErrorResult(payload)
     ? payload
     : { content: [{ type: "text" as const, text: JSON.stringify(payload) }], structuredContent: payload };
+}
+
+function toFetchManyToolResult(payload: Awaited<ReturnType<typeof fetchManySearchResults>>) {
+  const text = payload.results
+    .map((result, index) => {
+      if (!result) {
+        return `Result ${index + 1}\nError: missing result`;
+      }
+      if (result.is_error === true) {
+        return `Result ${index + 1}\nError: ${String(result.error)}`;
+      }
+      const metadata = isRecord(result.metadata) ? result.metadata : {};
+      return [
+        `Result ${index + 1}`,
+        `Path: ${String(metadata.path ?? "")}`,
+        `Title: ${String(result.title ?? "")}`,
+        "Content:",
+        String(result.text ?? "")
+      ].join("\n");
+    })
+    .join("\n\n");
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: payload
+  };
+}
+
+function toFetchedNodeToolResult(payload: Awaited<ReturnType<typeof readPath>>) {
+  if (isToolErrorResult(payload)) {
+    return payload;
+  }
+  return {
+    content: [{ type: "text" as const, text: modelFacingNodeText(payload) }],
+    structuredContent: payload
+  };
+}
+
+function toReadPathsToolResult(payload: Awaited<ReturnType<typeof readPaths>>) {
+  if (isToolErrorResult(payload)) {
+    return payload;
+  }
+  const text = payload.results
+    .map((result, index) =>
+      "is_error" in result && result.is_error === true
+        ? `Result ${index + 1}\nPath: ${String(result.path)}\nError: ${String(result.error)}`
+        : `Result ${index + 1}\n${modelFacingNodeText(result)}`
+    )
+    .join("\n\n");
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: payload
+  };
+}
+
+function modelFacingNodeText(node: Record<string, unknown>) {
+  const metadata = isRecord(node.metadata) ? node.metadata : {};
+  return [
+    `Path: ${String(metadata.path ?? "")}`,
+    `Title: ${String(node.title ?? "")}`,
+    "Content:",
+    String(node.text ?? "")
+  ].join("\n");
 }
 
 function toolError(message: string, payload: Record<string, unknown>) {
