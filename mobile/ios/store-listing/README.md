@@ -10,12 +10,12 @@ mobile/ios/build/AppStoreScreenshots/raw/
   iphone/01-organized.png
   iphone/02-save-from-safari.png
   iphone/03-lasting-knowledge.png
-  iphone/04-find-it.png
+  iphone/04-ask-with-sources.png
   iphone/05-under-control.png
   ipad/01-organized.png
   ipad/02-save-from-safari.png
   ipad/03-lasting-knowledge.png
-  ipad/04-find-it.png
+  ipad/04-ask-with-sources.png
   ipad/05-under-control.png
 ```
 

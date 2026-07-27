@@ -10,12 +10,137 @@ import os
 enum AppTab: Hashable {
     case home
     case browse
+    case askAI
     case manage
 }
 
 enum BrowseNavigationTarget: Equatable {
     case folder(String)
     case document(path: String, parentPath: String)
+}
+
+extension AppModel: AskAIKnowledgeProviding {
+    var selectedAskAIDatabaseId: String {
+        selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var selectedAskAIDatabaseTitle: String {
+        selectedBrowseDatabase?.displayTitle ?? selectedAskAIDatabaseId
+    }
+
+    var canAskAI: Bool {
+        canBrowse
+    }
+
+    var askAIDatabaseCandidates: [DatabaseSummary] {
+        browseListDatabases.filter { $0.status != .deleted }
+    }
+
+    func selectAskAIDatabase(_ databaseId: String) {
+        selectBrowseDatabase(databaseId)
+    }
+
+    func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else {
+            throw AskAIKnowledgeError.missingDatabase
+        }
+        guard isAskAIDatabaseAvailable(databaseId) else {
+            throw AskAIKnowledgeError.unavailableDatabase
+        }
+
+        let queries = Array(queryPlan.queries.prefix(AskAIQueryPlanner.maximumQueries))
+        guard !queries.isEmpty else {
+            return AskAIRetrievalResult(searchQueries: [], sources: [])
+        }
+        let session = browseSession(for: databaseId)
+        let searchClient = client
+        let hitsByQuery = try await withThrowingTaskGroup(
+            of: (String, [SearchNodeHit]).self,
+            returning: [String: [SearchNodeHit]].self
+        ) { group in
+            for query in queries {
+                group.addTask {
+                    let hits = try await searchClient.searchBrowseNodes(
+                        databaseId: databaseId,
+                        query: query.text,
+                        prefix: nil,
+                        limit: AskAIRetrievalPlanner.searchLimitPerQuery,
+                        session: session
+                    )
+                    return (query.text, hits)
+                }
+            }
+            var results: [String: [SearchNodeHit]] = [:]
+            for try await (query, hits) in group {
+                results[query] = hits
+            }
+            return results
+        }
+        let rankedCandidates = AskAIRetrievalPlanner.rankedCandidates(
+            queryPlan: queryPlan,
+            hitsByQuery: hitsByQuery
+        )
+
+        var contexts: [AskAIContextSource] = []
+        for candidate in rankedCandidates where contexts.count < AskAIRetrievalPlanner.maximumSources {
+            let hit = candidate.hit
+            guard let node = try await client.readBrowseNode(
+                databaseId: databaseId,
+                path: hit.path,
+                session: session
+            ), node.kind != .folder else {
+                continue
+            }
+            guard let evidence = await askAIRetrievalVerifier.prepareVerifiedEvidence(
+                queryPlan: queryPlan,
+                hit: hit,
+                content: node.content
+            ) else {
+                continue
+            }
+            let source = AskAISource(
+                id: "S\(contexts.count + 1)",
+                path: hit.path,
+                excerpt: evidence.excerpt,
+                score: hit.score,
+                matchReasons: hit.matchReasons
+            )
+            contexts.append(
+                AskAIContextSource(
+                    source: source,
+                    content: evidence.content
+                )
+            )
+        }
+        return AskAIRetrievalResult(searchQueries: queries.map(\.text), sources: contexts)
+    }
+
+    func openAskAISource(databaseId: String, path: String) {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else { return }
+        openBrowseDeepLink(databaseId: databaseId, nodePath: path)
+    }
+
+    private func isAskAIDatabaseAvailable(_ databaseId: String) -> Bool {
+        session != nil
+            || publicBrowseDatabaseIds.contains(databaseId)
+            || directBrowseDatabaseIds.contains(databaseId)
+    }
+}
+
+enum AskAIKnowledgeError: Error, LocalizedError, Equatable {
+    case missingDatabase
+    case unavailableDatabase
+
+    var errorDescription: String? {
+        switch self {
+        case .missingDatabase:
+            "Select a database before asking a question."
+        case .unavailableDatabase:
+            "This database is not currently available to Ask AI."
+        }
+    }
 }
 
 enum AppOpenURLDestination: Equatable {
@@ -104,6 +229,7 @@ enum SourceCaptureRetryError: Error, LocalizedError, Equatable {
 final class AppModel {
     private let authService: KinicAuthService
     private let client: KinicICClient
+    private let askAIRetrievalVerifier = AskAIRetrievalVerifier()
     private let shareInbox: ShareInbox
     private let sourceCaptureHistoryStore: SourceCaptureHistoryStore?
     private let settingsStore: SharedDefaultsStore
@@ -201,6 +327,10 @@ final class AppModel {
 
     var principalText: String {
         session?.principal ?? "Not signed in"
+    }
+
+    var askAIHistoryScope: AskAIHistoryScope {
+        AskAIHistoryScope(principal: session?.principal)
     }
 
     var isSignedIn: Bool {
@@ -1837,6 +1967,22 @@ final class AppModel {
             routes.append(BrowseFolderRoute(path: currentPath))
         }
         return routes
+    }
+
+    nonisolated static func browseNavigationRoutes(
+        for target: BrowseNavigationTarget,
+        includeDocument: Bool
+    ) -> [BrowseFolderRoute] {
+        switch target {
+        case let .folder(path):
+            return folderRoutes(to: path)
+        case let .document(path, parentPath):
+            var routes = folderRoutes(to: parentPath)
+            if includeDocument {
+                routes.append(.document(path: normalizedBrowsePath(path)))
+            }
+            return routes
+        }
     }
 
     nonisolated private static func decodedPathSegments(from url: URL) -> [String] {

@@ -35,11 +35,11 @@
       }
     },
     {
-      "id": "04-find-it",
-      "title": "Find it when you need it",
+      "id": "04-ask-with-sources",
+      "title": "Ask your memory, with sources",
       "sources": {
-        "iphone": "iphone/04-find-it.png",
-        "ipad": "ipad/04-find-it.png"
+        "iphone": "iphone/04-ask-with-sources.png",
+        "ipad": "ipad/04-ask-with-sources.png"
       }
     },
     {

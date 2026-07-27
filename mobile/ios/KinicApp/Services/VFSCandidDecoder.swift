@@ -97,6 +97,14 @@ enum VFSCandidDecoder {
         }
     }
 
+    static func decodeSQLJSONQueryRowsResult(_ data: Data) throws -> [String] {
+        let ok = try decodeResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("SQL JSON query result is not a record")
+        }
+        return try textVector(fields, "rows")
+    }
+
     static func decodeDatabaseSummaries(_ data: Data) throws -> [DatabaseSummary] {
         let ok = try decodeResult(data)
         guard case .vector(let values) = ok else {

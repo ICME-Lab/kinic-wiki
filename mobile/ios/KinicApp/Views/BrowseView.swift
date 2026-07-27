@@ -5,6 +5,7 @@
 import SwiftUI
 
 struct BrowseView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var model: AppModel
     let rootNavigationID: Int
     @State private var selectedDatabaseId: String?
@@ -52,6 +53,12 @@ struct BrowseView: View {
         .onChange(of: model.browseNavigationRequestID) {
             applyBrowseNavigationRequest()
         }
+        .onChange(of: horizontalSizeClass) { _, newSizeClass in
+            adaptNavigation(to: newSizeClass)
+        }
+        .onChange(of: folderPath) { _, newPath in
+            syncCompactDocumentSelection(with: newPath)
+        }
     }
 
     private func syncSelectionFromModel() {
@@ -70,10 +77,44 @@ struct BrowseView: View {
         switch model.requestedBrowseTarget {
         case let .folder(path):
             selectedDocumentPath = nil
-            folderPath = AppModel.folderRoutes(to: path)
+            folderPath = AppModel.browseNavigationRoutes(
+                for: .folder(path),
+                includeDocument: false
+            )
         case let .document(path, parentPath):
             selectedDocumentPath = path
-            folderPath = AppModel.folderRoutes(to: parentPath)
+            folderPath = AppModel.browseNavigationRoutes(
+                for: .document(path: path, parentPath: parentPath),
+                includeDocument: horizontalSizeClass == .compact
+            )
+        }
+    }
+
+    private func adaptNavigation(to sizeClass: UserInterfaceSizeClass?) {
+        switch sizeClass {
+        case .compact:
+            guard let selectedDocumentPath else { return }
+            folderPath = AppModel.browseNavigationRoutes(
+                for: .document(
+                    path: selectedDocumentPath,
+                    parentPath: AppModel.parentPath(selectedDocumentPath)
+                ),
+                includeDocument: true
+            )
+        case .regular:
+            guard folderPath.last?.kind == .document else { return }
+            selectedDocumentPath = folderPath.removeLast().path
+        default:
+            return
+        }
+    }
+
+    private func syncCompactDocumentSelection(with path: [BrowseFolderRoute]) {
+        guard horizontalSizeClass == .compact else { return }
+        if let route = path.last, route.kind == .document {
+            selectedDocumentPath = route.path
+        } else {
+            selectedDocumentPath = nil
         }
     }
 }

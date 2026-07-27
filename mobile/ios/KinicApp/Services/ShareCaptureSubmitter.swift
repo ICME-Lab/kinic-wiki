@@ -98,7 +98,7 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 outputLanguage: outputLanguage,
                 captureMetadata: captureMetadata,
-                reason: "Sign in in KinicWikiApp to send this URL later."
+                reason: "Sign in in KinicWiki to send this URL later."
             )
         }
         let databaseId: String
@@ -113,7 +113,7 @@ struct ShareCaptureSubmitter: Sendable {
                 normalizedURL,
                 outputLanguage: outputLanguage,
                 captureMetadata: captureMetadata,
-                reason: "Select a writable database in KinicWikiApp to send this URL later."
+                reason: "Select a writable database in KinicWiki to send this URL later."
             )
         }
         let receivedAt = Date.now

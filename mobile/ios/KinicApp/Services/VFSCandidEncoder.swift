@@ -47,6 +47,19 @@ enum VFSCandidEncoder {
         textArgs([databaseId, path])
     }
 
+    static func queryDatabaseSQLJSON(databaseId: String, sql: String, limit: UInt32) -> Data {
+        var data = magic
+        appendUnsigned(0, to: &data)
+        appendUnsigned(3, to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(primitive(typeNat32), to: &data)
+        encode(.text(databaseId), to: &data)
+        encode(.text(sql), to: &data)
+        encode(.nat32(limit), to: &data)
+        return data
+    }
+
     static func listChildren(databaseId: String, path: String) -> Data {
         oneRecord(
             tableEntries: [

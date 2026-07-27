@@ -16,6 +16,10 @@
 - [RELEASE.md](RELEASE.md) — Release procedure
 - [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — Public environment smoke test procedure
 
+## Legal
+
+- [Privacy Policy](legal/privacy-policy.md) — Source for the published Kinic privacy policy
+
 ## Internal Design (internal/)
 
 - [DEPENDENCY_FORKS.md](internal/DEPENDENCY_FORKS.md) — Scope and update policy for forked dependencies

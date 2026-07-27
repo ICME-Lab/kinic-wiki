@@ -7,6 +7,9 @@ import ICNativeClient
 import UniformTypeIdentifiers
 
 final class ShareViewController: UIViewController {
+    private static let databaseSelectionMessage = "Select where KinicWiki saves this URL."
+    private static let sourceAlreadySavedMessage = "This URL is already saved."
+
     private let brandImageView = UIImageView(image: UIImage(named: "KinicMark"))
     private let brandLabel = UILabel()
     private let titleLabel = UILabel()
@@ -24,6 +27,9 @@ final class ShareViewController: UIViewController {
     private var session: ICAuthSession?
     private var settingsStore: SharedDefaultsStore?
     private var submitter: ShareCaptureSubmitter?
+    private var databaseClient: KinicICClient?
+    private var sourceLookupTask: Task<Void, Never>?
+    private var sourceLookupGeneration = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -201,6 +207,7 @@ final class ShareViewController: UIViewController {
         self.configuration = configuration
         settingsStore = activeSettingsStore
         submitter = activeSubmitter
+        databaseClient = KinicICClient(configuration: configuration)
 
         guard let session = KinicAuthSessionStore(configuration: configuration).restore() else {
             submitSharedURL(url, captureMetadata: captureMetadata)
@@ -281,7 +288,7 @@ final class ShareViewController: UIViewController {
         let savedId = savedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         selectedDatabaseId = databases.contains(where: { $0.databaseId == savedId }) ? savedId : nil
         titleLabel.text = "Choose database"
-        messageLabel.text = "Select where KinicWiki saves this URL."
+        messageLabel.text = Self.databaseSelectionMessage
         activityIndicator.stopAnimating()
         databaseTableView.reloadData()
         if let selectedIndex = databases.firstIndex(where: { $0.databaseId == selectedDatabaseId }) {
@@ -297,6 +304,7 @@ final class ShareViewController: UIViewController {
         saveButton.isHidden = false
         doneButton.isHidden = false
         updateSaveButton()
+        updateSourceAvailabilityMessage()
     }
 
     private func submitSharedURL(
@@ -341,7 +349,52 @@ final class ShareViewController: UIViewController {
         saveButton.configuration?.title = "Save"
     }
 
+    private func updateSourceAvailabilityMessage() {
+        cancelSourceLookup()
+        messageLabel.text = Self.databaseSelectionMessage
+        guard let databaseId = selectedDatabaseId,
+              let url = sharedURL,
+              let session,
+              let databaseClient else {
+            return
+        }
+        let generation = sourceLookupGeneration
+        sourceLookupTask = Task { [weak self] in
+            do {
+                let exists = try await databaseClient.sourceURLExists(
+                    databaseId: databaseId,
+                    url: url,
+                    session: session
+                )
+                guard !Task.isCancelled,
+                      let self,
+                      self.sourceLookupGeneration == generation,
+                      self.selectedDatabaseId == databaseId else {
+                    return
+                }
+                self.messageLabel.text = exists
+                    ? Self.sourceAlreadySavedMessage
+                    : Self.databaseSelectionMessage
+            } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      self.sourceLookupGeneration == generation,
+                      self.selectedDatabaseId == databaseId else {
+                    return
+                }
+                self.messageLabel.text = Self.databaseSelectionMessage
+            }
+        }
+    }
+
+    private func cancelSourceLookup() {
+        sourceLookupGeneration += 1
+        sourceLookupTask?.cancel()
+        sourceLookupTask = nil
+    }
+
     private func showResult(_ result: ShareCaptureResult) {
+        cancelSourceLookup()
         activityIndicator.stopAnimating()
         databaseTableView.isHidden = true
         refreshButton.isHidden = true
@@ -352,6 +405,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func showFailure(_ error: Error) {
+        cancelSourceLookup()
         activityIndicator.stopAnimating()
         databaseTableView.isHidden = true
         refreshButton.isHidden = true
@@ -366,6 +420,7 @@ final class ShareViewController: UIViewController {
             return
         }
         settingsStore?.databaseId = selectedDatabaseId
+        cancelSourceLookup()
         let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.shareSelectionTitleText ?? "Untitled database"
         titleLabel.text = "Saving to KinicWiki..."
         messageLabel.text = "Saving to \(databaseTitle)."
@@ -382,6 +437,7 @@ final class ShareViewController: UIViewController {
             showResult(.failed(message: "KinicWiki session is not available."))
             return
         }
+        cancelSourceLookup()
         refreshButton.isEnabled = false
         saveButton.isEnabled = false
         refreshWritableDatabases(
@@ -408,6 +464,7 @@ final class ShareViewController: UIViewController {
     }
 
     @objc private func finish() {
+        cancelSourceLookup()
         extensionContext?.completeRequest(returningItems: nil)
     }
 }
@@ -439,6 +496,7 @@ extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
         tableView.deselectRow(at: indexPath, animated: true)
         tableView.reloadData()
         updateSaveButton()
+        updateSourceAvailabilityMessage()
     }
 }
 
