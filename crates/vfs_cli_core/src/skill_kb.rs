@@ -12,6 +12,7 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, SearchNodesRequest,
     SearchPreviewMode, WriteNodeRequest,
 };
+use wiki_domain::{decode_frontmatter_scalar, extract_frontmatter_block};
 
 const PRIVATE_SKILL_ROOT: &str = "/Skills";
 const SKILL_RUN_ROOT: &str = "/Sources/skill-runs";
@@ -290,7 +291,7 @@ async fn read_skill_manifest(
 }
 
 fn parse_manifest_view(content: &str) -> SkillManifestView {
-    let Some(frontmatter) = extract_frontmatter(content) else {
+    let Some(frontmatter) = extract_frontmatter_block(content) else {
         return SkillManifestView::default();
     };
     let mut manifest = SkillManifestView::default();
@@ -397,7 +398,7 @@ impl RunFrontmatter {
 }
 
 fn parse_run_frontmatter(content: &str) -> Option<RunFrontmatter> {
-    let frontmatter = extract_frontmatter(content)?;
+    let frontmatter = extract_frontmatter_block(content)?;
     let mut run = RunFrontmatter::default();
     for line in frontmatter.lines() {
         let Some((key, value)) = line.split_once(':') else {
@@ -440,28 +441,12 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
-fn extract_frontmatter(content: &str) -> Option<&str> {
-    let rest = content.strip_prefix("---\n")?;
-    let end = frontmatter_end(rest)?;
-    Some(&rest[..end])
-}
-
-fn frontmatter_end(rest: &str) -> Option<usize> {
-    rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })
-}
-
 fn clean_yaml_value(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.starts_with('"') && trimmed.ends_with('"') {
-        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
-    }
-    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-        return trimmed[1..trimmed.len() - 1].replace("''", "'");
-    }
-    trimmed.to_string()
+    decode_frontmatter_scalar(trimmed)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -514,14 +499,14 @@ fn validate_package_file(file: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_frontmatter, parse_run_frontmatter};
+    use super::{extract_frontmatter_block, parse_run_frontmatter};
 
     #[test]
     fn extract_frontmatter_requires_whole_line_terminator() {
         let content = "---\nskill_id: legal\n---not-a-terminator\noutcome: success\n---\n# Run\n";
 
         assert_eq!(
-            extract_frontmatter(content),
+            extract_frontmatter_block(content),
             Some("skill_id: legal\n---not-a-terminator\noutcome: success")
         );
     }

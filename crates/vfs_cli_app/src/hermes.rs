@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, NodeEntryKind};
+use wiki_domain::{decode_frontmatter_scalar, extract_frontmatter_block};
 
 const PRIVATE_SKILL_ROOT: &str = "/Skills";
 #[derive(Debug, Clone)]
@@ -544,12 +545,8 @@ fn skill_id_from_manifest_path(root: &str, path: &str) -> Option<String> {
 }
 
 fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let rest = &content[4..];
-    let end = frontmatter_end(rest)? + 4;
-    for line in content[4..end].lines() {
+    let frontmatter = extract_frontmatter_block(content)?;
+    for line in frontmatter.lines() {
         if line.starts_with(' ') || !line.contains(':') {
             continue;
         }
@@ -561,22 +558,12 @@ fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
     None
 }
 
-fn frontmatter_end(rest: &str) -> Option<usize> {
-    rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })
-}
-
 fn clean_yaml_value(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.starts_with('"') && trimmed.ends_with('"') {
-        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
-    }
-    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-        return trimmed[1..trimmed.len() - 1].replace("''", "'");
-    }
-    trimmed.to_string()
+    decode_frontmatter_scalar(trimmed)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn pending_json_files(pending_dir: &Path) -> Result<Vec<PathBuf>> {

@@ -2,6 +2,7 @@
 // What: Source capture, ops answer, and source run session authorization.
 // Why: Mechanical split out of lib.rs; a child module keeps same-crate private access.
 use super::*;
+use wiki_domain::{decode_frontmatter_scalar, extract_frontmatter_block};
 
 impl VfsService {
     pub fn authorize_source_capture_trigger_session(
@@ -351,12 +352,11 @@ fn validate_source_capture_request_node(node: &Node, caller: &str) -> Result<(),
 pub(crate) fn parse_frontmatter_fields(
     content: &str,
 ) -> Result<BTreeMap<String, Option<String>>, String> {
-    let rest = content
-        .strip_prefix("---\n")
-        .ok_or_else(|| "source capture request frontmatter is required".to_string())?;
-    let end = frontmatter_end(rest)
+    if !content.starts_with("---\n") {
+        return Err("source capture request frontmatter is required".to_string());
+    }
+    let frontmatter = extract_frontmatter_block(content)
         .ok_or_else(|| "source capture request frontmatter is not closed".to_string())?;
-    let frontmatter = &rest[..end];
     let mut fields = BTreeMap::new();
     for line in frontmatter.lines() {
         let trimmed = line.trim();
@@ -366,105 +366,12 @@ pub(crate) fn parse_frontmatter_fields(
         let Some((key, value)) = trimmed.split_once(':') else {
             return Err("source capture request frontmatter is invalid".to_string());
         };
-        fields.insert(key.trim().to_string(), frontmatter_scalar(value.trim())?);
+        let value = decode_frontmatter_scalar(value).map_err(|_| {
+            "source capture request frontmatter quoted scalar is invalid".to_string()
+        })?;
+        fields.insert(key.trim().to_string(), value);
     }
     Ok(fields)
-}
-
-fn frontmatter_scalar(value: &str) -> Result<Option<String>, String> {
-    if value == "null" || value == "~" {
-        return Ok(None);
-    }
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        return parse_json_string_literal(value).map(Some);
-    }
-    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        return Ok(Some(value[1..value.len() - 1].replace("''", "'")));
-    }
-    Ok(Some(value.to_string()))
-}
-
-fn frontmatter_end(rest: &str) -> Option<usize> {
-    rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })
-}
-
-fn parse_json_string_literal(value: &str) -> Result<String, String> {
-    let body = value
-        .strip_prefix('"')
-        .and_then(|inner| inner.strip_suffix('"'))
-        .ok_or_else(|| "source capture request frontmatter quoted scalar is invalid".to_string())?;
-    let mut chars = body.chars();
-    let mut decoded = String::new();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            let escaped = chars.next().ok_or_else(invalid_quoted_scalar)?;
-            decode_json_escape(escaped, &mut chars, &mut decoded)?;
-            continue;
-        }
-        if ch.is_control() {
-            return Err(invalid_quoted_scalar());
-        }
-        decoded.push(ch);
-    }
-    Ok(decoded)
-}
-
-fn decode_json_escape(
-    escaped: char,
-    chars: &mut std::str::Chars<'_>,
-    decoded: &mut String,
-) -> Result<(), String> {
-    match escaped {
-        '"' => decoded.push('"'),
-        '\\' => decoded.push('\\'),
-        '/' => decoded.push('/'),
-        'b' => decoded.push('\u{0008}'),
-        'f' => decoded.push('\u{000c}'),
-        'n' => decoded.push('\n'),
-        'r' => decoded.push('\r'),
-        't' => decoded.push('\t'),
-        'u' => {
-            let code = parse_json_hex4(chars)?;
-            if (0xD800..=0xDBFF).contains(&code) {
-                let slash = chars.next().ok_or_else(invalid_quoted_scalar)?;
-                let marker = chars.next().ok_or_else(invalid_quoted_scalar)?;
-                if slash != '\\' || marker != 'u' {
-                    return Err(invalid_quoted_scalar());
-                }
-                let low = parse_json_hex4(chars)?;
-                if !(0xDC00..=0xDFFF).contains(&low) {
-                    return Err(invalid_quoted_scalar());
-                }
-                let scalar = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                decoded.push(char::from_u32(scalar).ok_or_else(invalid_quoted_scalar)?);
-            } else if (0xDC00..=0xDFFF).contains(&code) {
-                return Err(invalid_quoted_scalar());
-            } else {
-                decoded.push(char::from_u32(code).ok_or_else(invalid_quoted_scalar)?);
-            }
-        }
-        _ => return Err(invalid_quoted_scalar()),
-    }
-    Ok(())
-}
-
-fn parse_json_hex4(chars: &mut std::str::Chars<'_>) -> Result<u32, String> {
-    let mut code = 0u32;
-    for _ in 0..4 {
-        code *= 16;
-        code += chars
-            .next()
-            .and_then(|ch| ch.to_digit(16))
-            .ok_or_else(invalid_quoted_scalar)?;
-    }
-    Ok(code)
-}
-
-fn invalid_quoted_scalar() -> String {
-    "source capture request frontmatter quoted scalar is invalid".to_string()
 }
 
 fn expect_frontmatter(

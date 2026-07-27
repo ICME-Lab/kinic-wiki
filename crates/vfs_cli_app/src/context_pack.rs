@@ -12,7 +12,8 @@ use vfs_client::VfsApi;
 use vfs_types::{LinkEdge, Node, NodeKind, QueryContext, QueryContextRequest, SourceEvidenceRef};
 use wiki_domain::{
     KNOWLEDGE_SOURCES_PREFIX, SESSION_SOURCES_PREFIX, SKILL_REGISTRY_ROOT, SKILL_RUNS_PREFIX,
-    WIKI_ROOT_PATH, validate_canonical_source_path, validate_knowledge_source_path,
+    WIKI_ROOT_PATH, extract_frontmatter_block, validate_canonical_source_path,
+    validate_knowledge_source_path,
 };
 
 const OKF_VERSION: &str = "0.1";
@@ -998,14 +999,10 @@ fn read_okf_manifest(path: &Path) -> Result<OkfBundleManifest> {
 
 fn okf_body_text(path: &Path) -> Result<String> {
     let text = fs::read_to_string(path)?;
-    let rest = text
-        .strip_prefix("---\n")
+    let frontmatter = extract_frontmatter_block(&text)
         .ok_or_else(|| anyhow!("missing YAML frontmatter delimited by ---"))?;
-    let end = rest
-        .find("\n---")
-        .ok_or_else(|| anyhow!("missing YAML frontmatter delimited by ---"))?;
-    let body_start = end + "\n---".len();
-    let body = rest[body_start..].trim_start_matches('\n');
+    let body_start = "---\n".len() + frontmatter.len() + "\n---".len();
+    let body = text[body_start..].trim_start_matches('\n');
     Ok(body.trim_end_matches('\n').to_string())
 }
 
@@ -1136,9 +1133,7 @@ fn inline_code_value(line: &str, prefix: &str) -> Result<String> {
 }
 
 fn frontmatter_text(text: &str) -> Option<&str> {
-    let rest = text.strip_prefix("---\n")?;
-    let end = rest.find("\n---")?;
-    Some(&rest[..end])
+    extract_frontmatter_block(text)
 }
 
 fn starts_with_frontmatter(path: &Path) -> Result<bool> {
