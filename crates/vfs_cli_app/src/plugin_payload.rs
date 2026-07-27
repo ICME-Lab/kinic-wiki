@@ -1,11 +1,11 @@
 // Where: crates/vfs_cli_app/src/plugin_payload.rs
 // What: Embedded plugin/runtime payload files for local agent setup.
 // Why: Installed kinic-vfs-cli binaries must not depend on a repo checkout.
+use crate::local_fs::unique_backup_path;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const MANAGED_MARKER_FILE: &str = ".kinic-managed-plugin";
 
@@ -152,7 +152,7 @@ pub fn replace_dir_with_payload(target: &Path, groups: &[&[PayloadFile]]) -> Res
                 fs::remove_dir_all(target)
                     .with_context(|| format!("failed to replace {}", target.display()))?;
             } else if directory_has_entries(target)? {
-                let backup = unique_backup_path(target);
+                let backup = unique_backup_path(target, "plugin");
                 eprintln!(
                     "warning: replacing unmanaged plugin directory: {} backup={}",
                     target.display(),
@@ -192,25 +192,6 @@ fn directory_has_entries(path: &Path) -> Result<bool> {
         .with_context(|| format!("failed to read {}", path.display()))?
         .next()
         .is_some())
-}
-
-fn unique_backup_path(target: &Path) -> std::path::PathBuf {
-    let parent = target.parent().unwrap_or_else(|| Path::new("."));
-    let name = target
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("plugin");
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis())
-        .unwrap_or(0);
-    let mut candidate = parent.join(format!("{name}.backup.{millis}"));
-    let mut suffix = 1;
-    while candidate.exists() {
-        candidate = parent.join(format!("{name}.backup.{millis}.{suffix}"));
-        suffix += 1;
-    }
-    candidate
 }
 
 fn write_payload_files(target: &Path, files: &[PayloadFile]) -> Result<()> {

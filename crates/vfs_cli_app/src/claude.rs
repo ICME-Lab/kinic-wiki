@@ -2,6 +2,7 @@
 // What: Local Claude Code plugin marketplace setup for Kinic skill recording.
 // Why: Claude Code installs plugins through marketplaces, while Kinic ships a self-contained local payload.
 use crate::cli::ClaudeCommand;
+use crate::local_fs::required_home_dir;
 use crate::plugin_payload::{CLAUDE_PLUGIN_FILES, RUNTIME_FILES, replace_dir_with_payload};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
@@ -194,10 +195,7 @@ fn print_result(value: Value, json_output: bool) -> Result<()> {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("HOME is required for Claude setup"))
+    required_home_dir("Claude setup")
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 // Where: crates/vfs_cli_core/src/skill_kb.rs
 // What: Read-only Skill Knowledge Base helpers shared by CLI and agent tools.
 // Why: Human CLI and agent runtime must rank and inspect skill packages identically.
+use crate::folders::ensure_parent_folders;
 use anyhow::{Result, anyhow};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,8 +10,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use vfs_client::VfsApi;
 use vfs_types::{
-    ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, SearchNodesRequest,
-    SearchPreviewMode, WriteNodeRequest,
+    ListNodesRequest, NodeEntryKind, NodeKind, SearchNodesRequest, SearchPreviewMode,
+    WriteNodeRequest,
 };
 use wiki_domain::{decode_frontmatter_scalar, extract_frontmatter_block};
 
@@ -242,25 +243,6 @@ pub async fn record_skill_run(client: &impl VfsApi, record: SkillRunRecord<'_>) 
         })
         .await?;
     Ok(json!({ "id": id, "run_path": run_path, "outcome": outcome }))
-}
-
-async fn ensure_parent_folders(client: &impl VfsApi, database_id: &str, path: &str) -> Result<()> {
-    let segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    let mut current = String::new();
-    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
-        current.push('/');
-        current.push_str(segment);
-        client
-            .mkdir_node(MkdirNodeRequest {
-                database_id: database_id.to_string(),
-                path: current.clone(),
-            })
-            .await?;
-    }
-    Ok(())
 }
 
 pub async fn read_skill_file(
