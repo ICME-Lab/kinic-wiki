@@ -46,6 +46,12 @@ struct AskAIConversationStoreTests {
         let raw = try String(contentsOf: fileURL, encoding: .utf8)
         #expect(raw.contains("Short persisted excerpt"))
         #expect(!raw.contains("full source body"))
+        #expect(try fileURL.resourceValues(
+            forKeys: [.isExcludedFromBackupKey]
+        ).isExcludedFromBackup == true)
+        #expect(try directory.resourceValues(
+            forKeys: [.isExcludedFromBackupKey]
+        ).isExcludedFromBackup == true)
     }
 
     @Test
@@ -96,14 +102,58 @@ struct AskAIConversationStoreTests {
         try await store.resetAfterLoadFailure()
 
         #expect(!FileManager.default.fileExists(atPath: store.fileURL.path()))
+        #expect(try await store.hasStoredConversationData())
         let corruptDirectory = baseDirectory
             .appending(path: "KinicWiki/AskAI/Corrupt", directoryHint: .isDirectory)
         let archivedFiles = try FileManager.default.contentsOfDirectory(
             at: corruptDirectory,
-            includingPropertiesForKeys: nil
+            includingPropertiesForKeys: [.isExcludedFromBackupKey]
         )
         #expect(archivedFiles.count == 1)
+        #expect(try archivedFiles[0].resourceValues(
+            forKeys: [.isExcludedFromBackupKey]
+        ).isExcludedFromBackup == true)
+        #expect(try corruptDirectory.resourceValues(
+            forKeys: [.isExcludedFromBackupKey]
+        ).isExcludedFromBackup == true)
         #expect(try await store.load().isEmpty)
+    }
+
+    @Test
+    func deleteAllRemovesOnlyTheCurrentScopeAndIsIdempotent() async throws {
+        let baseDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let guestStore = AskAIConversationStore(scope: .guest, baseDirectory: baseDirectory)
+        let principalStore = AskAIConversationStore(
+            scope: AskAIHistoryScope(principal: "aaaaa-aa"),
+            baseDirectory: baseDirectory
+        )
+        let conversation = AskAIConversation(databaseId: "db_a", databaseTitle: "A")
+
+        try await guestStore.save([conversation])
+        try await guestStore.resetAfterLoadFailure()
+        try await guestStore.save([conversation])
+        try await principalStore.save([conversation])
+        try await principalStore.resetAfterLoadFailure()
+
+        let corruptDirectory = baseDirectory
+            .appending(path: "KinicWiki/AskAI/Corrupt", directoryHint: .isDirectory)
+        #expect(try await guestStore.hasStoredConversationData())
+        #expect(try await principalStore.hasStoredConversationData())
+        try await guestStore.deleteAllStoredConversationData()
+        try await guestStore.deleteAllStoredConversationData()
+
+        #expect(!FileManager.default.fileExists(atPath: guestStore.fileURL.path()))
+        #expect(!(try await guestStore.hasStoredConversationData()))
+        #expect(try await principalStore.hasStoredConversationData())
+        let remainingArchives = try FileManager.default.contentsOfDirectory(
+            at: corruptDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(remainingArchives.count == 1)
+        #expect(remainingArchives[0].lastPathComponent.hasPrefix(
+            AskAIHistoryScope(principal: "aaaaa-aa").directoryName
+        ))
     }
 
     private func temporaryDirectory() -> URL {

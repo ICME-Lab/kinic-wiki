@@ -8,6 +8,8 @@ import Observation
 @MainActor
 @Observable
 final class AskAIModel {
+    static let maximumQuestionCharacters = AskAIQueryPlanner.maximumQuestionCharacters
+
     private let knowledgeProvider: AskAIKnowledgeProviding
     private let client: AskAICompleting
     private var store: AskAIConversationPersisting
@@ -19,10 +21,17 @@ final class AskAIModel {
     @ObservationIgnored private var historyOperationID: UUID?
     private var generationID: UUID?
     private(set) var historyScope: AskAIHistoryScope
+    private(set) var hasStoredConversationData = false
 
     var conversations: [AskAIConversation] = []
     var currentConversation: AskAIConversation?
-    var draft = ""
+    var draft = "" {
+        didSet {
+            if draft.count > Self.maximumQuestionCharacters {
+                draft = String(draft.prefix(Self.maximumQuestionCharacters))
+            }
+        }
+    }
     var isGenerating = false
     var loadState: ConversationLoadState = .loading
     var errorMessage: String?
@@ -79,6 +88,14 @@ final class AskAIModel {
             && currentConversation != nil
     }
 
+    var remainingQuestionCharacters: Int {
+        Self.maximumQuestionCharacters - draft.count
+    }
+
+    var canDeleteStoredConversationData: Bool {
+        !conversations.isEmpty || hasStoredConversationData
+    }
+
     func load() async {
         guard loadState != .loaded else {
             syncSelectedDatabase()
@@ -98,12 +115,14 @@ final class AskAIModel {
                 operationID: operationID
             ) else { return }
             let loadedConversations = try await targetStore.load()
+            let storedConversationDataExists = try await targetStore.hasStoredConversationData()
             guard isCurrentHistoryOperation(
                 contextID: targetContextID,
                 operationID: operationID
             ) else { return }
             historyOperationID = nil
             conversations = loadedConversations
+            hasStoredConversationData = storedConversationDataExists
             let recoveredInterruptedGenerations = recoverInterruptedGenerations()
             loadState = .loaded
             syncSelectedDatabase()
@@ -150,6 +169,7 @@ final class AskAIModel {
             historyOperationID = nil
             conversations = []
             currentConversation = nil
+            hasStoredConversationData = true
             loadState = .loaded
             syncSelectedDatabase()
         } catch {
@@ -174,6 +194,7 @@ final class AskAIModel {
         self.store = store
         conversations = []
         currentConversation = nil
+        hasStoredConversationData = false
         draft = ""
         loadState = .loading
         errorMessage = nil
@@ -264,7 +285,7 @@ final class AskAIModel {
         conversations = []
         currentConversation = nil
         startEmptyConversation()
-        persistConversations()
+        deleteAllStoredConversationData()
     }
 
     func send() {
@@ -617,9 +638,30 @@ final class AskAIModel {
             await previousTask?.value
             do {
                 try await targetStore.save(snapshot)
+                guard historyContextID == targetContextID else { return }
+                hasStoredConversationData = true
             } catch {
                 guard historyContextID == targetContextID else { return }
                 errorMessage = "Conversation history could not be saved: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func deleteAllStoredConversationData() {
+        guard loadState == .loaded else { return }
+        let previousTask = persistenceTask
+        let targetContextID = historyContextID
+        let targetStore = store
+        persistenceTask = Task {
+            await previousTask?.value
+            do {
+                try await targetStore.deleteAllStoredConversationData()
+                guard historyContextID == targetContextID else { return }
+                hasStoredConversationData = false
+                errorMessage = nil
+            } catch {
+                guard historyContextID == targetContextID else { return }
+                errorMessage = "Conversation history could not be deleted: \(error.localizedDescription)"
             }
         }
     }

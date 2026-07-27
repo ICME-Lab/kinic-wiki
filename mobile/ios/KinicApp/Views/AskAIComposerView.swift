@@ -34,6 +34,16 @@ struct AskAIComposerView: View {
             .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
 
+            Text(
+                "\(model.draft.count) / \(AskAIModel.maximumQuestionCharacters) characters"
+            )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityLabel(
+                    "\(model.remainingQuestionCharacters) characters remaining"
+                )
+
             Label(
                 "Your question, recent conversation, and relevant notes are sent to Kinic AI, then deleted after processing.",
                 systemImage: "lock.shield"

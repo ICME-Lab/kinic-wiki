@@ -213,6 +213,61 @@ struct AskAIRetrievalPlannerTests {
     }
 
     @Test
+    func retrievalVerifierPreparesLateExactEvidenceAcrossActorBoundary() async throws {
+        let verifier = AskAIRetrievalVerifier()
+        let queryPlan = plan("cat dog")
+        let content = "catdog "
+            + String(repeating: "unrelated filler ", count: 250)
+            + "cat dog authoritative answer"
+
+        let evidence = await verifier.prepareVerifiedEvidence(
+            queryPlan: queryPlan,
+            hit: hit(path: "/Knowledge/animals.md", score: -1),
+            content: content
+        )
+
+        let verifiedEvidence = try #require(evidence)
+        #expect(verifiedEvidence.content.contains("cat dog authoritative answer"))
+        #expect(!verifiedEvidence.content.hasPrefix("catdog"))
+    }
+
+    @Test
+    func retrievalVerifierPrefersVerifiedPreviewAcrossActorBoundary() async throws {
+        let verifier = AskAIRetrievalVerifier()
+        let preview = "alpha beta preview-adjacent supported answer"
+        let content = "EARLY alpha beta marker "
+            + String(repeating: "filler ", count: 700)
+            + preview
+
+        let evidence = await verifier.prepareVerifiedEvidence(
+            queryPlan: plan("alpha beta"),
+            hit: hit(
+                path: "/Knowledge/preview.md",
+                score: -1,
+                previewExcerpt: preview
+            ),
+            content: content
+        )
+
+        let verifiedEvidence = try #require(evidence)
+        #expect(verifiedEvidence.excerpt == preview)
+        #expect(!verifiedEvidence.content.contains("EARLY alpha beta marker"))
+    }
+
+    @Test
+    func retrievalVerifierRejectsPathOnlyMatchesAcrossActorBoundary() async {
+        let verifier = AskAIRetrievalVerifier()
+
+        let evidence = await verifier.prepareVerifiedEvidence(
+            queryPlan: plan("alpha beta"),
+            hit: hit(path: "/Knowledge/alpha-beta.md", score: -1),
+            content: "This document contains unrelated evidence."
+        )
+
+        #expect(evidence == nil)
+    }
+
+    @Test
     func evidenceWindowIncludesLateQueryTermsWithoutSearchPreview() {
         let queryPlan = plan("x402 paid api route")
         let content = String(repeating: "unrelated introduction ", count: 220)
@@ -247,6 +302,26 @@ struct AskAIRetrievalPlannerTests {
             ]
         )
         #expect(builtPrompt.message.contains("PAYMENT-SIGNATURE for the supported answer"))
+    }
+
+    @Test
+    func lateExactTermsAreNotShadowedByEarlierSubstringMatches() {
+        let queryPlan = plan("cat dog")
+        let content = "catdog "
+            + String(repeating: "unrelated filler ", count: 250)
+            + "cat dog authoritative answer"
+        let evidence = AskAIRetrievalPlanner.prepareEvidence(
+            queryPlan: queryPlan,
+            hit: hit(path: "/Knowledge/animals.md", score: -1),
+            content: content
+        )
+
+        #expect(evidence.content.contains("cat dog authoritative answer"))
+        #expect(!evidence.content.hasPrefix("catdog"))
+        #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            content: "\(evidence.excerpt)\n\(evidence.content)"
+        ))
     }
 
     @Test

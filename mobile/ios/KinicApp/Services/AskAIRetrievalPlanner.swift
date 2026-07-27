@@ -137,8 +137,21 @@ enum AskAIRetrievalPlanner {
             }
         }
 
-        let queryAnchor = narrowestRequiredQueryRange(queryPlan: queryPlan, in: content)
-        let window = contextWindow(in: content, around: queryAnchor)
+        for queryAnchor in requiredQueryRanges(queryPlan: queryPlan, in: content) {
+            let window = contextWindow(in: content, around: queryAnchor)
+            let evidence = PreparedEvidence(
+                excerpt: String(window.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)),
+                content: window
+            )
+            if hasRequiredExactMatches(
+                queryPlan: queryPlan,
+                content: "\(evidence.excerpt)\n\(evidence.content)"
+            ) {
+                return evidence
+            }
+        }
+
+        let window = contextWindow(in: content, around: nil)
         return PreparedEvidence(
             excerpt: String(window.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)),
             content: window
@@ -201,12 +214,11 @@ enum AskAIRetrievalPlanner {
         return content.range(of: preview, options: evidenceSearchOptions)
     }
 
-    private static func narrowestRequiredQueryRange(
+    private static func requiredQueryRanges(
         queryPlan: AskAIQueryPlan,
         in content: String
-    ) -> Range<String.Index>? {
-        var bestRange: Range<String.Index>?
-        var bestLength: Int?
+    ) -> [Range<String.Index>] {
+        var candidates: [Range<String.Index>] = []
 
         for query in queryPlan.queries {
             let tokens = Array(Set(semanticTokens(in: query.text)))
@@ -230,11 +242,7 @@ enum AskAIRetrievalPlanner {
                 tokenCounts[occurrences[right].token, default: 0] += 1
                 while left <= right, tokenCounts.count >= requiredCount {
                     let candidate = occurrences[left].range.lowerBound..<occurrences[right].range.upperBound
-                    let length = content.distance(from: candidate.lowerBound, to: candidate.upperBound)
-                    if bestLength.map({ length < $0 }) ?? true {
-                        bestRange = candidate
-                        bestLength = length
-                    }
+                    candidates.append(candidate)
                     let leftToken = occurrences[left].token
                     if tokenCounts[leftToken] == 1 {
                         tokenCounts.removeValue(forKey: leftToken)
@@ -245,7 +253,14 @@ enum AskAIRetrievalPlanner {
                 }
             }
         }
-        return bestRange
+        return candidates.sorted { left, right in
+            let leftLength = content.distance(from: left.lowerBound, to: left.upperBound)
+            let rightLength = content.distance(from: right.lowerBound, to: right.upperBound)
+            if leftLength != rightLength {
+                return leftLength < rightLength
+            }
+            return left.lowerBound < right.lowerBound
+        }
     }
 
     private static func ranges(of value: String, in content: String) -> [Range<String.Index>] {

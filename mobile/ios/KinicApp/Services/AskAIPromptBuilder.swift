@@ -13,7 +13,7 @@ enum AskAIPromptBuilder {
     static let maximumMessageCharacters = 24_000
     static let maximumHistoryCharacters = 6_000
     static let maximumContextCharacters = 16_000
-    static let maximumQuestionCharacters = 2_000
+    static let maximumQuestionCharacters = AskAIQueryPlanner.maximumQuestionCharacters
 
     static func build(
         databaseTitle: String,

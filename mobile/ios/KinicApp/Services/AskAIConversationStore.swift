@@ -6,8 +6,10 @@ import Foundation
 
 protocol AskAIConversationPersisting: Sendable {
     func load() async throws -> [AskAIConversation]
+    func hasStoredConversationData() async throws -> Bool
     func save(_ conversations: [AskAIConversation]) async throws
     func resetAfterLoadFailure() async throws
+    func deleteAllStoredConversationData() async throws
 }
 
 actor AskAIConversationStore: AskAIConversationPersisting {
@@ -50,27 +52,74 @@ actor AskAIConversationStore: AskAIConversationPersisting {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    func hasStoredConversationData() throws -> Bool {
+        if FileManager.default.fileExists(atPath: fileURL.path()) {
+            return true
+        }
+        guard FileManager.default.fileExists(atPath: corruptDirectoryURL.path()) else {
+            return false
+        }
+        return try scopedArchiveURLs().isEmpty == false
+    }
+
     func save(_ conversations: [AskAIConversation]) throws {
+        let directoryURL = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
+            at: directoryURL,
             withIntermediateDirectories: true
         )
+        try excludeFromBackup(directoryURL)
         try encoder.encode(conversations).write(to: fileURL, options: .atomic)
+        try excludeFromBackup(fileURL)
     }
 
     func resetAfterLoadFailure() throws {
         guard FileManager.default.fileExists(atPath: fileURL.path()) else {
             return
         }
+        try excludeFromBackup(fileURL)
         try FileManager.default.createDirectory(
             at: corruptDirectoryURL,
             withIntermediateDirectories: true
         )
+        try excludeFromBackup(corruptDirectoryURL)
         let timestamp = Int(Date.now.timeIntervalSince1970 * 1_000)
         let namespace = fileURL.deletingLastPathComponent().lastPathComponent
         let archiveURL = corruptDirectoryURL.appending(
             path: "\(namespace)-conversations-v1.corrupt-\(timestamp)-\(UUID().uuidString).json"
         )
         try FileManager.default.moveItem(at: fileURL, to: archiveURL)
+        try excludeFromBackup(archiveURL)
+    }
+
+    func deleteAllStoredConversationData() throws {
+        if FileManager.default.fileExists(atPath: fileURL.path()) {
+            try FileManager.default.removeItem(at: fileURL)
+        }
+        guard FileManager.default.fileExists(atPath: corruptDirectoryURL.path()) else {
+            return
+        }
+
+        for archiveURL in try scopedArchiveURLs() {
+            try FileManager.default.removeItem(at: archiveURL)
+        }
+    }
+
+    private func scopedArchiveURLs() throws -> [URL] {
+        let namespace = fileURL.deletingLastPathComponent().lastPathComponent
+        let archivePrefix = "\(namespace)-conversations-v1.corrupt-"
+        return try FileManager.default.contentsOfDirectory(
+            at: corruptDirectoryURL,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix(archivePrefix) && $0.pathExtension == "json"
+        }
+    }
+
+    private func excludeFromBackup(_ url: URL) throws {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = url
+        try mutableURL.setResourceValues(values)
     }
 }

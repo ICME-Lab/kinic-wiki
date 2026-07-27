@@ -55,7 +55,7 @@ struct AskAIHistoryView: View {
                     }
                     .labelStyle(.iconOnly)
                 }
-                if !model.conversations.isEmpty {
+                if model.canDeleteStoredConversationData {
                     ToolbarItem(placement: .destructiveAction) {
                         Button("Clear all", systemImage: "trash", role: .destructive) {
                             isConfirmingDeleteAll = true

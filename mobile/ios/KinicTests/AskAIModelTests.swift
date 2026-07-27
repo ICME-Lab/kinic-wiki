@@ -94,6 +94,38 @@ struct AskAIModelTests {
     }
 
     @Test
+    func questionLimitKeepsDraftHistoryAndPromptsConsistent() async throws {
+        let processedQuestion = String(
+            repeating: "x",
+            count: AskAIModel.maximumQuestionCharacters
+        )
+        let client = AskAICompletionStub(responses: [
+            .value("<answer>question</answer>"),
+            .value("<sources>S1</sources><answer>Grounded answer.</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: [contextSource()]),
+            client: client,
+            store: AskAIStoreStub()
+        )
+        await model.load()
+
+        model.draft = processedQuestion + "MUST-NOT-BE-SENT"
+
+        #expect(model.draft == processedQuestion)
+        #expect(model.remainingQuestionCharacters == 0)
+
+        model.send()
+        try await waitUntilFinished(model)
+
+        let prompts = await client.messages
+        #expect(model.messages.first?.text == processedQuestion)
+        #expect(prompts.count == 2)
+        #expect(prompts.allSatisfy { $0.contains(processedQuestion) })
+        #expect(prompts.allSatisfy { !$0.contains("MUST-NOT-BE-SENT") })
+    }
+
+    @Test
     func zeroSearchResultsCallOnlyQueryPlannerAndBecomeInsufficient() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [])
         let client = AskAICompletionStub(responses: [.value("<answer>unknown topic</answer>")])
@@ -457,8 +489,52 @@ struct AskAIModelTests {
 
         #expect(model.loadState == .loaded)
         #expect(model.conversations.isEmpty)
+        #expect(model.canDeleteStoredConversationData)
         #expect(await store.resetCount == 1)
         #expect(await store.savedConversations.isEmpty)
+    }
+
+    @Test
+    func loadExposesRecoveryOnlyDataForDeletion() async {
+        let store = AskAIStoreStub(hasStoredConversationData: true)
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: store
+        )
+
+        await model.load()
+
+        #expect(model.conversations.isEmpty)
+        #expect(model.canDeleteStoredConversationData)
+    }
+
+    @Test
+    func failedDeleteKeepsRecoveryDataAvailableForRetry() async throws {
+        let store = AskAIStoreStub(
+            hasStoredConversationData: true,
+            deleteFailuresRemaining: 1
+        )
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []),
+            store: store
+        )
+        await model.load()
+
+        model.deleteAllConversations()
+        try await waitForDeleteCount(store, count: 1)
+        try await waitForDeleteError(model)
+
+        #expect(model.canDeleteStoredConversationData)
+        #expect(model.errorMessage?.contains("could not be deleted") == true)
+
+        model.deleteAllConversations()
+        try await waitForDeleteCount(store, count: 2)
+        try await waitForDeleteAvailability(model, expected: false)
+
+        #expect(!model.canDeleteStoredConversationData)
+        #expect(model.errorMessage == nil)
     }
 
     @Test
@@ -485,6 +561,33 @@ struct AskAIModelTests {
         #expect(model.currentConversation?.id != deleted.id)
         #expect(!(await store.savedConversations.contains { $0.id == deleted.id }))
         #expect(await client.cancellationCount == 1)
+    }
+
+    @Test
+    func deleteAllWaitsForAnEarlierSaveBeforeDeletingStoredData() async throws {
+        let store = AskAIControllableStoreStub(suspendsSave: true)
+        let client = AskAICompletionStub(responses: [
+            .delayed("<answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: store
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForPendingSave(store)
+
+        model.deleteAllConversations()
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await store.deleteCount == 0)
+
+        await store.resumeSave()
+        try await waitForDeleteCount(store, count: 1)
+
+        #expect(model.conversations.isEmpty)
     }
 
     @Test
@@ -675,7 +778,7 @@ struct AskAIModelTests {
         await staleStoreA.resumeSave()
         await reenteredLoad.value
         model.deleteAllConversations()
-        try await waitForSaveCount(currentStoreA, count: 1)
+        try await waitForDeleteCount(currentStoreA, count: 1)
 
         #expect(await currentStoreA.savedConversations.isEmpty)
     }
@@ -821,12 +924,42 @@ struct AskAIModelTests {
         Issue.record("Expected the history save to finish")
     }
 
-    private func waitForSaveCount(_ store: AskAIStoreStub, count: Int) async throws {
+    private func waitForDeleteCount(_ store: AskAIStoreStub, count: Int) async throws {
         for _ in 0..<200 {
-            if await store.saveCount == count { return }
+            if await store.deleteCount == count { return }
             try await Task.sleep(for: .milliseconds(5))
         }
-        Issue.record("Expected \(count) history saves")
+        Issue.record("Expected \(count) stored-history deletions")
+    }
+
+    private func waitForDeleteAvailability(
+        _ model: AskAIModel,
+        expected: Bool
+    ) async throws {
+        for _ in 0..<200 {
+            if model.canDeleteStoredConversationData == expected { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected stored-history deletion availability to become \(expected)")
+    }
+
+    private func waitForDeleteError(_ model: AskAIModel) async throws {
+        for _ in 0..<200 {
+            if model.errorMessage?.contains("could not be deleted") == true { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected a stored-history deletion error")
+    }
+
+    private func waitForDeleteCount(
+        _ store: AskAIControllableStoreStub,
+        count: Int
+    ) async throws {
+        for _ in 0..<200 {
+            if await store.deleteCount == count { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        Issue.record("Expected \(count) stored-history deletions")
     }
 
     private func contextSource(id: String = "S1") -> AskAIContextSource {
@@ -917,12 +1050,22 @@ private actor AskAICompletionStub: AskAICompleting {
 private actor AskAIStoreStub: AskAIConversationPersisting {
     private(set) var savedConversations: [AskAIConversation]
     private var loadFailuresRemaining: Int
+    private var deleteFailuresRemaining: Int
+    private var storedConversationData: Bool
     private(set) var saveCount = 0
     private(set) var resetCount = 0
+    private(set) var deleteCount = 0
 
-    init(savedConversations: [AskAIConversation] = [], loadFailuresRemaining: Int = 0) {
+    init(
+        savedConversations: [AskAIConversation] = [],
+        loadFailuresRemaining: Int = 0,
+        hasStoredConversationData: Bool? = nil,
+        deleteFailuresRemaining: Int = 0
+    ) {
         self.savedConversations = savedConversations
         self.loadFailuresRemaining = loadFailuresRemaining
+        self.deleteFailuresRemaining = deleteFailuresRemaining
+        storedConversationData = hasStoredConversationData ?? !savedConversations.isEmpty
     }
 
     func load() async throws -> [AskAIConversation] {
@@ -933,14 +1076,30 @@ private actor AskAIStoreStub: AskAIConversationPersisting {
         return savedConversations
     }
 
+    func hasStoredConversationData() async throws -> Bool {
+        storedConversationData
+    }
+
     func save(_ conversations: [AskAIConversation]) async throws {
         saveCount += 1
         savedConversations = conversations
+        storedConversationData = true
     }
 
     func resetAfterLoadFailure() async throws {
         resetCount += 1
         savedConversations = []
+        storedConversationData = true
+    }
+
+    func deleteAllStoredConversationData() async throws {
+        deleteCount += 1
+        if deleteFailuresRemaining > 0 {
+            deleteFailuresRemaining -= 1
+            throw AskAIStoreStubError.deleteFailed
+        }
+        savedConversations = []
+        storedConversationData = false
     }
 }
 
@@ -962,6 +1121,10 @@ private actor AskAISharedStoreBacking {
         return savedConversations
     }
 
+    func hasStoredConversationData() -> Bool {
+        !savedConversations.isEmpty
+    }
+
     func save(_ conversations: [AskAIConversation]) async {
         if shouldSuspendSave {
             shouldSuspendSave = false
@@ -974,6 +1137,10 @@ private actor AskAISharedStoreBacking {
 
     func reset() {
         resetCount += 1
+        savedConversations = []
+    }
+
+    func deleteAll() {
         savedConversations = []
     }
 
@@ -995,12 +1162,20 @@ private actor AskAISharedStoreHandle: AskAIConversationPersisting {
         await backing.load()
     }
 
+    func hasStoredConversationData() async throws -> Bool {
+        await backing.hasStoredConversationData()
+    }
+
     func save(_ conversations: [AskAIConversation]) async throws {
         await backing.save(conversations)
     }
 
     func resetAfterLoadFailure() async throws {
         await backing.reset()
+    }
+
+    func deleteAllStoredConversationData() async throws {
+        await backing.deleteAll()
     }
 }
 
@@ -1013,6 +1188,7 @@ private actor AskAIControllableStoreStub: AskAIConversationPersisting {
     private var saveContinuation: CheckedContinuation<Void, any Error>?
     private var resetContinuation: CheckedContinuation<Void, any Error>?
     private(set) var saveCompletionCount = 0
+    private(set) var deleteCount = 0
 
     init(
         loadFails: Bool = false,
@@ -1042,6 +1218,10 @@ private actor AskAIControllableStoreStub: AskAIConversationPersisting {
         return []
     }
 
+    func hasStoredConversationData() async throws -> Bool {
+        false
+    }
+
     func save(_ conversations: [AskAIConversation]) async throws {
         defer { saveCompletionCount += 1 }
         if suspendsSave {
@@ -1057,6 +1237,10 @@ private actor AskAIControllableStoreStub: AskAIConversationPersisting {
                 resetContinuation = continuation
             }
         }
+    }
+
+    func deleteAllStoredConversationData() async throws {
+        deleteCount += 1
     }
 
     func resumeLoad(with conversations: [AskAIConversation]) {
@@ -1093,4 +1277,5 @@ private actor AskAIControllableStoreStub: AskAIConversationPersisting {
 private enum AskAIStoreStubError: Error {
     case loadFailed
     case saveFailed
+    case deleteFailed
 }

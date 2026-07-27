@@ -92,14 +92,10 @@ extension AppModel: AskAIKnowledgeProviding {
             ), node.kind != .folder else {
                 continue
             }
-            let evidence = AskAIRetrievalPlanner.prepareEvidence(
+            guard let evidence = await askAIRetrievalVerifier.prepareVerifiedEvidence(
                 queryPlan: queryPlan,
                 hit: hit,
                 content: node.content
-            )
-            guard await askAIRetrievalVerifier.hasRequiredExactMatches(
-                queryPlan: queryPlan,
-                content: "\(evidence.excerpt)\n\(evidence.content)"
             ) else {
                 continue
             }
