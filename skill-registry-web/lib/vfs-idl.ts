@@ -275,9 +275,17 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     size_bytes: idl.Opt(idl.Nat64),
     path: idl.Text,
     has_children: idl.Bool,
-    is_virtual: idl.Bool
+    is_virtual: idl.Bool,
+    is_published: idl.Bool
   });
   const NodeMutationAck = idl.Record({ updated_at: idl.Int64, etag: idl.Text, kind: NodeKind, path: idl.Text });
+  const NodePublication = idl.Record({
+    public_id: idl.Text,
+    database_id: idl.Text,
+    path: idl.Text,
+    published_at_ms: idl.Int64
+  });
+  const PublicNode = idl.Record({ content: idl.Text, updated_at: idl.Int64, published_at_ms: idl.Int64 });
   const NodeContext = idl.Record({ incoming_links: idl.Vec(LinkEdge), node: Node, outgoing_links: idl.Vec(LinkEdge) });
   const SearchPreviewField = idl.Variant({ Path: idl.Null, Content: idl.Null });
   const SearchPreviewMode = idl.Variant({ Light: idl.Null, ContentStart: idl.Null, None: idl.Null });
@@ -332,6 +340,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     namespace: idl.Text
   });
   const ListChildrenRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
+  const PublishNodeRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
   const IncomingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
   const OutgoingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
   const IndexSqlJsonQueryResult = idl.Record({ rows: idl.Vec(idl.Text), row_count: idl.Nat32, limit: idl.Nat32 });
@@ -437,6 +446,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
+  const ResultNodePublication = idl.Variant({ Ok: NodePublication, Err: idl.Text });
+  const ResultOptionalNodePublication = idl.Variant({ Ok: idl.Opt(NodePublication), Err: idl.Text });
+  const ResultPublicNode = idl.Variant({ Ok: idl.Opt(PublicNode), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultIndexSqlJsonQuery = idl.Variant({ Ok: IndexSqlJsonQueryResult, Err: idl.Text });
@@ -492,6 +504,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
     get_initial_free_database_grant_status: idl.Func([], [ResultInitialFreeDatabaseGrantStatus], ["query"]),
+    get_node_publication: idl.Func([PublishNodeRequest], [ResultOptionalNodePublication], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
@@ -526,6 +539,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
+    publish_node: idl.Func([PublishNodeRequest], [ResultNodePublication], []),
+    read_public_node: idl.Func([idl.Text], [ResultPublicNode], ["query"]),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
@@ -533,6 +548,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
+    unpublish_node: idl.Func([PublishNodeRequest], [ResultUnit], []),
     update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),
     wiki_metrics: idl.Func([], [ResultWikiMetrics], ["query"]),
     wiki_metrics_series: idl.Func([idl.Nat32], [ResultWikiMetricsSeries], ["query"]),
