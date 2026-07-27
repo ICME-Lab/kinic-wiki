@@ -8,8 +8,9 @@ const sitemap = readFileSync(new URL("../app/sitemap.ts", import.meta.url), "utf
 
 const headings = policy.match(/^##\s+\d+\.\s+.+$/gm) ?? [];
 assert.equal(headings.length, 11, "privacy policy must retain its 11 numbered sections");
-assert.match(policy, /Last Updated: July 23, 2026/);
-assert.match(policy, /Effective Date: August 22, 2026/);
+assert.match(policy, /Last Updated: July 27, 2026/);
+assert.match(policy, /Effective Date: July 27, 2026/);
+assert.match(policy, /Material changes posted after this Policy's Effective Date take effect 30 days after posting/);
 assert.match(policy, /Ask AI transient processing/);
 assert.match(policy, /Internet Computer canister state/);
 assert.match(policy, /SEV-SNP/);
