@@ -148,6 +148,43 @@ struct AskAIModelTests {
     }
 
     @Test
+    func sourceExcludedFromPromptIsRejectedByTheAnswerDecoder() async throws {
+        let sources = (1...2).map { index in
+            AskAIContextSource(
+                source: AskAISource(
+                    id: "S\(index)",
+                    path: "/" + String(repeating: "\(index)", count: 7_000),
+                    excerpt: String(repeating: "e", count: 300),
+                    score: Float(index),
+                    matchReasons: []
+                ),
+                content: String(repeating: "c", count: 3_000)
+            )
+        }
+        let client = AskAICompletionStub(responses: [
+            .value("<answer>question</answer>"),
+            .value("<sources>S2</sources><answer>Excluded source</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: sources),
+            client: client,
+            store: AskAIStoreStub()
+        )
+        await model.load()
+
+        model.draft = "Question"
+        model.send()
+        try await waitUntilFinished(model)
+
+        let prompts = await client.messages
+        #expect(prompts[1].contains("SOURCE S1"))
+        #expect(!prompts[1].contains("SOURCE S2"))
+        #expect(model.messages.last?.state == .failed)
+        #expect(model.messages.last?.text != "Excluded source")
+        #expect(model.errorMessage == AskAIResponseError.invalidSources.localizedDescription)
+    }
+
+    @Test
     func answerContentIsNotDisplayedWhileSecondCompletionIsPending() async throws {
         let client = AskAICompletionStub(responses: [
             .value("<answer>question</answer>"),
@@ -270,6 +307,58 @@ struct AskAIModelTests {
         let prompt = await client.messages.first
         #expect(prompt?.contains("USER: Tell me about ic-hono") == true)
         #expect(prompt?.contains("CURRENT QUESTION:\nそれは互換ですか？") == true)
+    }
+
+    @Test
+    func failedAndInterruptedTurnsAreExcludedFromBothPrompts() async throws {
+        let prior = AskAIConversation(
+            databaseId: "db_test",
+            databaseTitle: "Test DB",
+            messages: [
+                AskAIMessage(role: .user, text: "COMPLETED USER"),
+                AskAIMessage(role: .assistant, text: "COMPLETED ASSISTANT", state: .complete),
+                AskAIMessage(role: .user, text: "CANCELLED USER"),
+                AskAIMessage(role: .assistant, text: "Generation stopped.", state: .failed),
+                AskAIMessage(role: .user, text: "TIMEOUT USER"),
+                AskAIMessage(role: .assistant, text: "The answer took too long. Try again.", state: .failed),
+                AskAIMessage(role: .user, text: "ERROR USER"),
+                AskAIMessage(
+                    role: .assistant,
+                    text: "The answer could not be generated. Try again.",
+                    state: .failed
+                ),
+                AskAIMessage(role: .user, text: "INTERRUPTED USER"),
+                AskAIMessage(role: .assistant, text: "", state: .generating)
+            ]
+        )
+        let client = AskAICompletionStub(responses: [
+            .value("<answer>question</answer>"),
+            .value("<sources>S1</sources><answer>Grounded answer.</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: [contextSource()]),
+            client: client,
+            store: AskAIStoreStub(savedConversations: [prior])
+        )
+        await model.load()
+
+        model.draft = "Current question"
+        model.send()
+        try await waitUntilFinished(model)
+
+        let prompts = await client.messages
+        #expect(prompts.count == 2)
+        for prompt in prompts {
+            #expect(prompt.contains("COMPLETED USER"))
+            #expect(prompt.contains("COMPLETED ASSISTANT"))
+            #expect(!prompt.contains("CANCELLED USER"))
+            #expect(!prompt.contains("Generation stopped."))
+            #expect(!prompt.contains("TIMEOUT USER"))
+            #expect(!prompt.contains("The answer took too long."))
+            #expect(!prompt.contains("ERROR USER"))
+            #expect(!prompt.contains("The answer could not be generated."))
+            #expect(!prompt.contains("INTERRUPTED USER"))
+        }
     }
 
     @Test

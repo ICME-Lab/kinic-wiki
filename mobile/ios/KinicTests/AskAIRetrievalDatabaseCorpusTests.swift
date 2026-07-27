@@ -49,7 +49,6 @@ struct AskAIRetrievalDatabaseCorpusTests {
         let queryPlan = plan(["カオマンガイ 材料"])
         #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Sources/raw/web/743450c953214fbf.md",
             content: "ノイマン型コンピュータ。ガイドブック。特殊なプロセスと材料が必要。"
         ))
     }
@@ -74,7 +73,6 @@ struct AskAIRetrievalDatabaseCorpusTests {
             guard let note = databaseNotes.first(where: { $0.path == candidate.hit.path }) else { return nil }
             return AskAIRetrievalPlanner.hasRequiredExactMatches(
                 queryPlan: queryPlan,
-                path: note.path,
                 content: note.content
             ) ? note.path : nil
         }

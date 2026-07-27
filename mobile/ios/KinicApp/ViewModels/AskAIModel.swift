@@ -271,7 +271,7 @@ final class AskAIModel {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
 
-        let history = conversation.messages
+        let history = AskAIHistoryFormatter.semanticHistory(conversation.messages)
         let userMessage = AskAIMessage(role: .user, text: question)
         let assistantID = UUID()
         let trace = [
@@ -290,7 +290,7 @@ final class AskAIModel {
             trace: trace
         )
         conversation.messages.append(contentsOf: [userMessage, assistantMessage])
-        if history.isEmpty {
+        if conversation.messages.count == 2 {
             conversation.title = String(question.prefix(60))
         }
         conversation.updatedAt = .now
@@ -401,6 +401,13 @@ final class AskAIModel {
             ) else { return }
             let contexts = retrieval.sources
             let searchDetail = retrieval.searchQueries.joined(separator: "\n")
+            let builtPrompt = AskAIPromptBuilder.build(
+                databaseTitle: databaseTitle,
+                question: question,
+                history: history,
+                sources: contexts
+            )
+            let includedContexts = builtPrompt.includedContexts
 
             setTrace(
                 messageID: assistantID,
@@ -417,11 +424,12 @@ final class AskAIModel {
                     ),
                     AskAITraceEvent(
                         stage: .reading,
-                        title: "Read \(contexts.count) \(contexts.count == 1 ? "note" : "notes")"
+                        title: "Read \(includedContexts.count) \(includedContexts.count == 1 ? "note" : "notes")",
+                        detail: includedContexts.map(\.source.path).joined(separator: "\n")
                     )
                 ]
             )
-            guard !contexts.isEmpty else {
+            guard !includedContexts.isEmpty else {
                 completeAsInsufficient(messageID: assistantID, sources: [])
                 persistCurrentConversation()
                 finishGeneration(requestID: requestID)
@@ -436,14 +444,13 @@ final class AskAIModel {
                     isActive: true
                 )
             )
-            let prompt = AskAIPromptBuilder.build(
-                databaseTitle: databaseTitle,
-                question: question,
-                history: history,
-                sources: contexts
+            let sourceByID = Dictionary(
+                uniqueKeysWithValues: includedContexts.map { ($0.source.id, $0.source) }
             )
-            let sourceByID = Dictionary(uniqueKeysWithValues: contexts.map { ($0.source.id, $0.source) })
-            let response = try await client.completeContent(message: prompt, timeout: .seconds(90))
+            let response = try await client.completeContent(
+                message: builtPrompt.message,
+                timeout: .seconds(90)
+            )
             try Task.checkCancellation()
             guard continueGeneration(
                 requestID: requestID,
@@ -462,7 +469,7 @@ final class AskAIModel {
                     sources: sourceIDs.compactMap { sourceByID[$0] }
                 )
             case .insufficient:
-                completeAsInsufficient(messageID: assistantID, sources: contexts.map(\.source))
+                completeAsInsufficient(messageID: assistantID, sources: includedContexts.map(\.source))
             }
             persistCurrentConversation()
             finishGeneration(requestID: requestID)

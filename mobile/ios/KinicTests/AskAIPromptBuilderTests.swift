@@ -24,12 +24,13 @@ struct AskAIPromptBuilderTests {
             AskAIMessage(role: .assistant, text: "It uses migrations.")
         ]
 
-        let prompt = AskAIPromptBuilder.build(
+        let builtPrompt = AskAIPromptBuilder.build(
             databaseTitle: "Engineering",
             question: "How are migrations managed?",
             history: history,
             sources: [source]
         )
+        let prompt = builtPrompt.message
 
         #expect(prompt.contains("<sources></sources><answer></answer>"))
         #expect(prompt.contains("<sources>S1,S2</sources>"))
@@ -40,6 +41,7 @@ struct AskAIPromptBuilderTests {
         #expect(prompt.contains("CURRENT QUESTION:\nHow are migrations managed?"))
         #expect(prompt.contains("Do not answer an earlier question"))
         #expect(prompt.contains("If its topic differs, ignore it"))
+        #expect(builtPrompt.includedContexts == [source])
     }
 
     @Test
@@ -59,12 +61,13 @@ struct AskAIPromptBuilderTests {
             )
         }
 
-        let prompt = AskAIPromptBuilder.build(
+        let builtPrompt = AskAIPromptBuilder.build(
             databaseTitle: "Large DB",
             question: longQuestion,
             history: [],
             sources: sources
         )
+        let prompt = builtPrompt.message
 
         #expect(prompt.count <= AskAIPromptBuilder.maximumMessageCharacters)
         #expect(prompt.contains("CURRENT QUESTION:\n" + String(longQuestion.prefix(AskAIPromptBuilder.maximumQuestionCharacters))))
@@ -86,10 +89,39 @@ struct AskAIPromptBuilderTests {
             question: "Current question",
             history: history,
             sources: []
-        )
+        ).message
 
         #expect(prompt.contains("USER: LATEST-USER follow-up"))
         #expect(prompt.contains("ASSISTANT: LATEST-ASSISTANT context"))
         #expect(!prompt.contains("OLD-BEGIN"))
+    }
+
+    @Test
+    func excludesWholeSourceBlocksThatDoNotFitTheContextBudget() {
+        let sources = (1...2).map { index in
+            AskAIContextSource(
+                source: AskAISource(
+                    id: "S\(index)",
+                    path: "/" + String(repeating: "\(index)", count: 7_000),
+                    excerpt: String(repeating: "e", count: 300),
+                    score: Float(index),
+                    matchReasons: []
+                ),
+                content: String(repeating: "c", count: 3_000)
+            )
+        }
+
+        let builtPrompt = AskAIPromptBuilder.build(
+            databaseTitle: "Large DB",
+            question: "Question",
+            history: [],
+            sources: sources
+        )
+
+        #expect(builtPrompt.includedContexts.map(\.source.id) == ["S1"])
+        #expect(builtPrompt.message.contains("SOURCE S1"))
+        #expect(!builtPrompt.message.contains("SOURCE S2"))
+        #expect(builtPrompt.message.contains("END SOURCE S1"))
+        #expect(builtPrompt.message.count <= AskAIPromptBuilder.maximumMessageCharacters)
     }
 }

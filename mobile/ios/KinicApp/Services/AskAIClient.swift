@@ -74,32 +74,30 @@ actor AskAIClient: AskAICompleting {
     }
 
     static func parseSSE(_ body: String) throws -> String {
+        let normalizedBody = body
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let usesEventBoundaries = normalizedBody.contains("\n\n")
         var content = ""
         var receivedEvent = false
         var reachedCompletion = false
         var receivedDone = false
+        var pendingDataLines: [String] = []
 
-        for rawLine in body.split(omittingEmptySubsequences: false, whereSeparator: \Character.isNewline) {
-            let line = String(rawLine).trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
-            if reachedCompletion {
-                let trailingLine = line.trimmingCharacters(in: CharacterSet.whitespaces)
-                if trailingLine.isEmpty { continue }
-                guard trailingLine == "data: [DONE]", !receivedDone else {
+        func processPayload(_ payload: String) throws {
+            let payload = payload.trimmingCharacters(in: .whitespaces)
+            receivedEvent = true
+            if payload == "[DONE]" {
+                guard !receivedDone else {
                     throw AskAIClientError.invalidResponse
                 }
                 receivedDone = true
-                continue
-            }
-            guard !line.isEmpty else { continue }
-            guard line.hasPrefix("data:") else {
-                throw AskAIClientError.invalidResponse
-            }
-            receivedEvent = true
-            let payload = line.dropFirst(5).trimmingCharacters(in: CharacterSet.whitespaces)
-            if payload == "[DONE]" {
                 reachedCompletion = true
-                receivedDone = true
-                continue
+                return
+            }
+
+            guard !reachedCompletion else {
+                throw AskAIClientError.invalidResponse
             }
 
             let event: AskAIEvent
@@ -128,6 +126,60 @@ actor AskAIClient: AskAICompleting {
             } else if event.content == nil {
                 throw AskAIClientError.invalidResponse
             }
+        }
+
+        func dispatchPendingEvent() throws {
+            guard !pendingDataLines.isEmpty else { return }
+            let payload = pendingDataLines.joined(separator: "\n")
+            pendingDataLines.removeAll(keepingCapacity: true)
+            try processPayload(payload)
+        }
+
+        for rawLine in normalizedBody.split(
+            separator: "\n",
+            omittingEmptySubsequences: false
+        ) {
+            let line = String(rawLine)
+            if line.isEmpty {
+                if usesEventBoundaries {
+                    try dispatchPendingEvent()
+                }
+                continue
+            }
+            if line.hasPrefix(":") {
+                continue
+            }
+
+            let field: String
+            let value: String
+            if let colon = line.firstIndex(of: ":") {
+                field = String(line[..<colon])
+                let valueStart = line.index(after: colon)
+                var rawValue = String(line[valueStart...])
+                if rawValue.first == " " {
+                    rawValue.removeFirst()
+                }
+                value = rawValue
+            } else {
+                field = line
+                value = ""
+            }
+
+            switch field {
+            case "data":
+                if usesEventBoundaries {
+                    pendingDataLines.append(value)
+                } else {
+                    try processPayload(value)
+                }
+            case "event", "id", "retry":
+                continue
+            default:
+                continue
+            }
+        }
+        if usesEventBoundaries {
+            try dispatchPendingEvent()
         }
 
         guard receivedEvent, !content.isEmpty else {
