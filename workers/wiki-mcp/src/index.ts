@@ -26,13 +26,14 @@ import {
   type SourceEvidence,
   type WikiNode
 } from "./vfs.js";
-
-const TOOL_ANNOTATIONS = {
-  readOnlyHint: true,
-  idempotentHint: true,
-  openWorldHint: false,
-  destructiveHint: false
-} as const;
+import {
+  toFetchedNodeToolResult,
+  toFetchManyToolResult,
+  toolError,
+  toReadPathsToolResult,
+  toToolResult
+} from "./tool-results.js";
+import { MCP_TOOL_NAMES, TOOL_ANNOTATIONS } from "./tool-metadata.js";
 
 const DEFAULT_DATABASE_LIMIT = 10;
 const MAX_DATABASE_LIMIT = 50;
@@ -53,17 +54,6 @@ const SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS = 220_000;
 const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
-const MCP_TOOL_NAMES = [
-  "find_databases",
-  "search",
-  "fetch_many",
-  "read_path",
-  "read_paths",
-  "list",
-  "memory_manifest",
-  "context"
-] as const;
-
 const databaseResultOutputSchema = z.object({
   database_id: z.string(),
   name: z.string(),
@@ -1221,88 +1211,6 @@ function clipText(text: string, maxChars: number): string {
     return text;
   }
   return `${text.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
-function toToolResult(payload: Record<string, unknown> | ToolErrorResult) {
-  return isToolErrorResult(payload)
-    ? payload
-    : { content: [{ type: "text" as const, text: JSON.stringify(payload) }], structuredContent: payload };
-}
-
-function toFetchManyToolResult(payload: Awaited<ReturnType<typeof fetchManySearchResults>>) {
-  const text = payload.results
-    .map((result, index) => {
-      if (!result) {
-        return `Result ${index + 1}\nError: missing result`;
-      }
-      if (result.is_error === true) {
-        return `Result ${index + 1}\nError: ${String(result.error)}`;
-      }
-      const metadata = isRecord(result.metadata) ? result.metadata : {};
-      return [
-        `Result ${index + 1}`,
-        `Path: ${String(metadata.path ?? "")}`,
-        `Title: ${String(result.title ?? "")}`,
-        "Content:",
-        String(result.text ?? "")
-      ].join("\n");
-    })
-    .join("\n\n");
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: payload
-  };
-}
-
-function toFetchedNodeToolResult(payload: Awaited<ReturnType<typeof readPath>>) {
-  if (isToolErrorResult(payload)) {
-    return payload;
-  }
-  return {
-    content: [{ type: "text" as const, text: modelFacingNodeText(payload) }],
-    structuredContent: payload
-  };
-}
-
-function toReadPathsToolResult(payload: Awaited<ReturnType<typeof readPaths>>) {
-  if (isToolErrorResult(payload)) {
-    return payload;
-  }
-  const text = payload.results
-    .map((result, index) =>
-      "is_error" in result && result.is_error === true
-        ? `Result ${index + 1}\nPath: ${String(result.path)}\nError: ${String(result.error)}`
-        : `Result ${index + 1}\n${modelFacingNodeText(result)}`
-    )
-    .join("\n\n");
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: payload
-  };
-}
-
-function modelFacingNodeText(node: Record<string, unknown>) {
-  const metadata = isRecord(node.metadata) ? node.metadata : {};
-  return [
-    `Path: ${String(metadata.path ?? "")}`,
-    `Title: ${String(node.title ?? "")}`,
-    "Content:",
-    String(node.text ?? "")
-  ].join("\n");
-}
-
-function toolError(message: string, payload: Record<string, unknown>) {
-  const contentPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(contentPayload) }],
-    isError: true
-  };
-}
-
-type ToolErrorResult = ReturnType<typeof toolError>;
-
-function isToolErrorResult(value: Record<string, unknown> | ToolErrorResult): value is ToolErrorResult {
-  return value.isError === true;
 }
 
 async function parseJsonBody(request: Request): Promise<unknown> {
