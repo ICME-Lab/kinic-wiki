@@ -15,6 +15,19 @@ export type RawNode = {
   metadata_json: string;
 };
 
+export type RawNodePublication = {
+  public_id: string;
+  database_id: string;
+  path: string;
+  published_at_ms: bigint;
+};
+
+export type RawPublicNode = {
+  content: string;
+  updated_at: bigint;
+  published_at_ms: bigint;
+};
+
 export type RawCanisterHealth = {
   cycles_balance: bigint;
 };
@@ -286,6 +299,7 @@ export type RawChild = {
   size_bytes: [] | [bigint];
   is_virtual: boolean;
   has_children: boolean;
+  is_published: boolean;
 };
 
 export type RawRecent = {
@@ -444,6 +458,7 @@ export type VfsActor = {
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
   get_initial_free_database_grant_status: () => Promise<{ Ok: RawInitialFreeDatabaseGrantStatus } | { Err: string }>;
+  get_node_publication: (request: { database_id: string; path: string }) => Promise<{ Ok: [] | [RawNodePublication] } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
@@ -468,6 +483,9 @@ export type VfsActor = {
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
   update_database_metadata: (request: RawUpdateDatabaseMetadataRequest) => Promise<{ Ok: RawDatabaseMetadata } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
+  read_public_node: (publicId: string) => Promise<{ Ok: [] | [RawPublicNode] } | { Err: string }>;
+  publish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: RawNodePublication } | { Err: string }>;
+  unpublish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: null } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;

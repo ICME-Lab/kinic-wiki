@@ -342,6 +342,7 @@ impl VfsApi for MockClient {
             size_bytes: Some(5),
             is_virtual: false,
             has_children: false,
+            is_published: false,
         }])
     }
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {

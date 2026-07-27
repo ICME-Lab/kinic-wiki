@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
+import { NodePublicationControls } from "@/components/node-publication-controls";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
 import { GraphPanel } from "@/components/graph-panel";
@@ -402,6 +403,30 @@ function WikiBrowserContent() {
     setSelectedExplorerState(null);
     setExplorerRevision((current) => current + 1);
   }, []);
+  const updateExplorerPublicationState = useCallback((path: string, isPublished: boolean) => {
+    let cacheChanged = false;
+    for (const [key, children] of childNodesCache.current) {
+      let childrenChanged = false;
+      const nextChildren = children.map((child) => {
+        if (child.path !== path || child.isPublished === isPublished) return child;
+        childrenChanged = true;
+        return { ...child, isPublished };
+      });
+      if (childrenChanged) {
+        childNodesCache.current.set(key, nextChildren);
+        cacheChanged = true;
+      }
+    }
+    setSelectedExplorerState((current) => {
+      if (!current || current.node.path !== path || current.node.isPublished === isPublished) {
+        return current;
+      }
+      return { ...current, node: { ...current.node, isPublished } };
+    });
+    if (cacheChanged) {
+      setExplorerRevision((current) => current + 1);
+    }
+  }, []);
 
   const currentNode = currentNodeState(invalidCanister, canisterId, databaseId, selectedPath, currentRequestKey, node);
   const currentNodeContext = currentNodeContextState(invalidCanister, canisterId, databaseId, selectedPath, currentRequestKey, nodeContext);
@@ -462,7 +487,8 @@ function WikiBrowserContent() {
         current.node.path === nextNode.path &&
         current.node.kind === nextNode.kind &&
         current.node.etag === nextNode.etag &&
-        current.node.isVirtual === nextNode.isVirtual
+        current.node.isVirtual === nextNode.isVirtual &&
+        current.node.isPublished === nextNode.isPublished
       ) {
         return current;
       }
@@ -798,6 +824,16 @@ function WikiBrowserContent() {
                 view={view}
                 editState={activeEditState}
                 rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
+                actions={currentNode.data?.kind === "file" && currentNode.data.path.endsWith(".md") ? (
+                  <NodePublicationControls
+                    canisterId={canisterId}
+                    databaseId={databaseId}
+                    path={currentNode.data.path}
+                    role={currentDatabaseRole}
+                    identity={readIdentity}
+                    onPublicationStateChange={updateExplorerPublicationState}
+                  />
+                ) : undefined}
                 onViewChange={(nextView) => {
                   if (nextView !== "edit" && !canLeaveDirtyEdit()) {
                     return;

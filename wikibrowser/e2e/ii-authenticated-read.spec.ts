@@ -82,6 +82,118 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await expect(page.getByText("Local link graph")).toBeVisible();
 });
 
+testWithII("publishes one node without exposing the private database", async ({ page, browser }) => {
+  await installVirtualAuthenticator(page);
+  await page.goto("/dashboard");
+  await createLocalIdentity(page);
+  const principalLabel = await page.locator('[aria-label^="Principal "]').getAttribute("aria-label");
+  const principal = principalLabel?.slice("Principal ".length) ?? "";
+  expect(principal).not.toEqual("");
+
+  const seedIdentity = Ed25519KeyIdentity.generate();
+  const { database_id: databaseId } = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, `Published node e2e ${Date.now()}`);
+  const publishedPath = "/Knowledge/published.md";
+  const privatePath = "/Knowledge/private.md";
+  const uppercaseMarkdownPath = "/Knowledge/not-publishable.MD";
+  const sourcePath = "/Sources/not-publishable.md";
+  const firstWrite = await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: publishedPath,
+    kind: "file",
+    content: "# Public note\n\nFirst public version.\n\n[[/Knowledge/private.md|Private reference]]\n\n[External reference](https://example.com/reference)\n",
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: privatePath,
+    kind: "file",
+    content: "# Private note\n\nsecret-node-content",
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: uppercaseMarkdownPath,
+    kind: "file",
+    content: "# Uppercase extension\n",
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: sourcePath,
+    kind: "source",
+    content: "Source content",
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await grantDatabaseAccessAuthenticated(CANISTER_ID, seedIdentity, databaseId, principal, "owner");
+
+  await page.goto(`/db/${encodeURIComponent(databaseId)}${uppercaseMarkdownPath}`);
+  await expect(page.getByRole("heading", { name: "Uppercase extension" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish" })).toHaveCount(0);
+
+  await page.goto(`/db/${encodeURIComponent(databaseId)}${sourcePath}`);
+  await expect(page.getByText("Source content")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish" })).toHaveCount(0);
+
+  await page.goto(`/db/${encodeURIComponent(databaseId)}${publishedPath}`);
+  await expect(page.getByRole("heading", { name: "Public note" })).toBeVisible();
+  const explorer = page.locator('[data-tid="wiki-explorer-panel"]');
+  await expect(explorer.getByLabel("Published")).toHaveCount(0);
+  await page.getByRole("button", { name: "Publish" }).click();
+  const publishedLink = page.getByRole("link", { name: "Published", exact: true });
+  await expect(publishedLink).toBeVisible();
+  await expect(explorer.getByLabel("Published")).toBeVisible();
+  const publicPath = await publishedLink.getAttribute("href");
+  expect(publicPath).toMatch(/^\/p\/[0-9a-f]{32}$/);
+
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy public link" }).click();
+  const copiedLink = await page.evaluate(() => navigator.clipboard.readText());
+  expect(new URL(copiedLink).pathname).toEqual(publicPath);
+
+  const anonymousContext = await browser.newContext();
+  const anonymousPage = await anonymousContext.newPage();
+  await anonymousPage.goto(publicPath!);
+  await expect(anonymousPage.getByRole("heading", { name: "Public note" }).first()).toBeVisible();
+  await expect(anonymousPage.getByText("First public version.")).toBeVisible();
+  await expect(anonymousPage.getByText("Private reference")).toBeVisible();
+  await expect(anonymousPage.getByRole("link", { name: "Private reference" })).toHaveCount(0);
+  await expect(anonymousPage.getByRole("link", { name: "External reference" })).toHaveAttribute("href", "https://example.com/reference");
+  await expect(anonymousPage.getByText("secret-node-content")).toHaveCount(0);
+
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: publishedPath,
+    kind: "file",
+    content: "# Public note\n\nUpdated public version.\n",
+    metadataJson: "{}",
+    expectedEtag: firstWrite.node.etag
+  });
+  await anonymousPage.reload();
+  await expect(anonymousPage.getByText("Updated public version.")).toBeVisible();
+
+  for (const role of ["reader", "writer"] as const) {
+    await grantDatabaseAccessAuthenticated(CANISTER_ID, seedIdentity, databaseId, principal, role);
+    await page.reload();
+    await expect(page.getByRole("link", { name: "Published", exact: true })).toBeVisible();
+    await expect(page.locator('[data-tid="wiki-explorer-panel"]').getByLabel("Published")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy public link" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Unpublish" })).toHaveCount(0);
+  }
+
+  await grantDatabaseAccessAuthenticated(CANISTER_ID, seedIdentity, databaseId, principal, "owner");
+  await page.reload();
+  await page.getByRole("button", { name: "Unpublish" }).click();
+  await expect(page.getByRole("button", { name: "Publish" })).toBeVisible();
+  await expect(page.locator('[data-tid="wiki-explorer-panel"]').getByLabel("Published")).toHaveCount(0);
+  await anonymousPage.reload();
+  await expect(anonymousPage.getByRole("heading", { name: "Not found" })).toBeVisible();
+  await anonymousContext.close();
+});
+
 async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
   const seedIdentity = Ed25519KeyIdentity.generate();
   const { database_id: databaseId } = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, `II e2e ${Date.now()}`);
@@ -116,9 +228,18 @@ async function createLocalIdentity(page: Page): Promise<void> {
   await iiPopup.getByRole("button", { name: "Use existing identity", exact: true }).click();
 
   const missingIdentity = iiPopup.getByText("Cannot read properties of undefined (reading 'anchor_number')");
-  const needsIdentity = await missingIdentity.waitFor({ state: "visible", timeout: 2_000 }).then(() => true, () => false);
-  if (needsIdentity) {
-    await iiPopup.getByRole("button", { name: "Create new identity", exact: true }).click();
+  const createNewIdentity = iiPopup.getByRole("button", { name: "Create new identity", exact: true });
+  const hasMissingIdentityError = await missingIdentity.waitFor({ state: "visible", timeout: 2_000 }).then(
+    () => true,
+    () => false
+  );
+  const canCreateIdentity = await createNewIdentity.waitFor({ state: "visible", timeout: 2_000 }).then(
+    () => createNewIdentity.isEnabled(),
+    () => false
+  );
+  if (hasMissingIdentityError || canCreateIdentity) {
+    await expect(createNewIdentity).toBeEnabled();
+    await createNewIdentity.click();
     await iiPopup.getByRole("textbox").fill("Test");
     await iiPopup.getByRole("button", { name: "Create identity", exact: true }).click();
   }

@@ -31,7 +31,27 @@ guard_local_ii_origins() {
   esac
 }
 
+guard_staging_ii_origin() {
+  local origin="${KINIC_VFS_STAGING_II_ORIGIN:-}"
+  if [[ -z "${origin}" ]]; then
+    if [[ "${ICP_ENVIRONMENT:-}" == "staging" ]]; then
+      echo "KINIC_VFS_STAGING_II_ORIGIN is required for ICP_ENVIRONMENT=staging" >&2
+      exit 1
+    fi
+    return
+  fi
+  if [[ "${ICP_ENVIRONMENT:-}" != "staging" ]]; then
+    echo "KINIC_VFS_STAGING_II_ORIGIN is only allowed for ICP_ENVIRONMENT=staging" >&2
+    exit 1
+  fi
+  if ! [[ "${origin}" =~ ^https://[a-z0-9.-]+$ ]]; then
+    echo "KINIC_VFS_STAGING_II_ORIGIN must be an HTTPS origin without a path" >&2
+    exit 1
+  fi
+}
+
 guard_local_ii_origins
+guard_staging_ii_origin
 
 if [[ "${1:-}" == "--check-env-only" ]]; then
   exit 0

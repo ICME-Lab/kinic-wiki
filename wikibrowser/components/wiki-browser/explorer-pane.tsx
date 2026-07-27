@@ -449,7 +449,8 @@ export function explorerNodeFromSelection(
       etag: node.data.etag,
       sizeBytes: null,
       isVirtual: false,
-      hasChildren: node.data.kind === "folder" && Boolean(children.data && visibleChildren(children.data, node.data.path).length)
+      hasChildren: node.data.kind === "folder" && Boolean(children.data && visibleChildren(children.data, node.data.path).length),
+      isPublished: false
     };
   }
   if (children.data) {
@@ -461,7 +462,8 @@ export function explorerNodeFromSelection(
       etag: null,
       sizeBytes: null,
       isVirtual: true,
-      hasChildren: true
+      hasChildren: true,
+      isPublished: false
     };
   }
   return null;

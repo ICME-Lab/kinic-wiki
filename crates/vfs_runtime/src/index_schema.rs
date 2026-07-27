@@ -3,6 +3,9 @@
 // Why: Mechanical split out of lib.rs; a child module keeps same-crate private access.
 use super::*;
 
+const INDEX_SCHEMA_MIGRATION_002: &str =
+    include_str!("../migrations/index_db/002_node_publications.sql");
+
 impl VfsService {
     pub fn run_index_migrations(&self) -> Result<(), String> {
         self.run_index_migrations_with_config(default_cycles_billing_config())
@@ -63,6 +66,7 @@ fn run_index_migrations(
 ) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
+        apply_pending_index_migrations(&tx)?;
         validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(IndexPostMigrationAction::None);
@@ -73,6 +77,7 @@ fn run_index_migrations(
     create_schema_migrations(&tx)?;
     create_fresh_index_schema(&tx)?;
     insert_cycles_billing_config(&tx, config)?;
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(IndexPostMigrationAction::None)
@@ -85,6 +90,7 @@ fn run_index_migrations_for_upgrade(
 ) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
+        apply_pending_index_migrations(&tx)?;
         validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(IndexPostMigrationAction::None);
@@ -100,6 +106,7 @@ fn run_index_migrations_in_tx(
     config: &CyclesBillingConfig,
 ) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
+        apply_pending_index_migrations(conn)?;
         validate_current_index_schema(conn)?;
         return Ok(IndexPostMigrationAction::None);
     }
@@ -108,6 +115,7 @@ fn run_index_migrations_in_tx(
     create_schema_migrations(conn)?;
     create_fresh_index_schema(conn)?;
     insert_cycles_billing_config(conn, config)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
     validate_index_schema(conn)?;
     Ok(IndexPostMigrationAction::None)
@@ -119,6 +127,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&CyclesBillingConfig>,
 ) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
+        apply_pending_index_migrations(conn)?;
         validate_current_index_schema(conn)?;
         return Ok(IndexPostMigrationAction::None);
     }
@@ -155,13 +164,34 @@ fn reject_existing_index_tables_without_migrations_tx(
 
 fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     let versions = applied_index_versions(conn)?;
-    if versions.len() != 1 || versions[0] != INDEX_SCHEMA_VERSION_CURRENT {
+    if versions.iter().map(String::as_str).collect::<Vec<_>>() != INDEX_SCHEMA_VERSIONS {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
             versions.join(", ")
         ));
     }
     validate_index_schema(conn)
+}
+
+fn apply_pending_index_migrations(conn: &Transaction<'_>) -> Result<(), String> {
+    let versions = applied_index_versions(conn)?;
+    let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    if version_refs == INDEX_SCHEMA_VERSIONS {
+        return Ok(());
+    }
+    if version_refs != [INDEX_SCHEMA_VERSION_INITIAL] {
+        return Err(format!(
+            "unsupported index schema version; recreate the index database: {}",
+            versions.join(", ")
+        ));
+    }
+    conn.execute_batch(INDEX_SCHEMA_MIGRATION_002)
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    Ok(())
 }
 
 fn applied_index_versions(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
@@ -227,6 +257,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_orders",
         "market_purchase_pending_operations",
         "market_entitlements",
+        "node_publications",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -414,6 +445,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "status",
             ][..],
         ),
+        (
+            "node_publications",
+            &["public_id", "database_id", "path", "published_at_ms"][..],
+        ),
     ] {
         for column in columns {
             if !index_column_exists(conn, table, column)? {
@@ -456,6 +491,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_purchase_pending_buyer_idx",
         "market_entitlements_database_buyer_active_idx",
         "market_entitlements_buyer_idx",
+        "node_publications_database_idx",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));
