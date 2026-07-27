@@ -1816,6 +1816,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kinic-sqlite-compat"
+version = "0.1.0"
+dependencies = [
+ "ic-sqlite-vfs",
+ "rusqlite",
+]
+
+[[package]]
 name = "kinic-vfs-cli"
 version = "2.0.1"
 dependencies = [
@@ -3394,6 +3402,7 @@ version = "0.1.0"
 dependencies = [
  "candid",
  "ic-sqlite-vfs",
+ "kinic-sqlite-compat",
  "kinic-vfs-types",
  "proptest",
  "rusqlite",
@@ -3408,6 +3417,7 @@ name = "vfs-store"
 version = "0.1.0"
 dependencies = [
  "ic-sqlite-vfs",
+ "kinic-sqlite-compat",
  "kinic-vfs-types",
  "proptest",
  "rusqlite",
