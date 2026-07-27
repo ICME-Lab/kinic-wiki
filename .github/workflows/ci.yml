@@ -162,6 +162,10 @@ jobs:
         run: pnpm build
       - name: Build Cloudflare Worker
         run: pnpm build:worker
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run support route smoke
+        run: pnpm e2e:support
 
   wiki-generator-check:
     needs: changes

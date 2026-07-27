@@ -7,7 +7,7 @@
     "build": "wrangler deploy --dry-run --config wrangler.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
     "review:smoke": "node scripts/check-submission-cases.mjs",
-    "test": "node scripts/check-candid-drift.mjs && vitest run",
+    "test": "node scripts/check-candid-drift.mjs && node --test scripts/*.node-test.mjs && vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,6 +19,8 @@
     "@cloudflare/workers-types": "^4.20260408.0",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
+    "ajv": "^8.20.0",
+    "js-yaml": "^4.3.0",
     "typescript": "7.0.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.103.0"

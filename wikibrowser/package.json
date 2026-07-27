@@ -25,7 +25,8 @@
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "e2e:ii": "scripts/run-ii-e2e.sh",
     "e2e:ii:headed": "scripts/run-ii-e2e.sh --headed",
-    "e2e:ii:setup": "../scripts/setup-wikibrowser-ii-e2e.sh"
+    "e2e:ii:setup": "../scripts/setup-wikibrowser-ii-e2e.sh",
+    "e2e:support": "playwright test e2e/support.spec.ts --project chromium"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "6.5.0",
