@@ -1,4 +1,5 @@
 import { PublicMarkdownPreview } from "@/components/public-markdown-preview";
+import { AppLink as Link } from "@/components/app-link";
 import { publicNodePath } from "@/lib/share-links";
 import type { PublicNode } from "@/lib/types";
 import { readPublicNode } from "@/lib/vfs-client";
@@ -44,19 +45,54 @@ export function publicNodeHead(publicId: string, data: PublicNodePageData) {
 export function PublicNodeDocument({ data }: { data: PublicNodePageData }) {
   if (!data.node) return null;
   return (
-    <main className="min-h-screen bg-canvas px-4 py-8 text-ink sm:px-6 sm:py-14">
-      <article className="wiki-seo-document markdown-body relative mx-auto max-w-3xl overflow-hidden rounded-2xl border border-line bg-white px-6 py-8 shadow-sm sm:px-10 sm:py-12">
-        <div aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-accent" />
-        <header className="mb-9 border-b border-line pb-6">
-          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted">Published with Kinic Wiki</p>
-          <h1 className="mt-3">{data.title}</h1>
-          <p className="mt-3 text-sm text-muted">
-            Updated {formatTimestamp(data.node.updatedAt)} · Published {formatTimestamp(data.node.publishedAtMs)}
-          </p>
-        </header>
-        <PublicMarkdownPreview content={data.node.content} />
-      </article>
-    </main>
+    <div className="min-h-screen bg-canvas text-ink">
+      <header className="border-b border-line bg-paper px-4 py-4 sm:px-6">
+        <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3" aria-label="Primary navigation">
+          <Link
+            aria-label="Kinic Wiki home"
+            className="flex items-center gap-3 text-sm font-semibold text-ink no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            href="/"
+          >
+            <img className="h-9 w-9 rounded-lg" src="/kinic-mark.png" alt="" width={36} height={36} />
+            <span>Kinic Wiki</span>
+          </Link>
+          <Link
+            className="whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            href="/dashboard"
+          >
+            Start using Kinic Wiki
+          </Link>
+        </nav>
+      </header>
+
+      <main className="px-4 py-8 sm:px-6 sm:py-14">
+        <article className="wiki-seo-document markdown-body relative mx-auto max-w-3xl overflow-hidden rounded-2xl border border-line bg-white px-6 py-8 shadow-sm sm:px-10 sm:py-12">
+          <div aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-accent" />
+          <header className="mb-9 border-b border-line pb-6">
+            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted">Published with Kinic Wiki</p>
+            <h1 className="mt-3">{data.title}</h1>
+            <p className="mt-3 text-sm text-muted">
+              Updated {formatTimestamp(data.node.updatedAt)} · Published {formatTimestamp(data.node.publishedAtMs)}
+            </p>
+          </header>
+          <PublicMarkdownPreview content={data.node.content} />
+        </article>
+
+        <section className="relative mx-auto mt-6 max-w-3xl overflow-hidden rounded-2xl border border-line bg-paper px-6 py-6 sm:flex sm:items-center sm:justify-between sm:gap-8 sm:px-10">
+          <div aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-accent" />
+          <div>
+            <h2 className="text-xl font-semibold leading-tight text-ink">Build your own AI memory with Kinic Wiki</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-muted">Turn sources into durable, linked knowledge that agents can search, cite, and maintain.</p>
+          </div>
+          <Link
+            className="mt-5 inline-flex shrink-0 whitespace-nowrap rounded-lg border border-action bg-action px-4 py-2.5 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 sm:mt-0"
+            href="/dashboard"
+          >
+            Start using Kinic Wiki
+          </Link>
+        </section>
+      </main>
+    </div>
   );
 }
 

@@ -142,7 +142,19 @@ testWithII("publishes one node without exposing the private database", async ({ 
   await expect(page.getByRole("heading", { name: "Public note" })).toBeVisible();
   const explorer = page.locator('[data-tid="wiki-explorer-panel"]');
   await expect(explorer.getByLabel("Published")).toHaveCount(0);
-  await page.getByRole("button", { name: "Publish" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  let publicationDialog = page.getByRole("dialog", { name: "Publish page?" });
+  await expect(publicationDialog).toBeVisible();
+  await expect(publicationDialog.getByText(publishedPath, { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Published", exact: true })).toHaveCount(0);
+  await expect(explorer.getByLabel("Published")).toHaveCount(0);
+  await publicationDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(publicationDialog).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Published", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  publicationDialog = page.getByRole("dialog", { name: "Publish page?" });
+  await publicationDialog.getByRole("button", { name: "Publish" }).click();
   const publishedLink = page.getByRole("link", { name: "Published", exact: true });
   await expect(publishedLink).toBeVisible();
   await expect(explorer.getByLabel("Published")).toBeVisible();
@@ -187,7 +199,19 @@ testWithII("publishes one node without exposing the private database", async ({ 
   await grantDatabaseAccessAuthenticated(CANISTER_ID, seedIdentity, databaseId, principal, "owner");
   await page.reload();
   await page.getByRole("button", { name: "Unpublish" }).click();
-  await expect(page.getByRole("button", { name: "Publish" })).toBeVisible();
+  publicationDialog = page.getByRole("dialog", { name: "Unpublish page?" });
+  await expect(publicationDialog).toBeVisible();
+  await expect(publicationDialog.getByText(publishedPath, { exact: true })).toBeVisible();
+  await anonymousPage.reload();
+  await expect(anonymousPage.getByText("Updated public version.")).toBeVisible();
+  await publicationDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(publicationDialog).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Published", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Unpublish" }).click();
+  publicationDialog = page.getByRole("dialog", { name: "Unpublish page?" });
+  await publicationDialog.getByRole("button", { name: "Unpublish" }).click();
+  await expect(page.getByRole("button", { name: "Publish", exact: true })).toBeVisible();
   await expect(page.locator('[data-tid="wiki-explorer-panel"]').getByLabel("Published")).toHaveCount(0);
   await anonymousPage.reload();
   await expect(anonymousPage.getByRole("heading", { name: "Not found" })).toBeVisible();
