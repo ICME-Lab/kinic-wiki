@@ -1,5 +1,6 @@
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import { candidOptional, isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
 import { idlFactory } from "@/lib/vfs-idl";
 import type {
@@ -54,7 +55,7 @@ export async function createVfsActor(canisterId: string): Promise<VfsActor> {
 
 export async function createActor(principal: Principal, host: string): Promise<VfsActor> {
   const agent = HttpAgent.createSync({ host });
-  if (isLocalHost(host)) {
+  if (isLocalReplicaHost(host)) {
     await agent.fetchRootKey();
   }
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
@@ -71,7 +72,7 @@ export async function createAuthenticatedActor(canisterId: string, identity: Ide
   }
   const host = wikiIcHost();
   const agent = HttpAgent.createSync({ host, identity });
-  if (isLocalHost(host)) {
+  if (isLocalReplicaHost(host)) {
     await agent.fetchRootKey();
   }
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
@@ -112,11 +113,11 @@ export function rawDatabaseCycleCursor(cursor: string | null): [] | [bigint] {
 }
 
 export function rawTextCursor(cursor: string | null): [] | [string] {
-  return cursor ? [cursor] : [];
+  return cursor ? candidOptional(cursor) : [];
 }
 
 export function rawOptionalText(value: string | null): [] | [string] {
-  return value === null ? [] : [value];
+  return candidOptional(value);
 }
 
 export function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
@@ -181,9 +182,7 @@ export function normalizeWikiMetricsPoint(raw: RawWikiMetricsPoint): WikiMetrics
   };
 }
 
-export function isLocalHost(host: string): boolean {
-  return host.includes("127.0.0.1") || host.includes("localhost");
-}
+export { isLocalReplicaHost as isLocalHost };
 
 export function normalizeDatabaseRole(role: Variant): DatabaseRole {
   if ("Owner" in role) {

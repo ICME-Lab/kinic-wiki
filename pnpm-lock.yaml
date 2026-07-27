@@ -32,6 +32,9 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../../packages/source-contracts
+      '@kinic/vfs-client-core':
+        specifier: workspace:*
+        version: link:../../packages/vfs-client-core
       '@preact/signals':
         specifier: ^2.9.0
         version: 2.9.2(preact@10.29.4)
@@ -51,6 +54,8 @@ importers:
 
   packages/source-contracts: {}
 
+  packages/vfs-client-core: {}
+
   skill-registry-web:
     dependencies:
       '@icp-sdk/auth':
@@ -59,6 +64,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0
+      '@kinic/vfs-client-core':
+        specifier: workspace:*
+        version: link:../packages/vfs-client-core
       '@tanstack/react-router':
         specifier: 1.170.18
         version: 1.170.18(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -149,6 +157,9 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts
+      '@kinic/vfs-client-core':
+        specifier: workspace:*
+        version: link:../packages/vfs-client-core
       '@radix-ui/react-collapsible':
         specifier: 1.1.15
         version: 1.1.15(@types/react-dom@19.2.3(@types/react@19.2.7))(@types/react@19.2.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -273,6 +284,9 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../../packages/source-contracts
+      '@kinic/vfs-client-core':
+        specifier: workspace:*
+        version: link:../../packages/vfs-client-core
       '@vercel/og':
         specifier: 0.11.1
         version: 0.11.1
@@ -304,6 +318,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0
+      '@kinic/vfs-client-core':
+        specifier: workspace:*
+        version: link:../../packages/vfs-client-core
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

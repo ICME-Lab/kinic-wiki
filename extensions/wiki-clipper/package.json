@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@kinic/source-contracts": "workspace:*",
+    "@kinic/vfs-client-core": "workspace:*",
     "@icp-sdk/auth": "^5.0.0",
     "@icp-sdk/core": "^5.4.0",
     "@preact/signals": "^2.9.0",

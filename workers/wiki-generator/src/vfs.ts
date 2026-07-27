@@ -3,6 +3,11 @@
 // Why: Worker code only needs source reads, wiki writes, search, and sync paging.
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import {
+  candidOptional,
+  isLocalReplicaHost as isLocalHost,
+  unwrapCandidResult
+} from "@kinic/vfs-client-core";
 import { identityFromPem } from "./identity-pem.js";
 import { idlFactory } from "./vfs-idl.js";
 import type {
@@ -258,11 +263,7 @@ export async function ensureParentFolders(vfs: VfsClient, databaseId: string, pa
 }
 
 async function unwrap<T>(result: Promise<Result<T>>): Promise<T> {
-  const resolved = await result;
-  if ("Err" in resolved) {
-    throw new Error(resolved.Err);
-  }
-  return resolved.Ok;
+  return unwrapCandidResult(await result);
 }
 
 function normalizeOptionalNode(raw: [] | [RawNode]): WikiNode | null {
@@ -358,9 +359,5 @@ function toRawWriteNodeRequest(request: WriteNodeRequest): RawWriteNodeRequest {
 }
 
 function optionalText(value: string | null): [] | [string] {
-  return value ? [value] : [];
-}
-
-function isLocalHost(host: string): boolean {
-  return /^(https?:\/\/)?(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:\d+)?/i.test(host);
+  return value ? candidOptional(value) : [];
 }

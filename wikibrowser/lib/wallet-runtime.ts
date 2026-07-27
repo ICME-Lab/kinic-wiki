@@ -1,6 +1,7 @@
 // Where: wikibrowser wallet runtime policy.
 // What: centralizes IC host and wallet runtime decisions.
 // Why: wallet calls need one host source across UI and approval flows.
+import { isLocalReplicaHost } from "@kinic/vfs-client-core";
 
 export type WalletRuntime = {
   icHost: string;
@@ -12,12 +13,7 @@ export function configuredIcHost(): string {
 }
 
 export function isLocalIcHost(host: string): boolean {
-  try {
-    const { hostname } = new URL(host);
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname.endsWith(".localhost");
-  } catch {
-    return false;
-  }
+  return isLocalReplicaHost(host);
 }
 
 export function walletRuntime(): WalletRuntime {

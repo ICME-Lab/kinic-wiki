@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@icp-sdk/core": "^5.4.0",
+    "@kinic/vfs-client-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"
   },

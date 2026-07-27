@@ -1,6 +1,8 @@
 // Where: extensions/wiki-clipper/src/vfs-actor.js
 // What: Minimal write-capable VFS actor for evidence source persistence.
 // Why: The wiki browser client is read-only; capture needs source writes plus trigger session APIs.
+import { isLocalReplicaHost, variantName } from "@kinic/vfs-client-core";
+
 export async function createVfsActor({ canisterId, host, identity }) {
   const [{ Actor, HttpAgent }, { Principal }] = await Promise.all([
     import("@icp-sdk/core/agent"),
@@ -8,7 +10,7 @@ export async function createVfsActor({ canisterId, host, identity }) {
   ]);
   const principal = Principal.fromText(canisterId);
   const agent = await HttpAgent.create({ host, identity });
-  if (isLocalHost(host)) {
+  if (isLocalReplicaHost(host)) {
     await agent.fetchRootKey();
   }
   return Actor.createActor(idlFactory, { agent, canisterId: principal });
@@ -214,14 +216,7 @@ function parseCycles(value) {
 }
 
 function variantKey(value) {
-  return Object.keys(value || {})[0] || "";
+  return variantName(value) || "";
 }
 
-export function isLocalHost(host) {
-  try {
-    const { hostname } = new URL(host);
-    return hostname === "127.0.0.1" || hostname === "localhost";
-  } catch {
-    return false;
-  }
-}
+export { isLocalReplicaHost as isLocalHost };

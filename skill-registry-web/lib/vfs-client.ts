@@ -4,6 +4,7 @@
 
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import { isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
@@ -140,7 +141,7 @@ async function createAuthenticatedActor(canisterId: string, identity: Identity):
   const principal = principalOrThrow(canisterId);
   const host = wikiIcHost();
   const agent = HttpAgent.createSync({ host, identity });
-  if (isLocalHost(host)) await agent.fetchRootKey();
+  if (isLocalReplicaHost(host)) await agent.fetchRootKey();
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), { agent, canisterId: principal });
 }
 
@@ -150,7 +151,7 @@ async function createReadActor(canisterId: string, identity?: Identity): Promise
 
 async function createActor(principal: Principal, host: string): Promise<VfsActor> {
   const agent = HttpAgent.createSync({ host });
-  if (isLocalHost(host)) await agent.fetchRootKey();
+  if (isLocalReplicaHost(host)) await agent.fetchRootKey();
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), { agent, canisterId: principal });
 }
 
@@ -253,8 +254,4 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
 
 function nodeKindVariant(kind: NodeKind): Variant {
   return kind === "folder" ? { Folder: null } : kind === "source" ? { Source: null } : { File: null };
-}
-
-function isLocalHost(host: string): boolean {
-  return host.includes("127.0.0.1") || host.includes("localhost");
 }
