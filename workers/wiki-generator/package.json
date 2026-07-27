@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@icp-sdk/core": "^5.4.0",
+    "@kinic/source-contracts": "workspace:*",
     "@vercel/og": "0.11.1",
     "react": "19.2.5"
   },

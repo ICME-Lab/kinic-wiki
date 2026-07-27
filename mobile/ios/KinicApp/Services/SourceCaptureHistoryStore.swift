@@ -107,29 +107,11 @@ struct SourceCaptureHistoryStore: @unchecked Sendable {
     }
 
     private static func requestId(from requestPath: String) -> String? {
-        guard requestPath.hasPrefix("/Sources/source-capture-requests/"),
-              let filename = requestPath.split(separator: "/").last,
-              filename.hasSuffix(".md") else {
-            return nil
-        }
-        let requestId = String(filename.dropLast(3))
-        guard isSafeStorageSegment(requestId) else {
-            return nil
-        }
-        return requestId
+        SourceCaptureContract.requestId(from: requestPath)
     }
 
     private static func isSafeStorageSegment(_ value: String) -> Bool {
-        guard let first = value.unicodeScalars.first,
-              CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").contains(first),
-              value.count <= 128,
-              value != ".",
-              value != "..",
-              !value.contains("..") else {
-            return false
-        }
-        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
-        return value.unicodeScalars.allSatisfy(allowed.contains)
+        SourceCaptureContract.isSafeRequestId(value)
     }
 
     private static func historyDirectory(appGroupId: String?, strict: Bool, fileManager: FileManager) throws -> URL {

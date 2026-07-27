@@ -12,6 +12,7 @@
     "test": "node scripts/check-candid-drift.mjs && node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@kinic/source-contracts": "workspace:*",
     "@icp-sdk/auth": "^5.0.0",
     "@icp-sdk/core": "^5.4.0",
     "@preact/signals": "^2.9.0",

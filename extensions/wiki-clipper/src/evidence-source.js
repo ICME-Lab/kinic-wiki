@@ -1,7 +1,7 @@
 // Where: extensions/wiki-clipper/src/evidence-source.js
 // What: Convert captured conversations into canonical evidence source nodes.
 // Why: Evidence source is grouped by provider under /Sources/<provider>/<id>.md.
-import { hashText, sourceStemFromTitleHash } from "./source-filename.js";
+import { fnv1aHex, sourceStemFromTitleHash } from "@kinic/source-contracts";
 
 const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
 
@@ -39,7 +39,7 @@ export function buildEvidenceSource(capture, now = new Date()) {
 
 function sourceIdForCapture(capture, provider = safeProvider(capture.provider || "conversation")) {
   const identity = canonicalConversationIdentity(capture, provider);
-  const fingerprint = hashText(identity);
+  const fingerprint = fnv1aHex(identity);
   const stem = sourceStemFromTitleHash(capture.conversationTitle, fingerprint, provider);
   return `${provider}-${stem}`;
 }
