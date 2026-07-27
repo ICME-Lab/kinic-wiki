@@ -35,7 +35,6 @@ import {
   toToolResult
 } from "./tool-results.js";
 import { MCP_TOOL_NAMES, TOOL_ANNOTATIONS } from "./tool-metadata.js";
-
 const DEFAULT_DATABASE_LIMIT = 10;
 const MAX_DATABASE_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 10;
