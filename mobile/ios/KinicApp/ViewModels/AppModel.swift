@@ -99,7 +99,6 @@ extension AppModel: AskAIKnowledgeProviding {
             )
             guard await askAIRetrievalVerifier.hasRequiredExactMatches(
                 queryPlan: queryPlan,
-                path: hit.path,
                 content: "\(evidence.excerpt)\n\(evidence.content)"
             ) else {
                 continue

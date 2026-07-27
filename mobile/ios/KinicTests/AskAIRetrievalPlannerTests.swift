@@ -115,12 +115,10 @@ struct AskAIRetrievalPlannerTests {
 
         #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: plan,
-            path: "/Wiki/recipes/khao-man-gai.md",
             content: "簡単カオマンガイの材料と手順"
         ))
         #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: plan,
-            path: "/Sources/spintronics.md",
             content: "ノイマン型のガイドブックには特殊な材料が必要"
         ))
     }
@@ -132,13 +130,11 @@ struct AskAIRetrievalPlannerTests {
 
         #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: x402,
-            path: "/Wiki/x402-paid-api-route.md",
             content: "x402 Paid API Route Catalog"
         ))
         #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: hono,
-            path: "/Wiki/ic-hono.md",
-            content: "Full Cloudflare Workers compatibility is not supported."
+            content: "ic-hono has no full Cloudflare Workers compatibility."
         ))
     }
 
@@ -148,7 +144,6 @@ struct AskAIRetrievalPlannerTests {
 
         #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Wiki/recipes/khao-man-gai.md",
             content: "米、鶏むね肉、香味ペーストを炊飯器で一緒に炊くレシピ。"
         ))
     }
@@ -159,7 +154,6 @@ struct AskAIRetrievalPlannerTests {
 
         #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Wiki/food.md",
             content: "熱いものが苦手な猫舌について説明する。"
         ))
     }
@@ -207,12 +201,10 @@ struct AskAIRetrievalPlannerTests {
 
         let matches = await verifier.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Knowledge/ic-hono.md",
             content: "ic-hono does not provide full Cloudflare Workers compatibility."
         )
         let rejectsNoise = await verifier.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Knowledge/other.md",
             content: "An unrelated document about SwiftUI navigation."
         )
 
@@ -235,10 +227,9 @@ struct AskAIRetrievalPlannerTests {
         #expect(evidence.content.contains("PAYMENT-SIGNATURE for the supported answer"))
         #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Knowledge/payments.md",
             content: "\(evidence.excerpt)\n\(evidence.content)"
         ))
-        let prompt = AskAIPromptBuilder.build(
+        let builtPrompt = AskAIPromptBuilder.build(
             databaseTitle: "Payments",
             question: "How is the route authenticated?",
             history: [],
@@ -255,7 +246,7 @@ struct AskAIRetrievalPlannerTests {
                 )
             ]
         )
-        #expect(prompt.contains("PAYMENT-SIGNATURE for the supported answer"))
+        #expect(builtPrompt.message.contains("PAYMENT-SIGNATURE for the supported answer"))
     }
 
     @Test
@@ -277,7 +268,7 @@ struct AskAIRetrievalPlannerTests {
     }
 
     @Test
-    func preparedPromptEvidenceRejectsMatchesOutsideSelectedWindow() {
+    func evidenceWindowFallsBackWhenSearchPreviewDoesNotMatchTheQuery() {
         let queryPlan = plan("alpha beta")
         let preview = "selected preview with unrelated evidence"
         let content = "alpha beta only appears here "
@@ -289,10 +280,21 @@ struct AskAIRetrievalPlannerTests {
             content: content
         )
 
+        #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
+            queryPlan: queryPlan,
+            content: "\(evidence.excerpt)\n\(evidence.content)"
+        ))
+        #expect(evidence.content.contains("alpha beta only appears here"))
+        #expect(!evidence.content.contains("selected preview with unrelated evidence"))
+    }
+
+    @Test
+    func exactVerificationRejectsTermsFoundOnlyInThePath() {
+        let queryPlan = plan("alpha beta")
+
         #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: "/Knowledge/note.md",
-            content: "\(evidence.excerpt)\n\(evidence.content)"
+            content: "This document contains unrelated evidence."
         ))
     }
 

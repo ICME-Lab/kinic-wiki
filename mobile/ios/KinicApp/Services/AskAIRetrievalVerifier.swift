@@ -5,12 +5,10 @@
 actor AskAIRetrievalVerifier {
     func hasRequiredExactMatches(
         queryPlan: AskAIQueryPlan,
-        path: String,
         content: String
     ) -> Bool {
         AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: queryPlan,
-            path: path,
             content: content
         )
     }

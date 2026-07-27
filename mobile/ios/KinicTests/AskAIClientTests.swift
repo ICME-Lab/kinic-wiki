@@ -37,6 +37,42 @@ struct AskAIClientTests {
     }
 
     @Test
+    func parsesStandardEventsWithCommentsMetadataAndMultipleDataLines() throws {
+        let body = """
+        : keep-alive
+        event: message
+        id: 42
+        retry: 1000
+        data: {"content":
+        : heartbeat
+        data: "Grounded answer"}
+
+        ignored-field: ignored
+        data: {"finish_reason":"stop"}
+
+        : trailing-heartbeat
+        data: [DONE]
+
+        """.replacingOccurrences(of: "\n", with: "\r\n")
+
+        #expect(try AskAIClient.parseSSE(body) == "Grounded answer")
+    }
+
+    @Test
+    func rejectsMultipleCompleteJSONDataLinesInOneStandardEvent() {
+        let body = """
+        data: {"content":"final"}
+        data: {"finish_reason":"stop"}
+
+        : event-boundary
+        """
+
+        #expect(throws: AskAIClientError.invalidResponse) {
+            try AskAIClient.parseSSE(body)
+        }
+    }
+
+    @Test
     func rejectsContentEndingAtEOFWithoutDone() {
         let body = "data: {\"content\":\"partial\"}\n"
         #expect(throws: AskAIClientError.incompleteStream) {

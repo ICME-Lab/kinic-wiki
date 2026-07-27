@@ -95,10 +95,9 @@ enum AskAIRetrievalPlanner {
 
     static func hasRequiredExactMatches(
         queryPlan: AskAIQueryPlan,
-        path: String,
         content: String
     ) -> Bool {
-        let searchableText = normalize("\(path)\n\(content)")
+        let searchableText = normalize(content)
         let searchableTokens = Set(semanticTokens(in: searchableText))
         return queryPlan.queries.contains { query in
             let queryTokens = Set(semanticTokens(in: query.text))
@@ -124,13 +123,26 @@ enum AskAIRetrievalPlanner {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty })
             ?? ""
-        let anchor = previewRange(preview, in: content)
-            ?? narrowestRequiredQueryRange(queryPlan: queryPlan, in: content)
-        let window = contextWindow(in: content, around: anchor)
-        let excerpt = preview.isEmpty
-            ? String(window.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))
-            : String(preview.prefix(300))
-        return PreparedEvidence(excerpt: excerpt, content: window)
+        if let previewAnchor = previewRange(preview, in: content) {
+            let window = contextWindow(in: content, around: previewAnchor)
+            let evidence = PreparedEvidence(
+                excerpt: String(preview.prefix(300)),
+                content: window
+            )
+            if hasRequiredExactMatches(
+                queryPlan: queryPlan,
+                content: "\(evidence.excerpt)\n\(evidence.content)"
+            ) {
+                return evidence
+            }
+        }
+
+        let queryAnchor = narrowestRequiredQueryRange(queryPlan: queryPlan, in: content)
+        let window = contextWindow(in: content, around: queryAnchor)
+        return PreparedEvidence(
+            excerpt: String(window.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)),
+            content: window
+        )
     }
 
     static func semanticTokens(in value: String) -> [String] {

@@ -4,6 +4,11 @@
 
 import Foundation
 
+struct AskAIBuiltPrompt: Equatable, Sendable {
+    let message: String
+    let includedContexts: [AskAIContextSource]
+}
+
 enum AskAIPromptBuilder {
     static let maximumMessageCharacters = 24_000
     static let maximumHistoryCharacters = 6_000
@@ -15,7 +20,7 @@ enum AskAIPromptBuilder {
         question: String,
         history: [AskAIMessage],
         sources: [AskAIContextSource]
-    ) -> String {
+    ) -> AskAIBuiltPrompt {
         let recentHistory = AskAIHistoryFormatter.format(
             history,
             maximumCharacters: maximumHistoryCharacters
@@ -53,22 +58,27 @@ enum AskAIPromptBuilder {
             max(0, maximumMessageCharacters - prefix.count)
         )
         var sourceBlocks: [String] = []
+        var includedContexts: [AskAIContextSource] = []
         for contextSource in sources where remainingContext > 0 {
             let source = contextSource.source
             let header = "SOURCE \(source.id)\nPATH: \(source.path)\nMATCHED EXCERPT: \(source.excerpt)\nCONTENT:\n"
             let footer = "\nEND SOURCE \(source.id)"
             let separatorLength = sourceBlocks.isEmpty ? 0 : 2
-            let available = max(0, remainingContext - header.count - footer.count - separatorLength)
-            guard available > 0 else { break }
             let body = contextSource.content.bounded(
-                to: min(AskAIRetrievalPlanner.maximumContextCharactersPerSource, available)
+                to: AskAIRetrievalPlanner.maximumContextCharactersPerSource
             )
             let block = "\(header)\(body)\(footer)"
+            let requiredCharacters = separatorLength + block.count
+            guard requiredCharacters <= remainingContext else { continue }
             sourceBlocks.append(block)
-            remainingContext -= block.count + separatorLength
+            includedContexts.append(contextSource)
+            remainingContext -= requiredCharacters
         }
 
-        return prefix + sourceBlocks.joined(separator: "\n\n")
+        return AskAIBuiltPrompt(
+            message: prefix + sourceBlocks.joined(separator: "\n\n"),
+            includedContexts: includedContexts
+        )
     }
 }
 

@@ -5,6 +5,31 @@
 import Foundation
 
 enum AskAIHistoryFormatter {
+    static func semanticHistory(_ history: [AskAIMessage]) -> [AskAIMessage] {
+        var completedMessages: [AskAIMessage] = []
+        var index = history.startIndex
+
+        while index < history.endIndex {
+            guard history[index].role == .user else {
+                index = history.index(after: index)
+                continue
+            }
+            let assistantIndex = history.index(after: index)
+            guard assistantIndex < history.endIndex,
+                  history[assistantIndex].role == .assistant else {
+                index = assistantIndex
+                continue
+            }
+            let assistant = history[assistantIndex]
+            if assistant.state == .complete || assistant.state == .insufficient {
+                completedMessages.append(history[index])
+                completedMessages.append(assistant)
+            }
+            index = history.index(after: assistantIndex)
+        }
+        return completedMessages
+    }
+
     static func format(
         _ history: [AskAIMessage],
         maximumMessages: Int = 6,
@@ -12,7 +37,7 @@ enum AskAIHistoryFormatter {
     ) -> String {
         guard maximumMessages > 0, maximumCharacters > 0 else { return "" }
 
-        let messages = history.suffix(maximumMessages).map { message in
+        let messages = semanticHistory(history).suffix(maximumMessages).map { message in
             "\(message.role == .user ? "USER" : "ASSISTANT"): \(message.text)"
         }
         var remainingCharacters = maximumCharacters

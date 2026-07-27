@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: July 23, 2026
-Effective Date: August 22, 2026
+Last Updated: July 27, 2026
+Effective Date: July 27, 2026
 
 ## 1. Who we are
 
@@ -99,7 +99,7 @@ The Service is not directed to children under 13, and we do not knowingly proces
 
 ## 10. Changes to this Policy
 
-We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. Material changes take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
+We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. Material changes posted after this Policy's Effective Date take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
 
 ## 11. Contact us
 
