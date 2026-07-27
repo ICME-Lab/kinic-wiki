@@ -1,12 +1,31 @@
 // Where: tools/candid/subset-check.mjs
 // What: Shared structural checks for hand-written Candid IDL subsets.
 // Why: Browser-side hand-written IDL should fail CI when crates/vfs_canister/vfs.did drifts.
-export function checkCandidSubset({ didSource, idlSource, expectedTypes, expectedMethods, didTypeAliases = {} }) {
+export function selectCandidShapes(shapes, names) {
+  const selected = {};
+  for (const name of names) {
+    if (!(name in shapes)) {
+      throw new Error(`shared candid shape missing: ${name}`);
+    }
+    selected[name] = shapes[name];
+  }
+  return selected;
+}
+
+export function checkCandidSubset({
+  didSource,
+  idlSource,
+  expectedTypes,
+  expectedMethods,
+  didTypeAliases = {},
+  idlResultAliases = {},
+  rejectUnexpectedMethods = false
+}) {
   const failures = [];
   const didTypes = parseDidTypes(didSource);
   const didMethods = parseDidMethods(didSource, didTypeAliases);
   const idlTypes = parseIdlTypes(idlSource);
-  const idlMethods = parseIdlMethods(idlSource);
+  const idlMethods = parseIdlMethods(idlSource, idlResultAliases);
 
   for (const [name, shape] of Object.entries(expectedTypes)) {
     compareShape(failures, `vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
@@ -16,6 +35,14 @@ export function checkCandidSubset({ didSource, idlSource, expectedTypes, expecte
   for (const [name, shape] of Object.entries(expectedMethods)) {
     compareMethod(failures, `vfs.did method ${name}`, didMethods[name], shape, didTypeAliases);
     compareMethod(failures, `hand-written IDL method ${name}`, idlMethods[name], shape, didTypeAliases);
+  }
+
+  if (rejectUnexpectedMethods) {
+    for (const name of Object.keys(idlMethods)) {
+      if (!(name in expectedMethods)) {
+        failures.push(`unexpected hand-written IDL method: ${name}`);
+      }
+    }
   }
 
   return failures;
@@ -99,17 +126,27 @@ function parseIdlFields(body) {
   return fields;
 }
 
-function parseIdlMethods(source) {
+function parseIdlMethods(source, idlResultAliases) {
   const service = source.match(/return\s+idl\.Service\(\{([^]*?)\n\s*\}\);/m)?.[1] ?? "";
   const methods = {};
   for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*([^\]]+?)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
     methods[match[1]] = {
       input: splitIdlInputs(match[2]),
-      output: normalizeIdlShape(match[3]),
+      output: normalizeIdlResult(match[3], idlResultAliases),
       mode: match[4] ?? "update"
     };
   }
   return methods;
+}
+
+function normalizeIdlResult(value, idlResultAliases) {
+  const trimmed = value.trim();
+  const inlineResult = trimmed.match(
+    /^idl\.Variant\(\{\s*Ok:\s*(.+?),\s*Err:\s*idl\.Text\s*\}\)$/s
+  );
+  if (!inlineResult) return normalizeIdlShape(trimmed);
+  const okShape = normalizeIdlShape(inlineResult[1]);
+  return idlResultAliases[okShape] ?? okShape;
 }
 
 function findStatementEnd(source, start) {
