@@ -19,6 +19,7 @@
 ## Legal
 
 - [Privacy Policy](legal/privacy-policy.md) — Source for the published Kinic privacy policy
+- [Support](legal/support.md) — Source for the published Kinic support page
 
 ## Internal Design (internal/)
 

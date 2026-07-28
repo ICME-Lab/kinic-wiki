@@ -38,8 +38,9 @@ Route behavior:
   - `preview_mode` accepts `light`, `content-start`, or `none`; use `content-start` for broad/list/classification candidate review
   - Returns fetchable opaque ids
 - `fetch_many`
-  - Input: `{ "ids": ["<id-from-search>"] }`
-  - Fetches 1 to 10 search result ids and returns item-level errors for invalid or stale ids
+  - Input: `{ "ids": ["<id-or-public-url-from-search>"] }`
+  - Fetches 1 to 10 search results by the exact opaque `id` or public `url` returned by `search`, and returns item-level errors for invalid or stale references
+  - Do not pass ChatGPT citation tokens such as `turn0file0`; if an opaque id is hidden, construct `https://wiki.kinic.xyz/db/{database_id}{path}` from the result metadata
 - `read_path`
   - Input: `{ "database_id": "db_...", "path": "/Knowledge/index.md" }`
   - Calls canister `read_node` for a known path without requiring a search result id
@@ -56,9 +57,10 @@ Route behavior:
   - Calls canister `memory_manifest`
   - Use to discover Store API roots, capabilities, roles, and limits
 - `context`
-  - Input: `{ "database_id": "db_...", "task": "...", "entities": [], "namespace": "/Knowledge", "budget_tokens": 2000, "include_evidence": true, "depth": 1 }`
+  - Input: `{ "database_id": "db_...", "task": "...", "entities": [], "namespace": "/", "budget_tokens": 2000, "include_evidence": true, "depth": 1 }`
   - Calls canister `query_context`
   - Use first for normal question answering and task-scoped context collection
+  - Omitting `namespace` searches from `/`; pass `/Knowledge` explicitly to restrict recall to that store
 
 All tools keep read-only annotations:
 
@@ -74,9 +76,9 @@ For broad, list, or classification tasks:
 
 1. Build a candidate set with multiple `search` calls. Use query variants such as the raw user phrase, key nouns, synonyms, title terms, and topic terms.
 2. Use `preview_mode: "content-start"` when search result previews are used for candidate classification.
-3. If `/Knowledge` is thin, use `list` with `prefix: "/"` to discover top-level prefixes, then search `/Sources` and any discovered wiki prefix such as `/Wiki`.
+3. Use `list` with `prefix: "/"` to discover top-level prefixes, then narrow later searches to `/Knowledge`, `/Sources`, or a discovered wiki prefix such as `/Wiki` when useful.
 4. Separate title/path matches from topic or ability-term matches before synthesis. Do not mix another work's ability evidence into a title-matched work.
-5. Use `fetch_many` for one or more search result ids. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single known-path evidence check. Use returned `context.evidence` for source-reference trust checks.
+5. Use `fetch_many` for one or more exact search result ids or public URLs. Use `read_paths` for 2 or more known paths from `list`, `context`, or `search` metadata. Use `read_path` for a single known-path evidence check. Use returned `context.evidence` for source-reference trust checks.
 6. Report coverage limits: search queries, prefixes checked, fetched count, excluded candidates, and any `truncated: true` results.
 
 Recipe list example:
@@ -122,7 +124,7 @@ curl -sS http://127.0.0.1:8787/mcp \
 
 `wrangler.jsonc` defaults:
 
-- `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
+- `KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`
 - `KINIC_WIKI_IC_HOST=https://icp0.io`
 - `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
 
@@ -136,24 +138,33 @@ Cloudflare custom domains:
 Use a separate wiki app or staging app. Do not replace the existing memory app endpoint.
 
 1. Configure MCP URL as `https://wiki-mcp-staging.kinic.xyz/mcp`.
-2. Refresh tools.
-3. Confirm tools list contains exactly `find_databases`, `search`, `fetch_many`, `read_path`, `read_paths`, `list`, `memory_manifest`, and `context`.
-4. Run review test cases:
-   - `find_databases` can select `KINIC-WIKI`.
-   - `context` returns task-scoped nodes and evidence for a known public DB.
-   - `search` for `clipper usage` returns an evidence node with `preview_mode: "content-start"`.
-   - `list` with `prefix: "/"` discovers top-level prefixes.
-   - `fetch_many` returns node text for one or more search result ids.
-   - `read_path` returns node text for a known path.
-   - `read_paths` returns multiple known path bodies and item-level missing-path errors.
+2. Attach `skills/kinic-wiki-mcp/` to the plugin. For the public review submission, choose **With MCP** and submit the MCP with this skill; do not package an `.app.json` reference to the existing Developer Mode app.
+3. Refresh tools.
+4. Confirm tools list contains exactly `find_databases`, `search`, `fetch_many`, `read_path`, `read_paths`, `list`, `memory_manifest`, and `context`.
+5. Run review test cases:
+   - `find_databases` selects `KINIC-WIKI`.
+   - `context` defaults to `/` and returns `/Wiki/operators/browser-and-clipper.md` for `clipper usage`.
+   - `search` for `clipper usage` returns that page with `preview_mode: "content-start"`.
+   - `list` with `prefix: "/"` and `limit: 99` discovers top-level prefixes.
+   - `fetch_many` returns text for the strongest search results.
+   - `read_path` returns `/Wiki/architecture/code-map.md`.
+   - `read_paths` returns `/Wiki/operators/browser-and-clipper.md` and `/Wiki/operators/index.md`.
    - private, unknown, or stale ids return errors.
-5. Promote the same configuration to `https://wiki-mcp.kinic.xyz/mcp` after staging passes.
+6. Run the automated submission smoke three times against both configured endpoints. This also validates the attached skill instructions, tool reference, and OpenAI MCP dependency:
+
+```bash
+pnpm --dir workers/wiki-mcp review:smoke -- --repeats 3
+```
+
+7. Run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-submission.json` twice in a new ChatGPT web conversation with the submitted plugin and skill attached.
+8. Deploy only after local checks pass, then repeat steps 6 and 7 before resubmission. The current Cloudflare configuration routes staging and production hostnames to the same Worker, so staging checks endpoint parity rather than an isolated pre-production deployment.
 
 ## Review Checklist
 
 - No credentials required.
 - No write tools.
 - No private database access.
+- The submitted **With MCP** plugin includes `skills/kinic-wiki-mcp/`, and `agents/openai.yaml` points to `https://wiki-mcp.kinic.xyz/mcp`.
 - Responses contain only public database metadata, public node URLs, and public node text.
 - Responses do not include user ids, internal request/session ids, or secrets.
 - `https://mcp.kinic.xyz/mcp` remains unchanged.

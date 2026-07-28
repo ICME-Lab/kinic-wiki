@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 const DEFAULT_MCP_URL = "http://127.0.0.1:8787/mcp";
 const DEFAULT_DATABASE_QUERY = "KINIC-WIKI";
 const DEFAULT_QUERY = "vfs cli";
-const DEFAULT_PREFIX = "/Knowledge";
+const DEFAULT_PREFIX = "/";
 const DEFAULT_ITERATIONS = 5;
 const DEFAULT_WARMUP = 1;
 
@@ -172,8 +172,8 @@ function buildScenarios(databaseId, setup, capabilities) {
         preview_mode: "content-start"
       })
     ) : null,
-    capabilities.tools.has("list") ? scenario("list_root_shallow", () => callTool("list", { database_id: databaseId, prefix: "/", recursive: false, limit: 100 })) : null,
-    capabilities.tools.has("list") ? scenario("list_prefix_recursive", () => callTool("list", { database_id: databaseId, prefix: args.prefix, recursive: true, limit: 100 })) : null,
+    capabilities.tools.has("list") ? scenario("list_root_shallow", () => callTool("list", { database_id: databaseId, prefix: "/", recursive: false, limit: 99 })) : null,
+    capabilities.tools.has("list") ? scenario("list_prefix_recursive", () => callTool("list", { database_id: databaseId, prefix: args.prefix, recursive: true, limit: 99 })) : null,
     capabilities.tools.has("fetch_many") ? scenario("fetch_many", () => callTool("fetch_many", { ids: setup.fetch_ids })) : null,
     capabilities.tools.has("read_path") ? scenario("read_path", () => callTool("read_path", { database_id: databaseId, path: setup.primary_path })) : null,
     capabilities.tools.has("read_paths") && setup.paths.length >= 2 ? scenario("read_paths", () => callTool("read_paths", { database_id: databaseId, paths: setup.paths })) : null,

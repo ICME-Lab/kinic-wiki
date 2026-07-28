@@ -146,6 +146,20 @@ export default function HomePage() {
           ))}
         </div>
       </section>
+
+      <footer className="border-t border-line bg-white px-4 py-6 text-sm text-muted sm:px-6">
+        <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3" aria-label="Legal">
+          <span>Kinic Wiki</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/support">
+              Support
+            </Link>
+            <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/privacy-policy">
+              Privacy Policy
+            </Link>
+          </div>
+        </nav>
+      </footer>
     </main>
   );
 }
