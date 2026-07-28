@@ -129,7 +129,7 @@ function parseIdlFields(body) {
 function parseIdlMethods(source, idlResultAliases) {
   const service = source.match(/return\s+idl\.Service\(\{([^]*?)\n\s*\}\);/m)?.[1] ?? "";
   const methods = {};
-  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*([^\]]+?)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
+  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*([^\]]*?)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
     methods[match[1]] = {
       input: splitIdlInputs(match[2]),
       output: normalizeIdlResult(match[3], idlResultAliases),

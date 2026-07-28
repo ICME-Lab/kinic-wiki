@@ -23,6 +23,17 @@
     { "value": "/Sources/source-capture-requestsfake/1.md", "valid": false },
     { "value": "/Knowledge/1.md", "valid": false }
   ],
+  "canisterAcceptedRequestPaths": [
+    { "value": "/Sources/source-capture-requests/1.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/_leading.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/a..b.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/a/b.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/日本語.md", "valid": true },
+    { "value": "/Sources/source-capture-requestsfake/1.md", "valid": false },
+    { "value": "/Sources/source-capture-requests/1.txt", "valid": false },
+    { "value": "/Knowledge/1.md", "valid": false }
+  ],
   "slugs": [
     { "value": " Café / 日本語  ", "fallback": "source", "expected": "café-日本語" },
     { "value": "../", "fallback": "Example.com", "expected": "example.com" }

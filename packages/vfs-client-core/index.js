@@ -23,6 +23,7 @@ export function isLocalReplicaHost(value) {
     const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     return (
       hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
       hostname === "127.0.0.1" ||
       hostname === "::1" ||
       hostname === "0.0.0.0"

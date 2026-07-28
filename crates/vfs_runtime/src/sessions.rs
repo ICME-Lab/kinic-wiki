@@ -293,32 +293,15 @@ fn validate_session_nonce(session_nonce: &str) -> Result<(), String> {
 }
 
 fn validate_source_capture_request_path(request_path: &str) -> Result<(), String> {
-    if !is_source_capture_request_path(request_path) {
+    if !is_canister_accepted_source_capture_request_path(request_path) {
         return Err("request_path must be a source capture request path".to_string());
     }
     Ok(())
 }
 
-pub(crate) fn is_source_capture_request_path(path: &str) -> bool {
+pub(crate) fn is_canister_accepted_source_capture_request_path(path: &str) -> bool {
     const PREFIX: &str = "/Sources/source-capture-requests/";
-    let Some(filename) = path.strip_prefix(PREFIX) else {
-        return false;
-    };
-    let Some(request_id) = filename.strip_suffix(".md") else {
-        return false;
-    };
-    is_safe_source_capture_request_id(request_id)
-}
-
-fn is_safe_source_capture_request_id(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 128
-        && bytes[0].is_ascii_alphanumeric()
-        && !value.contains("..")
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    path.starts_with(PREFIX) && path.ends_with(".md")
 }
 
 fn validate_source_capture_request_node(node: &Node, caller: &str) -> Result<(), String> {

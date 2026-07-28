@@ -5,23 +5,27 @@ use crate::billing::{
     StorageChargeInput, compute_storage_charge_cycles, load_active_databases_for_storage_billing,
     load_storage_cycle_account, settle_database_storage_charge_in_tx,
 };
-use crate::sessions::{is_source_capture_request_path, parse_frontmatter_fields};
+use crate::sessions::{is_canister_accepted_source_capture_request_path, parse_frontmatter_fields};
 
 #[test]
-fn source_capture_paths_match_shared_contract_fixture() {
+fn canister_accepted_source_capture_paths_match_shared_contract_fixture() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../../contracts/source-capture-contract.json"
     ))
     .expect("source capture contract fixture should parse");
-    for entry in fixture["requestPaths"]
+    for entry in fixture["canisterAcceptedRequestPaths"]
         .as_array()
-        .expect("requestPaths should be an array")
+        .expect("canisterAcceptedRequestPaths should be an array")
     {
         let path = entry["value"]
             .as_str()
             .expect("path value should be a string");
         let expected = entry["valid"].as_bool().expect("valid should be a boolean");
-        assert_eq!(is_source_capture_request_path(path), expected, "{path}");
+        assert_eq!(
+            is_canister_accepted_source_capture_request_path(path),
+            expected,
+            "{path}"
+        );
     }
 }
 

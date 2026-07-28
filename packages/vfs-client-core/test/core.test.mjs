@@ -32,6 +32,7 @@ test("variantName returns only the Candid variant tag", () => {
 test("isLocalReplicaHost requires an exact parsed loopback hostname", () => {
   for (const value of [
     "http://localhost:8000",
+    "https://id.ai.localhost",
     "http://127.0.0.1:8000",
     "http://[::1]:8000",
     "http://0.0.0.0:8000"
@@ -41,7 +42,6 @@ test("isLocalReplicaHost requires an exact parsed loopback hostname", () => {
   for (const value of [
     "localhost:8000",
     "https://localhost.evil.test",
-    "https://id.ai.localhost",
     "https://example.com/?next=127.0.0.1"
   ]) {
     assert.equal(isLocalReplicaHost(value), false, value);
