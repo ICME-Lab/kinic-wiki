@@ -34,16 +34,6 @@ The public browser entry point is:
 
 https://wiki.kinic.xyz
 
-The official Kinic Wiki database is:
-
-https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Knowledge
-
-Database ID:
-
-```text
-db_kva4v2twg6jv
-```
-
 The canonical CLI guide is:
 
 https://wiki.kinic.xyz/docs/cli

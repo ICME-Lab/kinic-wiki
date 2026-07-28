@@ -25,7 +25,7 @@
 ### `find_databases`
 
 ```json
-{"query":"KINIC-WIKI","limit":10}
+{"query":"hono-docs","limit":10}
 ```
 
 ### `context`
@@ -34,8 +34,8 @@ Omit `namespace` to use the server default `/`.
 
 ```json
 {
-  "database_id":"db_kva4v2twg6jv",
-  "task":"summarize how the browser clipper stores captured pages",
+  "database_id":"db_23dhmsxlhukv",
+  "task":"explain how to test Hono applications with app.request and testClient",
   "budget_tokens":2000,
   "include_evidence":true,
   "depth":1
@@ -48,9 +48,9 @@ Pass `"namespace":"/Knowledge"` only when the user explicitly restricts the requ
 
 ```json
 {
-  "database_id":"db_kva4v2twg6jv",
-  "query":"clipper usage",
-  "prefix":"/",
+  "database_id":"db_23dhmsxlhukv",
+  "query":"testing app.request testClient",
+  "prefix":"/Wiki",
   "limit":3,
   "preview_mode":"content-start"
 }
@@ -67,7 +67,7 @@ If the host replaces IDs with citation aliases, use the exact public URLs instea
 ```json
 {
   "ids":[
-    "https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Wiki/operators/browser-and-clipper.md"
+    "https://wiki.kinic.xyz/db/db_23dhmsxlhukv/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0002.md"
   ]
 }
 ```
@@ -77,15 +77,15 @@ Never pass `turn0file0`, `turn0file1`, or similar host-local aliases.
 ### `list`
 
 ```json
-{"database_id":"db_kva4v2twg6jv","prefix":"/","recursive":false,"limit":99}
+{"database_id":"db_23dhmsxlhukv","prefix":"/","recursive":false,"limit":99}
 ```
 
 ### `read_path`
 
 ```json
 {
-  "database_id":"db_kva4v2twg6jv",
-  "path":"/Wiki/architecture/code-map.md"
+  "database_id":"db_23dhmsxlhukv",
+  "path":"/Knowledge/sources/honojs__hono/index.md"
 }
 ```
 
@@ -93,10 +93,10 @@ Never pass `turn0file0`, `turn0file1`, or similar host-local aliases.
 
 ```json
 {
-  "database_id":"db_kva4v2twg6jv",
+  "database_id":"db_23dhmsxlhukv",
   "paths":[
-    "/Wiki/operators/browser-and-clipper.md",
-    "/Wiki/operators/index.md"
+    "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0002.md",
+    "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0004.md"
   ]
 }
 ```
@@ -104,7 +104,7 @@ Never pass `turn0file0`, `turn0file1`, or similar host-local aliases.
 ### `memory_manifest`
 
 ```json
-{"database_id":"db_kva4v2twg6jv"}
+{"database_id":"db_23dhmsxlhukv"}
 ```
 
 ## Output interpretation

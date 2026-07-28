@@ -5,9 +5,9 @@
 import { writeFileSync } from "node:fs";
 
 const DEFAULT_MCP_URL = "http://127.0.0.1:8787/mcp";
-const DEFAULT_DATABASE_QUERY = "KINIC-WIKI";
-const DEFAULT_QUERY = "vfs cli";
-const DEFAULT_PREFIX = "/";
+const DEFAULT_DATABASE_QUERY = "hono-docs";
+const DEFAULT_QUERY = "testing app.request testClient";
+const DEFAULT_PREFIX = "/Wiki";
 const DEFAULT_ITERATIONS = 5;
 const DEFAULT_WARMUP = 1;
 
