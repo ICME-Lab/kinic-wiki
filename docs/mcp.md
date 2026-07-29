@@ -124,7 +124,7 @@ curl -sS http://127.0.0.1:8787/mcp \
 
 `wrangler.jsonc` defaults:
 
-- `KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`
+- `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
 - `KINIC_WIKI_IC_HOST=https://icp0.io`
 - `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
 
@@ -142,13 +142,13 @@ Use a separate wiki app or staging app. Do not replace the existing memory app e
 3. Refresh tools.
 4. Confirm tools list contains exactly `find_databases`, `search`, `fetch_many`, `read_path`, `read_paths`, `list`, `memory_manifest`, and `context`.
 5. Run review test cases:
-   - `find_databases` selects `KINIC-WIKI`.
-   - `context` defaults to `/` and returns `/Wiki/operators/browser-and-clipper.md` for `clipper usage`.
-   - `search` for `clipper usage` returns that page with `preview_mode: "content-start"`.
+   - `find_databases` selects `hono-docs`.
+   - `context` defaults to `/` and returns Hono testing guidance for `app.request` and `testClient`.
+   - `search` for `testing app.request testClient` under `/Wiki` returns testClient guidance with `preview_mode: "content-start"`.
    - `list` with `prefix: "/"` and `limit: 99` discovers top-level prefixes.
    - `fetch_many` returns text for the strongest search results.
-   - `read_path` returns `/Wiki/architecture/code-map.md`.
-   - `read_paths` returns `/Wiki/operators/browser-and-clipper.md` and `/Wiki/operators/index.md`.
+   - `read_path` returns `/Knowledge/sources/honojs__hono/index.md`.
+   - `read_paths` returns two Hono testClient pages.
    - private, unknown, or stale ids return errors.
 6. Run the automated submission smoke three times against both configured endpoints. This also validates the attached skill instructions, tool reference, and OpenAI MCP dependency:
 

@@ -5,6 +5,7 @@
 const X_TWEET_INTENT_URL = "https://twitter.com/intent/tweet";
 const PUBLIC_WIKI_ORIGIN = "https://wiki.kinic.xyz";
 const PUBLIC_DATABASE_ROUTE_PREFIX = "/db";
+const PUBLIC_NODE_ROUTE_PREFIX = "/p";
 
 export function isRoutableDatabaseId(databaseId: string): boolean {
   return databaseId.trim().length > 0;
@@ -22,6 +23,15 @@ export function databaseRouteBase(databaseId: string): string {
 
 export function publicDatabaseUrl(databaseId: string, origin = PUBLIC_WIKI_ORIGIN): string {
   return new URL(publicDatabasePath(databaseId), origin).toString();
+}
+
+export function publicNodePath(publicId: string): string {
+  if (!/^[0-9a-f]{32}$/.test(publicId)) throw new Error("invalid public node id");
+  return `${PUBLIC_NODE_ROUTE_PREFIX}/${publicId}`;
+}
+
+export function publicNodeUrl(publicId: string, origin = PUBLIC_WIKI_ORIGIN): string {
+  return new URL(publicNodePath(publicId), origin).toString();
 }
 
 export function xShareDatabaseHref({

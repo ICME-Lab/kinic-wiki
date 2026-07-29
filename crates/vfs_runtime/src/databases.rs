@@ -805,6 +805,7 @@ pub(crate) fn delete_database_index_rows(
         "database_cycle_accounts",
         "market_entitlements",
         "market_listings",
+        "node_publications",
         "database_members",
         "source_capture_trigger_sessions",
         "ops_answer_sessions",

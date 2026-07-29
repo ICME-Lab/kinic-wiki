@@ -133,10 +133,10 @@ Database metadata input example:
 
 ```json
 {
-  "name": "KINIC-WIKI",
-  "description": "Public Kinic Wiki knowledge for operations, structure, clipper usage, and agent workflows.",
-  "llm_summary": "Covers Kinic Wiki operations, VFS structure, wiki browser behavior, clipper usage, agent query/ingest/lint workflows, compatibility decisions, and repo documentation. Useful FTS queries include \"clipper usage\", \"wiki structure\", \"operation skills\", \"agent docs\", and \"database lifecycle\". Does not cover private user memory or non-public DB content.",
-  "tags_json": "[\"kinic-wiki\",\"wiki\",\"vfs\",\"clipper\",\"agent\",\"operations\",\"ingest\",\"query\",\"lint\",\"architecture\"]"
+  "name": "Project Knowledge",
+  "description": "Public project documentation and operational knowledge.",
+  "llm_summary": "Covers project architecture, operations, decisions, and source-backed implementation guidance.",
+  "tags_json": "[\"project\",\"documentation\",\"operations\",\"architecture\"]"
 }
 ```
 

@@ -22,10 +22,10 @@ use vfs_types::{
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
-
+#[path = "database_service/node_publications.rs"]
+mod node_publications;
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 const MARKET_SECOND_BUYER_PRINCIPAL: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-
 fn service() -> VfsService {
     service_with_root().0
 }

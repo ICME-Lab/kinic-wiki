@@ -57,22 +57,37 @@ export function identityProviderUrl(): string {
 }
 
 export function derivationOriginUrl(locationLike: LocationLike | null = currentLocation()): string {
+  const configuredOrigin = configuredDerivationOrigin();
   if (!localIiE2eEnabled()) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   if (!locationLike || !isLocalHostname(locationLike.hostname)) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   const canisterId = publicEnv("VITE_KINIC_WIKI_CANISTER_ID") ?? "";
   if (!CANISTER_ID_PATTERN.test(canisterId)) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   const wikiHost = publicEnv("VITE_WIKI_IC_HOST") || DEFAULT_LOCAL_WIKI_IC_HOST;
   const wikiUrl = localHttpUrl(wikiHost);
   if (!wikiUrl) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   return `http://${canisterId}.localhost:${wikiUrl.port || "80"}`;
+}
+
+function configuredDerivationOrigin(): string {
+  const value = publicEnv("VITE_II_DERIVATION_ORIGIN");
+  if (!value) return DERIVATION_ORIGIN;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:" && !url.username && !url.password && url.origin === value) {
+      return value;
+    }
+  } catch {
+    // Invalid build configuration falls back to the production derivation origin.
+  }
+  return DERIVATION_ORIGIN;
 }
 
 function publicEnv(name: keyof ImportMetaEnv): string | undefined {

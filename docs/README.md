@@ -14,6 +14,7 @@
 ## Operations
 
 - [RELEASE.md](RELEASE.md) — Release procedure
+- [STAGING.md](STAGING.md) — Staging environment and deployment procedure
 - [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — Public environment smoke test procedure
 
 ## Legal

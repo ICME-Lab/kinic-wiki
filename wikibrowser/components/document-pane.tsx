@@ -34,7 +34,8 @@ export function DocumentHeader({
   isDirectory,
   canEditDirectory,
   editState,
-  rawContent
+  rawContent,
+  actions
 }: {
   canisterId: string;
   databaseId: string;
@@ -45,6 +46,7 @@ export function DocumentHeader({
   canEditDirectory: boolean;
   editState: DocumentEditState;
   rawContent: string | null;
+  actions?: ReactNode;
 }) {
   async function copyText(label: string, value: string) {
     try {
@@ -64,6 +66,7 @@ export function DocumentHeader({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {actions}
           <MobileCopyPathButton onCopyPath={() => void copyText("Path", path)} />
           <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
             <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />

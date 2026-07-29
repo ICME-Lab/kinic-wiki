@@ -193,6 +193,7 @@ The `/db/<database-id>/...` and `/dashboard/project/<database-id>` URLs are TanS
 ## Cloudflare Workers Deploy
 
 Use this repository as a monorepo project and set the Workers build root to `wikibrowser`.
+For the isolated staging environment, fixed resource identifiers, deployment order, and verification procedure, use [`../docs/STAGING.md`](../docs/STAGING.md) instead of the production commands below.
 
 Cloudflare settings:
 

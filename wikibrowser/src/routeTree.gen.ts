@@ -28,6 +28,7 @@ import { Route as MarketplaceIndexRouteImport } from './routes/marketplace.index
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as SkillsDatabaseIdRouteImport } from './routes/skills.$databaseId'
+import { Route as PPublicIdRouteImport } from './routes/p.$publicId'
 import { Route as MarketplaceListingIdRouteImport } from './routes/marketplace.$listingId'
 import { Route as DocsSkillsRouteImport } from './routes/docs.skills'
 import { Route as DocsCliRouteImport } from './routes/docs.cli'
@@ -140,6 +141,11 @@ const SkillsDatabaseIdRoute = SkillsDatabaseIdRouteImport.update({
   path: '/skills/$databaseId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PPublicIdRoute = PPublicIdRouteImport.update({
+  id: '/p/$publicId',
+  path: '/p/$publicId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MarketplaceListingIdRoute = MarketplaceListingIdRouteImport.update({
   id: '/$listingId',
   path: '/$listingId',
@@ -248,6 +254,7 @@ export interface FileRoutesByFullPath {
   '/docs/cli': typeof DocsCliRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
+  '/p/$publicId': typeof PPublicIdRoute
   '/skills/$databaseId': typeof SkillsDatabaseIdRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/docs/': typeof DocsIndexRoute
@@ -281,6 +288,7 @@ export interface FileRoutesByTo {
   '/docs/cli': typeof DocsCliRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
+  '/p/$publicId': typeof PPublicIdRoute
   '/skills/$databaseId': typeof SkillsDatabaseIdRoute
   '/dashboard': typeof DashboardIndexRoute
   '/docs': typeof DocsIndexRoute
@@ -319,6 +327,7 @@ export interface FileRoutesById {
   '/docs/cli': typeof DocsCliRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
+  '/p/$publicId': typeof PPublicIdRoute
   '/skills/$databaseId': typeof SkillsDatabaseIdRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/docs/': typeof DocsIndexRoute
@@ -358,6 +367,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/skills'
     | '/marketplace/$listingId'
+    | '/p/$publicId'
     | '/skills/$databaseId'
     | '/dashboard/'
     | '/docs/'
@@ -391,6 +401,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/skills'
     | '/marketplace/$listingId'
+    | '/p/$publicId'
     | '/skills/$databaseId'
     | '/dashboard'
     | '/docs'
@@ -428,6 +439,7 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/skills'
     | '/marketplace/$listingId'
+    | '/p/$publicId'
     | '/skills/$databaseId'
     | '/dashboard/'
     | '/docs/'
@@ -462,6 +474,7 @@ export interface RootRouteChildren {
   SupportRoute: typeof SupportRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
   DbDatabaseIdRoute: typeof DbDatabaseIdRouteWithChildren
+  PPublicIdRoute: typeof PPublicIdRoute
   SkillsDatabaseIdRoute: typeof SkillsDatabaseIdRoute
   ApiQueryAnswerRoute: typeof ApiQueryAnswerRoute
   ApiSourceCaptureTriggerRoute: typeof ApiSourceCaptureTriggerRoute
@@ -601,6 +614,13 @@ declare module '@tanstack/react-router' {
       path: '/skills/$databaseId'
       fullPath: '/skills/$databaseId'
       preLoaderRoute: typeof SkillsDatabaseIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/p/$publicId': {
+      id: '/p/$publicId'
+      path: '/p/$publicId'
+      fullPath: '/p/$publicId'
+      preLoaderRoute: typeof PPublicIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/marketplace/$listingId': {
@@ -813,6 +833,7 @@ const rootRouteChildren: RootRouteChildren = {
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
   DbDatabaseIdRoute: DbDatabaseIdRouteWithChildren,
+  PPublicIdRoute: PPublicIdRoute,
   SkillsDatabaseIdRoute: SkillsDatabaseIdRoute,
   ApiQueryAnswerRoute: ApiQueryAnswerRoute,
   ApiSourceCaptureTriggerRoute: ApiSourceCaptureTriggerRoute,

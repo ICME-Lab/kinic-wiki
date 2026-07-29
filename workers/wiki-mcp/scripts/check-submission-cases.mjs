@@ -18,11 +18,11 @@ const SKILL_OPENAI_CONFIG = new URL("agents/openai.yaml", SKILL_ROOT);
 const SUBMISSION_FILE = new URL("../chatgpt-app-submission.json", import.meta.url);
 const SUBMISSION_SCHEMA_FILE = new URL("../schemas/chatgpt-app-submission.v1.json", import.meta.url);
 const DESCRIPTOR_SNAPSHOT_FILE = new URL("../schemas/mcp-descriptor-hashes.json", import.meta.url);
-const DATABASE_ID = "db_kva4v2twg6jv";
-const DATABASE_QUERY = "KINIC-WIKI";
-const BROWSER_CLIPPER_PATH = "/Wiki/operators/browser-and-clipper.md";
-const OPERATOR_INDEX_PATH = "/Wiki/operators/index.md";
-const CODE_MAP_PATH = "/Wiki/architecture/code-map.md";
+const DATABASE_ID = "db_23dhmsxlhukv";
+const DATABASE_QUERY = "hono-docs";
+const TESTING_PATH = "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0002.md";
+const AUTH_TESTING_PATH = "/Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0004.md";
+const INDEX_PATH = "/Knowledge/sources/honojs__hono/index.md";
 const MISSING_PATH = "/__kinic_openai_review_missing__.md";
 const REQUEST_TIMEOUT_MS = 20_000;
 const EXPECTED_TOOLS = [
@@ -153,7 +153,7 @@ function validateSkill() {
     toolReference.includes(`"database_id":"${DATABASE_ID}"`),
     `skill reference must use ${DATABASE_ID}`
   );
-  for (const path of [BROWSER_CLIPPER_PATH, OPERATOR_INDEX_PATH, CODE_MAP_PATH]) {
+  for (const path of [TESTING_PATH, AUTH_TESTING_PATH, INDEX_PATH]) {
     assert(toolReference.includes(path), `skill reference must include ${path}`);
   }
   validateOpenAiConfigYaml(openAiConfig);
@@ -170,12 +170,12 @@ function validateSubmissionCases(submission) {
   );
 
   const prompts = submission.test_cases.map((testCase) => testCase.user_prompt);
-  assert(prompts[0].includes(DATABASE_QUERY), "database discovery prompt must name KINIC-WIKI");
+  assert(prompts[0].includes(DATABASE_QUERY), `database discovery prompt must name ${DATABASE_QUERY}`);
   for (const prompt of prompts.slice(1)) {
     assert(prompt.includes(DATABASE_ID), `positive test prompt must include ${DATABASE_ID}`);
   }
-  assert(prompts[3].includes(BROWSER_CLIPPER_PATH) && prompts[3].includes(OPERATOR_INDEX_PATH), "batch-read prompt must include both stable operator paths");
-  assert(prompts[4].includes(CODE_MAP_PATH), "single-read prompt must include the stable code map path");
+  assert(prompts[3].includes(TESTING_PATH) && prompts[3].includes(AUTH_TESTING_PATH), "batch-read prompt must include both stable Hono paths");
+  assert(prompts[4].includes(INDEX_PATH), "single-read prompt must include the stable Hono index path");
 
   for (const testCase of submission.test_cases) {
     assert(
@@ -235,36 +235,36 @@ async function checkSuccessfulCalls(client, mcpUrl) {
 
   const context = await callTool(client, mcpUrl, "context", {
     database_id: DATABASE_ID,
-    task: "clipper usage",
+    task: "explain how to test Hono applications with app.request and testClient",
     budget_tokens: 2000,
     include_evidence: true,
     depth: 1
   });
   assert(context.structured.namespace === "/", `${mcpUrl} context must default to namespace /`);
   assert(
-    context.structured.nodes?.some((entry) => entry.node?.path === BROWSER_CLIPPER_PATH),
-    `${mcpUrl} context must return the browser clipper page`
+    /testClient|app\.request/i.test(context.text),
+    `${mcpUrl} context must return Hono testing guidance`
   );
   assert(context.text.includes("Untrusted wiki evidence follows"), `${mcpUrl} context must label retrieved text as untrusted`);
 
   const search = await callTool(client, mcpUrl, "search", {
     database_id: DATABASE_ID,
-    query: "clipper usage",
-    prefix: "/",
+    query: "testing app.request testClient",
+    prefix: "/Wiki",
     limit: 10,
     preview_mode: "content-start"
   });
   const searchResults = search.structured.results;
   assert(
-    searchResults?.some((result) => result.metadata?.path === BROWSER_CLIPPER_PATH),
-    `${mcpUrl} search must return the browser clipper page`
+    searchResults?.some((result) => result.metadata?.path === TESTING_PATH),
+    `${mcpUrl} search must return the curated Hono testing page`
   );
   const publicUrls = searchResults.slice(0, 2).map((result) => result.url);
   const fetched = await callTool(client, mcpUrl, "fetch_many", { ids: publicUrls });
   assert(fetched.structured.results?.length === publicUrls.length, `${mcpUrl} fetch_many must return every requested result`);
   assert(
     fetched.structured.results.every((result) => result.is_error !== true && !("text" in result)),
-    `${mcpUrl} fetch_many structured results must omit full text`
+    `${mcpUrl} fetch_many structured results must omit full text: ${JSON.stringify(fetched.structured.results)}`
   );
   assert(fetched.text.includes("Content:"), `${mcpUrl} fetch_many content must contain readable node text`);
 
@@ -279,7 +279,7 @@ async function checkSuccessfulCalls(client, mcpUrl) {
 
   const batch = await callTool(client, mcpUrl, "read_paths", {
     database_id: DATABASE_ID,
-    paths: [BROWSER_CLIPPER_PATH, OPERATOR_INDEX_PATH]
+    paths: [TESTING_PATH, AUTH_TESTING_PATH]
   });
   assert(
     batch.structured.results?.every((result) => result.is_error !== true && !("text" in result)),
@@ -292,9 +292,9 @@ async function checkSuccessfulCalls(client, mcpUrl) {
 
   const node = await callTool(client, mcpUrl, "read_path", {
     database_id: DATABASE_ID,
-    path: CODE_MAP_PATH
+    path: INDEX_PATH
   });
-  assert(node.structured.metadata?.path === CODE_MAP_PATH, `${mcpUrl} read_path must return the stable code map`);
+  assert(node.structured.metadata?.path === INDEX_PATH, `${mcpUrl} read_path must return the stable Hono index`);
   assert(!("text" in node.structured), `${mcpUrl} read_path structured output must omit full text`);
   assert(node.text.includes("Content:"), `${mcpUrl} read_path content must contain readable node text`);
 }

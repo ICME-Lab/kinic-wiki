@@ -11,8 +11,7 @@ const idl = readFileSync(new URL("../src/vfs-idl.ts", import.meta.url), "utf8");
 const didTypeAliases = {
   ...sharedAliases,
   ResultExportSnapshot: "Result_7",
-  ResultFetchUpdates: "Result_8",
-  ResultDatabases: "Result_17"
+  ResultFetchUpdates: "Result_8"
 };
 
 const expectedTypes = {

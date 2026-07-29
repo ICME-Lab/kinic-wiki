@@ -107,43 +107,43 @@
   },
   "test_cases": [
     {
-      "description": "Discover the official public Kinic Wiki database by its stable name.",
-      "user_prompt": "Use only KinicWiki's find_databases tool to find the public Kinic Wiki database named \"KINIC-WIKI\". Return its exact name, database id, and public link.",
+      "description": "Discover a public Hono documentation database by its stable name.",
+      "user_prompt": "Use only KinicWiki's find_databases tool to find the public database named \"hono-docs\". Return its exact name, database id, and public link.",
       "file_attachment_urls": null,
       "tools_triggered": "find_databases",
-      "expected_output": "Returns the KINIC-WIKI database with its database id and public link.",
+      "expected_output": "Returns the hono-docs database with its database id and public link.",
       "expected_output_url": null
     },
     {
       "description": "Answer a normal question from whole-database task-scoped context.",
-      "user_prompt": "Using Kinic Wiki database db_kva4v2twg6jv, use only the context tool once with task-scoped context across the whole database to summarize how the browser clipper stores captured pages. Include the exact supporting wiki paths in the answer.",
+      "user_prompt": "Using Kinic Wiki database db_23dhmsxlhukv, use only the context tool once with task-scoped context across the whole database to explain how to test Hono applications with app.request and testClient. Include the exact supporting wiki paths in the answer.",
       "file_attachment_urls": null,
       "tools_triggered": "context",
-      "expected_output": "Explains the browser clipper workflow from public wiki nodes and identifies the supporting wiki paths.",
+      "expected_output": "Explains Hono application testing from public documentation nodes and identifies the supporting wiki paths.",
       "expected_output_url": null
     },
     {
       "description": "Search the fixed public database and read the strongest matching pages.",
-      "user_prompt": "In Kinic Wiki database db_kva4v2twg6jv, call search once for \"clipper usage\" with prefix / and limit 3. Then call fetch_many once for the first two results. Do not pass ChatGPT citation tokens such as turn0file0. Instead, pass each result's exact public URL, constructing it as https://wiki.kinic.xyz/db/db_kva4v2twg6jv{path} from its metadata path if needed. Use no other tools. Summarize those pages and identify their exact wiki paths.",
+      "user_prompt": "In Kinic Wiki database db_23dhmsxlhukv, call search once for \"testing app.request testClient\" with prefix /Wiki and limit 3. Then call fetch_many once for the first two results. Do not pass ChatGPT citation tokens such as turn0file0. Instead, pass each result's exact public URL, constructing it as https://wiki.kinic.xyz/db/db_23dhmsxlhukv{path} from its metadata path if needed. Use no other tools. Summarize those pages and identify their exact wiki paths.",
       "file_attachment_urls": null,
       "tools_triggered": "search, fetch_many",
-      "expected_output": "Summarizes the relevant clipper usage guidance from the strongest public wiki pages and identifies those pages.",
+      "expected_output": "Summarizes the relevant Hono testing guidance from the strongest public wiki pages and identifies those pages.",
       "expected_output_url": null
     },
     {
       "description": "List the fixed database root and batch-read two explicit public paths.",
-      "user_prompt": "In Kinic Wiki database db_kva4v2twg6jv, use only list and then read_paths: list the top-level inventory under /, then read /Wiki/operators/browser-and-clipper.md and /Wiki/operators/index.md together. Briefly summarize each page after reading them.",
+      "user_prompt": "In Kinic Wiki database db_23dhmsxlhukv, use only list and then read_paths: list the top-level inventory under /, then read /Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0002.md and /Wiki/sources/honojs__hono/2026/https-hono-dev-llms-full-txt-testclient-5dff0a939ad6-testclient-s0692-c0004.md together. Briefly summarize each page after reading them.",
       "file_attachment_urls": null,
       "tools_triggered": "list, read_paths",
-      "expected_output": "Shows the top-level public inventory and summarizes the two requested operator pages.",
+      "expected_output": "Shows the top-level public inventory and summarizes the requested Hono testClient pages.",
       "expected_output_url": null
     },
     {
       "description": "Inspect the fixed database capabilities and read one explicit public path.",
-      "user_prompt": "Use only memory_manifest and then read_path to show the public manifest for Kinic Wiki database db_kva4v2twg6jv, then read and briefly summarize /Wiki/architecture/code-map.md.",
+      "user_prompt": "Use only memory_manifest and then read_path to show the public manifest for Kinic Wiki database db_23dhmsxlhukv, then read and briefly summarize /Knowledge/sources/honojs__hono/index.md.",
       "file_attachment_urls": null,
       "tools_triggered": "memory_manifest, read_path",
-      "expected_output": "Explains the database's public capabilities and read-only policy, then summarizes the requested code map page.",
+      "expected_output": "Explains the database's public capabilities and read-only policy, then summarizes the Hono documentation index.",
       "expected_output_url": null
     }
   ],
