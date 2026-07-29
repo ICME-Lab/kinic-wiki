@@ -81,9 +81,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "ar_archive_writer"
@@ -198,14 +198,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "backoff"
-version = "0.4.0"
+name = "backon"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b62ddb9cb1ec0a098ad4bbf9344d0713fa193ae1a80af55febcff2627b6a00c1"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
 dependencies = [
- "getrandom 0.2.17",
- "instant",
- "rand 0.8.6",
+ "fastrand",
 ]
 
 [[package]]
@@ -1260,16 +1258,16 @@ dependencies = [
 
 [[package]]
 name = "ic-agent"
-version = "0.47.3"
+version = "0.49.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85dbab284eac1806b77833cff143d66ae97aae74d34b0e60fb4ab4edf3d6fa12"
+checksum = "1f9086b59107b6d6485a915762a2a3986ef208e80bb40eff22d099bbcd71deea"
 dependencies = [
  "arc-swap",
  "async-channel 2.5.0",
  "async-lock",
  "async-trait",
  "async-watch",
- "backoff",
+ "backon",
  "bytes",
  "cached",
  "candid",
@@ -1493,9 +1491,9 @@ dependencies = [
 
 [[package]]
 name = "ic-transport-types"
-version = "0.47.3"
+version = "0.49.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2116182b3ec5a831d579db0a205b6cf9c2ca96616493bef99480532d0b3c2f5"
+checksum = "e2d13d859ea481e8d5766a54a3b4dfcf4c11ff6f21d5e2aeaf9a44dd710a76ff"
 dependencies = [
  "candid",
  "hex",
@@ -1682,15 +1680,6 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_core",
-]
-
-[[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
