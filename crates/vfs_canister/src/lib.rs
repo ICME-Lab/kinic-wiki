@@ -402,6 +402,7 @@ fn read_node(database_id: String, path: String) -> Result<Option<Node>, String> 
 
 #[query]
 fn get_node_publication(request: PublishNodeRequest) -> Result<Option<NodePublication>, String> {
+    require_authenticated_caller()?;
     with_service(|service| service.get_node_publication(&caller_text(), request))
 }
 

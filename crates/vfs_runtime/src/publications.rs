@@ -62,14 +62,7 @@ impl VfsService {
     ) -> Result<NodePublication, String> {
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
         validate_public_node_id(public_id)?;
-        let meta = self.database_meta(&request.database_id)?;
-        let node = self
-            .database_store(&meta)?
-            .read_node(&request.path)?
-            .ok_or_else(|| format!("node not found: {}", request.path))?;
-        if node.kind != NodeKind::File || !request.path.ends_with(".md") {
-            return Err("only Markdown file nodes can be published".to_string());
-        }
+        self.require_publishable_node(&request)?;
 
         self.write_index(|conn| {
             if let Some(publication) =
@@ -91,7 +84,16 @@ impl VfsService {
 
     pub fn unpublish_node(&self, caller: &str, request: PublishNodeRequest) -> Result<(), String> {
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
-        self.remove_node_publications_for_path(&request.database_id, &request.path)
+        self.require_publishable_node(&request)?;
+        self.write_index(|conn| {
+            conn.execute(
+                "DELETE FROM node_publications
+                 WHERE database_id = ?1 AND path = ?2",
+                params![request.database_id, request.path],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
     }
 
     pub fn get_node_publication(
@@ -99,6 +101,9 @@ impl VfsService {
         caller: &str,
         request: PublishNodeRequest,
     ) -> Result<Option<NodePublication>, String> {
+        if caller == ANONYMOUS_PRINCIPAL {
+            return Err("anonymous caller not allowed".to_string());
+        }
         self.require_role(&request.database_id, caller, RequiredRole::Reader)?;
         self.read_index(|conn| load_node_publication(conn, &request.database_id, &request.path))
     }
@@ -124,13 +129,16 @@ impl VfsService {
         }))
     }
 
-    pub(crate) fn remove_node_publications_for_path(
-        &self,
-        database_id: &str,
-        path: &str,
-    ) -> Result<(), String> {
-        self.detach_node_publications_for_paths(database_id, &[path])
-            .map(|_| ())
+    fn require_publishable_node(&self, request: &PublishNodeRequest) -> Result<(), String> {
+        let meta = self.database_meta(&request.database_id)?;
+        let node = self
+            .database_store(&meta)?
+            .read_node(&request.path)?
+            .ok_or_else(|| format!("node not found: {}", request.path))?;
+        if node.kind != NodeKind::File || !request.path.ends_with(".md") {
+            return Err("only Markdown file nodes can be published".to_string());
+        }
+        Ok(())
     }
 
     pub(crate) fn detach_node_publications_for_paths(

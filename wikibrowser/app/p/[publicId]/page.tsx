@@ -1,6 +1,6 @@
 import { PublicMarkdownPreview } from "@/components/public-markdown-preview";
 import { AppLink as Link } from "@/components/app-link";
-import { publicNodePath } from "@/lib/share-links";
+import { publicNodeUrl } from "@/lib/share-links";
 import type { PublicNode } from "@/lib/types";
 import { readPublicNode } from "@/lib/vfs-client";
 
@@ -23,9 +23,11 @@ export async function loadPublicNodePageData(publicId: string): Promise<PublicNo
   };
 }
 
-export function publicNodeHead(publicId: string, data: PublicNodePageData) {
+export function publicNodeHead(publicId: string, data: PublicNodePageData, origin: string) {
   if (!data.node) return { meta: [{ title: "Not found | Kinic Wiki" }, { name: "robots", content: "noindex" }] };
-  const canonical = publicNodePath(publicId);
+  const canonical = publicNodeUrl(publicId, origin);
+  const openGraphImage = new URL("/opengraph-image.png", origin).toString();
+  const twitterImage = new URL("/twitter-image.png", origin).toString();
   return {
     meta: [
       { title: `${data.title} | Kinic Wiki` },
@@ -34,9 +36,11 @@ export function publicNodeHead(publicId: string, data: PublicNodePageData) {
       { property: "og:description", content: data.description },
       { property: "og:type", content: "article" },
       { property: "og:url", content: canonical },
-      { name: "twitter:card", content: "summary" },
+      { property: "og:image", content: openGraphImage },
+      { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: data.title },
-      { name: "twitter:description", content: data.description }
+      { name: "twitter:description", content: data.description },
+      { name: "twitter:image", content: twitterImage }
     ],
     links: [{ rel: "canonical", href: canonical }]
   };
