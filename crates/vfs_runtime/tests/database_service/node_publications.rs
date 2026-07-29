@@ -4,7 +4,9 @@
 
 use super::*;
 use vfs_runtime::fail_next_publication_detach_for_test;
-use vfs_types::{ListChildrenRequest, PublishNodeRequest, WriteNodeItem, WriteNodesRequest};
+use vfs_types::{
+    ListChildrenRequest, MkdirNodeRequest, PublishNodeRequest, WriteNodeItem, WriteNodesRequest,
+};
 
 fn node_publication_count(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
@@ -88,6 +90,18 @@ fn node_publication_exposes_only_the_selected_live_markdown_node() {
             .expect("reader should inspect publication"),
         Some(publication.clone())
     );
+    assert_eq!(
+        service
+            .get_node_publication("writer", request.clone())
+            .expect("writer should inspect publication"),
+        Some(publication.clone())
+    );
+    assert_eq!(
+        service
+            .get_node_publication("owner", request.clone())
+            .expect("owner should inspect publication"),
+        Some(publication.clone())
+    );
 
     let public_node = service
         .read_public_node(&publication.public_id)
@@ -101,6 +115,15 @@ fn node_publication_exposes_only_the_selected_live_markdown_node() {
             .read_node("alpha", "2vxsx-fae", "/Knowledge/private.md")
             .is_err(),
         "publication must not grant anonymous database access"
+    );
+    service
+        .grant_database_access("alpha", "owner", "2vxsx-fae", DatabaseRole::Reader, 6)
+        .expect("anonymous reader access should grant");
+    assert!(
+        service
+            .get_node_publication("2vxsx-fae", request.clone())
+            .expect_err("anonymous reader must not inspect publication")
+            .contains("anonymous caller not allowed")
     );
 
     let current_public = service
@@ -657,6 +680,123 @@ fn delete_and_unpublish_invalidate_public_urls() {
             .read_public_node(&second.public_id)
             .expect("lookup should succeed")
             .is_none()
+    );
+}
+
+#[test]
+fn unpublish_rejects_non_markdown_paths_and_removes_only_the_exact_publication() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .mkdir_node(
+            "owner",
+            MkdirNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Knowledge/nested".to_string(),
+            },
+            2,
+        )
+        .expect("nested folder should create");
+    for (path, content) in [
+        ("/Knowledge/first.md", "first public body"),
+        ("/Knowledge/nested/second.md", "second public body"),
+        ("/Knowledge/not-markdown.txt", "private text body"),
+    ] {
+        service
+            .write_node(
+                "owner",
+                WriteNodeRequest {
+                    database_id: "alpha".to_string(),
+                    path: path.to_string(),
+                    kind: NodeKind::File,
+                    content: content.to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                2,
+            )
+            .expect("node should write");
+    }
+    let first_request = PublishNodeRequest {
+        database_id: "alpha".to_string(),
+        path: "/Knowledge/first.md".to_string(),
+    };
+    let second_request = PublishNodeRequest {
+        database_id: "alpha".to_string(),
+        path: "/Knowledge/nested/second.md".to_string(),
+    };
+    let first = service
+        .publish_node(
+            "owner",
+            first_request.clone(),
+            "00112233445566778899aabbccddeeff",
+            3,
+        )
+        .expect("first node should publish");
+    let second = service
+        .publish_node(
+            "owner",
+            second_request.clone(),
+            "ffeeddccbbaa99887766554433221100",
+            3,
+        )
+        .expect("second node should publish");
+
+    for invalid_path in [
+        "",
+        "/",
+        "Knowledge/first.md",
+        "/Knowledge",
+        "/Knowledge/not-markdown.txt",
+        "/Knowledge/missing.md",
+    ] {
+        service
+            .unpublish_node(
+                "owner",
+                PublishNodeRequest {
+                    database_id: "alpha".to_string(),
+                    path: invalid_path.to_string(),
+                },
+            )
+            .expect_err("invalid publication path should reject");
+        assert!(
+            service
+                .read_public_node(&first.public_id)
+                .expect("first public lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            service
+                .read_public_node(&second.public_id)
+                .expect("second public lookup should succeed")
+                .is_some()
+        );
+    }
+
+    service
+        .unpublish_node("owner", first_request)
+        .expect("first node should unpublish");
+    assert!(
+        service
+            .read_public_node(&first.public_id)
+            .expect("first public lookup should succeed")
+            .is_none()
+    );
+    assert_eq!(
+        service
+            .read_public_node(&second.public_id)
+            .expect("second public lookup should succeed")
+            .expect("second publication should remain")
+            .content,
+        "second public body"
+    );
+    assert_eq!(
+        service
+            .get_node_publication("owner", second_request)
+            .expect("owner should inspect remaining publication"),
+        Some(second)
     );
 }
 
