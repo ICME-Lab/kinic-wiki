@@ -1,6 +1,7 @@
 // Where: workers/wiki-generator/src/processing.ts
 // What: Manual and queued generation workflows.
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 import { loadConfig } from "./config.js";
 import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
 import {
@@ -672,12 +673,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function isSourceCaptureRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
-  const name = path.slice("/Sources/source-capture-requests/".length);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 type GeneratedPage = {

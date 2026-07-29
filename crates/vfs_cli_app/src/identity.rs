@@ -124,6 +124,7 @@ fn parse_signed_delegations(
                     pubkey: decode_hex_field(&signed.delegation.pubkey, "delegation.pubkey")?,
                     expiration,
                     targets,
+                    permissions: None,
                 },
                 signature: decode_hex_field(&signed.signature, "signature")?,
             })
@@ -355,6 +356,7 @@ mod tests {
             pubkey: hex::decode(SESSION_PUBLIC_KEY_HEX).unwrap(),
             expiration,
             targets: None,
+            permissions: None,
         };
         let signature = root
             .sign_delegation(&delegation)

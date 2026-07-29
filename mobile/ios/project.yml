@@ -99,6 +99,7 @@ targets:
       - KinicApp/Services/VFSCandidLEB.swift
       - KinicApp/Services/VFSClient.swift
       - KinicApp/Utilities/Bundle+Configuration.swift
+      - KinicApp/Utilities/SourceCaptureContract.swift
       - KinicApp/Utilities/URLNormalizer.swift
       - KinicApp/Utilities/URLNormalizerError.swift
       - KinicApp/Views/KinicDesign.swift

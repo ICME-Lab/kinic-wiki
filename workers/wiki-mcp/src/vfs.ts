@@ -4,6 +4,12 @@
 
 import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import {
+  candidOptional,
+  isLocalReplicaHost as isLocalHost,
+  unwrapCandidResult as unwrap,
+  variantName as candidVariantName
+} from "@kinic/vfs-client-core";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, null>;
@@ -305,9 +311,9 @@ export async function searchNodes(
     await actor.search_nodes({
       database_id: databaseId,
       query_text: query,
-      prefix: [prefix],
+      prefix: candidOptional(prefix),
       top_k: limit,
-      preview_mode: [rawSearchPreviewMode(previewMode)]
+      preview_mode: candidOptional(rawSearchPreviewMode(previewMode))
     })
   );
   return raw.map(normalizeSearchHit);
@@ -343,7 +349,7 @@ export async function queryContext(
       database_id: request.databaseId,
       task: request.task,
       entities: request.entities,
-      namespace: [request.namespace],
+      namespace: candidOptional(request.namespace),
       budget_tokens: request.budgetTokens,
       include_evidence: request.includeEvidence,
       depth: request.depth
@@ -410,13 +416,6 @@ async function createVfsActorUncached(host: string, canisterId: string): Promise
     agent,
     canisterId: Principal.fromText(canisterId)
   });
-}
-
-function unwrap<T>(result: Result<T>): T {
-  if ("Err" in result) {
-    throw new Error(result.Err);
-  }
-  return result.Ok;
 }
 
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
@@ -574,17 +573,8 @@ function rawSearchPreviewMode(mode: SearchPreviewMode): Variant {
 }
 
 function variantName(value: Variant): string {
-  const key = Object.keys(value)[0] ?? "unknown";
+  const key = candidVariantName(value) ?? "unknown";
   return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-}
-
-function isLocalHost(host: string): boolean {
-  try {
-    const hostname = new URL(host).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
-  } catch {
-    return false;
-  }
 }
 
 const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {

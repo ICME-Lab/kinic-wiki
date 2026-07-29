@@ -1,4 +1,5 @@
 packages:
+  - packages/*
   - wikibrowser
   - skill-registry-web
   - workers/wiki-mcp

@@ -96,6 +96,8 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Test Candid tools
+        run: npm --prefix tools/candid test
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
       - name: Check file size ratchet

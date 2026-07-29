@@ -16,6 +16,7 @@
   "dependencies": {
     "@icp-sdk/auth": "5.0.0",
     "@icp-sdk/core": "^5.4.0",
+    "@kinic/vfs-client-core": "workspace:*",
     "@tanstack/react-router": "1.170.18",
     "@tanstack/react-start": "1.168.28",
     "lucide-react": "0.555.0",

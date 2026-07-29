@@ -1,4 +1,5 @@
 import type { Identity } from "@icp-sdk/core/agent";
+import { sourceCaptureRequestId, sourceCaptureRequestPath } from "@kinic/source-contracts";
 import { authorizeSourceCaptureTriggerSession, mkdirNodeAuthenticated, writeNodeAuthenticated } from "@/lib/vfs-client";
 
 export type CreatedSourceCaptureRequest = {
@@ -21,8 +22,8 @@ const triggerSessionCache = new Map<string, TriggerSessionCacheEntry>();
 export async function createSourceCaptureRequest(canisterId: string, databaseId: string, identity: Identity, url: string): Promise<CreatedSourceCaptureRequest> {
   const normalizedUrl = normalizedHttpUrl(url);
   const session = await ensureSourceCaptureTriggerSession(canisterId, databaseId, identity);
-  const requestId = safeSourceCaptureRequestId(Date.now(), crypto.randomUUID());
-  const requestPath = `/Sources/source-capture-requests/${requestId}.md`;
+  const requestId = sourceCaptureRequestId(Date.now(), crypto.randomUUID());
+  const requestPath = sourceCaptureRequestPath(requestId);
   const requestedAt = new Date().toISOString();
   const requestedBy = identity.getPrincipal().toText();
   await ensureParentFolders(canisterId, databaseId, identity, requestPath);
@@ -57,19 +58,7 @@ export async function createSourceCaptureRequest(canisterId: string, databaseId:
 }
 
 export function safeSourceCaptureRequestId(timeMs: number, uuid: string): string {
-  const suffix = uuid.trim();
-  if (!isSafeRequestSegment(suffix) || suffix.length > 96) {
-    throw new Error("source capture request id is invalid.");
-  }
-  const requestId = `${timeMs}-${suffix}`;
-  if (!isSafeRequestSegment(requestId) || requestId.length > 128) {
-    throw new Error("source capture request id is invalid.");
-  }
-  return requestId;
-}
-
-function isSafeRequestSegment(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && value !== "." && value !== ".." && !value.includes("..");
+  return sourceCaptureRequestId(timeMs, uuid);
 }
 
 async function ensureParentFolders(canisterId: string, databaseId: string, identity: Identity, path: string): Promise<void> {

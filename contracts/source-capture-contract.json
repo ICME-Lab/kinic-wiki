@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "requestIds": [
+    { "value": "1", "valid": true },
+    { "value": "1700000000000-00000000-0000-4000-8000-000000000000", "valid": true },
+    { "value": "a_b.c-d", "valid": true },
+    { "value": "", "valid": false },
+    { "value": "_leading", "valid": false },
+    { "value": "a..b", "valid": false },
+    { "value": "a/b", "valid": false },
+    { "value": "a\\b", "valid": false },
+    { "value": "日本語", "valid": false },
+    { "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true },
+    { "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false }
+  ],
+  "requestPaths": [
+    { "value": "/Sources/source-capture-requests/1.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/a_b.c-d.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/.md", "valid": false },
+    { "value": "/Sources/source-capture-requests/_leading.md", "valid": false },
+    { "value": "/Sources/source-capture-requests/a..b.md", "valid": false },
+    { "value": "/Sources/source-capture-requests/a/b.md", "valid": false },
+    { "value": "/Sources/source-capture-requestsfake/1.md", "valid": false },
+    { "value": "/Knowledge/1.md", "valid": false }
+  ],
+  "canisterAcceptedRequestPaths": [
+    { "value": "/Sources/source-capture-requests/1.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/_leading.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/a..b.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/a/b.md", "valid": true },
+    { "value": "/Sources/source-capture-requests/日本語.md", "valid": true },
+    { "value": "/Sources/source-capture-requestsfake/1.md", "valid": false },
+    { "value": "/Sources/source-capture-requests/1.txt", "valid": false },
+    { "value": "/Knowledge/1.md", "valid": false }
+  ],
+  "slugs": [
+    { "value": " Café / 日本語  ", "fallback": "source", "expected": "café-日本語" },
+    { "value": "../", "fallback": "Example.com", "expected": "example.com" }
+  ],
+  "fnv1a": [
+    { "value": "", "hex": "811c9dc5", "base36": "0ztntfp" },
+    { "value": "abc", "hex": "1a47e90b", "base36": "07aigaz" }
+  ],
+  "sha256": [
+    { "value": "", "hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    { "value": "abc", "hex": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+  ],
+  "hostnames": [
+    { "value": "https://Example.COM/path", "expected": "example.com" },
+    { "value": "not a url", "expected": "web-source" }
+  ]
+}

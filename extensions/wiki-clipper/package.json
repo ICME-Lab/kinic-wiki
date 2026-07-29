@@ -12,12 +12,15 @@
     "test": "node scripts/check-candid-drift.mjs && node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@kinic/source-contracts": "workspace:*",
+    "@kinic/vfs-client-core": "workspace:*",
     "@icp-sdk/auth": "^5.0.0",
     "@icp-sdk/core": "^5.4.0",
     "@preact/signals": "^2.9.0",
     "preact": "^10.29.1"
   },
   "devDependencies": {
+    "@kinic/candid-tools": "workspace:*",
     "@playwright/test": "^1.59.1",
     "esbuild": "0.28.1"
   }

@@ -1,6 +1,12 @@
 // Where: workers/wiki-generator/src/source-capture.ts
 // What: source capture request parsing, source persistence, and request state writes.
 // Why: Browser-submitted URLs should become evidence sources before wiki page generation.
+import {
+  hostnameForUrl,
+  isSourceCaptureRequestPath,
+  sha256Hex,
+  sourceStemFromTitleHash
+} from "@kinic/source-contracts";
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
@@ -11,10 +17,7 @@ import type { RuntimeEnv } from "./env.js";
 import type { SourceCaptureRequest, SourceCaptureTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 
-const SOURCE_CAPTURE_REQUEST_PREFIX = "/Sources/source-capture-requests";
 const FETCHING_STALE_MS = 15 * 60 * 1000;
-const MAX_SOURCE_STEM_BYTES = 128;
-const SOURCE_STEM_ENCODER = new TextEncoder();
 
 export type SourceCaptureTriggerContext = {
   config: WorkerConfig;
@@ -448,69 +451,6 @@ function sourcePathVariant(basePath: string, attempt: number): string {
   return `${basePath}-${attempt}`;
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function sourceStemFromTitleHash(title: string, hash: string, fallback: string): string {
-  const slug = slugTitle(title, fallback);
-  return truncateStem(`${slug}-${hash}`, hash);
-}
-
-function slugTitle(value: string, fallback: string): string {
-  const source = String(value || "")
-    .normalize("NFKC")
-    .toLowerCase()
-    .trim();
-  let output = "";
-  let lastWasDash = false;
-  for (const char of source) {
-    if (isSourceStemChar(char)) {
-      output += char;
-      lastWasDash = false;
-    } else if (!lastWasDash) {
-      output += "-";
-      lastWasDash = true;
-    }
-  }
-  const normalized = output
-    .replace(/\.{2,}/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^[._-]+|[._-]+$/g, "");
-  if (normalized && isUnicodeAlphanumeric([...normalized][0] ?? "")) return normalized;
-  return fallback === value ? "source" : slugTitle(fallback, "source");
-}
-
-function truncateStem(stem: string, hash: string): string {
-  if (SOURCE_STEM_ENCODER.encode(stem).length <= MAX_SOURCE_STEM_BYTES) return stem;
-  const suffix = `-${hash}`;
-  const maxPrefixBytes = MAX_SOURCE_STEM_BYTES - SOURCE_STEM_ENCODER.encode(suffix).length;
-  let prefix = "";
-  for (const char of stem.slice(0, -suffix.length)) {
-    if (SOURCE_STEM_ENCODER.encode(`${prefix}${char}`).length > maxPrefixBytes) break;
-    prefix += char;
-  }
-  const trimmed = prefix.replace(/[._-]+$/g, "") || "source";
-  return `${trimmed}${suffix}`;
-}
-
-function hostnameForUrl(finalUrl: string): string {
-  try {
-    return new URL(finalUrl).hostname || "web-source";
-  } catch {
-    return "web-source";
-  }
-}
-
-function isSourceStemChar(value: string): boolean {
-  return isUnicodeAlphanumeric(value) || value === "." || value === "_" || value === "-";
-}
-
-function isUnicodeAlphanumeric(value: string): boolean {
-  return /^[\p{L}\p{N}]$/u.test(value);
-}
-
 function sourceCaptureStatus(value: string | null | undefined): SourceCaptureRequest["status"] | null {
   if (value === "queued" || value === "fetching" || value === "source_written" || value === "generating" || value === "completed" || value === "failed") {
     return value;
@@ -563,12 +503,6 @@ function validateSourceCaptureRequestPath(path: string): void {
   if (!isSourceCaptureRequestPath(path)) {
     throw new SourceCaptureTriggerError(`invalid source capture request path: ${path}`, 400);
   }
-}
-
-function isSourceCaptureRequestPath(path: string): boolean {
-  if (!path.startsWith(`${SOURCE_CAPTURE_REQUEST_PREFIX}/`)) return false;
-  const name = path.slice(SOURCE_CAPTURE_REQUEST_PREFIX.length + 1);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function validateSourcePath(sourcePrefix: string, path: string): void {

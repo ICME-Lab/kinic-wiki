@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/kinic_sqlite_compat",
     "crates/vfs_cli_app",
     "crates/vfs_cli_core",
     "crates/vfs_client",

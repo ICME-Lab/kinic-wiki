@@ -1,7 +1,7 @@
 // Where: extensions/wiki-clipper/src/web-source.js
 // What: Build canonical evidence source nodes from active-page DOM text snapshots.
 // Why: Web page capture should save source evidence before queueing generation.
-import { sourceStemFromTitleHash } from "./source-filename.js";
+import { hostnameForUrl, sha256Hex, sourceStemFromTitleHash } from "@kinic/source-contracts";
 import { normalizedHttpUrl } from "./source-capture-request.js";
 
 const MAX_WEB_SOURCE_CHARS = 300_000;
@@ -280,14 +280,6 @@ function webSourceTitle(value, finalUrl) {
   }
 }
 
-function hostnameForUrl(finalUrl) {
-  try {
-    return new URL(finalUrl).hostname || "web-source";
-  } catch {
-    return "web-source";
-  }
-}
-
 function webSourcePathFromId(sourceId) {
   return `/Sources/web/${sourceId.slice("web-".length)}.md`;
 }
@@ -299,9 +291,4 @@ function limitSourceText(text, maxChars) {
   }
   const limited = text.slice(0, maxChars).trimEnd();
   return { text: limited, truncated: true, originalChars, savedChars: limited.length };
-}
-
-async function sha256Hex(value) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

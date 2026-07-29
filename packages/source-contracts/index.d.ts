@@ -1,0 +1,11 @@
+export function sourceStemFromTitleHash(title: string, hash8: string, fallback?: string): string;
+export function slugTitle(value: string, fallback?: string): string;
+export function fnv1a32(value: string): number;
+export function fnv1aHex(value: string): string;
+export function fnv1aBase36(value: string): string;
+export function sha256Hex(value: string): Promise<string>;
+export function hostnameForUrl(value: string, fallback?: string): string;
+export function isSafeSourceCaptureRequestId(value: unknown): value is string;
+export function sourceCaptureRequestId(timeMs: number, suffix: string): string;
+export function sourceCaptureRequestPath(requestId: string): string;
+export function isSourceCaptureRequestPath(path: unknown): path is string;

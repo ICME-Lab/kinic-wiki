@@ -1,6 +1,7 @@
 // Where: wikibrowser/app/api/source-capture/trigger/route.ts
 // What: Server-side authenticated trigger for source capture worker requests.
 // Why: Browsers and extensions must not receive the worker bearer token.
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 
 type TriggerRequest = {
   canisterId: string;
@@ -115,12 +116,6 @@ function parseTriggerRequest(value: unknown): TriggerRequest | string {
     return "requestPath must be a source capture request path";
   }
   return { canisterId, databaseId, requestPath, sessionNonce };
-}
-
-function isSourceCaptureRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
-  const name = path.slice("/Sources/source-capture-requests/".length);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

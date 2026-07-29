@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::VfsApi;
 use vfs_types::{DeleteNodeRequest, ListNodesRequest, Node, NodeKind};
-use wiki_domain::validate_knowledge_source_path;
+use wiki_domain::{extract_frontmatter_block, validate_knowledge_source_path};
 
 const REQUEST_PREFIX: &str = "/Sources/source-capture-requests";
 const GENERATED_TARGET_PREFIX: &str = "/Knowledge/conversations";
@@ -351,21 +351,13 @@ fn parse_request_node(node: &Node) -> Result<Option<MatchedRequest>> {
 }
 
 fn parse_frontmatter(content: &str) -> Result<Option<Frontmatter>> {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    if !content.starts_with("---\n") {
+        return Ok(None);
+    }
+    let Some(frontmatter) = extract_frontmatter_block(content) else {
         return Ok(None);
     };
-    let Some(end) = frontmatter_end(rest) else {
-        return Ok(None);
-    };
-    let frontmatter = &rest[..end];
     Ok(Some(serde_yaml::from_str(frontmatter)?))
-}
-
-fn frontmatter_end(rest: &str) -> Option<usize> {
-    rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })
 }
 
 fn normalize_url(value: &str) -> Result<String> {

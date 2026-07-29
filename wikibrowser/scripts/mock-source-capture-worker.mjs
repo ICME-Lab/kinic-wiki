@@ -1,7 +1,6 @@
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-
-const SOURCE_CAPTURE_PREFIX = "/Sources/source-capture-requests/";
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 
 export async function handleMockSourceCaptureRequest(request, env = process.env) {
   const url = new URL(request.url);
@@ -83,12 +82,6 @@ function parseSourceCaptureBody(value, env) {
     return "canisterId does not match worker canister config";
   }
   return { canisterId, databaseId, requestPath, sessionNonce };
-}
-
-function isSourceCaptureRequestPath(path) {
-  if (!path.startsWith(SOURCE_CAPTURE_PREFIX)) return false;
-  const name = path.slice(SOURCE_CAPTURE_PREFIX.length);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function jsonResponse(body, status) {

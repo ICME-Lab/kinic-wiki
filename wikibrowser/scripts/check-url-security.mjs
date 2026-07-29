@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 if (!crypto.subtle.timingSafeEqual) {
@@ -39,9 +40,8 @@ assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\|
 assert.doesNotMatch(wikiBrowser, new RegExp('tab === "source ' + 'capture" \\|\\| tab === "sources"'));
 assert.match(documentPane, /authPrompt\?: "private" \| null/);
 assert.doesNotMatch(documentPane, /Write access/);
-assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
-assert.match(sourceCapture, /function isSafeRequestSegment/);
-assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
+assert.match(sourceCapture, /sourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
+assert.match(sourceCapture, /sourceCaptureRequestPath\(requestId\)/);
 assert.match(homePage, /location\.hash\.startsWith\(marker\)/);
 assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)/);
 assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
@@ -616,7 +616,11 @@ console.log("URL security checks OK");
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
-  const source = readFileSync(sourcePath, "utf8");
+  const source = readFileSync(sourcePath, "utf8").replace(
+    'import { isSourceCaptureRequestPath } from "@kinic/source-contracts";',
+    "const { isSourceCaptureRequestPath } = globalThis.__kinicSourceContracts;"
+  );
+  globalThis.__kinicSourceContracts = { isSourceCaptureRequestPath };
   return importStrippedTsForTest(source);
 }
 
