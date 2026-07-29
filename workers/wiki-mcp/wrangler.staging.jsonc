@@ -1,22 +1,39 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "kinic-wiki-mcp",
+  "name": "kinic-wiki-mcp-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-12",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
   "observability": {
     "enabled": true
   },
   "routes": [
     {
-      "pattern": "wiki-mcp.kinic.xyz",
+      "pattern": "wiki-mcp-staging.kinic.xyz",
       "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MCP_AUTH_STATE",
+        "class_name": "McpAuthState"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["McpAuthState"]
     }
   ],
   "vars": {
     "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "KINIC_WIKI_IC_HOST": "https://icp0.io",
     "KINIC_WIKI_PUBLIC_ORIGIN": "https://wiki.kinic.xyz",
+    "MCP_AUTH_ENABLED": "true",
+    "MCP_PUBLIC_ORIGIN": "https://wiki-mcp-staging.kinic.xyz",
     "OPENAI_APPS_CHALLENGE_TOKEN": "U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"
   }
 }

@@ -22,23 +22,90 @@ function nativeAuthHTML(config: { delegationTtlNs: string; derivationOrigin: str
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KinicWikiApp Sign In</title>
   <style>
-    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --ink: #1f1f1f;
+      --muted: #67676f;
+      --stroke: #747775;
+    }
     html, body { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
-    body { position: fixed; inset: 0; margin: 0; background: #fff; color: #0b0b0f; }
+    body { position: fixed; inset: 0; margin: 0; background: #fff; color: var(--ink); }
     main { width: 100%; height: 100dvh; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom)); box-sizing: border-box; overflow: hidden; }
-    section { width: min(100%, 360px); display: grid; gap: 14px; text-align: center; }
+    section { width: min(100%, 360px); text-align: center; }
+    .auth-copy { display: grid; gap: 10px; }
     h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 700; }
-    p { margin: 0; color: #66666f; font-size: 15px; line-height: 1.55; }
-    button { min-height: 56px; border: 0; border-radius: 16px; background: #000; color: #fff; font: inherit; font-size: 16px; font-weight: 700; }
-    button:disabled { opacity: .55; }
+    p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    .provider-list { display: grid; gap: 10px; margin-top: 28px; }
+    .social-actions { display: grid; gap: 10px; }
+    .social-actions[hidden] { display: none; }
+    .provider-button {
+      position: relative;
+      display: flex;
+      width: 100%;
+      min-height: 56px;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 0 52px;
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .provider-icon {
+      position: absolute;
+      top: 50%;
+      left: 18px;
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      transform: translateY(-50%);
+    }
+    .provider-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .provider-icon--ii { left: 16px; width: 28px; }
+    .provider-button:hover { background: #f7f8f8; }
+    .provider-button:active { background: #eef0f1; }
+    .provider-button:focus-visible { outline: 3px solid rgb(47 128 237 / 28%); outline-offset: 2px; }
+    .provider-button:disabled { opacity: .52; cursor: default; }
+    .status { min-height: 22px; margin-top: 14px; font-size: 14px; }
+    @media (max-width: 340px) {
+      main { padding-right: 12px; padding-left: 12px; }
+      .provider-button { padding-inline: 42px; font-size: 14px; }
+      .provider-icon--ii { left: 12px; width: 24px; }
+    }
   </style>
 </head>
 <body>
   <main>
     <section>
-      <h1>KinicWikiApp Sign In</h1>
-      <p id="native-auth-message">Continue with Internet Identity to finish native sign in.</p>
-      <button id="native-auth-continue" onclick="window.kinicNativeAuthStart && window.kinicNativeAuthStart()" type="button">Continue</button>
+      <div class="auth-copy">
+        <h1>Sign in to KinicWiki</h1>
+        <p>Choose how to continue.</p>
+      </div>
+      <div class="provider-list">
+        <button class="provider-button" id="native-auth-internet-identity" onclick="window.kinicNativeAuthStart && window.kinicNativeAuthStart('internet-identity')" type="button">
+          <span class="provider-icon provider-icon--ii" aria-hidden="true"><img data-provider-logo="internet-identity" src="/native-auth/internet-identity.svg" alt=""></span>
+          <span>Continue with Internet Identity</span>
+        </button>
+        <div class="social-actions" id="native-auth-openid-actions" hidden>
+          <button class="provider-button" id="native-auth-apple" onclick="window.kinicNativeAuthStart && window.kinicNativeAuthStart('apple')" type="button">
+            <span class="provider-icon" aria-hidden="true"><img data-provider-logo="apple" src="/native-auth/apple.svg" alt=""></span>
+            <span>Continue with Apple</span>
+          </button>
+          <button class="provider-button" id="native-auth-google" onclick="window.kinicNativeAuthStart && window.kinicNativeAuthStart('google')" type="button">
+            <span class="provider-icon" aria-hidden="true"><img data-provider-logo="google" src="/native-auth/google.svg" alt=""></span>
+            <span>Continue with Google</span>
+          </button>
+        </div>
+      </div>
+      <p class="status" id="native-auth-message" role="status" aria-live="polite"></p>
     </section>
   </main>
   <script>
@@ -54,7 +121,21 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
 (() => {
   const config = ${jsonConfig};
   const message = document.getElementById("native-auth-message");
-  const button = document.getElementById("native-auth-continue");
+  const openidActions = document.getElementById("native-auth-openid-actions");
+  const buttons = [
+    document.getElementById("native-auth-apple"),
+    document.getElementById("native-auth-google"),
+    document.getElementById("native-auth-internet-identity")
+  ].filter(Boolean);
+  const openidIssuers = Object.freeze({
+    apple: "https://appleid.apple.com",
+    google: "https://accounts.google.com"
+  });
+  const openingMessages = Object.freeze({
+    "internet-identity": "Opening Internet Identity…",
+    apple: "Opening Apple…",
+    google: "Opening Google…"
+  });
   let parsed = null;
   let parseFailed = false;
   let started = false;
@@ -66,7 +147,10 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
   };
   const setError = (value) => {
     setMessage(value);
-    if (button) button.disabled = true;
+    setButtonsDisabled(true);
+  };
+  const setButtonsDisabled = (disabled) => {
+    for (const button of buttons) button.disabled = disabled;
   };
 
   try {
@@ -80,18 +164,28 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
     setError("Native auth request is missing.");
   }
 
-  window.kinicNativeAuthStart = () => {
+  if (parsed && isMainnetIdentityProvider(parsed.identityProvider) && openidActions) {
+    openidActions.hidden = false;
+  }
+
+  window.kinicNativeAuthStart = (flow) => {
     if (!parsed || started) return;
-    started = true;
-    if (button) {
-      button.disabled = true;
-      button.textContent = "Opening Internet Identity...";
+    if (flow !== "internet-identity" && !Object.hasOwn(openidIssuers, flow)) {
+      setError("Sign-in method is invalid.");
+      return;
     }
-    startAuthorization(parsed);
+    if (flow !== "internet-identity" && !isMainnetIdentityProvider(parsed.identityProvider)) {
+      setError("Apple and Google sign-in are available only with the production Internet Identity service.");
+      return;
+    }
+    started = true;
+    setButtonsDisabled(true);
+    setMessage(openingMessages[flow]);
+    startAuthorization(parsed, flow);
   };
 
-  function startAuthorization(requestParams) {
-    const idpWindow = window.open(requestParams.identityProvider.toString(), "kinic-ios-native-auth", "popup,width=520,height=720");
+  function startAuthorization(requestParams, flow) {
+    const idpWindow = window.open(authorizationURL(requestParams.identityProvider, flow), "kinic-ios-native-auth", "popup,width=520,height=720");
     const request = {
       kind: "authorize-client",
       sessionPublicKey: new Uint8Array(requestParams.sessionPublicKey),
@@ -121,7 +215,7 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
     };
 
     function handleMessage(event) {
-      if (event.origin !== requestParams.identityProvider.origin || !isRecord(event.data)) return;
+      if (event.origin !== requestParams.identityProvider.origin || event.source !== idpWindow || !isRecord(event.data)) return;
       if (event.data.kind === "authorize-client-success") {
         try {
           const payload = normalizeInternetIdentityResponseForNative(event.data);
@@ -210,6 +304,23 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
     }
     url.hash = "authorize";
     return url;
+  }
+
+  function authorizationURL(identityProvider, flow) {
+    if (flow === "internet-identity") return identityProvider.toString();
+    const issuer = openidIssuers[flow];
+    if (!issuer || !isMainnetIdentityProvider(identityProvider)) throw new Error("Sign-in method is not allowed");
+    const url = new URL("/authorize", identityProvider.origin);
+    url.searchParams.set("openid", issuer);
+    return url.toString();
+  }
+
+  function isMainnetIdentityProvider(identityProvider) {
+    return (
+      identityProvider.origin === "https://id.ai" &&
+      identityProvider.pathname === "/" &&
+      identityProvider.search === ""
+    );
   }
 
   function maxTTL(value) {

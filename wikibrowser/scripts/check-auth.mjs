@@ -47,6 +47,7 @@ assert.match(
   /VITE_II_DERIVATION_ORIGIN=https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/
 );
 assert.match(packageConfig.scripts["deploy:staging"], /VITE_KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai/);
+assert.match(packageConfig.scripts["deploy:staging"], /check_worker_deploy_source\.mjs/);
 assert.match(
   packageConfig.scripts["deploy:staging"],
   /VITE_II_DERIVATION_ORIGIN=https:\/\/3ryrw-kyaaa-aaaaf-qgxpq-cai\.icp0\.io/

@@ -78,6 +78,8 @@ wiki, knowledge, capture, links, notes, Internet Computer
 
 ## Review Notes
 
-Sign in with Internet Identity and select a readable database in Ask AI. Submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
+On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Continue with Apple", or "Continue with Google". Internet Identity appears first and supports passkey-based access.
+
+After signing in, select a readable database in Ask AI. Submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
 
 To test capture, select a writable database, then share an HTTP or HTTPS URL into "Save to KinicWiki".

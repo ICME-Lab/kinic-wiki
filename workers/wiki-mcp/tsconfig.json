@@ -4,7 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "types": ["@cloudflare/workers-types", "node", "vitest/globals"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers", "node", "vitest/globals"],
     "skipLibCheck": true,
     "noEmit": true,
     "allowSyntheticDefaultImports": true

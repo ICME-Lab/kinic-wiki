@@ -1,10 +1,17 @@
 // Where: workers/wiki-mcp/src/index.ts
-// What: Remote MCP entrypoint exposing public Kinic Wiki database discovery, search, and read tools.
-// Why: ChatGPT should read public wiki memory through anonymous canister queries without write access.
+// What: Remote MCP entrypoint exposing Kinic Wiki database discovery, search, and read tools.
+// Why: Production stays anonymous while staging uses a request-scoped II delegation without adding writes.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import {
+  authenticateMcpRequest,
+  authenticationBoundaryResponse,
+  authenticationMode,
+  handleAuthRoute
+} from "./auth/oauth.js";
+export { McpAuthState } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
@@ -247,11 +254,21 @@ const contextOutputSchema = z.object({
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
     const url = new URL(request.url);
+    const authMode = authenticationMode(request, env);
+    const authBoundaryResponse = authenticationBoundaryResponse(authMode);
+    if (authBoundaryResponse) {
+      return withCors(authBoundaryResponse);
+    }
     if (request.method === "OPTIONS") {
       return withCors(new Response(null, { status: 204 }));
     }
+    const authRoute = await handleAuthRoute(request, env);
+    if (authRoute) {
+      return withCors(authRoute);
+    }
+    const requiresAuthentication = authMode === "required";
     if (request.method === "GET" && url.pathname === "/") {
-      return withCors(Response.json(rootInfo(url)));
+      return withCors(Response.json(rootInfo(url, requiresAuthentication)));
     }
     if (request.method === "GET" && url.pathname === "/health") {
       return withCors(Response.json({ ok: true, name: "kinic-wiki-mcp" }));
@@ -263,7 +280,15 @@ export default {
       return withCors(Response.json({ error: "not found" }, { status: 404 }));
     }
 
-    const server = createServer(env);
+    let requestEnv = env;
+    if (requiresAuthentication) {
+      const authenticated = await authenticateMcpRequest(request, env);
+      if ("response" in authenticated) {
+        return withCors(authenticated.response);
+      }
+      requestEnv = { ...env, KINIC_WIKI_IDENTITY: authenticated.identity };
+    }
+    const server = createServer(requestEnv);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     if (request.method === "GET") {
@@ -280,10 +305,12 @@ export default {
   }
 } satisfies ExportedHandler<RuntimeEnv>;
 
-function rootInfo(url: URL) {
+function rootInfo(url: URL, requiresAuthentication: boolean) {
   return {
     name: "kinic-wiki-mcp",
-    description: "Public, anonymous, read-only Kinic Wiki MCP server.",
+    description: requiresAuthentication
+      ? "Internet Identity authenticated, private, read-only Kinic Wiki MCP server."
+      : "Public, anonymous, read-only Kinic Wiki MCP server.",
     mcp_endpoint: new URL("/mcp", url.origin).toString(),
     health_endpoint: new URL("/health", url.origin).toString(),
     tools: [...MCP_TOOL_NAMES]
@@ -313,7 +340,7 @@ export function createServer(env: RuntimeEnv): McpServer {
   server.registerTool(
     "find_databases",
     {
-      description: "Use this when you need to discover which anonymous-readable public Kinic Wiki database matches a user task.",
+      description: "Use this when you need to discover which Kinic Wiki database visible to the current caller matches a user task.",
       inputSchema: {
         query: z.string().optional(),
         limit: z.number().int().min(1).max(MAX_DATABASE_LIMIT).optional()
@@ -328,7 +355,7 @@ export function createServer(env: RuntimeEnv): McpServer {
     "search",
     {
       description:
-        "Search one selected public Kinic Wiki database. Use multiple queries for broad/list/classification tasks. Use prefix / for whole-DB recall, /Knowledge for curated notes, and /Sources for raw evidence when curated notes are thin. Use content-start preview for candidate classification.",
+        "Search one selected Kinic Wiki database visible to the current caller. Use multiple queries for broad/list/classification tasks. Use prefix / for whole-DB recall, /Knowledge for curated notes, and /Sources for raw evidence when curated notes are thin. Use content-start preview for candidate classification.",
       inputSchema: {
         database_id: z.string().min(1),
         query: z.string().min(1),
@@ -407,7 +434,7 @@ export function createServer(env: RuntimeEnv): McpServer {
   server.registerTool(
     "memory_manifest",
     {
-      description: "Discover Store API roots, capabilities, roles, and limits for one public Kinic Wiki database.",
+      description: "Discover Store API roots, capabilities, roles, and limits for one Kinic Wiki database visible to the current caller.",
       inputSchema: {
         database_id: z.string().min(1)
       },
@@ -1233,9 +1260,9 @@ async function parseJsonBody(request: Request): Promise<unknown> {
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", "*");
-  headers.set("access-control-allow-headers", "content-type,mcp-session-id,last-event-id,mcp-protocol-version");
+  headers.set("access-control-allow-headers", "authorization,content-type,mcp-session-id,last-event-id,mcp-protocol-version");
   headers.set("access-control-allow-methods", "GET,POST,OPTIONS");
-  headers.set("access-control-expose-headers", "mcp-session-id,mcp-protocol-version");
+  headers.set("access-control-expose-headers", "mcp-session-id,mcp-protocol-version,www-authenticate");
   return new Response(response.body, { status: response.status, headers });
 }
 
