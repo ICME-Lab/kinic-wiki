@@ -445,7 +445,7 @@ struct ShareInboxTests {
         }
 
         let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
-        #expect(store.showPublicBrowseDatabases == false)
+        #expect(store.showPublicBrowseDatabases == true)
         #expect(store.showPurchasedBrowseDatabases == false)
 
         store.showPublicBrowseDatabases = true
@@ -561,7 +561,7 @@ struct ShareInboxTests {
             settingsStore: store
         )
 
-        #expect(model.showPublicBrowseDatabases == false)
+        #expect(model.showPublicBrowseDatabases == true)
         #expect(model.showPurchasedBrowseDatabases == false)
         model.setShowPublicBrowseDatabases(true)
         model.setShowPurchasedBrowseDatabases(true)

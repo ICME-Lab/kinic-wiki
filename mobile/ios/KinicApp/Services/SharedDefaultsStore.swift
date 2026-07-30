@@ -43,7 +43,9 @@ struct SharedDefaultsStore: @unchecked Sendable {
 
     var showPublicBrowseDatabases: Bool {
         get {
-            defaults.bool(forKey: Self.showPublicBrowseDatabasesKey)
+            defaults.object(forKey: Self.showPublicBrowseDatabasesKey) == nil
+                ? true
+                : defaults.bool(forKey: Self.showPublicBrowseDatabasesKey)
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.showPublicBrowseDatabasesKey)

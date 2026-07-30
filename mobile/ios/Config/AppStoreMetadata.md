@@ -78,8 +78,8 @@ wiki, knowledge, capture, links, notes, Internet Computer
 
 ## Review Notes
 
-On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Continue with Apple", or "Continue with Google". Internet Identity appears first and supports passkey-based access.
+On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Continue with Apple", or "Continue with Google". Internet Identity appears first and supports passkey-based access. KinicWiki does not use a separate username/password account; reviewers can create or access an account with the Apple Account already configured on the review device.
 
-After signing in, select a readable database in Ask AI. Submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
+Public databases are shown by default. Open Browse and select the pre-populated public database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain" and submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
 
-To test capture, select a writable database, then share an HTTP or HTTPS URL into "Save to KinicWiki".
+To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
