@@ -3,6 +3,10 @@
 // Why: ChatGPT-facing tool names, output shapes, and id encoding must stay stable.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import type { Identity } from "@icp-sdk/core/agent";
+import type { McpAuthState } from "../src/auth/state.js";
+import type { RuntimeEnv } from "../src/vfs.js";
 
 const mocks = vi.hoisted(() => ({
   listNodes: vi.fn(),
@@ -27,6 +31,8 @@ vi.mock("../src/vfs.js", () => ({
 }));
 
 import worker, {
+  containsConnectPrivateCall,
+  createServer,
   decodeSearchResultId,
   encodeSearchResultId,
   fetchManySearchResults,
@@ -43,7 +49,31 @@ const env = {
   KINIC_WIKI_CANISTER_ID: "canister-a",
   KINIC_WIKI_IC_HOST: "https://icp0.io",
   KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test",
+  MCP_ACCESS_POLICY: "public",
   OPENAI_APPS_CHALLENGE_TOKEN: "test-openai-apps-challenge"
+};
+
+function unavailableAuthBinding(): never {
+  throw new Error("auth binding must not be used by this test");
+}
+
+const fakeAuthNamespace: DurableObjectNamespace<McpAuthState> = {
+  newUniqueId: unavailableAuthBinding,
+  idFromName: unavailableAuthBinding,
+  idFromString: unavailableAuthBinding,
+  get: unavailableAuthBinding,
+  getByName: unavailableAuthBinding,
+  jurisdiction: () => fakeAuthNamespace
+};
+
+const privateOptInEnv = {
+  ...env,
+  KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
+  KINIC_WIKI_MCP_TARGET_ORIGIN: "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app",
+  MCP_ACCESS_POLICY: "private_opt_in",
+  MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
+  MCP_KEY_ENCRYPTION_KEY: "test-encryption-key",
+  MCP_AUTH_STATE: fakeAuthNamespace
 };
 
 describe("wiki mcp worker", () => {
@@ -253,7 +283,12 @@ describe("wiki mcp worker", () => {
 
   it("advertises the public read-only tools", async () => {
     const response = await postMcp({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
-    const tools = response.result.tools as Array<{ name: string; annotations: Record<string, boolean>; outputSchema?: unknown }>;
+    const tools = response.result.tools as Array<{
+      name: string;
+      annotations: Record<string, boolean>;
+      outputSchema?: unknown;
+      _meta?: Record<string, unknown>;
+    }>;
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "context",
       "fetch_many",
@@ -272,7 +307,195 @@ describe("wiki mcp worker", () => {
         destructiveHint: false
       });
       expect(tool.outputSchema).toMatchObject({ type: "object" });
+      expect(tool._meta?.securitySchemes).toEqual([{ type: "noauth" }]);
     }
+  });
+
+  it("advertises nine tools without authentication in private opt-in mode", async () => {
+    const response = await postMcp(
+      { jsonrpc: "2.0", id: 12, method: "tools/list", params: {} },
+      privateOptInEnv,
+      "https://wiki-mcp-staging.kinic.xyz/mcp"
+    );
+    const tools = response.result.tools as Array<{
+      name: string;
+      _meta?: Record<string, unknown>;
+    }>;
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "find_databases",
+      "search",
+      "fetch_many",
+      "read_path",
+      "read_paths",
+      "list",
+      "memory_manifest",
+      "context",
+      "connect_private"
+    ]);
+    for (const tool of tools.slice(0, -1)) {
+      expect(tool._meta?.securitySchemes).toEqual([
+        { type: "noauth" },
+        { type: "oauth2", scopes: ["mcp:read"] }
+      ]);
+    }
+    expect(tools.at(-1)?._meta?.securitySchemes).toEqual([
+      { type: "oauth2", scopes: ["mcp:read"] }
+    ]);
+  });
+
+  it("advertises OAuth-only tools in private-required mode", async () => {
+    const server = createServer(privateOptInEnv, { accessPolicy: "private_required" });
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await server.connect(transport);
+    const message = { jsonrpc: "2.0", id: 121, method: "tools/list", params: {} };
+    const response = await transport.handleRequest(
+      new Request("https://wiki-mcp-staging.kinic.xyz/mcp", {
+        method: "POST",
+        headers: mcpHeaders(),
+        body: JSON.stringify(message)
+      }),
+      { parsedBody: message }
+    );
+    const payload = await parseMcpResponse(response);
+    for (const tool of payload.result.tools as Array<{ _meta?: Record<string, unknown> }>) {
+      expect(tool._meta?.securitySchemes).toEqual([
+        { type: "oauth2", scopes: ["mcp:read"] }
+      ]);
+    }
+  });
+
+  it("keeps ordinary unauthenticated calls public in private opt-in mode", async () => {
+    await postMcp(
+      {
+        jsonrpc: "2.0",
+        id: 13,
+        method: "tools/call",
+        params: { name: "find_databases", arguments: { limit: 1 } }
+      },
+      privateOptInEnv,
+      "https://wiki-mcp-staging.kinic.xyz/mcp"
+    );
+    expect(mocks.listDatabases).toHaveBeenCalledWith(privateOptInEnv);
+    expect(mocks.listDatabases.mock.calls[0]?.[0]).not.toHaveProperty("KINIC_WIKI_IDENTITY");
+  });
+
+  it("returns an MCP OAuth challenge for an unauthenticated connect_private call", async () => {
+    const response = await fetchMcp(
+      {
+        jsonrpc: "2.0",
+        id: 14,
+        method: "tools/call",
+        params: { name: "connect_private", arguments: {} }
+      },
+      privateOptInEnv,
+      "https://wiki-mcp-staging.kinic.xyz/mcp"
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("www-authenticate")).toBeNull();
+    const payload = await parseMcpResponse(response);
+    expect(payload.result.isError).toBe(true);
+    expect(payload.result._meta?.["mcp/www_authenticate"]).toEqual([
+      expect.stringContaining(
+        'resource_metadata="https://wiki-mcp-staging.kinic.xyz/.well-known/oauth-protected-resource/mcp"'
+      )
+    ]);
+    const challenge = payload.result._meta["mcp/www_authenticate"][0] as string;
+    expect(challenge).toContain('error="insufficient_scope"');
+    expect(challenge).toContain('error_description="Private connection is required"');
+    expect(JSON.stringify(payload.result)).not.toContain("principal");
+    expect(JSON.stringify(payload.result)).not.toContain("delegation");
+    expect(JSON.stringify(payload.result)).not.toContain("token");
+  });
+
+  it("requires OAuth for a batch containing connect_private", async () => {
+    const response = await fetchMcp(
+      [
+        { jsonrpc: "2.0", id: 15, method: "tools/list", params: {} },
+        {
+          jsonrpc: "2.0",
+          id: 16,
+          method: "tools/call",
+          params: { name: "connect_private", arguments: {} }
+        }
+      ],
+      privateOptInEnv,
+      "https://wiki-mcp-staging.kinic.xyz/mcp"
+    );
+    expect(response.status).toBe(401);
+    const challenge = response.headers.get("www-authenticate");
+    expect(challenge).toContain(
+      "https://wiki-mcp-staging.kinic.xyz/.well-known/oauth-protected-resource/mcp"
+    );
+    expect(challenge).toContain('error="insufficient_scope"');
+    expect(challenge).toContain('error_description="Private connection is required"');
+  });
+
+  it("does not downgrade an invalid bearer token to public mode", async () => {
+    const response = await fetchMcp(
+      {
+        jsonrpc: "2.0",
+        id: 17,
+        method: "tools/call",
+        params: { name: "find_databases", arguments: {} }
+      },
+      privateOptInEnv,
+      "https://wiki-mcp-staging.kinic.xyz/mcp",
+      { authorization: "Bearer invalid" }
+    );
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toContain('error="invalid_token"');
+    expect(response.headers.get("www-authenticate")).toContain(
+      'error_description="Access token is invalid or expired"'
+    );
+    expect(mocks.listDatabases).not.toHaveBeenCalled();
+  });
+
+  it("returns only connection state after an authenticated connect_private retry", async () => {
+    const server = createServer(
+      { ...privateOptInEnv, KINIC_WIKI_IDENTITY: {} as Identity },
+      { accessPolicy: "private_opt_in" }
+    );
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await server.connect(transport);
+    const response = await transport.handleRequest(
+      new Request("https://wiki-mcp-staging.kinic.xyz/mcp", {
+        method: "POST",
+        headers: mcpHeaders(),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 18,
+          method: "tools/call",
+          params: { name: "connect_private", arguments: {} }
+        })
+      }),
+      {
+        parsedBody: {
+          jsonrpc: "2.0",
+          id: 18,
+          method: "tools/call",
+          params: { name: "connect_private", arguments: {} }
+        }
+      }
+    );
+    const payload = await parseMcpResponse(response);
+    expect(payload.result.structuredContent).toEqual({ connected: true, mode: "private" });
+    expect(JSON.parse(payload.result.content[0].text)).toEqual({ connected: true, mode: "private" });
+  });
+
+  it("detects connect_private only as an exact tools/call name", () => {
+    expect(
+      containsConnectPrivateCall([
+        { jsonrpc: "2.0", method: "tools/list" },
+        { jsonrpc: "2.0", method: "tools/call", params: { name: "connect_private" } }
+      ])
+    ).toBe(true);
+    expect(
+      containsConnectPrivateCall({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "find_databases", arguments: { text: "connect_private" } }
+      })
+    ).toBe(false);
   });
 
   it("accepts the documented list limit through MCP JSON-RPC", async () => {
@@ -988,6 +1211,74 @@ describe("wiki mcp worker", () => {
     expect(response.result.structuredContent).toBeUndefined();
   });
 
+  it("accepts valid MCP calls larger than the former 16 KiB limit", async () => {
+    const task = "x".repeat(20_000);
+    await postMcp({
+      jsonrpc: "2.0",
+      id: 19,
+      method: "tools/call",
+      params: { name: "context", arguments: { database_id: "db_alpha", task } }
+    });
+
+    expect(mocks.queryContext).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({ task })
+    );
+  });
+
+  it("returns 413 only when the complete MCP body exceeds 256 KiB", async () => {
+    const maxBytes = 256 * 1024;
+    const atLimit = await worker.fetch(
+      new Request("https://mcp.example.test/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: " ".repeat(maxBytes)
+      }),
+      env
+    );
+    expect(atLimit.status).toBe(400);
+    await expect(atLimit.json()).resolves.toEqual({ error: "bad request" });
+
+    const overLimit = await worker.fetch(
+      new Request("https://mcp.example.test/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: " ".repeat(maxBytes + 1)
+      }),
+      env
+    );
+    expect(overLimit.status).toBe(413);
+    expect(overLimit.headers.get("access-control-allow-origin")).toBe("*");
+    await expect(overLimit.json()).resolves.toEqual({ error: "payload_too_large" });
+  });
+
+  it("classifies declared MCP body length before reading", async () => {
+    const oversized = await worker.fetch(
+      new Request("https://mcp.example.test/mcp", {
+        method: "POST",
+        headers: {
+          "content-length": String(256 * 1024 + 1),
+          "content-type": "application/json"
+        },
+        body: "{}"
+      }),
+      env
+    );
+    expect(oversized.status).toBe(413);
+    await expect(oversized.json()).resolves.toEqual({ error: "payload_too_large" });
+
+    const invalid = await worker.fetch(
+      new Request("https://mcp.example.test/mcp", {
+        method: "POST",
+        headers: { "content-length": "invalid", "content-type": "application/json" },
+        body: "{}"
+      }),
+      env
+    );
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toEqual({ error: "bad request" });
+  });
+
   it("returns http 400 for non-json MCP requests", async () => {
     const response = await worker.fetch(
       new Request("https://mcp.example.test/mcp", {
@@ -1011,20 +1302,41 @@ describe("wiki mcp worker", () => {
   });
 });
 
-async function postMcp(payload: Record<string, unknown>) {
-  const response = await worker.fetch(
-    new Request("https://mcp.example.test/mcp", {
+async function postMcp(
+  payload: unknown,
+  runtimeEnv: RuntimeEnv = env,
+  url = "https://mcp.example.test/mcp"
+) {
+  const response = await fetchMcp(payload, runtimeEnv, url);
+  expect(response.status).toBe(200);
+  return parseMcpResponse(response);
+}
+
+async function fetchMcp(
+  payload: unknown,
+  runtimeEnv: RuntimeEnv,
+  url: string,
+  extraHeaders: Record<string, string> = {}
+) {
+  return worker.fetch(
+    new Request(url, {
       method: "POST",
-      headers: {
-        accept: "application/json, text/event-stream",
-        "content-type": "application/json",
-        "mcp-protocol-version": "2025-06-18"
-      },
+      headers: { ...mcpHeaders(), ...extraHeaders },
       body: JSON.stringify(payload)
     }),
-    env
+    runtimeEnv
   );
-  expect(response.status).toBe(200);
+}
+
+function mcpHeaders() {
+  return {
+    accept: "application/json, text/event-stream",
+    "content-type": "application/json",
+    "mcp-protocol-version": "2025-06-18"
+  };
+}
+
+async function parseMcpResponse(response: Response) {
   const text = await response.text();
   const dataLine = text.split("\n").find((line) => line.startsWith("data: "));
   if (!dataLine) {

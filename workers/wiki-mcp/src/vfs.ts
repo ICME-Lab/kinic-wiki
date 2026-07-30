@@ -19,9 +19,10 @@ type Result<T> = { Ok: T } | { Err: string };
 export type RuntimeEnv = {
   KINIC_WIKI_CANISTER_ID?: string;
   KINIC_WIKI_IC_HOST?: string;
+  KINIC_WIKI_MCP_TARGET_ORIGIN?: string;
   KINIC_WIKI_PUBLIC_ORIGIN?: string;
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
-  MCP_AUTH_ENABLED?: string;
+  MCP_ACCESS_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
   MCP_KEY_ENCRYPTION_KEY?: string;
   MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthState>;
@@ -300,7 +301,7 @@ const actorCache = new Map<string, Promise<VfsActor>>();
 
 export async function listDatabases(env: RuntimeEnv): Promise<DatabaseSummary[]> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.list_databases(), env);
+  const raw = unwrap(await callVfs(env, "list_databases", () => actor.list_databases()), env);
   return raw.map(normalizeDatabaseSummary).filter((database) => database.status === "active");
 }
 
@@ -314,13 +315,15 @@ export async function searchNodes(
 ): Promise<SearchHit[]> {
   const actor = await createVfsActor(env);
   const raw = unwrap(
-    await actor.search_nodes({
-      database_id: databaseId,
-      query_text: query,
-      prefix: candidOptional(prefix),
-      top_k: limit,
-      preview_mode: candidOptional(rawSearchPreviewMode(previewMode))
-    }),
+    await callVfs(env, "search_nodes", () =>
+      actor.search_nodes({
+        database_id: databaseId,
+        query_text: query,
+        prefix: candidOptional(prefix),
+        top_k: limit,
+        preview_mode: candidOptional(rawSearchPreviewMode(previewMode))
+      })
+    ),
     env
   );
   return raw.map(normalizeSearchHit);
@@ -328,13 +331,21 @@ export async function searchNodes(
 
 export async function listNodes(env: RuntimeEnv, databaseId: string, prefix: string, recursive: boolean, limit: number): Promise<NodeEntry[]> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.list_nodes({ database_id: databaseId, prefix, recursive, limit }), env);
+  const raw = unwrap(
+    await callVfs(env, "list_nodes", () =>
+      actor.list_nodes({ database_id: databaseId, prefix, recursive, limit })
+    ),
+    env
+  );
   return raw.map(normalizeNodeEntry);
 }
 
 export async function readNode(env: RuntimeEnv, databaseId: string, path: string): Promise<WikiNode | null> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.read_node(databaseId, path), env);
+  const raw = unwrap(
+    await callVfs(env, "read_node", () => actor.read_node(databaseId, path)),
+    env
+  );
   return raw[0] ? normalizeNode(raw[0]) : null;
 }
 
@@ -352,15 +363,17 @@ export async function queryContext(
 ): Promise<QueryContext> {
   const actor = await createVfsActor(env);
   const raw = unwrap(
-    await actor.query_context({
-      database_id: request.databaseId,
-      task: request.task,
-      entities: request.entities,
-      namespace: candidOptional(request.namespace),
-      budget_tokens: request.budgetTokens,
-      include_evidence: request.includeEvidence,
-      depth: request.depth
-    }),
+    await callVfs(env, "query_context", () =>
+      actor.query_context({
+        database_id: request.databaseId,
+        task: request.task,
+        entities: request.entities,
+        namespace: candidOptional(request.namespace),
+        budget_tokens: request.budgetTokens,
+        include_evidence: request.includeEvidence,
+        depth: request.depth
+      })
+    ),
     env
   );
   return normalizeQueryContext(raw);
@@ -368,12 +381,24 @@ export async function queryContext(
 
 export async function memoryManifest(env: RuntimeEnv, databaseId: string): Promise<MemoryManifest> {
   const actor = await createVfsActor(env);
-  return normalizeMemoryManifest(unwrap(await actor.memory_manifest({ database_id: databaseId }), env));
+  return normalizeMemoryManifest(
+    unwrap(
+      await callVfs(env, "memory_manifest", () => actor.memory_manifest({ database_id: databaseId })),
+      env
+    )
+  );
 }
 
 export async function sourceEvidence(env: RuntimeEnv, databaseId: string, nodePath: string): Promise<SourceEvidence> {
   const actor = await createVfsActor(env);
-  return normalizeSourceEvidence(unwrap(await actor.source_evidence({ database_id: databaseId, node_path: nodePath }), env));
+  return normalizeSourceEvidence(
+    unwrap(
+      await callVfs(env, "source_evidence", () =>
+        actor.source_evidence({ database_id: databaseId, node_path: nodePath })
+      ),
+      env
+    )
+  );
 }
 
 export async function queryDatabaseSqlJson(
@@ -383,7 +408,14 @@ export async function queryDatabaseSqlJson(
   limit: number
 ): Promise<IndexSqlJsonQueryResult> {
   const actor = await createVfsActor(env);
-  return normalizeIndexSqlJsonQueryResult(unwrap(await actor.query_database_sql_json(databaseId, sql, limit), env));
+  return normalizeIndexSqlJsonQueryResult(
+    unwrap(
+      await callVfs(env, "query_database_sql_json", () =>
+        actor.query_database_sql_json(databaseId, sql, limit)
+      ),
+      env
+    )
+  );
 }
 
 export function resolveCanisterId(env: RuntimeEnv): string {
@@ -432,6 +464,40 @@ async function createVfsActorUncached(host: string, canisterId: string, identity
 function unwrap<T>(result: Result<T>, env: RuntimeEnv): T {
   return unwrapCandidResult(result, (message) =>
     new Error(env.KINIC_WIKI_IDENTITY ? "Kinic Wiki database is unavailable" : message)
+  );
+}
+
+async function callVfs<T>(
+  env: RuntimeEnv,
+  stage: string,
+  call: () => Promise<Result<T>>
+): Promise<Result<T>> {
+  try {
+    const result = await call();
+    if ("Err" in result) {
+      logAuthenticatedVfsFailure(env, `${stage}_result`);
+    }
+    return result;
+  } catch (error) {
+    if (!env.KINIC_WIKI_IDENTITY) {
+      throw error;
+    }
+    logAuthenticatedVfsFailure(env, `${stage}_call`);
+    throw new Error("Kinic Wiki database is unavailable");
+  }
+}
+
+function logAuthenticatedVfsFailure(env: RuntimeEnv, stage: string): void {
+  if (!env.KINIC_WIKI_IDENTITY) {
+    return;
+  }
+  console.error(
+    JSON.stringify({
+      event: "vfs_call",
+      trace_id: crypto.randomUUID(),
+      stage,
+      error_code: "database_unavailable"
+    })
   );
 }
 

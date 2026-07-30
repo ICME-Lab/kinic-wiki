@@ -11,17 +11,17 @@ import {
 } from "./crypto.js";
 import {
   generateIiKey,
+  IiDelegationError,
   IiRegistrationError,
   IiSessionEndedError,
   INTERNET_IDENTITY_ORIGIN,
   mintKinicIdentity,
   redeemRegistration,
+  resolveKinicMcpTargetOrigin,
   restoreIiKey
 } from "./internet-identity.js";
 import type { ClientAuthMethod, McpAuthState, OAuthClientRecordV1, PendingSessionInput } from "./state.js";
 
-export const STAGING_MCP_RESOURCE = "https://wiki-mcp-staging.kinic.xyz/mcp";
-const STAGING_ORIGIN = "https://wiki-mcp-staging.kinic.xyz";
 const CALLBACK_PATH = "/mcp/connect";
 const CLIENT_PREFIX = "mcl1.";
 const COOKIE_NAME = "__Host-kinic-mcp-connect";
@@ -38,21 +38,39 @@ type OAuthClientRegistrationRequest = {
   client_name?: unknown;
 };
 
-export type AuthenticationMode = "disabled" | "required" | "misconfigured" | "origin_mismatch";
+export type McpAccessPolicy = "public" | "private_required" | "private_opt_in";
+
+export type AuthenticationMode =
+  | McpAccessPolicy
+  | "misconfigured"
+  | "origin_configuration"
+  | "origin_mismatch";
 
 export function authenticationMode(request: Request, env: RuntimeEnv): AuthenticationMode {
-  if (env.MCP_AUTH_ENABLED !== "true") {
-    return "disabled";
-  }
-  const configuredOrigin = env.MCP_PUBLIC_ORIGIN?.trim();
-  if (configuredOrigin !== STAGING_ORIGIN) {
+  const policy = env.MCP_ACCESS_POLICY?.trim();
+  if (policy !== "public" && policy !== "private_required" && policy !== "private_opt_in") {
     return "misconfigured";
   }
-  return new URL(request.url).origin === configuredOrigin ? "required" : "origin_mismatch";
+  if (policy === "public") {
+    return policy;
+  }
+  const configuredOrigin = oauthOrigin(env);
+  if (!configuredOrigin || !env.MCP_AUTH_STATE || !env.MCP_KEY_ENCRYPTION_KEY?.trim()) {
+    return "misconfigured";
+  }
+  try {
+    resolveKinicMcpTargetOrigin(env.KINIC_WIKI_MCP_TARGET_ORIGIN, env.KINIC_WIKI_CANISTER_ID);
+  } catch {
+    return "origin_configuration";
+  }
+  return new URL(request.url).origin === configuredOrigin ? policy : "origin_mismatch";
 }
 
 export function authenticationBoundaryResponse(mode: AuthenticationMode): Response | null {
-  if (mode === "misconfigured") {
+  if (mode === "misconfigured" || mode === "origin_configuration") {
+    if (mode === "origin_configuration") {
+      logMcpAuth(mode);
+    }
     return json({ error: "temporarily_unavailable" }, 503, { "cache-control": "no-store" });
   }
   if (mode === "origin_mismatch") {
@@ -62,19 +80,21 @@ export function authenticationBoundaryResponse(mode: AuthenticationMode): Respon
 }
 
 export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promise<Response | null> {
-  if (authenticationMode(request, env) !== "required") {
+  const mode = authenticationMode(request, env);
+  if (mode !== "private_required" && mode !== "private_opt_in") {
     return null;
   }
   const url = new URL(request.url);
   if (request.method === "GET" && url.pathname === "/.well-known/oauth-protected-resource/mcp") {
-    return json(protectedResourceMetadata());
+    return json(protectedResourceMetadata(env));
   }
   if (request.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
-    return json(authorizationServerMetadata());
+    return json(authorizationServerMetadata(env));
   }
   if (request.method === "GET" && url.pathname === "/.well-known/ii-auth-callbacks") {
+    const origin = requiredOauthOrigin(env);
     return json(
-      { callbacks: [`${STAGING_ORIGIN}${CALLBACK_PATH}`] },
+      { callbacks: [`${origin}${CALLBACK_PATH}`] },
       200,
       { "access-control-allow-origin": INTERNET_IDENTITY_ORIGIN, "cache-control": "no-store" }
     );
@@ -101,12 +121,18 @@ export async function authenticateMcpRequest(
   request: Request,
   env: RuntimeEnv
 ): Promise<{ identity: Identity } | { response: Response }> {
-  const resourceMetadata = `${STAGING_ORIGIN}/.well-known/oauth-protected-resource/mcp`;
+  const resource = mcpResource(env);
   const unauthorized = () =>
     json(
       { error: "invalid_token" },
       401,
-      { "www-authenticate": `Bearer resource_metadata="${resourceMetadata}", error="invalid_token"` }
+      {
+        "www-authenticate": mcpWwwAuthenticateChallenge(
+          env,
+          "invalid_token",
+          "Access token is invalid or expired"
+        )
+      }
     );
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) {
@@ -118,7 +144,7 @@ export async function authenticateMcpRequest(
     return { response: unauthorized() };
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
-  const validated = await stub.validateAccessToken(tokenValue, STAGING_MCP_RESOURCE, Date.now());
+  const validated = await stub.validateAccessToken(tokenValue, resource, Date.now());
   if (!validated) {
     return { response: unauthorized() };
   }
@@ -134,42 +160,66 @@ export async function authenticateMcpRequest(
     return { response: unauthorized() };
   }
   try {
-    const identity = await mintKinicIdentity(restoreIiKey(keyJson));
+    const targetOrigin = resolveKinicMcpTargetOrigin(
+      env.KINIC_WIKI_MCP_TARGET_ORIGIN,
+      env.KINIC_WIKI_CANISTER_ID
+    );
+    const identity = await mintKinicIdentity(restoreIiKey(keyJson), targetOrigin);
     return { identity };
   } catch (error) {
     if (error instanceof IiSessionEndedError) {
       await stub.invalidate();
       return { response: unauthorized() };
     }
+    logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_unknown");
     return { response: json({ error: "temporarily_unavailable" }, 503) };
   }
 }
 
-export function mcpUnauthorizedResponse(): Response {
+export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
   return json(
     { error: "unauthorized" },
     401,
     {
-      "www-authenticate": `Bearer resource_metadata="${STAGING_ORIGIN}/.well-known/oauth-protected-resource/mcp"`
+      "www-authenticate": mcpWwwAuthenticateChallenge(
+        env,
+        "insufficient_scope",
+        "Private connection is required"
+      )
     }
   );
 }
 
-function protectedResourceMetadata() {
+export function mcpWwwAuthenticateChallenge(
+  env: RuntimeEnv,
+  error: "insufficient_scope" | "invalid_token",
+  errorDescription: string
+): string {
+  const origin = requiredOauthOrigin(env);
+  return [
+    `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+    `error="${error}"`,
+    `error_description="${errorDescription}"`
+  ].join(", ");
+}
+
+function protectedResourceMetadata(env: RuntimeEnv) {
+  const origin = requiredOauthOrigin(env);
   return {
-    resource: STAGING_MCP_RESOURCE,
-    authorization_servers: [STAGING_ORIGIN],
+    resource: mcpResource(env),
+    authorization_servers: [origin],
     scopes_supported: ["mcp:read", "offline_access"],
     bearer_methods_supported: ["header"]
   };
 }
 
-function authorizationServerMetadata() {
+function authorizationServerMetadata(env: RuntimeEnv) {
+  const origin = requiredOauthOrigin(env);
   return {
-    issuer: STAGING_ORIGIN,
-    authorization_endpoint: `${STAGING_ORIGIN}/oauth/authorize`,
-    token_endpoint: `${STAGING_ORIGIN}/oauth/token`,
-    registration_endpoint: `${STAGING_ORIGIN}/oauth/register`,
+    issuer: origin,
+    authorization_endpoint: `${origin}/oauth/authorize`,
+    token_endpoint: `${origin}/oauth/token`,
+    registration_endpoint: `${origin}/oauth/register`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
@@ -241,10 +291,12 @@ async function registerClient(request: Request, env: RuntimeEnv): Promise<Respon
 
 async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
+  const resource = mcpResource(env);
+  const origin = requiredOauthOrigin(env);
   const clientId = url.searchParams.get("client_id");
   const redirectUri = url.searchParams.get("redirect_uri");
   const oauthState = url.searchParams.get("state");
-  const resource = url.searchParams.get("resource");
+  const requestedResource = url.searchParams.get("resource");
   const scope = normalizeScope(url.searchParams.get("scope"));
   const codeChallenge = url.searchParams.get("code_challenge");
   if (
@@ -252,7 +304,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
     !clientId ||
     !redirectUri ||
     !oauthState ||
-    resource !== STAGING_MCP_RESOURCE ||
+    requestedResource !== resource ||
     !scope ||
     !codeChallenge ||
     url.searchParams.get("code_challenge_method") !== "S256" ||
@@ -298,7 +350,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   const iiUrl = new URL("/mcp", INTERNET_IDENTITY_ORIGIN);
   const fragment = new URLSearchParams({
     registration_key: base64UrlEncode(new Uint8Array(registrationKey.getPublicKey().toDer())),
-    callback: `${STAGING_ORIGIN}${CALLBACK_PATH}`,
+    callback: `${origin}${CALLBACK_PATH}`,
     state: connectState,
     ttl: String(SESSION_CAP_MS / 1000)
   });
@@ -322,7 +374,6 @@ function connectPage(): Response {
   const messages = {
     invalid_connection: "Connection data is invalid or expired. Start again from your AI client.",
     registration_rejected: "Internet Identity rejected this connection. Check the trusted connector and reconnect.",
-    read_only_required: "Reconnect and keep Internet Identity read-only access enabled.",
     temporarily_unavailable: "Internet Identity is temporarily unavailable. Start a fresh connection and try again."
   };
   const status = document.querySelector("#status");
@@ -423,9 +474,9 @@ async function completeConnect(request: Request, env: RuntimeEnv): Promise<Respo
 }
 
 type ConnectFailure = {
-  error: "invalid_connection" | "registration_rejected" | "read_only_required" | "temporarily_unavailable";
+  error: "invalid_connection" | "registration_rejected" | "temporarily_unavailable";
   stage: string;
-  status: 400 | 401 | 403 | 503;
+  status: 400 | 401 | 503;
   errorDescription?: string;
 };
 
@@ -447,14 +498,6 @@ export function classifyRegistrationFailure(error: unknown): ConnectFailure {
       stage: error.stage,
       status: 401,
       errorDescription: "Internet Identity rejected this connection."
-    };
-  }
-  if (error.code === "read_only_required") {
-    return {
-      error: "read_only_required",
-      stage: error.stage,
-      status: 403,
-      errorDescription: "Reconnect with Internet Identity read-only access enabled."
     };
   }
   return {
@@ -512,6 +555,18 @@ function logConnect(
   }
 }
 
+function logMcpAuth(stage: string): void {
+  console.error(
+    JSON.stringify({
+      event: "mcp_auth",
+      trace_id: crypto.randomUUID(),
+      stage,
+      error_code: "delegation_unavailable",
+      status: 503
+    })
+  );
+}
+
 async function token(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/x-www-form-urlencoded")) {
     return oauthJsonError("invalid_request", 400);
@@ -525,8 +580,9 @@ async function token(request: Request, env: RuntimeEnv): Promise<Response> {
     return oauthJsonError("invalid_client", 401);
   }
   const now = Date.now();
+  const expectedResource = mcpResource(env);
   if (form.get("grant_type") === "authorization_code") {
-    if ((form.get("resource") ?? STAGING_MCP_RESOURCE) !== STAGING_MCP_RESOURCE) {
+    if ((form.get("resource") ?? expectedResource) !== expectedResource) {
       return oauthJsonError("invalid_target", 400);
     }
     const code = form.get("code");
@@ -549,9 +605,9 @@ async function token(request: Request, env: RuntimeEnv): Promise<Response> {
   }
   if (form.get("grant_type") === "refresh_token") {
     const refreshToken = form.get("refresh_token");
-    const resource = form.get("resource") ?? STAGING_MCP_RESOURCE;
+    const resource = form.get("resource") ?? expectedResource;
     const sessionId = refreshToken ? parseRoutedToken(refreshToken, "mkr1") : null;
-    if (!refreshToken || !sessionId || resource !== STAGING_MCP_RESOURCE) {
+    if (!refreshToken || !sessionId || resource !== expectedResource) {
       return oauthJsonError("invalid_grant", 400);
     }
     const issued = await authNamespace(env).getByName(sessionName(sessionId)).rotateRefreshToken({
@@ -618,6 +674,33 @@ async function getClient(env: RuntimeEnv, clientId: string): Promise<OAuthClient
     return null;
   }
   return authNamespace(env).getByName(clientName(clientId)).getClient();
+}
+
+function oauthOrigin(env: RuntimeEnv): string | null {
+  const value = env.MCP_PUBLIC_ORIGIN?.trim();
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value && url.pathname === "/" && !url.search && !url.hash
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function requiredOauthOrigin(env: RuntimeEnv): string {
+  const origin = oauthOrigin(env);
+  if (!origin) {
+    throw new Error("MCP_PUBLIC_ORIGIN must be a bare HTTPS origin");
+  }
+  return origin;
+}
+
+function mcpResource(env: RuntimeEnv): string {
+  return `${requiredOauthOrigin(env)}/mcp`;
 }
 
 function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthState> {
@@ -687,8 +770,8 @@ function stringArray(value: unknown): string[] | null {
 
 async function limitedJson<T>(request: Request): Promise<T | null> {
   try {
-    const text = await readLimitedText(request, MAX_AUTH_BODY_BYTES);
-    return text === null ? null : (JSON.parse(text) as T);
+    const result = await readLimitedText(request, MAX_AUTH_BODY_BYTES);
+    return result.ok ? (JSON.parse(result.text) as T) : null;
   } catch {
     return null;
   }
@@ -696,20 +779,27 @@ async function limitedJson<T>(request: Request): Promise<T | null> {
 
 async function limitedForm(request: Request): Promise<URLSearchParams | null> {
   try {
-    const text = await readLimitedText(request, MAX_AUTH_BODY_BYTES);
-    return text === null ? null : new URLSearchParams(text);
+    const result = await readLimitedText(request, MAX_AUTH_BODY_BYTES);
+    return result.ok ? new URLSearchParams(result.text) : null;
   } catch {
     return null;
   }
 }
 
-export async function readLimitedText(request: Request, maxBytes: number): Promise<string | null> {
+export type LimitedTextResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: "invalid_content_length" | "too_large" };
+
+export async function readLimitedText(request: Request, maxBytes: number): Promise<LimitedTextResult> {
   const contentLength = request.headers.get("content-length");
-  if (contentLength !== null && (!/^[0-9]+$/u.test(contentLength) || Number(contentLength) > maxBytes)) {
-    return null;
+  if (contentLength !== null && !/^[0-9]+$/u.test(contentLength)) {
+    return { ok: false, reason: "invalid_content_length" };
+  }
+  if (contentLength !== null && Number(contentLength) > maxBytes) {
+    return { ok: false, reason: "too_large" };
   }
   if (!request.body) {
-    return "";
+    return { ok: true, text: "" };
   }
 
   const reader = request.body.getReader();
@@ -724,7 +814,7 @@ export async function readLimitedText(request: Request, maxBytes: number): Promi
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         await reader.cancel();
-        return null;
+        return { ok: false, reason: "too_large" };
       }
       chunks.push(value);
     }
@@ -738,7 +828,7 @@ export async function readLimitedText(request: Request, maxBytes: number): Promi
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(body);
+  return { ok: true, text: new TextDecoder().decode(body) };
 }
 
 function readCookie(header: string | null, name: string): string | null {

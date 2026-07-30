@@ -3,11 +3,17 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  UnauthorizedError,
+  auth,
+  extractWWWAuthenticateParams
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const DEFAULT_SERVER_URL = "https://wiki-mcp-staging.kinic.xyz/mcp";
+export const FIND_DATABASE_LIMIT = 50;
 const EXPECTED_TOOLS = [
+  "connect_private",
   "context",
   "fetch_many",
   "find_databases",
@@ -39,6 +45,46 @@ export function summarizeToolResult(result) {
     ok: result?.isError !== true,
     response_bytes: Buffer.byteLength(text)
   };
+}
+
+export function toolAuthenticationChallenge(result) {
+  const challenges = result?._meta?.["mcp/www_authenticate"];
+  if (result?.isError !== true || !Array.isArray(challenges) || typeof challenges[0] !== "string") {
+    throw new Error("connect_private did not return an MCP OAuth challenge");
+  }
+  const challenge = challenges[0];
+  if (!challenge.includes('error="insufficient_scope"') || !challenge.includes("error_description=")) {
+    throw new Error("connect_private returned an incomplete MCP OAuth challenge");
+  }
+  return challenge;
+}
+
+export function parseAuthenticationChallenge(challenge) {
+  const response = new Response(null, {
+    status: 401,
+    headers: { "www-authenticate": challenge }
+  });
+  const params = extractWWWAuthenticateParams(response);
+  if (!params.resourceMetadataUrl || params.error !== "insufficient_scope") {
+    throw new Error("connect_private returned invalid OAuth challenge parameters");
+  }
+  return params;
+}
+
+export function assertPrivateOptInToolSecurity(tools) {
+  for (const tool of tools) {
+    const actual = tool?._meta?.securitySchemes;
+    const expected =
+      tool?.name === "connect_private"
+        ? [{ type: "oauth2", scopes: ["mcp:read"] }]
+        : [
+            { type: "noauth" },
+            { type: "oauth2", scopes: ["mcp:read"] }
+          ];
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`Unexpected authentication metadata for ${tool?.name ?? "unknown tool"}`);
+    }
+  }
 }
 
 class SmokeOAuthProvider {
@@ -113,15 +159,32 @@ async function main() {
     if (JSON.stringify(toolNames) !== JSON.stringify(EXPECTED_TOOLS)) {
       throw new Error(`Unexpected MCP tools: ${toolNames.join(", ")}`);
     }
+    assertPrivateOptInToolSecurity(tools.tools);
+
+    const publicFindResult = await client.callTool({
+      name: "find_databases",
+      arguments: { query: options.query, limit: FIND_DATABASE_LIMIT }
+    });
+    assertToolSucceeded("public find_databases", publicFindResult);
+
+    const connectResult = await connectPrivate(
+      client,
+      provider,
+      callback.waitForCode,
+      options.serverUrl
+    );
+    assertToolSucceeded("connect_private", connectResult);
 
     const findResult = await client.callTool({
       name: "find_databases",
-      arguments: { query: options.query, limit: 99 }
+      arguments: { query: options.query, limit: FIND_DATABASE_LIMIT }
     });
     assertToolSucceeded("find_databases", findResult);
     const findText = toolResultText(findResult);
     const summary = {
       tools: { ok: true, count: toolNames.length },
+      public_find_databases: summarizeToolResult(publicFindResult),
+      connect_private: summarizeToolResult(connectResult),
       find_databases: {
         ...summarizeToolResult(findResult),
         ...(options.databaseId ? { private_database_visible: findText.includes(options.databaseId) } : {})
@@ -180,6 +243,34 @@ async function connectClient(client, provider, waitForCode, serverUrl) {
   transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: provider });
   await client.connect(transport);
   return transport;
+}
+
+async function connectPrivate(client, provider, waitForCode, serverUrl) {
+  const unauthenticatedResult = await client.callTool({
+    name: "connect_private",
+    arguments: {}
+  });
+  const challenge = toolAuthenticationChallenge(unauthenticatedResult);
+  const { resourceMetadataUrl, scope } = parseAuthenticationChallenge(challenge);
+  const started = await auth(provider, {
+    serverUrl,
+    resourceMetadataUrl,
+    scope: scope ?? "mcp:read"
+  });
+  if (started !== "REDIRECT") {
+    throw new Error("connect_private OAuth flow did not request authorization");
+  }
+  const authorizationCode = await waitForCode;
+  const completed = await auth(provider, {
+    serverUrl,
+    authorizationCode,
+    resourceMetadataUrl,
+    scope: scope ?? "mcp:read"
+  });
+  if (completed !== "AUTHORIZED") {
+    throw new Error("connect_private OAuth code exchange did not complete");
+  }
+  return client.callTool({ name: "connect_private", arguments: {} });
 }
 
 async function startCallbackServer(oauthState) {

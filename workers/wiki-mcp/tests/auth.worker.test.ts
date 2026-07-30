@@ -30,10 +30,63 @@ describe("staging OAuth discovery and registration", () => {
     });
   });
 
-  it("requires a bearer token on staging MCP", async () => {
-    const response = await fetchWorker(`${origin}/mcp`, { method: "POST" });
+  it("returns a tool-level OAuth challenge only when connect_private is called", async () => {
+    const publicResponse = await fetchWorker(`${origin}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "find_databases", arguments: {} }
+      })
+    });
+    expect(publicResponse.status).toBe(200);
+    await expect(publicResponse.json()).resolves.toEqual({ ok: true, mode: "public" });
+
+    const response = await fetchWorker(`${origin}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "connect_private", arguments: {} }
+      })
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json<{
+      result: { isError: boolean; _meta: { "mcp/www_authenticate": string[] } };
+    }>();
+    expect(payload.result.isError).toBe(true);
+    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
+      "/.well-known/oauth-protected-resource/mcp"
+    );
+    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
+      'error="insufficient_scope"'
+    );
+    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
+      'error_description="Private connection is required"'
+    );
+  });
+
+  it("keeps a connect_private batch behind an HTTP OAuth boundary", async () => {
+    const response = await fetchWorker(`${origin}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} },
+        {
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: { name: "connect_private", arguments: {} }
+        }
+      ])
+    });
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toContain("/.well-known/oauth-protected-resource/mcp");
+    expect(response.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(response.headers.get("www-authenticate")).toContain("error_description");
   });
 
   it("serves safe callback messages without embedding connection data", async () => {
@@ -41,7 +94,7 @@ describe("staging OAuth discovery and registration", () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain("read_only_required");
+    expect(html).toContain("temporarily_unavailable");
     expect(html).toContain("registration_rejected");
     expect(html).not.toContain("raw principal");
     expect(html).not.toContain("authorization code");
@@ -227,6 +280,18 @@ describe("McpAuthState single-use records", () => {
     });
     expect(first?.accessToken).toMatch(/^mka1\.single-use\./u);
     expect(first?.refreshToken).toMatch(/^mkr1\.single-use\./u);
+    await expect(
+      stub.validateAccessToken(first!.accessToken, resource, Date.now())
+    ).resolves.toMatchObject({ sessionExpiresAt: expect.any(Number) });
+    await expect(
+      stub.validateAccessToken(first!.accessToken, `${origin}/other`, Date.now())
+    ).resolves.toBeNull();
+    await expect(
+      stub.validateAccessToken(first!.accessToken, resource, first!.accessExpiresAt + 1)
+    ).resolves.toBeNull();
+    await expect(
+      stub.validateAccessToken("mka1.single-use.invalid", resource, Date.now())
+    ).resolves.toBeNull();
     await expect(
       stub.exchangeCode({
         code: completed!.code,
