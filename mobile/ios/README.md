@@ -85,6 +85,8 @@ The renderer accepts PNG captures only and writes five iPhone 6.9-inch PNGs and 
 
 `mobile/ios/scripts/install-device.sh` builds `KinicWiki` for the first connected iPhone reported by Xcode, then installs it with `devicectl`. If device discovery or install stalls, unlock the iPhone, keep the screen awake, trust this Mac, reconnect USB, then retry. Set `KINIC_IOS_DEVICE_ID=<udid>` to pin a specific device.
 
+For a clean browser-session authentication check in a Debug build, launch the app with `KINIC_EPHEMERAL_AUTH=1`. Release builds always keep the normal shared web authentication session.
+
 ## TestFlight
 
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
