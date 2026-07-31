@@ -460,6 +460,23 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStoreMigratesExistingPublicDatabaseVisibilityOnce() throws {
+        let suiteName = "kinic.shared-defaults-migration.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        defaults.set(false, forKey: "kinic.browse-show-public-databases.v1")
+        let migratedStore = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(migratedStore.showPublicBrowseDatabases == true)
+
+        migratedStore.showPublicBrowseDatabases = false
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
+    }
+
+    @Test
     func classifiesOnlySupportedUniversalLinkEntrypoints() {
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/ios-share?queued=1")!,

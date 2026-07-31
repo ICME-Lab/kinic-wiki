@@ -10,7 +10,7 @@ import {
   unwrapCandidResult,
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
-import type { McpAuthState } from "./auth/state.js";
+import type { McpAuthStateV2 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, null>;
@@ -25,7 +25,8 @@ export type RuntimeEnv = {
   MCP_ACCESS_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
   MCP_KEY_ENCRYPTION_KEY?: string;
-  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthState>;
+  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV2>;
+  MCP_REGISTRATION_RATE_LIMIT?: RateLimit;
   KINIC_WIKI_IDENTITY?: Identity;
 };
 

@@ -7,6 +7,8 @@ import Foundation
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
     private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
+    private static let browseDatabaseVisibilityDefaultsVersionKey = "kinic.browse-database-visibility-defaults-version"
+    private static let currentBrowseDatabaseVisibilityDefaultsVersion = 2
     private static let showPublicBrowseDatabasesKey = "kinic.browse-show-public-databases.v1"
     private static let showPurchasedBrowseDatabasesKey = "kinic.browse-show-purchased-databases.v1"
     private static let wikiOutputLanguageKey = "kinic.wiki-output-language.v1"
@@ -17,10 +19,12 @@ struct SharedDefaultsStore: @unchecked Sendable {
 
     init(appGroupId: String?, strict: Bool = false) throws {
         defaults = try Self.defaults(appGroupId: appGroupId, strict: strict)
+        migrateBrowseDatabaseVisibilityDefaults()
     }
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
+        migrateBrowseDatabaseVisibilityDefaults()
     }
 
     var databaseId: String {
@@ -107,6 +111,18 @@ struct SharedDefaultsStore: @unchecked Sendable {
             return .standard
         }
         return shared
+    }
+
+    private func migrateBrowseDatabaseVisibilityDefaults() {
+        guard defaults.integer(forKey: Self.browseDatabaseVisibilityDefaultsVersionKey)
+                < Self.currentBrowseDatabaseVisibilityDefaultsVersion else {
+            return
+        }
+        defaults.set(true, forKey: Self.showPublicBrowseDatabasesKey)
+        defaults.set(
+            Self.currentBrowseDatabaseVisibilityDefaultsVersion,
+            forKey: Self.browseDatabaseVisibilityDefaultsVersionKey
+        )
     }
 }
 

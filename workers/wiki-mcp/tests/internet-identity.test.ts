@@ -204,7 +204,8 @@ describe("staging authentication boundary", () => {
     MCP_ACCESS_POLICY: "private_opt_in",
     MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
     MCP_KEY_ENCRYPTION_KEY: "test-key",
-    MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"]
+    MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],
+    MCP_REGISTRATION_RATE_LIMIT: {} as RuntimeEnv["MCP_REGISTRATION_RATE_LIMIT"]
   } satisfies RuntimeEnv;
 
   it("enables private opt-in only on the canonical staging origin", async () => {
@@ -232,6 +233,13 @@ describe("staging authentication boundary", () => {
     expect(response?.status).toBe(503);
     await expect(response?.json()).resolves.toEqual({ error: "temporarily_unavailable" });
 
+    expect(
+      authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
+        ...stagingEnv,
+        MCP_REGISTRATION_RATE_LIMIT: undefined
+      })
+    ).toBe("misconfigured");
+
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const invalidTargetMode = authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
       KINIC_WIKI_CANISTER_ID: KINIC_CANISTER_ID,
@@ -239,7 +247,8 @@ describe("staging authentication boundary", () => {
       MCP_ACCESS_POLICY: "private_opt_in",
       MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
       MCP_KEY_ENCRYPTION_KEY: "test-key",
-      MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"]
+      MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],
+      MCP_REGISTRATION_RATE_LIMIT: {} as RuntimeEnv["MCP_REGISTRATION_RATE_LIMIT"]
     });
     expect(invalidTargetMode).toBe("origin_configuration");
     const invalidTargetResponse = authenticationBoundaryResponse(invalidTargetMode);

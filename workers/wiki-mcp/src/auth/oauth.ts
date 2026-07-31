@@ -20,7 +20,14 @@ import {
   resolveKinicMcpTargetOrigin,
   restoreIiKey
 } from "./internet-identity.js";
-import type { ClientAuthMethod, McpAuthState, OAuthClientRecordV1, PendingSessionInput } from "./state.js";
+import {
+  OAUTH_CLIENT_IDLE_TTL_MS,
+  type AuthorizationSessionInput,
+  type ClientAuthMethod,
+  type McpAuthStateV2,
+  type OAuthClientRecordV2,
+  type TokenIssueResult
+} from "./state.js";
 
 const CALLBACK_PATH = "/mcp/connect";
 const CLIENT_PREFIX = "mcl1.";
@@ -55,7 +62,12 @@ export function authenticationMode(request: Request, env: RuntimeEnv): Authentic
     return policy;
   }
   const configuredOrigin = oauthOrigin(env);
-  if (!configuredOrigin || !env.MCP_AUTH_STATE || !env.MCP_KEY_ENCRYPTION_KEY?.trim()) {
+  if (
+    !configuredOrigin ||
+    !env.MCP_AUTH_STATE ||
+    !env.MCP_KEY_ENCRYPTION_KEY?.trim() ||
+    !env.MCP_REGISTRATION_RATE_LIMIT
+  ) {
     return "misconfigured";
   }
   try {
@@ -229,6 +241,23 @@ function authorizationServerMetadata(env: RuntimeEnv) {
 }
 
 async function registerClient(request: Request, env: RuntimeEnv): Promise<Response> {
+  let rateLimitAllowed: boolean;
+  try {
+    const clientAddress = request.headers.get("cf-connecting-ip") ?? "unknown";
+    const outcome = await registrationRateLimiter(env).limit({
+      key: `oauth-register:${clientAddress}`
+    });
+    rateLimitAllowed = outcome.success;
+  } catch {
+    return oauthJsonError("temporarily_unavailable", 503);
+  }
+  if (!rateLimitAllowed) {
+    return json(
+      { error: "temporarily_unavailable" },
+      429,
+      { "cache-control": "no-store", "retry-after": "60" }
+    );
+  }
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
     return oauthJsonError("invalid_client_metadata", 400);
   }
@@ -254,15 +283,18 @@ async function registerClient(request: Request, env: RuntimeEnv): Promise<Respon
   }
   const clientId = `${CLIENT_PREFIX}${randomOpaque(18)}`;
   const clientSecret = authMethod === "none" ? null : randomOpaque();
-  const record: OAuthClientRecordV1 = {
-    version: 1,
+  const now = Date.now();
+  const record: OAuthClientRecordV2 = {
+    version: 2,
     kind: "oauth_client",
     clientId,
     redirectUris,
     grantTypes: [...new Set(grantTypes)],
     tokenEndpointAuthMethod: authMethod,
     clientSecretHash: clientSecret ? await sha256(clientSecret) : null,
-    createdAt: Date.now()
+    createdAt: now,
+    lastUsedAt: now,
+    clientExpiresAt: now + OAUTH_CLIENT_IDLE_TTL_MS
   };
   const created = await authNamespace(env).getByName(clientName(clientId)).createClient(record);
   if (!created) {
@@ -327,7 +359,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   const registrationKey = generateIiKey();
   const sessionKey = generateIiKey();
   const key = encryptionKey(env);
-  const input: PendingSessionInput = {
+  const input: AuthorizationSessionInput = {
     sessionId,
     clientId,
     redirectUri,
@@ -341,7 +373,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
     sessionKey: await encryptJson(sessionKey.toJSON(), key, sessionKeyContext(sessionId)),
     createdAt: now,
     sessionCapAt: now + SESSION_CAP_MS,
-    expiresAt: now + CONNECT_TTL_MS
+    connectExpiresAt: now + CONNECT_TTL_MS
   };
   const created = await authNamespace(env).getByName(sessionName(sessionId)).createSession(input);
   if (!created) {
@@ -625,7 +657,7 @@ async function authenticateClient(
   request: Request,
   form: URLSearchParams,
   env: RuntimeEnv
-): Promise<OAuthClientRecordV1 | null> {
+): Promise<OAuthClientRecordV2 | null> {
   const basic = parseBasic(request.headers.get("authorization"));
   const clientId = basic?.clientId ?? form.get("client_id");
   if (!clientId) {
@@ -654,7 +686,7 @@ async function authenticateClient(
     : null;
 }
 
-function tokenResponse(issued: Awaited<ReturnType<McpAuthState["exchangeCode"]>> extends infer T ? NonNullable<T> : never, now: number): Response {
+function tokenResponse(issued: TokenIssueResult, now: number): Response {
   return json(
     {
       access_token: issued.accessToken,
@@ -669,11 +701,11 @@ function tokenResponse(issued: Awaited<ReturnType<McpAuthState["exchangeCode"]>>
   );
 }
 
-async function getClient(env: RuntimeEnv, clientId: string): Promise<OAuthClientRecordV1 | null> {
+async function getClient(env: RuntimeEnv, clientId: string): Promise<OAuthClientRecordV2 | null> {
   if (!clientId.startsWith(CLIENT_PREFIX)) {
     return null;
   }
-  return authNamespace(env).getByName(clientName(clientId)).getClient();
+  return authNamespace(env).getByName(clientName(clientId)).getClient(Date.now());
 }
 
 function oauthOrigin(env: RuntimeEnv): string | null {
@@ -703,11 +735,18 @@ function mcpResource(env: RuntimeEnv): string {
   return `${requiredOauthOrigin(env)}/mcp`;
 }
 
-function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthState> {
+function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV2> {
   if (!env.MCP_AUTH_STATE) {
     throw new Error("MCP_AUTH_STATE binding is required");
   }
   return env.MCP_AUTH_STATE;
+}
+
+function registrationRateLimiter(env: RuntimeEnv): RateLimit {
+  if (!env.MCP_REGISTRATION_RATE_LIMIT) {
+    throw new Error("MCP_REGISTRATION_RATE_LIMIT binding is required");
+  }
+  return env.MCP_REGISTRATION_RATE_LIMIT;
 }
 
 function encryptionKey(env: RuntimeEnv): string {

@@ -34,6 +34,19 @@ test("keeps production public until promotion and isolates staging auth state", 
   assert.equal(productionConfig.durable_objects, undefined);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_opt_in");
   assert.equal(stagingConfig.durable_objects.bindings[0].name, "MCP_AUTH_STATE");
+  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV2");
+  assert.deepEqual(stagingConfig.ratelimits, [
+    {
+      name: "MCP_REGISTRATION_RATE_LIMIT",
+      namespace_id: "7802026",
+      simple: { limit: 10, period: 60 }
+    }
+  ]);
+  assert.deepEqual(stagingConfig.migrations.at(-1), {
+    tag: "v2",
+    new_sqlite_classes: ["McpAuthStateV2"],
+    deleted_classes: ["McpAuthState"]
+  });
   assert.notEqual(productionConfig.name, stagingConfig.name);
 });
 

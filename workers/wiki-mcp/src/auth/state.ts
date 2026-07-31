@@ -5,11 +5,14 @@ import { randomOpaque, sha256 } from "./crypto.js";
 
 const RECORD_KEY = "record";
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const AUTHORIZATION_CODE_TTL_MS = 10 * 60 * 1000;
+export const OAUTH_CLIENT_IDLE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const MAX_SPENT_REFRESH_TOKENS = 64;
 
 export type ClientAuthMethod = "none" | "client_secret_basic" | "client_secret_post";
 
-export type OAuthClientRecordV1 = {
-  version: 1;
+export type OAuthClientRecordV2 = {
+  version: 2;
   kind: "oauth_client";
   clientId: string;
   redirectUris: string[];
@@ -17,10 +20,12 @@ export type OAuthClientRecordV1 = {
   tokenEndpointAuthMethod: ClientAuthMethod;
   clientSecretHash: string | null;
   createdAt: number;
+  lastUsedAt: number;
+  clientExpiresAt: number;
 };
 
-export type PendingSessionRecordV1 = {
-  version: 1;
+export type AuthorizationSessionRecordV2 = {
+  version: 2;
   kind: "authorization_session";
   phase: "pending" | "redeeming" | "authorized" | "active" | "invalid";
   sessionId: string;
@@ -34,19 +39,35 @@ export type PendingSessionRecordV1 = {
   cookieHash: string;
   registrationKey: EncryptedValueV1 | null;
   sessionKey: EncryptedValueV1;
-  codeHash: string | null;
+  pendingCodeHash: string | null;
+  consumedCodeHash: string | null;
   accessTokenHash: string | null;
-  accessExpiresAt: number | null;
-  refreshTokenHash: string | null;
+  accessTokenExpiresAt: number | null;
+  currentRefreshTokenHash: string | null;
+  spentRefreshTokenHashes: string[];
   createdAt: number;
   sessionCapAt: number;
-  expiresAt: number;
-  grantExpiresAt: number | null;
+  connectExpiresAt: number;
+  authorizationCodeExpiresAt: number | null;
+  sessionExpiresAt: number | null;
 };
 
-export type AuthStateRecordV1 = OAuthClientRecordV1 | PendingSessionRecordV1;
+export type AuthStateRecordV2 = OAuthClientRecordV2 | AuthorizationSessionRecordV2;
 
-export type PendingSessionInput = Omit<PendingSessionRecordV1, "version" | "kind" | "phase" | "codeHash" | "accessTokenHash" | "accessExpiresAt" | "refreshTokenHash" | "grantExpiresAt">;
+export type AuthorizationSessionInput = Omit<
+  AuthorizationSessionRecordV2,
+  | "version"
+  | "kind"
+  | "phase"
+  | "pendingCodeHash"
+  | "consumedCodeHash"
+  | "accessTokenHash"
+  | "accessTokenExpiresAt"
+  | "currentRefreshTokenHash"
+  | "spentRefreshTokenHashes"
+  | "authorizationCodeExpiresAt"
+  | "sessionExpiresAt"
+>;
 
 export type TokenIssueResult = {
   accessToken: string;
@@ -58,52 +79,82 @@ export type TokenIssueResult = {
   encryptedSessionKey: EncryptedValueV1;
 };
 
-export class McpAuthState extends DurableObject<RuntimeEnv> {
-  async createClient(record: OAuthClientRecordV1): Promise<boolean> {
-    const existing = await this.ctx.storage.get<AuthStateRecordV1>(RECORD_KEY);
+type TokenOperationResult =
+  | { kind: "issued"; value: TokenIssueResult }
+  | { kind: "invalid" }
+  | { kind: "replay" };
+
+export class McpAuthStateV2 extends DurableObject<RuntimeEnv> {
+  async createClient(record: OAuthClientRecordV2): Promise<boolean> {
+    const existing = await this.ctx.storage.get<AuthStateRecordV2>(RECORD_KEY);
     if (existing) {
       return false;
     }
     await this.ctx.storage.put(RECORD_KEY, record);
+    await this.ctx.storage.setAlarm(record.clientExpiresAt);
     return true;
   }
 
-  async getClient(): Promise<OAuthClientRecordV1 | null> {
-    const record = await this.ctx.storage.get<AuthStateRecordV1>(RECORD_KEY);
-    return record?.kind === "oauth_client" ? record : null;
+  async getClient(now: number): Promise<OAuthClientRecordV2 | null> {
+    const result = await this.ctx.storage.transaction(async (transaction) => {
+      const record = await transaction.get<AuthStateRecordV2>(RECORD_KEY);
+      if (record?.kind !== "oauth_client") {
+        return { client: null, expired: false };
+      }
+      if (record.clientExpiresAt <= now) {
+        record.clientExpiresAt = now;
+        await transaction.put(RECORD_KEY, record);
+        return { client: null, expired: true };
+      }
+      record.lastUsedAt = now;
+      record.clientExpiresAt = now + OAUTH_CLIENT_IDLE_TTL_MS;
+      await transaction.put(RECORD_KEY, record);
+      return { client: record, expired: false };
+    });
+    if (result.expired) {
+      await this.invalidate();
+      return null;
+    }
+    if (result.client) {
+      await this.ctx.storage.setAlarm(result.client.clientExpiresAt);
+    }
+    return result.client;
   }
 
-  async createSession(input: PendingSessionInput): Promise<boolean> {
-    const existing = await this.ctx.storage.get<AuthStateRecordV1>(RECORD_KEY);
+  async createSession(input: AuthorizationSessionInput): Promise<boolean> {
+    const existing = await this.ctx.storage.get<AuthStateRecordV2>(RECORD_KEY);
     if (existing) {
       return false;
     }
-    const record: PendingSessionRecordV1 = {
+    const record: AuthorizationSessionRecordV2 = {
       ...input,
-      version: 1,
+      version: 2,
       kind: "authorization_session",
       phase: "pending",
-      codeHash: null,
+      pendingCodeHash: null,
+      consumedCodeHash: null,
       accessTokenHash: null,
-      accessExpiresAt: null,
-      refreshTokenHash: null,
-      grantExpiresAt: null
+      accessTokenExpiresAt: null,
+      currentRefreshTokenHash: null,
+      spentRefreshTokenHashes: [],
+      authorizationCodeExpiresAt: null,
+      sessionExpiresAt: null
     };
     await this.ctx.storage.put(RECORD_KEY, record);
-    await this.ctx.storage.setAlarm(record.expiresAt);
+    await this.ctx.storage.setAlarm(record.connectExpiresAt);
     return true;
   }
 
-  async claimConnect(connectState: string, cookie: string, now: number): Promise<PendingSessionRecordV1 | null> {
+  async claimConnect(connectState: string, cookie: string, now: number): Promise<AuthorizationSessionRecordV2 | null> {
     const connectStateHash = await sha256(connectState);
     const cookieHash = await sha256(cookie);
     const consumedHash = await sha256(randomOpaque());
     return this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV1>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV2>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "pending" ||
-        record.expiresAt <= now ||
+        record.connectExpiresAt <= now ||
         !hashEquals(record.connectStateHash, connectStateHash) ||
         !hashEquals(record.cookieHash, cookieHash)
       ) {
@@ -123,13 +174,13 @@ export class McpAuthState extends DurableObject<RuntimeEnv> {
     expectedSessionId: string
   ): Promise<{ code: string; redirectUri: string; oauthState: string } | null> {
     const code = `mkc1.${expectedSessionId}.${randomOpaque()}`;
-    const codeHash = await sha256(code);
+    const pendingCodeHash = await sha256(code);
     const result = await this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV1>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV2>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "redeeming" ||
-        record.expiresAt <= now ||
+        record.connectExpiresAt <= now ||
         record.sessionId !== expectedSessionId
       ) {
         return null;
@@ -140,16 +191,21 @@ export class McpAuthState extends DurableObject<RuntimeEnv> {
         await transaction.put(RECORD_KEY, record);
         return null;
       }
-      record.codeHash = codeHash;
+      record.pendingCodeHash = pendingCodeHash;
       record.registrationKey = null;
-      record.grantExpiresAt = grantExpiresAt;
-      record.expiresAt = sessionExpiresAt;
+      record.authorizationCodeExpiresAt = Math.min(now + AUTHORIZATION_CODE_TTL_MS, sessionExpiresAt);
+      record.sessionExpiresAt = sessionExpiresAt;
       record.phase = "authorized";
       await transaction.put(RECORD_KEY, record);
-      return { code, redirectUri: record.redirectUri, oauthState: record.oauthState, expiresAt: record.expiresAt };
+      return {
+        code,
+        redirectUri: record.redirectUri,
+        oauthState: record.oauthState,
+        authorizationCodeExpiresAt: record.authorizationCodeExpiresAt
+      };
     });
     if (result) {
-      await this.ctx.storage.setAlarm(result.expiresAt);
+      await this.ctx.storage.setAlarm(result.authorizationCodeExpiresAt);
     }
     return result;
   }
@@ -168,42 +224,97 @@ export class McpAuthState extends DurableObject<RuntimeEnv> {
     const codeHash = await sha256(input.code);
     const verifierChallenge = await sha256(input.codeVerifier);
     const material = await createTokenMaterial(routeId(input.code), input.issueRefreshToken, input.now);
-    return this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV1>(RECORD_KEY);
-      if (
-        record?.kind !== "authorization_session" ||
-        record.phase !== "authorized" ||
-        !record.codeHash ||
-        record.expiresAt <= input.now ||
-        record.clientId !== input.clientId ||
-        record.redirectUri !== input.redirectUri ||
-        !hashEquals(record.codeHash, codeHash) ||
-        !hashEquals(record.codeChallenge, verifierChallenge)
-      ) {
-        return null;
+    const result = await this.ctx.storage.transaction<TokenOperationResult>(async (transaction) => {
+      const record = await transaction.get<AuthStateRecordV2>(RECORD_KEY);
+      if (record?.kind !== "authorization_session") {
+        return { kind: "invalid" };
       }
-      return storeIssuedTokens(transaction, record, material, input.issueRefreshToken);
+      const requestMatchesSession =
+        record.clientId === input.clientId &&
+        record.redirectUri === input.redirectUri &&
+        hashEquals(record.codeChallenge, verifierChallenge);
+      if (
+        record.phase === "active" &&
+        record.sessionExpiresAt !== null &&
+        record.sessionExpiresAt > input.now &&
+        record.consumedCodeHash &&
+        hashEquals(record.consumedCodeHash, codeHash) &&
+        requestMatchesSession
+      ) {
+        record.phase = "invalid";
+        await transaction.put(RECORD_KEY, record);
+        return { kind: "replay" };
+      }
+      if (
+        record.phase !== "authorized" ||
+        !record.pendingCodeHash ||
+        !record.authorizationCodeExpiresAt ||
+        record.authorizationCodeExpiresAt <= input.now ||
+        !record.sessionExpiresAt ||
+        record.sessionExpiresAt <= input.now ||
+        !requestMatchesSession ||
+        !hashEquals(record.pendingCodeHash, codeHash)
+      ) {
+        return { kind: "invalid" };
+      }
+      return {
+        kind: "issued",
+        value: await storeInitialTokens(transaction, record, material, input.issueRefreshToken)
+      };
     });
+    if (result.kind === "replay") {
+      await this.invalidate();
+      return null;
+    }
+    if (result.kind === "issued") {
+      await this.ctx.storage.setAlarm(result.value.sessionExpiresAt);
+      return result.value;
+    }
+    return null;
   }
 
   async rotateRefreshToken(input: { refreshToken: string; clientId: string; resource: string; now: number }): Promise<TokenIssueResult | null> {
     const refreshTokenHash = await sha256(input.refreshToken);
     const material = await createTokenMaterial(routeId(input.refreshToken), true, input.now);
-    return this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV1>(RECORD_KEY);
+    const result = await this.ctx.storage.transaction<TokenOperationResult>(async (transaction) => {
+      const record = await transaction.get<AuthStateRecordV2>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "active" ||
-        !record.refreshTokenHash ||
-        record.expiresAt <= input.now ||
+        !record.sessionExpiresAt ||
+        record.sessionExpiresAt <= input.now ||
         record.clientId !== input.clientId ||
-        record.resource !== input.resource ||
-        !hashEquals(record.refreshTokenHash, refreshTokenHash)
+        record.resource !== input.resource
       ) {
-        return null;
+        return { kind: "invalid" };
       }
-      return storeIssuedTokens(transaction, record, material, true);
+      if (record.spentRefreshTokenHashes.some((hash) => hashEquals(hash, refreshTokenHash))) {
+        record.phase = "invalid";
+        await transaction.put(RECORD_KEY, record);
+        return { kind: "replay" };
+      }
+      if (!record.currentRefreshTokenHash || !hashEquals(record.currentRefreshTokenHash, refreshTokenHash)) {
+        return { kind: "invalid" };
+      }
+      if (record.spentRefreshTokenHashes.length >= MAX_SPENT_REFRESH_TOKENS) {
+        record.phase = "invalid";
+        await transaction.put(RECORD_KEY, record);
+        return { kind: "replay" };
+      }
+      return {
+        kind: "issued",
+        value: await storeRotatedTokens(transaction, record, material)
+      };
     });
+    if (result.kind === "replay") {
+      await this.invalidate();
+      return null;
+    }
+    if (result.kind === "issued") {
+      await this.ctx.storage.setAlarm(result.value.sessionExpiresAt);
+      return result.value;
+    }
+    return null;
   }
 
   async validateAccessToken(token: string, resource: string, now: number): Promise<{
@@ -216,15 +327,16 @@ export class McpAuthState extends DurableObject<RuntimeEnv> {
       !record ||
       record.phase !== "active" ||
       !record.accessTokenHash ||
-      !record.accessExpiresAt ||
-      record.accessExpiresAt <= now ||
-      record.expiresAt <= now ||
+      !record.accessTokenExpiresAt ||
+      record.accessTokenExpiresAt <= now ||
+      !record.sessionExpiresAt ||
+      record.sessionExpiresAt <= now ||
       record.resource !== resource ||
       !hashEquals(record.accessTokenHash, tokenHash)
     ) {
       return null;
     }
-    return { encryptedSessionKey: record.sessionKey, sessionExpiresAt: record.expiresAt };
+    return { encryptedSessionKey: record.sessionKey, sessionExpiresAt: record.sessionExpiresAt };
   }
 
   async invalidate(): Promise<void> {
@@ -233,17 +345,23 @@ export class McpAuthState extends DurableObject<RuntimeEnv> {
   }
 
   async alarm(): Promise<void> {
-    const record = await this.ctx.storage.get<AuthStateRecordV1>(RECORD_KEY);
-    if (record?.kind === "authorization_session" && record.expiresAt <= Date.now()) {
-      await this.ctx.storage.deleteAll();
+    const record = await this.ctx.storage.get<AuthStateRecordV2>(RECORD_KEY);
+    if (!record) {
+      await this.ctx.storage.deleteAlarm();
+      return;
     }
+    const deadline = recordDeadline(record);
+    if (deadline === null || deadline <= Date.now()) {
+      await this.invalidate();
+      return;
+    }
+    await this.ctx.storage.setAlarm(deadline);
   }
 
-  private async getSession(): Promise<PendingSessionRecordV1 | null> {
-    const record = await this.ctx.storage.get<AuthStateRecordV1>(RECORD_KEY);
+  private async getSession(): Promise<AuthorizationSessionRecordV2 | null> {
+    const record = await this.ctx.storage.get<AuthStateRecordV2>(RECORD_KEY);
     return record?.kind === "authorization_session" ? record : null;
   }
-
 }
 
 type TokenMaterial = {
@@ -267,29 +385,81 @@ async function createTokenMaterial(sessionId: string | null, issueRefreshToken: 
   };
 }
 
-async function storeIssuedTokens(
+async function storeInitialTokens(
   transaction: DurableObjectTransaction,
-  record: PendingSessionRecordV1,
+  record: AuthorizationSessionRecordV2,
   material: TokenMaterial,
   issueRefreshToken: boolean
 ): Promise<TokenIssueResult> {
   const refreshAllowed = issueRefreshToken && record.scope.split(/\s+/u).includes("offline_access");
-  const accessExpiresAt = Math.min(material.now + ACCESS_TOKEN_TTL_MS, record.expiresAt);
-  record.codeHash = null;
+  record.consumedCodeHash = record.pendingCodeHash;
+  record.pendingCodeHash = null;
+  record.authorizationCodeExpiresAt = null;
   record.accessTokenHash = material.accessTokenHash;
-  record.accessExpiresAt = accessExpiresAt;
-  record.refreshTokenHash = refreshAllowed ? material.refreshTokenHash : null;
+  record.accessTokenExpiresAt = Math.min(material.now + ACCESS_TOKEN_TTL_MS, requiredSessionExpiry(record));
+  record.currentRefreshTokenHash = refreshAllowed ? material.refreshTokenHash : null;
   record.phase = "active";
   await transaction.put(RECORD_KEY, record);
+  return tokenIssueResult(record, material, refreshAllowed);
+}
+
+async function storeRotatedTokens(
+  transaction: DurableObjectTransaction,
+  record: AuthorizationSessionRecordV2,
+  material: TokenMaterial
+): Promise<TokenIssueResult> {
+  record.spentRefreshTokenHashes.push(requiredCurrentRefreshTokenHash(record));
+  record.currentRefreshTokenHash = material.refreshTokenHash;
+  record.accessTokenHash = material.accessTokenHash;
+  record.accessTokenExpiresAt = Math.min(material.now + ACCESS_TOKEN_TTL_MS, requiredSessionExpiry(record));
+  await transaction.put(RECORD_KEY, record);
+  return tokenIssueResult(record, material, true);
+}
+
+function tokenIssueResult(
+  record: AuthorizationSessionRecordV2,
+  material: TokenMaterial,
+  includeRefreshToken: boolean
+): TokenIssueResult {
   return {
     accessToken: material.accessToken,
-    refreshToken: refreshAllowed ? material.refreshToken : null,
-    accessExpiresAt,
-    sessionExpiresAt: record.expiresAt,
+    refreshToken: includeRefreshToken ? material.refreshToken : null,
+    accessExpiresAt: record.accessTokenExpiresAt!,
+    sessionExpiresAt: requiredSessionExpiry(record),
     scope: record.scope,
     resource: record.resource,
     encryptedSessionKey: record.sessionKey
   };
+}
+
+function recordDeadline(record: AuthStateRecordV2): number | null {
+  if (record.kind === "oauth_client") {
+    return record.clientExpiresAt;
+  }
+  if (record.phase === "pending" || record.phase === "redeeming") {
+    return record.connectExpiresAt;
+  }
+  if (record.phase === "authorized") {
+    return record.authorizationCodeExpiresAt;
+  }
+  if (record.phase === "active") {
+    return record.sessionExpiresAt;
+  }
+  return null;
+}
+
+function requiredSessionExpiry(record: AuthorizationSessionRecordV2): number {
+  if (record.sessionExpiresAt === null) {
+    throw new Error("session expiration is unavailable");
+  }
+  return record.sessionExpiresAt;
+}
+
+function requiredCurrentRefreshTokenHash(record: AuthorizationSessionRecordV2): string {
+  if (!record.currentRefreshTokenHash) {
+    throw new Error("refresh token hash is unavailable");
+  }
+  return record.currentRefreshTokenHash;
 }
 
 function routeId(token: string): string | null {

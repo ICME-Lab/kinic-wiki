@@ -54,7 +54,9 @@ Discovery and OAuth endpoints:
 - `GET /.well-known/ii-auth-callbacks`
 - `GET|POST /mcp/connect`
 
-OAuth uses authorization code with mandatory S256 PKCE and DCR. The only scopes are `mcp:read` and `offline_access`; the staging audience is fixed to `https://wiki-mcp-staging.kinic.xyz/mcp`. Access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration.
+OAuth uses authorization code with mandatory S256 PKCE and DCR. The only scopes are `mcp:read` and `offline_access`; the staging audience is fixed to `https://wiki-mcp-staging.kinic.xyz/mcp`. Authorization codes expire after at most ten minutes, access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration. Reuse of an authorization code or rotated refresh token revokes the active local session. A session also requires a fresh connection after 64 refresh rotations.
+
+DCR applies a best-effort limit of ten registration attempts per connecting IP per minute in each Cloudflare location. Cloudflare's rate limiter is eventually consistent, so concurrent requests can temporarily exceed that limit. A rejected request returns `429` with `Retry-After: 60`; a rate-limiter failure returns `503`. Registered clients expire after 180 days without use and extend that deadline when an unexpired client ID is referenced by an OAuth request.
 
 The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. The direct MCP backend calls therefore pass `https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app` unchanged to `mcp_get_accounts`, `mcp_prepare_delegation`, and `mcp_get_delegation` so they derive the same existing Kinic principal. The resulting per-app delegation preserves the access level selected in II: read-only carries `permissions = "queries"`, while full access uses the protocol's unrestricted form with the optional permissions field absent. Delegations last at most five minutes and are never cached across requests. The MCP surface remains read-only.
 
@@ -192,6 +194,8 @@ Production uses `wrangler.jsonc`; staging uses `wrangler.staging.jsonc` and a se
 - staging: `MCP_ACCESS_POLICY=private_opt_in`
 
 `MCP_ACCESS_POLICY` accepts only `public`, `private_required`, or `private_opt_in`. A missing or unknown value returns `503` instead of guessing another mode.
+
+Staging requires both the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. The V2 auth-state migration deletes the V1 Durable Object namespace and all existing OAuth clients and sessions. After that deployment, every previously connected client must register and connect again. Production remains public and has neither binding.
 
 `KINIC_WIKI_IC_HOST` is the IC API gateway. `KINIC_WIKI_MCP_TARGET_ORIGIN` is the exact origin used by the II backend to derive the existing Kinic principal; it must be a bare HTTPS `ic0.app` origin for `KINIC_WIKI_CANISTER_ID`. The Worker does not rewrite, discover, or fall back between origins at runtime. The canister's `/.well-known/ii-alternative-origins` remains responsible only for allowing the controlled `wiki.kinic.xyz` frontend to request the public derivation origin.
 

@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { McpAuthState } from "../src/auth/state.js";
+import type { McpAuthStateV2 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
 const mocks = vi.hoisted(() => ({
@@ -57,7 +57,7 @@ function unavailableAuthBinding(): never {
   throw new Error("auth binding must not be used by this test");
 }
 
-const fakeAuthNamespace: DurableObjectNamespace<McpAuthState> = {
+const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV2> = {
   newUniqueId: unavailableAuthBinding,
   idFromName: unavailableAuthBinding,
   idFromString: unavailableAuthBinding,
@@ -73,7 +73,10 @@ const privateOptInEnv = {
   MCP_ACCESS_POLICY: "private_opt_in",
   MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
   MCP_KEY_ENCRYPTION_KEY: "test-encryption-key",
-  MCP_AUTH_STATE: fakeAuthNamespace
+  MCP_AUTH_STATE: fakeAuthNamespace,
+  MCP_REGISTRATION_RATE_LIMIT: {
+    limit: vi.fn().mockResolvedValue({ success: true })
+  }
 };
 
 describe("wiki mcp worker", () => {

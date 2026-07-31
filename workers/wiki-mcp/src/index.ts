@@ -16,7 +16,7 @@ import {
   type AuthenticationMode,
   type McpAccessPolicy
 } from "./auth/oauth.js";
-export { McpAuthState } from "./auth/state.js";
+export { McpAuthStateV2 } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
