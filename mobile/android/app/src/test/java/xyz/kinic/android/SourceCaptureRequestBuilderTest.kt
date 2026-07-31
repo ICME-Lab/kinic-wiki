@@ -32,10 +32,25 @@ class SourceCaptureRequestBuilderTest {
         )
         assertTrue(request.content.contains("kind: kinic.source_capture_request"))
         assertTrue(request.content.contains("url: \"https:\\/\\/example.com\\/page\""))
+        assertTrue(request.content.contains("output_language: \"en\""))
+        assertEquals(WikiOutputLanguage.ENGLISH, request.outputLanguage)
         assertEquals(
-            "{\"request_type\":\"source_capture\",\"url\":\"https:\\/\\/example.com\\/page\"}",
+            "{\"output_language\":\"en\",\"request_type\":\"source_capture\",\"url\":\"https:\\/\\/example.com\\/page\"}",
             request.metadataJson,
         )
+    }
+
+    @Test
+    fun includesSelectedOutputLanguage() {
+        val request = SourceCaptureRequestBuilder.request(
+            url = URI("https://example.com/page"),
+            databaseId = "db_demo",
+            requestedBy = "aaaaa-aa",
+            outputLanguage = WikiOutputLanguage.JAPANESE,
+        )
+
+        assertTrue(request.content.contains("output_language: \"ja\""))
+        assertTrue(request.metadataJson.contains("\"output_language\":\"ja\""))
     }
 
     @Test

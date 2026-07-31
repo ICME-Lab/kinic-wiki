@@ -194,6 +194,43 @@ object VfsCandidEncoder {
             ),
         )
 
+    fun writeNode(
+        databaseId: String,
+        path: String,
+        kind: VfsNodeKind,
+        content: String,
+        metadataJson: String,
+        expectedEtag: String?,
+    ): ByteArray {
+        val kinds = listOf("File", "Source", "Folder")
+        val nodeKind = TypeEntry.Variant(
+            kinds.map { field(it, TypeRef.Primitive(typeNull)) },
+        )
+        val optionalText = TypeEntry.Opt(TypeRef.Primitive(typeText))
+        val request = TypeEntry.Record(
+            listOf(
+                field("content", TypeRef.Primitive(typeText)),
+                field("kind", TypeRef.Table(0)),
+                field("path", TypeRef.Primitive(typeText)),
+                field("expected_etag", TypeRef.Table(1)),
+                field("metadata_json", TypeRef.Primitive(typeText)),
+                field("database_id", TypeRef.Primitive(typeText)),
+            ),
+        )
+        return oneRecord(
+            tableEntries = listOf(nodeKind, optionalText, request),
+            argType = TypeRef.Table(2),
+            namedValues = listOf(
+                "content" to Value.Text(content),
+                "kind" to Value.Variant(kind.candidName, kinds, Value.Null),
+                "path" to Value.Text(path),
+                "expected_etag" to (expectedEtag?.let { Value.Some(Value.Text(it)) } ?: Value.None),
+                "metadata_json" to Value.Text(metadataJson),
+                "database_id" to Value.Text(databaseId),
+            ),
+        )
+    }
+
     fun writeNodes(request: SourceCaptureRequest): ByteArray {
         val nodeKind = TypeEntry.Variant(
             listOf(

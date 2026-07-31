@@ -14,6 +14,7 @@ data class SourceCaptureRequest(
     val content: String,
     val metadataJson: String,
     val normalizedUrl: URI,
+    val outputLanguage: WikiOutputLanguage = WikiOutputLanguage.ENGLISH,
 )
 
 data class ShareCaptureMetadata(
@@ -41,7 +42,94 @@ data class PendingSharedUrl(
     val requestId: String,
     val databaseId: String?,
     val captureMetadata: ShareCaptureMetadata?,
+    val outputLanguage: WikiOutputLanguage = WikiOutputLanguage.ENGLISH,
 )
+
+enum class WikiOutputLanguage(val code: String, val displayName: String) {
+    ENGLISH("en", "English"),
+    JAPANESE("ja", "Japanese"),
+    SIMPLIFIED_CHINESE("zh-Hans", "Chinese (Simplified)"),
+    KOREAN("ko", "Korean"),
+    SPANISH("es", "Spanish"),
+    FRENCH("fr", "French"),
+    GERMAN("de", "German"),
+    PORTUGUESE("pt", "Portuguese");
+
+    companion object {
+        fun fromCode(code: String): WikiOutputLanguage? = entries.firstOrNull { it.code == code }
+        fun fromSetting(value: String): WikiOutputLanguage =
+            entries.firstOrNull { it.code == value || it.displayName.equals(value, ignoreCase = true) } ?: ENGLISH
+    }
+}
+
+enum class SourceCaptureHistoryStatus(val workerValue: String) {
+    QUEUED("queued"),
+    FETCHING("fetching"),
+    SOURCE_WRITTEN("source_written"),
+    GENERATING("generating"),
+    COMPLETED("completed"),
+    FAILED("failed");
+
+    companion object {
+        fun fromWorkerValue(value: String): SourceCaptureHistoryStatus? =
+            entries.firstOrNull { it.workerValue == value }
+    }
+}
+
+data class SourceCaptureHistoryItem(
+    val requestPath: String,
+    val url: String,
+    val status: SourceCaptureHistoryStatus,
+    val requestedAtMilliseconds: Long,
+    val updatedAtMilliseconds: Long,
+    val claimedAt: String?,
+    val sourcePath: String?,
+    val targetPath: String?,
+    val finishedAt: String?,
+    val error: String?,
+    val lastCheckedAtMilliseconds: Long? = null,
+    val syncError: String? = null,
+) {
+    fun isRetryable(now: Instant = Instant.now()): Boolean =
+        when (status) {
+            SourceCaptureHistoryStatus.QUEUED,
+            SourceCaptureHistoryStatus.SOURCE_WRITTEN,
+            SourceCaptureHistoryStatus.FAILED,
+            -> true
+            SourceCaptureHistoryStatus.FETCHING -> claimedAt?.let {
+                runCatching { Instant.parse(it) }.getOrNull()
+            }?.let { now.epochSecond - it.epochSecond >= 15 * 60 } == true
+            SourceCaptureHistoryStatus.GENERATING,
+            SourceCaptureHistoryStatus.COMPLETED,
+            -> false
+        }
+}
+
+data class SourceCaptureHistoryRecord(
+    val databaseId: String,
+    val item: SourceCaptureHistoryItem,
+) {
+    val id: String = "$databaseId:${item.requestPath}"
+
+    companion object {
+        fun fromRequest(request: SourceCaptureRequest, requestedAt: Instant): SourceCaptureHistoryRecord =
+            SourceCaptureHistoryRecord(
+                databaseId = request.databaseId,
+                item = SourceCaptureHistoryItem(
+                    requestPath = request.requestPath,
+                    url = request.normalizedUrl.toString(),
+                    status = SourceCaptureHistoryStatus.QUEUED,
+                    requestedAtMilliseconds = requestedAt.toEpochMilli(),
+                    updatedAtMilliseconds = requestedAt.toEpochMilli(),
+                    claimedAt = null,
+                    sourcePath = null,
+                    targetPath = null,
+                    finishedAt = null,
+                    error = null,
+                ),
+            )
+    }
+}
 
 data class DatabaseSummary(
     val databaseId: String,

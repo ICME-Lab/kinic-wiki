@@ -20,6 +20,7 @@ object SourceCaptureRequestBuilder {
         now: Instant = Instant.now(),
         uuid: UUID = UUID.randomUUID(),
         captureMetadata: ShareCaptureMetadata? = null,
+        outputLanguage: WikiOutputLanguage = WikiOutputLanguage.ENGLISH,
     ): SourceCaptureRequest {
         val normalizedUrl = URLNormalizer.normalizedHttpUrl(url)
         val resolvedRequestId = requestId?.let(::validateRequestId) ?: makeRequestId(now, uuid)
@@ -35,6 +36,7 @@ object SourceCaptureRequestBuilder {
             "url: ${jsonString(urlText)}",
             "requested_by: ${jsonString(requestedBy)}",
             "requested_at: ${jsonString(now.toString())}",
+            "output_language: ${jsonString(outputLanguage.code)}",
             "claimed_at: null",
             "source_path: null",
             "target_path: null",
@@ -48,6 +50,7 @@ object SourceCaptureRequestBuilder {
         val metadataPayload = mutableMapOf(
             "request_type" to "source_capture",
             "url" to urlText,
+            "output_language" to outputLanguage.code,
         )
         appendCaptureMetadata(cleanedMetadata, metadataPayload)
 
@@ -58,6 +61,7 @@ object SourceCaptureRequestBuilder {
             content = (frontmatter + body).joinToString("\n"),
             metadataJson = jsonObjectSorted(metadataPayload),
             normalizedUrl = normalizedUrl,
+            outputLanguage = outputLanguage,
         )
     }
 

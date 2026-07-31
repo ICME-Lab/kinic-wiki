@@ -17,6 +17,7 @@ class SourceCaptureSubmitter(
     private val inbox: ShareInbox,
     private val gateway: SourceCaptureGateway,
     private val resolveDatabase: SourceCaptureDatabaseResolver,
+    private val historyStore: SourceCaptureHistoryStore? = null,
 ) {
     suspend fun submitNextPendingUrl(session: IcAuthSession, selectedDatabase: DatabaseSummary?): String {
         val item = inbox.loadPendingUrls().firstOrNull() ?: return "No pending URLs."
@@ -45,14 +46,29 @@ class SourceCaptureSubmitter(
                 requestId = item.requestId,
                 now = item.receivedAt,
                 captureMetadata = item.captureMetadata,
+                outputLanguage = item.outputLanguage,
             )
             val submission = gateway.saveSourceCaptureRequest(request, session)
+            if (historyStore != null) {
+                try {
+                    historyStore.save(SourceCaptureHistoryRecord.fromRequest(request, item.receivedAt))
+                    inbox.remove(item)
+                } catch (_: Exception) {
+                    return "Source request saved, but local history could not be saved. It remains queued for retry."
+                }
+            }
             try {
                 gateway.triggerSourceCapture(submission)
-                inbox.remove(item)
+                if (historyStore == null) {
+                    inbox.remove(item)
+                }
                 "Saved ${submission.requestPath}."
             } catch (error: Exception) {
-                "Saved ${submission.requestPath}, but capture could not start. It remains queued for retry: ${error.message ?: "trigger failed"}"
+                if (historyStore == null) {
+                    "Saved ${submission.requestPath}, but capture could not start. It remains queued for retry: ${error.message ?: "trigger failed"}"
+                } else {
+                    "Saved ${submission.requestPath}, but capture could not start. Retry it from history: ${error.message ?: "trigger failed"}"
+                }
             }
         } catch (error: Exception) {
             error.message ?: "Source capture submission failed."

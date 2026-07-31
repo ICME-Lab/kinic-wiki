@@ -23,13 +23,16 @@ class MainActivity : ComponentActivity() {
         val authService = kinicAuthService(configuration, applicationContext)
         val settingsStore = kinicSettingsStore(filesDir)
         val inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
+        val historyStore = sourceCaptureHistoryStore(filesDir)
         val vfsClient = KinicVfsClient(configuration)
+        val icClient = KinicIcClient(configuration)
         val submitter = SourceCaptureSubmitter(
             inbox = inbox,
-            gateway = KinicIcClient(configuration),
+            gateway = icClient,
             resolveDatabase = { databaseId, session ->
                 vfsClient.listReadableDatabases(session).firstOrNull { it.databaseId == databaseId }
             },
+            historyStore = historyStore,
         )
         viewModel = ViewModelProvider(
             this,
@@ -40,6 +43,8 @@ class MainActivity : ComponentActivity() {
                 inbox,
                 submitter,
                 vfsClient,
+                historyStore,
+                icClient,
             ),
         )[KinicAppViewModel::class.java]
         handleIntent(intent)

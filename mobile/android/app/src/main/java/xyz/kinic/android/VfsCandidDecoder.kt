@@ -35,6 +35,10 @@ object VfsCandidDecoder {
         }
     }
 
+    fun decodeWriteNodeResult(data: ByteArray) {
+        decodeResult(data).recordOrNull() ?: throw invalid("expected write_node result")
+    }
+
     fun decodeDatabaseSummaries(data: ByteArray): List<DatabaseSummary> {
         val ok = decodeResult(data)
         val vector = ok.vectorOrNull() ?: throw invalid("expected database summary vector")

@@ -35,9 +35,9 @@ class KinicSettingsStore(
         }.getOrDefault(DarkMode.SYSTEM)
         set(value) = write(read().put("darkMode", value.name))
 
-    var generationLanguage: String
-        get() = read().optString("generationLanguage", "Japanese").ifBlank { "Japanese" }
-        set(value) = write(read().put("generationLanguage", value.trim().ifBlank { "Japanese" }))
+    var generationLanguage: WikiOutputLanguage
+        get() = WikiOutputLanguage.fromSetting(read().optString("generationLanguage", WikiOutputLanguage.ENGLISH.code))
+        set(value) = write(read().put("generationLanguage", value.code))
 
     private fun read(): JSONObject =
         runCatching {

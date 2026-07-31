@@ -85,6 +85,62 @@ class KinicIcClient(
         }
     }
 
+    suspend fun retrySourceCapture(
+        databaseId: String,
+        requestPath: String,
+        session: IcAuthSession,
+    ) {
+        validateSession(session)
+        val node = VfsCandidDecoder.decodeReadNodeResult(
+            client.queryRaw(
+                method = "read_node",
+                arg = VfsCandidEncoder.readNode(databaseId, requestPath),
+                identity = session,
+            ),
+        ) ?: throw IllegalStateException("Source capture request is no longer available.")
+        val request = SourceCaptureHistoryParser.request(node)
+        require(request.requestedBy == session.principal) {
+            "The source capture request belongs to a different principal."
+        }
+        require(request.item.isRetryable()) {
+            "Source capture request is not retryable in state ${request.item.status.workerValue}."
+        }
+        if (request.item.status == SourceCaptureHistoryStatus.FAILED) {
+            val retry = request.retryWrite()
+            VfsCandidDecoder.decodeWriteNodeResult(
+                client.callRaw(
+                    method = "write_node",
+                    arg = VfsCandidEncoder.writeNode(
+                        databaseId = databaseId,
+                        path = requestPath,
+                        kind = VfsNodeKind.FILE,
+                        content = retry.content,
+                        metadataJson = retry.metadataJson,
+                        expectedEtag = node.etag,
+                    ),
+                    identity = session,
+                ),
+            )
+        }
+        val sessionNonce = UUID.randomUUID().toString().lowercase()
+        VfsCandidDecoder.decodeUnitResult(
+            client.callRaw(
+                method = "authorize_source_capture_trigger_session",
+                arg = VfsCandidEncoder.authorizeSourceCaptureTriggerSession(databaseId, sessionNonce),
+                identity = session,
+            ),
+        )
+        triggerSourceCapture(
+            CaptureSubmission(
+                databaseId = databaseId,
+                requestPath = requestPath,
+                requestId = SourceCaptureHistoryStore.requestId(requestPath).orEmpty(),
+                url = request.item.url,
+                sessionNonce = sessionNonce,
+            ),
+        )
+    }
+
     private fun validateSession(session: IcAuthSession) {
         require(session.canisterId == configuration.canisterId) {
             "auth session canister does not match configuration"

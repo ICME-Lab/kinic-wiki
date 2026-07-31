@@ -72,13 +72,17 @@ data class KinicAppUiState(
     val showPublicDatabases: Boolean = true,
     val showPurchasedDatabases: Boolean = false,
     val darkMode: DarkMode = DarkMode.SYSTEM,
-    val generationLanguage: String = "Japanese",
+    val generationLanguage: WikiOutputLanguage = WikiOutputLanguage.ENGLISH,
+    val sourceCaptureHistory: List<SourceCaptureHistoryRecord> = emptyList(),
+    val isLoadingSourceCaptureHistory: Boolean = false,
+    val sourceCaptureRetryPaths: Set<String> = emptySet(),
     val manage: ManageUiState = ManageUiState(),
 )
 
 sealed interface KinicAppEvent {
     data class OpenUri(val uri: URI) : KinicAppEvent
     data class CopyText(val label: String, val value: String) : KinicAppEvent
+    data class Navigate(val destination: KinicTopLevelDestination) : KinicAppEvent
 }
 
 class KinicAppViewModel(
@@ -88,6 +92,8 @@ class KinicAppViewModel(
     private val inbox: ShareInbox,
     private val submitter: SourceCaptureSubmitter,
     private val vfsClient: KinicVfsClient,
+    private val historyStore: SourceCaptureHistoryStore,
+    private val icClient: KinicIcClient,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         KinicAppUiState(
@@ -225,6 +231,7 @@ class KinicAppViewModel(
             if (browseId.isNotBlank()) {
                 loadBrowsePath("/")
             }
+            refreshSourceCaptureHistory()
         }
     }
 
@@ -245,14 +252,15 @@ class KinicAppViewModel(
         _uiState.update { it.copy(darkMode = mode) }
     }
 
-    fun setGenerationLanguage(language: String) {
+    fun setGenerationLanguage(language: WikiOutputLanguage) {
         settingsStore.generationLanguage = language
-        _uiState.update { it.copy(generationLanguage = settingsStore.generationLanguage) }
+        _uiState.update { it.copy(generationLanguage = language) }
     }
 
     fun selectCaptureDatabase(databaseId: String) {
         settingsStore.selectedDatabaseId = databaseId
         _uiState.update { it.copy(selectedCaptureDatabaseId = databaseId) }
+        refreshSourceCaptureHistory()
     }
 
     fun selectBrowseDatabase(databaseId: String) {
@@ -386,6 +394,7 @@ class KinicAppViewModel(
             inbox.enqueue(
                 url = URI(url.trim()),
                 databaseId = _uiState.value.selectedCaptureDatabaseId,
+                outputLanguage = _uiState.value.generationLanguage,
             )
         }.onSuccess {
             _uiState.update { state ->
@@ -414,7 +423,92 @@ class KinicAppViewModel(
             _uiState.update {
                 it.copy(pendingUrls = inbox.loadPendingUrls(), message = message)
             }
+            refreshSourceCaptureHistory()
         }
+    }
+
+    fun refreshSourceCaptureHistory(refreshAll: Boolean = false) {
+        val state = _uiState.value
+        val databaseId = state.selectedCaptureDatabaseId
+        if (databaseId.isBlank()) {
+            _uiState.update { it.copy(sourceCaptureHistory = emptyList()) }
+            return
+        }
+        val local = historyStore.load(databaseId)
+        _uiState.update { it.copy(sourceCaptureHistory = local) }
+        val session = state.session ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingSourceCaptureHistory = true) }
+            val records = if (refreshAll) local else local.take(10)
+            records.forEach { record ->
+                val checkedAt = System.currentTimeMillis()
+                val updated = runCatching {
+                    val node = vfsClient.readBrowseNode(
+                        databaseId,
+                        record.item.requestPath,
+                        session,
+                    ) ?: throw IllegalStateException("Request node is no longer available.")
+                    record.copy(
+                        item = SourceCaptureHistoryParser.item(node).copy(
+                            lastCheckedAtMilliseconds = checkedAt,
+                            syncError = null,
+                        ),
+                    )
+                }.getOrElse { error ->
+                    record.copy(
+                        item = record.item.copy(
+                            lastCheckedAtMilliseconds = checkedAt,
+                            syncError = errorMessage(error),
+                        ),
+                    )
+                }
+                runCatching { historyStore.save(updated) }
+                _uiState.update { current ->
+                    current.copy(
+                        sourceCaptureHistory = current.sourceCaptureHistory.map {
+                            if (it.id == updated.id) updated else it
+                        },
+                    )
+                }
+            }
+            _uiState.update { it.copy(isLoadingSourceCaptureHistory = false) }
+        }
+    }
+
+    fun retrySourceCapture(record: SourceCaptureHistoryRecord) {
+        val state = _uiState.value
+        val session = state.session ?: return
+        if (record.databaseId != state.selectedCaptureDatabaseId) {
+            _uiState.update { it.copy(message = "Select the database that owns this capture before retrying.") }
+            return
+        }
+        if (!record.item.isRetryable() || record.item.requestPath in state.sourceCaptureRetryPaths) return
+        _uiState.update {
+            it.copy(sourceCaptureRetryPaths = it.sourceCaptureRetryPaths + record.item.requestPath)
+        }
+        viewModelScope.launch {
+            runCatching {
+                icClient.retrySourceCapture(record.databaseId, record.item.requestPath, session)
+            }.onSuccess {
+                _uiState.update { it.copy(message = "Capture retry started.") }
+            }.onFailure { error ->
+                _uiState.update { it.copy(message = "Capture retry failed: ${errorMessage(error)}") }
+            }
+            _uiState.update {
+                it.copy(sourceCaptureRetryPaths = it.sourceCaptureRetryPaths - record.item.requestPath)
+            }
+            refreshSourceCaptureHistory(refreshAll = true)
+        }
+    }
+
+    fun openCaptureDocument(record: SourceCaptureHistoryRecord) {
+        val path = record.item.targetPath ?: return
+        val entry = _uiState.value.browseDatabases.firstOrNull {
+            it.summary.databaseId == record.databaseId
+        } ?: return
+        selectBrowseDatabase(entry.summary.databaseId)
+        openBrowseNode(path)
+        _events.tryEmit(KinicAppEvent.Navigate(KinicTopLevelDestination.BROWSE))
     }
 
     fun selectManageDatabase(databaseId: String) {
@@ -753,6 +847,8 @@ class KinicAppViewModelFactory(
     private val inbox: ShareInbox,
     private val submitter: SourceCaptureSubmitter,
     private val vfsClient: KinicVfsClient,
+    private val historyStore: SourceCaptureHistoryStore,
+    private val icClient: KinicIcClient,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -764,6 +860,8 @@ class KinicAppViewModelFactory(
             inbox,
             submitter,
             vfsClient,
+            historyStore,
+            icClient,
         ) as T
     }
 }

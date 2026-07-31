@@ -108,6 +108,7 @@ fun KinicAppShell(
             when (event) {
                 is KinicAppEvent.OpenUri -> onOpenUri(event.uri)
                 is KinicAppEvent.CopyText -> onCopyText(event.label, event.value)
+                is KinicAppEvent.Navigate -> Unit
             }
         }
     }
@@ -122,6 +123,17 @@ private fun KinicNavigation(state: KinicAppUiState, viewModel: KinicAppViewModel
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: KinicTopLevelDestination.HOME.route
+    LaunchedEffect(viewModel, navController) {
+        viewModel.events.collect { event ->
+            if (event is KinicAppEvent.Navigate) {
+                navController.navigate(event.destination.route) {
+                    popUpTo(KinicTopLevelDestination.HOME.route) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -245,6 +257,43 @@ private fun HomeScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) {
                 TextButton(onClick = { viewModel.removePending(item) }) {
                     Icon(Icons.Outlined.Delete, contentDescription = null)
                     Text("Remove")
+                }
+                HorizontalDivider()
+            }
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                SectionTitle("History")
+                IconButton(onClick = { viewModel.refreshSourceCaptureHistory(refreshAll = true) }) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "Refresh history")
+                }
+            }
+        }
+        items(state.sourceCaptureHistory.take(10), key = SourceCaptureHistoryRecord::id) { record ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(record.item.url, maxLines = 2)
+                Text(
+                    record.item.status.workerValue.replace('_', ' '),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                record.item.error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                record.item.syncError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (record.item.isRetryable()) {
+                        TextButton(
+                            onClick = { viewModel.retrySourceCapture(record) },
+                            enabled = record.item.requestPath !in state.sourceCaptureRetryPaths,
+                        ) { Text("Retry") }
+                    }
+                    if (record.item.targetPath != null) {
+                        TextButton(onClick = { viewModel.openCaptureDocument(record) }) {
+                            Text("Open document")
+                        }
+                    }
                 }
                 HorizontalDivider()
             }
@@ -678,13 +727,7 @@ private fun SettingsPanel(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                 )
             }
         }
-        OutlinedTextField(
-            value = state.generationLanguage,
-            onValueChange = viewModel::setGenerationLanguage,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Generation language") },
-            singleLine = true,
-        )
+        LanguageDropdown(state.generationLanguage, viewModel::setGenerationLanguage)
         TextButton(onClick = viewModel::openPrivacyPolicy) { Text("Privacy policy") }
     }
 }
@@ -694,6 +737,38 @@ private fun SettingSwitch(label: String, checked: Boolean, onCheckedChange: (Boo
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LanguageDropdown(
+    selected: WikiOutputLanguage,
+    onSelect: (WikiOutputLanguage) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = selected.displayName,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
+            label = { Text("Generation language") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            WikiOutputLanguage.entries.forEach { language ->
+                DropdownMenuItem(
+                    text = { Text(language.displayName) },
+                    onClick = {
+                        expanded = false
+                        onSelect(language)
+                    },
+                )
+            }
+        }
     }
 }
 

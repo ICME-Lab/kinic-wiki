@@ -1,27 +1,70 @@
-// Where: mobile/android/app/src/main/java/xyz/kinic/android/ShareActivity.kt
-// What: Android share target for URL capture.
-// Why: Browser shares should enter the shared pending queue for later app-side capture.
-
 package xyz.kinic.android
 
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import xyz.kinic.android.ic.IcAuthSession
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URI
 
 class ShareActivity : ComponentActivity() {
-    private val sessionState = mutableStateOf<IcAuthSession?>(null)
+    private var message by mutableStateOf("Preparing shared URL...")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text("KinicWiki", style = MaterialTheme.typography.headlineSmall)
+                    Text(message)
+                    Button(
+                        onClick = {
+                            startActivity(
+                                Intent(this@ShareActivity, MainActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                            )
+                            finish()
+                        },
+                    ) {
+                        Text("Open KinicWiki")
+                    }
+                }
+            }
+        }
+        if (savedInstanceState == null) {
+            submitSharedUrl()
+        }
+    }
+
+    private fun submitSharedUrl() {
+        val sharedUrl = sharedUrl() ?: run {
+            message = "No valid shared URL."
+            return
+        }
         val configuration = AppConfiguration.fromResources(this)
         val authService = kinicAuthService(configuration, applicationContext)
         val settingsStore = kinicSettingsStore(filesDir)
         val inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
+        val historyStore = sourceCaptureHistoryStore(filesDir)
         val vfsClient = KinicVfsClient(configuration)
         val submitter = SourceCaptureSubmitter(
             inbox = inbox,
@@ -29,64 +72,43 @@ class ShareActivity : ComponentActivity() {
             resolveDatabase = { databaseId, session ->
                 vfsClient.listReadableDatabases(session).firstOrNull { it.databaseId == databaseId }
             },
+            historyStore = historyStore,
         )
-        sessionState.value = authService.restore()
-        val initialMessage = enqueueSharedText(inbox)
-        setContent {
-            KinicAppView(
-                inbox = inbox,
-                session = sessionState.value,
-                message = initialMessage,
-                initialSelectedDatabaseId = settingsStore.selectedBrowseDatabaseId.ifBlank { settingsStore.selectedDatabaseId },
-                onSignIn = {
-                    val url = authService.startSignIn()
-                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url.toString())))
-                    "Opening Internet Identity..."
-                },
-                onSignOut = {
-                    authService.signOut()
-                    sessionState.value = null
-                    "Signed out."
-                },
-                onSubmitNext = submit@ { database ->
-                    val session = sessionState.value ?: return@submit "Sign in before submitting."
-                    submitter.submitNextPendingUrl(session = session, selectedDatabase = database)
-                },
-                onResolveDatabase = resolve@ { databaseId ->
-                    val session = sessionState.value ?: return@resolve null
-                    vfsClient.listReadableDatabases(session).firstOrNull { it.databaseId == databaseId }
-                },
-                onRefreshDatabases = refresh@ {
-                    val session = sessionState.value ?: return@refresh emptyList()
-                    vfsClient.listReadableDatabases(session)
-                },
-                onSelectDatabase = { databaseId ->
-                    settingsStore.selectedDatabaseId = databaseId
-                    settingsStore.selectedBrowseDatabaseId = databaseId
-                },
-                onListChildren = children@ { databaseId, path ->
-                    val session = sessionState.value ?: return@children emptyList()
-                    vfsClient.listBrowseChildren(databaseId = databaseId, path = path, session = session)
-                },
-                onReadNode = node@ { databaseId, path ->
-                    val session = sessionState.value ?: return@node null
-                    vfsClient.readBrowseNode(databaseId = databaseId, path = path, session = session)
-                },
+        lifecycleScope.launch {
+            val metadata = withContext(Dispatchers.IO) {
+                XPostMetadataFetcher().metadata(sharedUrl)
+            }
+            runCatching {
+                inbox.enqueue(
+                    url = sharedUrl,
+                    databaseId = settingsStore.selectedDatabaseId,
+                    captureMetadata = metadata,
+                    outputLanguage = settingsStore.generationLanguage,
+                )
+            }.onFailure {
+                message = it.message ?: "Failed to queue the shared URL."
+                return@launch
+            }
+            val session = authService.restore()
+            if (session == null || settingsStore.selectedDatabaseId.isBlank()) {
+                message = "Queued for submission in KinicWiki."
+                return@launch
+            }
+            message = submitter.submitNextPendingUrl(
+                session = session,
+                selectedDatabase = null,
             )
         }
     }
 
-    private fun enqueueSharedText(inbox: ShareInbox): String {
-        if (intent?.action != Intent.ACTION_SEND) return "No shared URL"
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
-        if (text.isNullOrEmpty()) return "No shared URL"
-        val candidate = text.lineSequence().firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
-            ?: text
-        return runCatching {
-            inbox.enqueue(URI(candidate))
-            "Queued"
-        }.getOrElse {
-            it.message ?: "Failed"
-        }
+    private fun sharedUrl(): URI? {
+        if (intent?.action != Intent.ACTION_SEND) return null
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        val candidate = HTTP_URL.find(text)?.value?.trimEnd('.', ',', ')', ']', '}') ?: return null
+        return runCatching { URLNormalizer.normalizedHttpUrl(candidate) }.getOrNull()
+    }
+
+    private companion object {
+        val HTTP_URL = Regex("""https?://\S+""", RegexOption.IGNORE_CASE)
     }
 }

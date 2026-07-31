@@ -27,6 +27,7 @@ class ShareInbox(private val queueDirectory: File) {
         requestId: String? = null,
         databaseId: String? = null,
         captureMetadata: ShareCaptureMetadata? = null,
+        outputLanguage: WikiOutputLanguage = WikiOutputLanguage.ENGLISH,
     ): PendingSharedUrl {
         val normalizedUrl = URLNormalizer.normalizedHttpUrl(url)
         val id = UUID.randomUUID().toString().lowercase()
@@ -39,6 +40,7 @@ class ShareInbox(private val queueDirectory: File) {
             requestId = resolvedRequestId,
             databaseId = databaseId?.trim()?.takeIf(String::isNotEmpty),
             captureMetadata = captureMetadata?.cleaned(),
+            outputLanguage = outputLanguage,
         )
         val temporary = File(queueDirectory, "$id.tmp")
         val final = File(queueDirectory, "$id.json")
@@ -69,6 +71,8 @@ class ShareInbox(private val queueDirectory: File) {
                 requestId = requestId,
                 databaseId = json.optString("databaseId").trim().takeIf(String::isNotEmpty),
                 captureMetadata = decodeMetadata(json.optJSONObject("captureMetadata")),
+                outputLanguage = WikiOutputLanguage.fromCode(json.optString("outputLanguage"))
+                    ?: WikiOutputLanguage.ENGLISH,
             )
         }.getOrNull()
 
@@ -78,6 +82,7 @@ class ShareInbox(private val queueDirectory: File) {
             .put("url", item.url.toString())
             .put("receivedAt", item.receivedAt.toString())
             .put("requestId", item.requestId)
+            .put("outputLanguage", item.outputLanguage.code)
         item.databaseId?.let { json.put("databaseId", it) }
         item.captureMetadata?.let { json.put("captureMetadata", encodeMetadata(it)) }
         return json
