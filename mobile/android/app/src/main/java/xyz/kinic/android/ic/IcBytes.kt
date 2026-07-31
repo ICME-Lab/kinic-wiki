@@ -57,20 +57,6 @@ internal fun ULong.toUleb128(): ByteArray {
     return out.toByteArray()
 }
 
-internal fun ULong.toSleb128(): ByteArray {
-    var remaining = this
-    val out = mutableListOf<Byte>()
-    do {
-        var byte = (remaining and 0x7fu).toInt()
-        remaining = remaining shr 7
-        val signBitSet = byte and 0x40 != 0
-        val hasMore = remaining != 0uL || signBitSet
-        if (hasMore) byte = byte or 0x80
-        out += byte.toByte()
-    } while (remaining != 0uL || (out.last().toInt() and 0x40) != 0)
-    return out.toByteArray()
-}
-
 internal fun ByteArray.base64UrlNoPadding(): String =
     Base64.getUrlEncoder().withoutPadding().encodeToString(this)
 

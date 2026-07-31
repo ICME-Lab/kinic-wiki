@@ -27,12 +27,10 @@ Kotlin / Jetpack Compose app scaffold for Kinic Wiki mobile capture.
 
 ## Verification
 
-Use Android Studio with JDK 17, or a local Gradle install:
+The project uses the checked-in Gradle 9.4.1 wrapper. Install JDK 17 and Android
+SDK Platform 37 with Build Tools 36.0.0, then run:
 
 ```bash
 cd mobile/android
-gradle testDebugUnitTest
-gradle assembleDebug
+./gradlew testDebugUnitTest assembleDebug lintDebug
 ```
-
-This repository worktree currently has no Gradle installation, so command-line verification depends on Android Studio or Gradle being installed locally.

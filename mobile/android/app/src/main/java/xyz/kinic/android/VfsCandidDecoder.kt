@@ -388,6 +388,11 @@ private fun ULong.toIntChecked(label: String): Int {
     return toInt()
 }
 
+private fun Long.toIntChecked(label: String): Int {
+    if (this !in 0..Int.MAX_VALUE.toLong()) throw VfsCandidError.InvalidPayload("$label is out of range")
+    return toInt()
+}
+
 private fun ULong.toUIntChecked(label: String): UInt {
     if (this > UInt.MAX_VALUE.toULong()) throw VfsCandidError.InvalidPayload("$label is too large")
     return toUInt()

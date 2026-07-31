@@ -9,7 +9,7 @@ object IcRequestId {
         when (value) {
             is IcCbor.Value.Text -> value.value.encodeToByteArray().sha256()
             is IcCbor.Value.Bytes -> value.value.sha256()
-            is IcCbor.Value.Unsigned -> value.value.toSleb128().sha256()
+            is IcCbor.Value.Unsigned -> value.value.toUleb128().sha256()
             is IcCbor.Value.ArrayValue -> concatBytes(value.values.map(::hash)).sha256()
             is IcCbor.Value.MapValue -> {
                 val hashed = value.values.map { (key, item) -> hash(key) to hash(item) }

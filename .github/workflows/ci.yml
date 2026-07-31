@@ -21,6 +21,7 @@ jobs:
       wiki_mcp: ${{ steps.paths.outputs.wiki_mcp }}
       skill_registry_web: ${{ steps.paths.outputs.skill_registry_web }}
       ios: ${{ steps.paths.outputs.ios }}
+      android: ${{ steps.paths.outputs.android }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -54,6 +55,7 @@ jobs:
               echo "wiki_mcp=true"
               echo "skill_registry_web=true"
               echo "ios=true"
+              echo "android=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -87,6 +89,7 @@ jobs:
           set_output wiki_mcp "($js_workspace|^workers/wiki-mcp/)"
           set_output skill_registry_web "($js_workspace|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
           set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
+          set_output android '^(mobile/android/|\.github/workflows/ci\.yml)'
 
   regression-groups-check:
     runs-on: ubuntu-latest
@@ -128,6 +131,26 @@ jobs:
             ASC_KEY_ID=DUMMYKEY01 \
             ASC_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
             mobile/ios/scripts/testflight-upload.sh --validate-only
+
+  android-check:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Run Android checks
+        run: ./gradlew testDebugUnitTest assembleDebug lintDebug
 
   wikibrowser-check:
     needs: changes

@@ -44,8 +44,22 @@ class IcClientCoreTest {
 
     @Test
     fun requestIdHashesNaturalNumbersWithUnsignedLeb128() {
-        val encoded = byteArrayOf(0xe5.toByte(), 0x8e.toByte(), 0x26.toByte())
-        assertArrayEquals(encoded.sha256(), IcRequestId.hash(IcCbor.Value.Unsigned(624_485uL)))
+        val vectors = listOf(
+            0uL to byteArrayOf(0x00),
+            63uL to byteArrayOf(0x3f),
+            64uL to byteArrayOf(0x40),
+            127uL to byteArrayOf(0x7f),
+            128uL to byteArrayOf(0x80.toByte(), 0x01),
+            624_485uL to byteArrayOf(0xe5.toByte(), 0x8e.toByte(), 0x26),
+        )
+
+        vectors.forEach { (value, encoded) ->
+            assertArrayEquals(
+                "unsigned LEB128 request-id hash for $value",
+                encoded.sha256(),
+                IcRequestId.hash(IcCbor.Value.Unsigned(value)),
+            )
+        }
     }
 
     @Test

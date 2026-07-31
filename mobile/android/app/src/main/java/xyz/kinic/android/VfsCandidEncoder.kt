@@ -43,7 +43,7 @@ object VfsCandidEncoder {
         )
 
     fun authorizeSourceCaptureTriggerSession(databaseId: String, sessionNonce: String): ByteArray =
-        oneRecord(
+        encodeRecordValues(
             tableEntries = listOf(
                 TypeEntry.Record(
                     listOf(
@@ -111,13 +111,13 @@ object VfsCandidEncoder {
         argType: TypeRef,
         namedValues: List<Pair<String, Value>>,
     ): ByteArray =
-        oneRecord(
+        encodeRecordValues(
             tableEntries = tableEntries,
             argType = argType,
             values = namedValues.sortedBy { label(it.first) }.map { it.second },
         )
 
-    private fun oneRecord(tableEntries: List<TypeEntry>, argType: TypeRef, values: List<Value>): ByteArray {
+    private fun encodeRecordValues(tableEntries: List<TypeEntry>, argType: TypeRef, values: List<Value>): ByteArray {
         val out = mutableListOf<Byte>()
         out += magic
         appendUnsigned(tableEntries.size.toULong(), out)
