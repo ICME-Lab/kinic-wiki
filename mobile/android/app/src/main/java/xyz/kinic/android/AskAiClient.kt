@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URI
+import java.net.SocketTimeoutException
 
 interface AskAiCompleting {
     suspend fun completeContent(message: String, timeoutMilliseconds: Long): String
@@ -53,6 +54,8 @@ class AskAiClient(private val endpoint: URI) : AskAiCompleting {
                 }
             }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AskAiClientError.Timeout
+        } catch (_: SocketTimeoutException) {
             throw AskAiClientError.Timeout
         }
 
