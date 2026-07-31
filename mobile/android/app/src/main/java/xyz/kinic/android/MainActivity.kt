@@ -79,9 +79,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        val callbackUri = intent?.data?.let { URI(it.toString()) } ?: return
-        if (callbackUri.path == "/android-auth-callback") {
-            viewModel.completeSignIn(callbackUri)
-        }
+        val uri = intent?.data?.let { runCatching { URI(it.toString()) }.getOrNull() } ?: return
+        handleDeepLink(uri)
+    }
+
+    internal fun handleDeepLink(uri: URI) {
+        KinicDeepLinkParser.parse(uri)?.let(viewModel::handleDestination)
     }
 }

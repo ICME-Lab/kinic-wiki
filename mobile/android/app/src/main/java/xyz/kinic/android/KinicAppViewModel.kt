@@ -77,12 +77,13 @@ data class KinicAppUiState(
     val isLoadingSourceCaptureHistory: Boolean = false,
     val sourceCaptureRetryPaths: Set<String> = emptySet(),
     val manage: ManageUiState = ManageUiState(),
+    val requestedDestination: KinicTopLevelDestination = KinicTopLevelDestination.HOME,
+    val navigationRequestId: Long = 0,
 )
 
 sealed interface KinicAppEvent {
     data class OpenUri(val uri: URI) : KinicAppEvent
     data class CopyText(val label: String, val value: String) : KinicAppEvent
-    data class Navigate(val destination: KinicTopLevelDestination) : KinicAppEvent
 }
 
 class KinicAppViewModel(
@@ -164,6 +165,28 @@ class KinicAppViewModel(
             return
         }
         _events.tryEmit(KinicAppEvent.OpenUri(requireNotNull(uri)))
+    }
+
+    fun handleDestination(destination: KinicDestination) {
+        when (destination) {
+            is KinicDestination.AuthCallback -> completeSignIn(destination.uri)
+            is KinicDestination.Database -> {
+                addDirectDatabase(destination.databaseId)
+                if (destination.nodePath != "/") openBrowseNode(destination.nodePath)
+                requestNavigation(KinicTopLevelDestination.BROWSE)
+            }
+            KinicDestination.Dashboard,
+            is KinicDestination.Cycles,
+            -> {
+                if (destination is KinicDestination.Cycles && !destination.databaseId.isNullOrBlank()) {
+                    selectManageDatabase(destination.databaseId)
+                }
+                requestNavigation(KinicTopLevelDestination.MANAGE)
+            }
+            KinicDestination.Profile,
+            KinicDestination.Root,
+            -> requestNavigation(KinicTopLevelDestination.HOME)
+        }
     }
 
     fun refreshDatabases() {
@@ -509,7 +532,7 @@ class KinicAppViewModel(
         } ?: return
         selectBrowseDatabase(entry.summary.databaseId)
         openBrowseNode(path)
-        _events.tryEmit(KinicAppEvent.Navigate(KinicTopLevelDestination.BROWSE))
+        requestNavigation(KinicTopLevelDestination.BROWSE)
     }
 
     override suspend fun retrieve(databaseId: String, plan: AskAiQueryPlan): AskAiRetrievalResult {
@@ -553,7 +576,7 @@ class KinicAppViewModel(
         }
         selectBrowseDatabase(database.summary.databaseId)
         openBrowseNode(path)
-        _events.tryEmit(KinicAppEvent.Navigate(KinicTopLevelDestination.BROWSE))
+        requestNavigation(KinicTopLevelDestination.BROWSE)
     }
 
     fun selectManageDatabase(databaseId: String) {
@@ -786,6 +809,15 @@ class KinicAppViewModel(
 
     private fun showError(error: Throwable) {
         _uiState.update { it.copy(message = errorMessage(error)) }
+    }
+
+    private fun requestNavigation(destination: KinicTopLevelDestination) {
+        _uiState.update {
+            it.copy(
+                requestedDestination = destination,
+                navigationRequestId = it.navigationRequestId + 1,
+            )
+        }
     }
 
     companion object {

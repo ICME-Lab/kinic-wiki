@@ -147,10 +147,18 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools"
       - uses: gradle/actions/setup-gradle@v5
       - name: Run Android checks
         run: ./gradlew testDebugUnitTest assembleDebug lintDebug
+      - name: Run Compose tests on API 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: cd mobile/android && ./gradlew connectedDebugAndroidTest
 
   wikibrowser-check:
     needs: changes

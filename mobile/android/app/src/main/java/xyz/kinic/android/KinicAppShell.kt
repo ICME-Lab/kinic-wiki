@@ -109,7 +109,6 @@ fun KinicAppShell(
             when (event) {
                 is KinicAppEvent.OpenUri -> onOpenUri(event.uri)
                 is KinicAppEvent.CopyText -> onCopyText(event.label, event.value)
-                is KinicAppEvent.Navigate -> Unit
             }
         }
     }
@@ -128,14 +127,12 @@ private fun KinicNavigation(
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: KinicTopLevelDestination.HOME.route
-    LaunchedEffect(viewModel, navController) {
-        viewModel.events.collect { event ->
-            if (event is KinicAppEvent.Navigate) {
-                navController.navigate(event.destination.route) {
-                    popUpTo(KinicTopLevelDestination.HOME.route) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                }
+    LaunchedEffect(state.navigationRequestId, navController) {
+        if (state.navigationRequestId > 0) {
+            navController.navigate(state.requestedDestination.route) {
+                popUpTo(KinicTopLevelDestination.HOME.route) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
             }
         }
     }
