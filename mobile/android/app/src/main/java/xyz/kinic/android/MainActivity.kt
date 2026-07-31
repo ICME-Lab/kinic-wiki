@@ -4,55 +4,55 @@
 
 package xyz.kinic.android
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.runtime.mutableStateOf
-import xyz.kinic.android.ic.IcAuthSession
+import androidx.lifecycle.ViewModelProvider
 import java.io.File
 import java.net.URI
 
 class MainActivity : ComponentActivity() {
-    private lateinit var configuration: AppConfiguration
-    private lateinit var authService: KinicAuthService
-    private lateinit var settingsStore: KinicSettingsStore
-    private lateinit var inbox: ShareInbox
-    private lateinit var submitter: SourceCaptureSubmitter
-    private lateinit var vfsClient: KinicVfsClient
-    private val sessionState = mutableStateOf<IcAuthSession?>(null)
-    private val messageState = mutableStateOf("")
+    private lateinit var viewModel: KinicAppViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configuration = AppConfiguration.fromResources(this)
-        authService = kinicAuthService(configuration, applicationContext)
-        settingsStore = kinicSettingsStore(filesDir)
-        inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
-        vfsClient = KinicVfsClient(configuration)
-        submitter = SourceCaptureSubmitter(
+        val configuration = AppConfiguration.fromResources(this)
+        val authService = kinicAuthService(configuration, applicationContext)
+        val settingsStore = kinicSettingsStore(filesDir)
+        val inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
+        val vfsClient = KinicVfsClient(configuration)
+        val submitter = SourceCaptureSubmitter(
             inbox = inbox,
             gateway = KinicIcClient(configuration),
             resolveDatabase = { databaseId, session ->
                 vfsClient.listReadableDatabases(session).firstOrNull { it.databaseId == databaseId }
             },
         )
-        sessionState.value = authService.restore()
-        handleAuthCallback(intent?.data?.let { URI(it.toString()) })
+        viewModel = ViewModelProvider(
+            this,
+            KinicAppViewModelFactory(
+                configuration,
+                authService,
+                settingsStore,
+                inbox,
+                submitter,
+                vfsClient,
+            ),
+        )[KinicAppViewModel::class.java]
+        handleIntent(intent)
         setContent {
-            KinicAppView(
-                inbox = inbox,
-                session = sessionState.value,
-                message = messageState.value,
-                initialSelectedDatabaseId = settingsStore.selectedBrowseDatabaseId.ifBlank { settingsStore.selectedDatabaseId },
-                onSignIn = ::startSignIn,
-                onSignOut = ::signOut,
-                onSubmitNext = ::submitNextPendingUrl,
-                onResolveDatabase = ::resolveDatabase,
-                onRefreshDatabases = ::refreshDatabases,
-                onSelectDatabase = ::selectDatabase,
-                onListChildren = ::listChildren,
-                onReadNode = ::readNode,
+            KinicAppShell(
+                viewModel = viewModel,
+                onOpenUri = { uri ->
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri.toString())))
+                },
+                onCopyText = { label, value ->
+                    val clipboard = getSystemService(ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+                },
             )
         }
     }
@@ -60,61 +60,13 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleAuthCallback(intent.data?.let { URI(it.toString()) })
+        handleIntent(intent)
     }
 
-    private fun startSignIn(): String {
-        val url = authService.startSignIn()
-        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url.toString())))
-        return "Opening Internet Identity..."
-    }
-
-    private fun signOut(): String {
-        authService.signOut()
-        sessionState.value = null
-        return "Signed out."
-    }
-
-    private suspend fun submitNextPendingUrl(database: DatabaseSummary?): String {
-        val session = sessionState.value ?: return "Sign in before submitting."
-        return submitter.submitNextPendingUrl(session = session, selectedDatabase = database)
-    }
-
-    private suspend fun refreshDatabases(): List<DatabaseSummary> {
-        val session = sessionState.value ?: return emptyList()
-        return vfsClient.listReadableDatabases(session)
-    }
-
-    private suspend fun resolveDatabase(databaseId: String): DatabaseSummary? {
-        val session = sessionState.value ?: return null
-        return vfsClient.listReadableDatabases(session).firstOrNull { it.databaseId == databaseId }
-    }
-
-    private fun selectDatabase(databaseId: String) {
-        settingsStore.selectedDatabaseId = databaseId
-        settingsStore.selectedBrowseDatabaseId = databaseId
-    }
-
-    private suspend fun listChildren(databaseId: String, path: String): List<ChildNode> {
-        val session = sessionState.value ?: return emptyList()
-        return vfsClient.listBrowseChildren(databaseId = databaseId, path = path, session = session)
-    }
-
-    private suspend fun readNode(databaseId: String, path: String): VfsNode? {
-        val session = sessionState.value ?: return null
-        return vfsClient.readBrowseNode(databaseId = databaseId, path = path, session = session)
-    }
-
-    private fun handleAuthCallback(callbackUri: URI?) {
-        if (callbackUri == null) return
-        if (callbackUri.path != "/android-auth-callback") return
-        runCatching {
-            authService.completeSignIn(callbackUri)
-        }.onSuccess { session ->
-            sessionState.value = session
-            messageState.value = "Signed in."
-        }.onFailure { error ->
-            messageState.value = error.message ?: "Sign in failed."
+    private fun handleIntent(intent: Intent?) {
+        val callbackUri = intent?.data?.let { URI(it.toString()) } ?: return
+        if (callbackUri.path == "/android-auth-callback") {
+            viewModel.completeSignIn(callbackUri)
         }
     }
 }
