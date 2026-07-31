@@ -111,6 +111,87 @@ data class ChildNode(
     val isVirtual: Boolean,
 )
 
+data class SearchNodeHit(
+    val path: String,
+    val kind: VfsNodeKind,
+    val snippet: String?,
+    val previewExcerpt: String?,
+    val matchReasons: List<String>,
+    val score: Float,
+)
+
+data class CreatedDatabase(
+    val databaseId: String,
+    val name: String,
+    val status: DatabaseStatus,
+    val initialFreeGrantApplied: Boolean,
+)
+
+data class CyclesBillingConfig(
+    val kinicLedgerCanisterId: String,
+    val billingAuthorityId: String,
+    val cyclesPerKinic: ULong,
+    val minUpdateCycles: ULong,
+    val topUp: CyclesTopUpConfig,
+)
+
+data class CyclesTopUpConfig(
+    val enabled: Boolean,
+    val launcherPrincipal: String,
+    val thresholdCycles: ULong,
+)
+
+data class DatabaseMember(
+    val principal: String,
+    val role: DatabaseRole,
+    val createdAtMs: Long,
+)
+
+data class DatabaseCycleEntry(
+    val entryId: ULong,
+    val databaseId: String,
+    val kind: String,
+    val amountCycles: Long,
+    val balanceAfterCycles: ULong,
+    val caller: String,
+    val method: String?,
+    val ledgerBlockIndex: ULong?,
+    val paymentAmountE8s: ULong?,
+    val cyclesPerKinic: ULong?,
+    val cyclesDelta: ULong?,
+    val createdAtMs: Long,
+)
+
+data class DatabaseCycleEntryPage(
+    val entries: List<DatabaseCycleEntry>,
+    val nextCursor: ULong?,
+)
+
+data class DatabaseCyclesPendingPurchase(
+    val operationId: ULong,
+    val databaseId: String,
+    val status: String,
+    val amountCycles: ULong,
+    val paymentAmountE8s: ULong,
+    val ledgerBlockIndex: ULong?,
+    val createdAtMs: Long,
+    val requiredAction: String,
+)
+
+data class MarketEntitlement(
+    val databaseId: String,
+    val buyerPrincipal: String,
+    val listingId: String,
+    val orderId: String,
+    val purchasedAtMs: Long,
+    val status: String,
+)
+
+data class MarketEntitlementPage(
+    val entitlements: List<MarketEntitlement>,
+    val nextCursor: String?,
+)
+
 private fun String?.cleaned(): String? {
     val trimmed = this?.trim()
     return if (trimmed.isNullOrEmpty()) null else trimmed

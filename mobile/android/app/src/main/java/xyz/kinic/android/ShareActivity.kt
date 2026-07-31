@@ -19,7 +19,7 @@ class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val configuration = AppConfiguration.fromResources(this)
-        val authService = kinicAuthService(configuration, filesDir)
+        val authService = kinicAuthService(configuration, applicationContext)
         val settingsStore = kinicSettingsStore(filesDir)
         val inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
         val vfsClient = KinicVfsClient(configuration)

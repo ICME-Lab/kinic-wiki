@@ -9,25 +9,38 @@ import xyz.kinic.android.ic.IcAuthSession
 import xyz.kinic.android.ic.IcClientError
 import xyz.kinic.android.ic.IcIdentityBridge
 import xyz.kinic.android.ic.IcInternetIdentityAuthenticator
+import android.content.Context
 import java.io.File
 import java.net.URI
 import java.util.Base64
 
-class KinicAuthService(
+class KinicAuthService internal constructor(
     private val configuration: AppConfiguration,
-    private val sessionFile: File,
-    private val pendingFile: File,
+    sessionFile: File,
+    pendingFile: File,
+    cipher: AuthSecretCipher,
 ) {
+    private val sessionStore = AuthSecretStore(sessionFile, cipher)
+    private val pendingStore = AuthSecretStore(pendingFile, cipher)
+
     fun restore(): IcAuthSession? {
-        if (!sessionFile.exists()) return null
+        val stored = try {
+            sessionStore.read()
+        } catch (_: Exception) {
+            signOut()
+            return null
+        } ?: return null
         val session = try {
-            IcIdentityBridge.decodeSession(sessionFile.readText(Charsets.UTF_8))
+            IcIdentityBridge.decodeSession(stored.value)
         } catch (_: Exception) {
             signOut()
             return null
         }
         return try {
             IcIdentityBridge.validateSession(session, configuration.icClientConfiguration())
+            if (stored.isLegacyPlaintext) {
+                sessionStore.write(IcIdentityBridge.encodeSession(session))
+            }
             session
         } catch (_: Exception) {
             signOut()
@@ -41,13 +54,11 @@ class KinicAuthService(
             callbackDomain = configuration.callbackDomain,
             configuration = configuration.icClientConfiguration(),
         )
-        ensureParentDirectory(pendingFile)
-        pendingFile.writeText(
+        pendingStore.write(
             JSONObject()
                 .put("state", request.state)
                 .put("sessionPrivateKey", base64Url(request.sessionPrivateKey))
                 .toString(),
-            Charsets.UTF_8,
         )
         return request.url
     }
@@ -73,34 +84,42 @@ class KinicAuthService(
             throw error
         }
         IcIdentityBridge.validateSession(session, configuration.icClientConfiguration())
-        ensureParentDirectory(sessionFile)
-        sessionFile.writeText(IcIdentityBridge.encodeSession(session), Charsets.UTF_8)
+        sessionStore.write(IcIdentityBridge.encodeSession(session))
         clearPending()
         return session
     }
 
     fun signOut() {
-        sessionFile.delete()
+        sessionStore.clear()
         clearPending()
     }
 
     fun hasPendingSignIn(): Boolean =
-        pendingFile.exists()
+        pendingStore.exists()
 
     private fun pendingAuth(): PendingAuth {
-        val json = try {
-            JSONObject(pendingFile.readText(Charsets.UTF_8))
+        val stored = try {
+            pendingStore.read() ?: throw IcClientError.InvalidPayload
         } catch (_: Exception) {
             throw IcClientError.InvalidPayload
         }
-        return PendingAuth(
+        val json = try {
+            JSONObject(stored.value)
+        } catch (_: Exception) {
+            throw IcClientError.InvalidPayload
+        }
+        val pending = PendingAuth(
             state = json.getString("state"),
             sessionPrivateKey = base64UrlDecoded(json.getString("sessionPrivateKey")),
         )
+        if (stored.isLegacyPlaintext) {
+            pendingStore.write(stored.value)
+        }
+        return pending
     }
 
     private fun clearPending() {
-        pendingFile.delete()
+        pendingStore.clear()
     }
 
     private data class PendingAuth(
@@ -109,16 +128,13 @@ class KinicAuthService(
     )
 }
 
-fun kinicAuthService(configuration: AppConfiguration, filesDir: File): KinicAuthService =
+fun kinicAuthService(configuration: AppConfiguration, context: Context): KinicAuthService =
     KinicAuthService(
         configuration = configuration,
-        sessionFile = File(filesDir, "internet-identity-session.json"),
-        pendingFile = File(filesDir, "internet-identity-pending.json"),
+        sessionFile = File(context.filesDir, "internet-identity-session.json"),
+        pendingFile = File(context.filesDir, "internet-identity-pending.json"),
+        cipher = AndroidKeystoreAuthSecretCipher(),
     )
-
-private fun ensureParentDirectory(file: File) {
-    file.parentFile?.mkdirs()
-}
 
 private fun base64Url(bytes: ByteArray): String =
     Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)

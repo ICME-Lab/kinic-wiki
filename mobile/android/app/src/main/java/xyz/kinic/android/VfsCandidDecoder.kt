@@ -8,8 +8,11 @@ object VfsCandidDecoder {
     private val magic = byteArrayOf(0x44, 0x49, 0x44, 0x4c)
     private const val typeNull = -1L
     private const val typeBool = -2L
+    private const val typeNat = -3L
+    private const val typeNat32 = -7L
     private const val typeNat64 = -8L
     private const val typeInt64 = -12L
+    private const val typeFloat32 = -13L
     private const val typeText = -15L
     private const val typeOpt = -18L
     private const val typeVec = -19L
@@ -59,6 +62,90 @@ object VfsCandidDecoder {
             etag = text(fields, "etag"),
             createdAt = int64(fields, "created_at"),
             updatedAt = int64(fields, "updated_at"),
+        )
+    }
+
+    fun decodeSearchNodeHitsResult(data: ByteArray): List<SearchNodeHit> {
+        val vector = decodeResult(data).vectorOrNull() ?: throw invalid("expected search hit vector")
+        return vector.map(::searchNodeHit)
+    }
+
+    fun decodeDatabaseMetadataResult(data: ByteArray): DatabaseMetadata {
+        val fields = decodeResult(data).recordOrNull() ?: throw invalid("database metadata is not a record")
+        return databaseMetadata(fields)
+    }
+
+    fun decodeCreateDatabaseResult(data: ByteArray): CreatedDatabase {
+        val fields = decodeResult(data).recordOrNull() ?: throw invalid("expected create_database result")
+        return CreatedDatabase(
+            databaseId = text(fields, "database_id"),
+            name = text(fields, "name"),
+            status = databaseStatus(variant(fields, "status")),
+            initialFreeGrantApplied = bool(fields, "initial_free_grant_applied"),
+        )
+    }
+
+    fun decodeDatabaseMembersResult(data: ByteArray): List<DatabaseMember> {
+        val vector = decodeResult(data).vectorOrNull() ?: throw invalid("expected database member vector")
+        return vector.map { value ->
+            val fields = value.recordOrNull() ?: throw invalid("database member is not a record")
+            DatabaseMember(
+                principal = text(fields, "principal"),
+                role = databaseRole(variant(fields, "role")),
+                createdAtMs = int64(fields, "created_at_ms"),
+            )
+        }
+    }
+
+    fun decodeCyclesBillingConfigResult(data: ByteArray): CyclesBillingConfig {
+        val fields = decodeResult(data).recordOrNull() ?: throw invalid("cycles billing config is not a record")
+        val topUpFields = fields[label("top_up")]?.recordOrNull() ?: throw invalid("top_up is not a record")
+        return CyclesBillingConfig(
+            kinicLedgerCanisterId = text(fields, "kinic_ledger_canister_id"),
+            billingAuthorityId = text(fields, "billing_authority_id"),
+            cyclesPerKinic = nat64(fields, "cycles_per_kinic"),
+            minUpdateCycles = nat64(fields, "min_update_cycles"),
+            topUp = CyclesTopUpConfig(
+                enabled = bool(topUpFields, "enabled"),
+                launcherPrincipal = text(topUpFields, "launcher_principal"),
+                thresholdCycles = nat(topUpFields, "threshold_cycles"),
+            ),
+        )
+    }
+
+    fun decodeDatabaseCycleEntryPageResult(data: ByteArray): DatabaseCycleEntryPage {
+        val fields = decodeResult(data).recordOrNull() ?: throw invalid("cycle entry page is not a record")
+        val entries = fields[label("entries")]?.vectorOrNull() ?: throw invalid("expected cycle entry vector")
+        return DatabaseCycleEntryPage(
+            entries = entries.map(::databaseCycleEntry),
+            nextCursor = optionalNat64(fields, "next_cursor"),
+        )
+    }
+
+    fun decodeDatabaseCyclesPendingPurchasesResult(data: ByteArray): List<DatabaseCyclesPendingPurchase> {
+        val vector = decodeResult(data).vectorOrNull() ?: throw invalid("expected pending purchase vector")
+        return vector.map { value ->
+            val fields = value.recordOrNull() ?: throw invalid("pending purchase is not a record")
+            DatabaseCyclesPendingPurchase(
+                operationId = nat64(fields, "operation_id"),
+                databaseId = text(fields, "database_id"),
+                status = text(fields, "status"),
+                amountCycles = nat64(fields, "amount_cycles"),
+                paymentAmountE8s = nat64(fields, "payment_amount_e8s"),
+                ledgerBlockIndex = optionalNat64(fields, "ledger_block_index"),
+                createdAtMs = int64(fields, "created_at_ms"),
+                requiredAction = text(fields, "required_action"),
+            )
+        }
+    }
+
+    fun decodeMarketEntitlementPageResult(data: ByteArray): MarketEntitlementPage {
+        val fields = decodeResult(data).recordOrNull() ?: throw invalid("market entitlement page is not a record")
+        val entitlements = fields[label("entitlements")]?.vectorOrNull()
+            ?: throw invalid("expected market entitlement vector")
+        return MarketEntitlementPage(
+            entitlements = entitlements.map(::marketEntitlement),
+            nextCursor = optionalText(fields, "next_cursor"),
         )
     }
 
@@ -121,6 +208,48 @@ object VfsCandidDecoder {
         )
     }
 
+    private fun searchNodeHit(value: Value): SearchNodeHit {
+        val fields = value.recordOrNull() ?: throw invalid("search hit is not a record")
+        return SearchNodeHit(
+            path = text(fields, "path"),
+            kind = nodeKind(variant(fields, "kind")),
+            snippet = optionalText(fields, "snippet"),
+            previewExcerpt = previewExcerpt(fields, "preview"),
+            matchReasons = textVector(fields, "match_reasons"),
+            score = float32(fields, "score"),
+        )
+    }
+
+    private fun databaseCycleEntry(value: Value): DatabaseCycleEntry {
+        val fields = value.recordOrNull() ?: throw invalid("database cycle entry is not a record")
+        return DatabaseCycleEntry(
+            entryId = nat64(fields, "entry_id"),
+            databaseId = text(fields, "database_id"),
+            kind = text(fields, "kind"),
+            amountCycles = int64(fields, "amount_cycles"),
+            balanceAfterCycles = nat64(fields, "balance_after_cycles"),
+            caller = text(fields, "caller"),
+            method = optionalText(fields, "method"),
+            ledgerBlockIndex = optionalNat64(fields, "ledger_block_index"),
+            paymentAmountE8s = optionalNat64(fields, "payment_amount_e8s"),
+            cyclesPerKinic = optionalNat64(fields, "cycles_per_kinic"),
+            cyclesDelta = optionalNat64(fields, "cycles_delta"),
+            createdAtMs = int64(fields, "created_at_ms"),
+        )
+    }
+
+    private fun marketEntitlement(value: Value): MarketEntitlement {
+        val fields = value.recordOrNull() ?: throw invalid("market entitlement is not a record")
+        return MarketEntitlement(
+            databaseId = text(fields, "database_id"),
+            buyerPrincipal = text(fields, "buyer_principal"),
+            listingId = text(fields, "listing_id"),
+            orderId = text(fields, "order_id"),
+            purchasedAtMs = int64(fields, "purchased_at_ms"),
+            status = text(fields, "status"),
+        )
+    }
+
     private fun databaseRole(label: UInt): DatabaseRole =
         when (label) {
             label("Owner") -> DatabaseRole.OWNER
@@ -160,6 +289,12 @@ object VfsCandidDecoder {
     private fun nat64(fields: Map<UInt, Value>, name: String): ULong =
         fields[label(name)]?.nat64OrNull() ?: throw invalid("missing nat64 field $name")
 
+    private fun nat(fields: Map<UInt, Value>, name: String): ULong =
+        fields[label(name)]?.natOrNull() ?: throw invalid("missing nat field $name")
+
+    private fun float32(fields: Map<UInt, Value>, name: String): Float =
+        fields[label(name)]?.float32OrNull() ?: throw invalid("missing float32 field $name")
+
     private fun optionalText(fields: Map<UInt, Value>, name: String): String? {
         val value = fields[label(name)] ?: throw invalid("missing optional text field $name")
         val child = when (value) {
@@ -185,6 +320,18 @@ object VfsCandidDecoder {
             else -> throw invalid("optional field $name is not optional")
         } ?: return null
         return child.nat64OrNull() ?: throw invalid("optional field $name is not nat64")
+    }
+
+    private fun textVector(fields: Map<UInt, Value>, name: String): List<String> {
+        val values = fields[label(name)]?.vectorOrNull() ?: throw invalid("missing text vector field $name")
+        return values.map { it.textOrNull() ?: throw invalid("vector field $name contains non-text") }
+    }
+
+    private fun previewExcerpt(fields: Map<UInt, Value>, name: String): String? {
+        val value = fields[label(name)] as? Value.Opt ?: throw invalid("missing optional preview field $name")
+        val preview = value.value ?: return null
+        val previewFields = preview.recordOrNull() ?: throw invalid("preview field is not a record")
+        return optionalText(previewFields, "excerpt")
     }
 
     private fun variant(fields: Map<UInt, Value>, name: String): UInt =
@@ -286,8 +433,11 @@ object VfsCandidDecoder {
                     1 -> Value.Bool(true)
                     else -> throw invalid("invalid bool $byte")
                 }
+                typeNat -> Value.Nat(readUnsigned())
+                typeNat32 -> Value.Nat32(readFixedUInt32())
                 typeNat64 -> Value.Nat64(readFixedUInt64())
                 typeInt64 -> Value.Int64(readFixedUInt64().toLong())
+                typeFloat32 -> Value.Float32(Float.fromBits(readFixedUInt32().toInt()))
                 typeText -> {
                     val count = readUnsigned().toIntChecked("text length")
                     if (offset + count > data.size) throw invalid("text exceeds payload")
@@ -305,6 +455,16 @@ object VfsCandidDecoder {
                 result = result or (data[offset + index].toUByte().toULong() shl (index * 8))
             }
             offset += 8
+            return result
+        }
+
+        private fun readFixedUInt32(): UInt {
+            if (offset + 4 > data.size) throw invalid("nat32 exceeds payload")
+            var result = 0u
+            repeat(4) { index ->
+                result = result or (data[offset + index].toUByte().toUInt() shl (index * 8))
+            }
+            offset += 4
             return result
         }
 
@@ -366,8 +526,11 @@ object VfsCandidDecoder {
         data object Null : Value()
         data class Bool(val value: Boolean) : Value()
         data class Text(val value: String) : Value()
+        data class Nat(val value: ULong) : Value()
+        data class Nat32(val value: UInt) : Value()
         data class Nat64(val value: ULong) : Value()
         data class Int64(val value: Long) : Value()
+        data class Float32(val value: Float) : Value()
         data class Opt(val value: Value?) : Value()
         data class Vector(val values: List<Value>) : Value()
         data class Record(val fields: Map<UInt, Value>) : Value()
@@ -375,8 +538,10 @@ object VfsCandidDecoder {
 
         fun boolOrNull(): Boolean? = if (this is Bool) value else null
         fun textOrNull(): String? = if (this is Text) value else null
+        fun natOrNull(): ULong? = if (this is Nat) value else null
         fun nat64OrNull(): ULong? = if (this is Nat64) value else null
         fun int64OrNull(): Long? = if (this is Int64) value else null
+        fun float32OrNull(): Float? = if (this is Float32) value else null
         fun vectorOrNull(): List<Value>? = if (this is Vector) values else null
         fun recordOrNull(): Map<UInt, Value>? = if (this is Record) fields else null
         fun variantOrNull(): Variant? = if (this is Variant) this else null

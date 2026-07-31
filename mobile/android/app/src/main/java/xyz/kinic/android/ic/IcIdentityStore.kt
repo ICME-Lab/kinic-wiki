@@ -5,6 +5,8 @@
 package xyz.kinic.android.ic
 
 import android.content.Context
+import xyz.kinic.android.AndroidKeystoreAuthSecretCipher
+import xyz.kinic.android.AuthSecretStore
 import java.io.File
 
 class IcIdentityStore(
@@ -12,17 +14,29 @@ class IcIdentityStore(
     private val configuration: IcClientConfiguration,
     private val fileName: String = "internet-identity-session.json",
 ) {
+    private val store = AuthSecretStore(
+        File(context.filesDir, fileName),
+        AndroidKeystoreAuthSecretCipher(),
+    )
+
     fun restore(): IcAuthSession? {
-        val file = file()
-        if (!file.exists()) return null
+        val stored = try {
+            store.read()
+        } catch (_: Exception) {
+            clear()
+            return null
+        } ?: return null
         val session = try {
-            IcIdentityBridge.decodeSession(file.readText(Charsets.UTF_8))
+            IcIdentityBridge.decodeSession(stored.value)
         } catch (_: Exception) {
             clear()
             return null
         }
         return try {
             IcIdentityBridge.validateSession(session, configuration)
+            if (stored.isLegacyPlaintext) {
+                store.write(IcIdentityBridge.encodeSession(session))
+            }
             session
         } catch (_: Exception) {
             clear()
@@ -32,13 +46,10 @@ class IcIdentityStore(
 
     fun save(session: IcAuthSession) {
         IcIdentityBridge.validateSession(session, configuration)
-        file().writeText(IcIdentityBridge.encodeSession(session), Charsets.UTF_8)
+        store.write(IcIdentityBridge.encodeSession(session))
     }
 
     fun clear() {
-        file().delete()
+        store.clear()
     }
-
-    private fun file(): File =
-        File(context.filesDir, fileName)
 }

@@ -20,10 +20,10 @@ import java.util.Base64
 class KinicAuthServiceTest {
     @Test
     fun startSignInBuildsNativeAuthUrlAndStoresPendingKey() {
-        withTemporaryAuthService { service, _, pendingFile, _ ->
+        withTemporaryAuthService { service, _, pendingFile, _, cipher ->
             val url = service.startSignIn()
             val query = queryValues(url)
-            val pending = JSONObject(pendingFile.readText(Charsets.UTF_8))
+            val pending = JSONObject(readSecret(pendingFile, cipher))
 
             assertEquals("/#/native-auth", "${url.path}#${url.fragment?.substringBefore("?")}")
             assertEquals("https://wiki.kinic.xyz/android-auth-callback", query.getValue("callback"))
@@ -31,15 +31,16 @@ class KinicAuthServiceTest {
             assertTrue(query.containsKey("sessionPublicKey"))
             assertTrue(query.containsKey("maxTimeToLive"))
             assertTrue(pending.getString("sessionPrivateKey").isNotBlank())
+            assertEquals(2, JSONObject(pendingFile.readText(Charsets.UTF_8)).getInt("version"))
         }
     }
 
     @Test
     fun callbackSuccessPersistsSessionAndClearsPendingAuth() {
-        withTemporaryAuthService { service, sessionFile, pendingFile, configuration ->
+        withTemporaryAuthService { service, sessionFile, pendingFile, configuration, cipher ->
             val url = service.startSignIn()
             val state = queryValues(url).getValue("state")
-            val privateKey = pendingPrivateKey(pendingFile)
+            val privateKey = pendingPrivateKey(pendingFile, cipher)
             val callback = successCallback(state, privateKey, configuration)
 
             val session = service.completeSignIn(callback)
@@ -48,14 +49,15 @@ class KinicAuthServiceTest {
             assertTrue(sessionFile.exists())
             assertFalse(pendingFile.exists())
             assertEquals(session, service.restore())
+            assertEquals(2, JSONObject(sessionFile.readText(Charsets.UTF_8)).getInt("version"))
         }
     }
 
     @Test
     fun callbackRejectsMismatchedStateAndKeepsPendingAuth() {
-        withTemporaryAuthService { service, _, pendingFile, configuration ->
+        withTemporaryAuthService { service, _, pendingFile, configuration, cipher ->
             service.startSignIn()
-            val privateKey = pendingPrivateKey(pendingFile)
+            val privateKey = pendingPrivateKey(pendingFile, cipher)
             val callback = successCallback("wrong-state", privateKey, configuration)
 
             assertThrows(IcClientError::class.java) {
@@ -67,9 +69,9 @@ class KinicAuthServiceTest {
 
     @Test
     fun callbackRejectsMalformedResult() {
-        withTemporaryAuthService { service, _, pendingFile, _ ->
+        withTemporaryAuthService { service, _, pendingFile, _, cipher ->
             service.startSignIn()
-            val state = JSONObject(pendingFile.readText(Charsets.UTF_8)).getString("state")
+            val state = JSONObject(readSecret(pendingFile, cipher)).getString("state")
             val callback = URI("https://wiki.kinic.xyz/android-auth-callback?state=$state&result=not-base64")
 
             assertThrows(Exception::class.java) {
@@ -77,17 +79,43 @@ class KinicAuthServiceTest {
             }
         }
     }
+
+    @Test
+    fun restoreMigratesValidatedPlaintextSessionToEncryptedV2() {
+        withTemporaryAuthService { service, sessionFile, _, configuration, _ ->
+            val privateKey = ByteArray(32) { (it + 1).toByte() }
+            val session = xyz.kinic.android.ic.IcIdentityBridge.makeSession(
+                identityPayload(privateKey, configuration.canisterId),
+                privateKey,
+                configuration.icClientConfiguration(),
+            )
+            sessionFile.writeText(
+                xyz.kinic.android.ic.IcIdentityBridge.encodeSession(session),
+                Charsets.UTF_8,
+            )
+
+            assertEquals(session, service.restore())
+            assertEquals(2, JSONObject(sessionFile.readText(Charsets.UTF_8)).getInt("version"))
+        }
+    }
 }
 
 private fun withTemporaryAuthService(
-    block: (KinicAuthService, File, File, AppConfiguration) -> Unit,
+    block: (KinicAuthService, File, File, AppConfiguration, AuthSecretCipher) -> Unit,
 ) {
     val directory = Files.createTempDirectory("kinic-auth-service-test").toFile()
     try {
         val configuration = testAppConfiguration()
         val sessionFile = File(directory, "session.json")
         val pendingFile = File(directory, "pending.json")
-        block(KinicAuthService(configuration, sessionFile, pendingFile), sessionFile, pendingFile, configuration)
+        val cipher = TestAuthSecretCipher()
+        block(
+            KinicAuthService(configuration, sessionFile, pendingFile, cipher),
+            sessionFile,
+            pendingFile,
+            configuration,
+            cipher,
+        )
     } finally {
         directory.deleteRecursively()
     }
@@ -109,9 +137,24 @@ private fun successCallback(state: String, privateKey: ByteArray, configuration:
     return URI("https://wiki.kinic.xyz/android-auth-callback?state=$state&result=$result")
 }
 
-private fun pendingPrivateKey(file: File): ByteArray {
-    val json = JSONObject(file.readText(Charsets.UTF_8))
+private fun pendingPrivateKey(file: File, cipher: AuthSecretCipher): ByteArray {
+    val json = JSONObject(readSecret(file, cipher))
     return Base64.getUrlDecoder().decode(json.getString("sessionPrivateKey"))
+}
+
+private fun readSecret(file: File, cipher: AuthSecretCipher): String =
+    requireNotNull(AuthSecretStore(file, cipher).read()).value
+
+private class TestAuthSecretCipher : AuthSecretCipher {
+    override fun encrypt(plaintext: ByteArray): EncryptedSecret =
+        EncryptedSecret(iv = byteArrayOf(1, 2, 3), ciphertext = plaintext.map { (it.toInt() xor MASK).toByte() }.toByteArray())
+
+    override fun decrypt(secret: EncryptedSecret): ByteArray =
+        secret.ciphertext.map { (it.toInt() xor MASK).toByte() }.toByteArray()
+
+    private companion object {
+        const val MASK = 0x5a
+    }
 }
 
 private fun queryValues(url: URI): Map<String, String> {

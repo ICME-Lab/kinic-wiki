@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configuration = AppConfiguration.fromResources(this)
-        authService = kinicAuthService(configuration, filesDir)
+        authService = kinicAuthService(configuration, applicationContext)
         settingsStore = kinicSettingsStore(filesDir)
         inbox = ShareInbox(File(filesDir, "pending-shared-urls.v2"))
         vfsClient = KinicVfsClient(configuration)

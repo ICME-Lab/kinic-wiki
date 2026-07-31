@@ -7,7 +7,9 @@ package xyz.kinic.android
 object VfsCandidEncoder {
     private val magic = listOf(0x44, 0x49, 0x44, 0x4c).map(Int::toByte)
     private const val typeNull = -1L
+    private const val typeBool = -2L
     private const val typeNat32 = -7L
+    private const val typeNat64 = -8L
     private const val typeText = -15L
     private const val typeOpt = -18L
     private const val typeVec = -19L
@@ -25,6 +27,9 @@ object VfsCandidEncoder {
     fun readNode(databaseId: String, path: String): ByteArray =
         textArgs(listOf(databaseId, path))
 
+    fun textArgsForDatabase(databaseId: String): ByteArray =
+        textArgs(listOf(databaseId))
+
     fun listChildren(databaseId: String, path: String): ByteArray =
         oneRecord(
             tableEntries = listOf(
@@ -40,6 +45,136 @@ object VfsCandidEncoder {
                 "path" to Value.Text(path),
                 "database_id" to Value.Text(databaseId),
             ),
+        )
+
+    fun searchNodes(databaseId: String, query: String, prefix: String?, topK: UInt): ByteArray {
+        val optionalText = TypeEntry.Opt(TypeRef.Primitive(typeText))
+        val previewMode = TypeEntry.Variant(
+            listOf(
+                field("Light", TypeRef.Primitive(typeNull)),
+                field("ContentStart", TypeRef.Primitive(typeNull)),
+                field("None", TypeRef.Primitive(typeNull)),
+            ),
+        )
+        val optionalPreviewMode = TypeEntry.Opt(TypeRef.Table(1))
+        val request = TypeEntry.Record(
+            listOf(
+                field("top_k", TypeRef.Primitive(typeNat32)),
+                field("database_id", TypeRef.Primitive(typeText)),
+                field("preview_mode", TypeRef.Table(2)),
+                field("prefix", TypeRef.Table(0)),
+                field("query_text", TypeRef.Primitive(typeText)),
+            ),
+        )
+        return oneRecord(
+            tableEntries = listOf(optionalText, previewMode, optionalPreviewMode, request),
+            argType = TypeRef.Table(3),
+            namedValues = listOf(
+                "top_k" to Value.Nat32(topK),
+                "database_id" to Value.Text(databaseId),
+                "preview_mode" to Value.Some(
+                    Value.Variant("Light", listOf("Light", "ContentStart", "None"), Value.Null),
+                ),
+                "prefix" to (prefix?.let { Value.Some(Value.Text(it)) } ?: Value.None),
+                "query_text" to Value.Text(query),
+            ),
+        )
+    }
+
+    fun createDatabase(name: String): ByteArray =
+        oneRecord(
+            tableEntries = listOf(
+                TypeEntry.Record(listOf(field("name", TypeRef.Primitive(typeText)))),
+            ),
+            argType = TypeRef.Table(0),
+            namedValues = listOf("name" to Value.Text(name)),
+        )
+
+    fun updateDatabaseMetadata(
+        databaseId: String,
+        name: String,
+        description: String,
+        llmSummary: String?,
+        tagsJson: String,
+    ): ByteArray {
+        val optionalText = TypeEntry.Opt(TypeRef.Primitive(typeText))
+        val request = TypeEntry.Record(
+            listOf(
+                field("llm_summary", TypeRef.Table(0)),
+                field("name", TypeRef.Primitive(typeText)),
+                field("description", TypeRef.Primitive(typeText)),
+                field("database_id", TypeRef.Primitive(typeText)),
+                field("tags_json", TypeRef.Primitive(typeText)),
+            ),
+        )
+        return oneRecord(
+            tableEntries = listOf(optionalText, request),
+            argType = TypeRef.Table(1),
+            namedValues = listOf(
+                "llm_summary" to (llmSummary?.let { Value.Some(Value.Text(it)) } ?: Value.None),
+                "name" to Value.Text(name),
+                "description" to Value.Text(description),
+                "database_id" to Value.Text(databaseId),
+                "tags_json" to Value.Text(tagsJson),
+            ),
+        )
+    }
+
+    fun grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole): ByteArray {
+        val roles = listOf("Owner", "Writer", "Reader")
+        val roleVariant = TypeEntry.Variant(
+            roles.map { field(it, TypeRef.Primitive(typeNull)) },
+        )
+        return encodeArguments(
+            tableEntries = listOf(roleVariant),
+            argumentTypes = listOf(
+                TypeRef.Primitive(typeText),
+                TypeRef.Primitive(typeText),
+                TypeRef.Table(0),
+            ),
+            values = listOf(
+                Value.Text(databaseId),
+                Value.Text(principal),
+                Value.Variant(role.candidName, roles, Value.Null),
+            ),
+        )
+    }
+
+    fun revokeDatabaseAccess(databaseId: String, principal: String): ByteArray =
+        textArgs(listOf(databaseId, principal))
+
+    fun listDatabaseCycleEntries(databaseId: String, cursor: ULong?, limit: UInt): ByteArray =
+        encodeArguments(
+            tableEntries = listOf(TypeEntry.Opt(TypeRef.Primitive(typeNat64))),
+            argumentTypes = listOf(
+                TypeRef.Primitive(typeText),
+                TypeRef.Table(0),
+                TypeRef.Primitive(typeNat32),
+            ),
+            values = listOf(
+                Value.Text(databaseId),
+                cursor?.let { Value.Some(Value.Nat64(it)) } ?: Value.None,
+                Value.Nat32(limit),
+            ),
+        )
+
+    fun marketListEntitlements(cursor: String?, limit: UInt): ByteArray =
+        encodeArguments(
+            tableEntries = listOf(TypeEntry.Opt(TypeRef.Primitive(typeText))),
+            argumentTypes = listOf(TypeRef.Table(0), TypeRef.Primitive(typeNat32)),
+            values = listOf(
+                cursor?.let { Value.Some(Value.Text(it)) } ?: Value.None,
+                Value.Nat32(limit),
+            ),
+        )
+
+    fun deleteDatabase(databaseId: String): ByteArray =
+        oneRecord(
+            tableEntries = listOf(
+                TypeEntry.Record(listOf(field("database_id", TypeRef.Primitive(typeText)))),
+            ),
+            argType = TypeRef.Table(0),
+            namedValues = listOf("database_id" to Value.Text(databaseId)),
         )
 
     fun authorizeSourceCaptureTriggerSession(databaseId: String, sessionNonce: String): ByteArray =
@@ -128,6 +263,22 @@ object VfsCandidEncoder {
         return out.toByteArray()
     }
 
+    private fun encodeArguments(
+        tableEntries: List<TypeEntry>,
+        argumentTypes: List<TypeRef>,
+        values: List<Value>,
+    ): ByteArray {
+        require(argumentTypes.size == values.size)
+        val out = mutableListOf<Byte>()
+        out += magic
+        appendUnsigned(tableEntries.size.toULong(), out)
+        tableEntries.forEach { encode(it, out) }
+        appendUnsigned(argumentTypes.size.toULong(), out)
+        argumentTypes.forEach { encode(it, out) }
+        values.forEach { encode(it, out) }
+        return out.toByteArray()
+    }
+
     private fun textArgs(texts: List<String>): ByteArray {
         val out = mutableListOf<Byte>()
         out += magic
@@ -187,6 +338,7 @@ object VfsCandidEncoder {
             Value.Null -> Unit
             Value.None -> out += 0.toByte()
             is Value.Nat32 -> appendFixedUInt32(value.value, out)
+            is Value.Nat64 -> appendFixedUInt64(value.value, out)
             is Value.Text -> appendText(value.text, out)
             is Value.Record -> value.fields.sortedBy { label(it.first) }.forEach { encode(it.second, out) }
             is Value.Vector -> {
@@ -217,6 +369,12 @@ object VfsCandidEncoder {
         }
     }
 
+    private fun appendFixedUInt64(value: ULong, out: MutableList<Byte>) {
+        repeat(8) { offset ->
+            out += ((value shr (offset * 8)) and 0xffu).toByte()
+        }
+    }
+
     private fun appendUnsigned(value: ULong, out: MutableList<Byte>) =
         VfsCandidLeb.appendUnsigned(value, out)
 
@@ -241,6 +399,7 @@ object VfsCandidEncoder {
         data object Null : Value()
         data object None : Value()
         data class Nat32(val value: UInt) : Value()
+        data class Nat64(val value: ULong) : Value()
         data class Text(val text: String) : Value()
         data class Record(val fields: List<Pair<String, Value>>) : Value()
         data class Vector(val values: List<Value>) : Value()
