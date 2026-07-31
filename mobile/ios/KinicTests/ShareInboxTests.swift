@@ -445,7 +445,7 @@ struct ShareInboxTests {
         }
 
         let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
-        #expect(store.showPublicBrowseDatabases == false)
+        #expect(store.showPublicBrowseDatabases == true)
         #expect(store.showPurchasedBrowseDatabases == false)
 
         store.showPublicBrowseDatabases = true
@@ -457,6 +457,23 @@ struct ShareInboxTests {
         store.showPurchasedBrowseDatabases = false
         #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
         #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPurchasedBrowseDatabases == false)
+    }
+
+    @Test
+    func sharedDefaultsStoreMigratesExistingPublicDatabaseVisibilityOnce() throws {
+        let suiteName = "kinic.shared-defaults-migration.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        defaults.set(false, forKey: "kinic.browse-show-public-databases.v1")
+        let migratedStore = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(migratedStore.showPublicBrowseDatabases == true)
+
+        migratedStore.showPublicBrowseDatabases = false
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
     }
 
     @Test
@@ -561,7 +578,7 @@ struct ShareInboxTests {
             settingsStore: store
         )
 
-        #expect(model.showPublicBrowseDatabases == false)
+        #expect(model.showPublicBrowseDatabases == true)
         #expect(model.showPurchasedBrowseDatabases == false)
         model.setShowPublicBrowseDatabases(true)
         model.setShowPurchasedBrowseDatabases(true)

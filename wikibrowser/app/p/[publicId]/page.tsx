@@ -100,19 +100,83 @@ export function PublicNodeDocument({ data }: { data: PublicNodePageData }) {
   );
 }
 
-function publicNodeTitle(content: string): string {
+export function publicNodeTitle(content: string): string {
   const body = splitFrontmatterText(content);
-  const heading = body.match(/^\s*#{1,6}\s+(.+?)\s*#*\s*$/m)?.[1];
+  const heading = firstMarkdownHeading(body);
   return cleanInlineMarkdown(heading ?? "Published note").slice(0, 120);
 }
 
-function publicNodeDescription(content: string): string {
+function firstMarkdownHeading(markdown: string): string | null {
+  const lines = markdown.split(/\r?\n/);
+  let fence: MarkdownFence | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (fence) {
+      if (closesMarkdownFence(lines[index], fence)) fence = null;
+      continue;
+    }
+    fence = markdownFenceStart(lines[index]);
+    if (fence) continue;
+
+    const atxHeading = lines[index].match(/^[ \t]{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)?.[1];
+    if (atxHeading) return atxHeading;
+    const setextHeading = setextHeadingText(lines, index);
+    if (setextHeading) return setextHeading;
+  }
+  return null;
+}
+
+type MarkdownFence = {
+  marker: "`" | "~";
+  length: number;
+};
+
+function markdownFenceStart(line: string): MarkdownFence | null {
+  const marker = line.match(/^[ \t]{0,3}(`{3,}|~{3,})/)?.[1];
+  if (!marker) return null;
+  return { marker: marker[0] as MarkdownFence["marker"], length: marker.length };
+}
+
+function closesMarkdownFence(line: string, fence: MarkdownFence): boolean {
+  const marker = line.match(/^[ \t]{0,3}(`+|~+)[ \t]*$/)?.[1];
+  return marker?.[0] === fence.marker && marker.length >= fence.length;
+}
+
+function setextHeadingText(lines: string[], index: number): string | null {
+  if (!/^[ \t]{0,3}(?:=+|-+)[ \t]*$/.test(lines[index + 1] ?? "")) return null;
+
+  const headingLines = [lines[index]];
+  for (let previous = index - 1; previous >= 0 && lines[previous].trim(); previous -= 1) {
+    headingLines.unshift(lines[previous]);
+  }
+  if (
+    headingLines.some(
+      (line) =>
+        /^(?: {4}|\t)/.test(line) ||
+        /^(?:>|[-+*]\s|\d+[.)]\s|[-*_]{3,})/.test(line.trim())
+    )
+  ) {
+    return null;
+  }
+  return headingLines.map((line) => line.trim()).join(" ");
+}
+
+export function publicNodeDescription(content: string): string {
   const body = splitFrontmatterText(content);
   const paragraph = body
     .split(/\n\s*\n/)
-    .map((value) => value.replace(/\n/g, " ").trim())
-    .find((value) => value && !/^(#{1,6}\s|```|~~~|[-*+]\s|>\s)/.test(value));
-  return cleanInlineMarkdown(paragraph ?? "A note published with Kinic Wiki").slice(0, 180);
+    .map((value) => value.trim())
+    .find(
+      (value) =>
+        value &&
+        !/^(#{1,6}\s|```|~~~|[-*+]\s|>\s)/.test(value) &&
+        !isSetextHeadingBlock(value)
+    );
+  return cleanInlineMarkdown(paragraph?.replace(/\n/g, " ") ?? "A note published with Kinic Wiki").slice(0, 180);
+}
+
+function isSetextHeadingBlock(markdown: string): boolean {
+  const lines = markdown.split(/\r?\n/);
+  return lines.length >= 2 && /^[ \t]{0,3}(?:=+|-+)[ \t]*$/.test(lines.at(-1) ?? "");
 }
 
 function cleanInlineMarkdown(value: string): string {

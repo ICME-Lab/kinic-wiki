@@ -52,10 +52,15 @@ export function toContextToolResult(payload: ToolPayload | ToolErrorResult) {
   );
 }
 
-export function toolError(message: string, payload: ToolPayload) {
+export function toolError(
+  message: string,
+  payload: ToolPayload,
+  meta?: Record<string, unknown>
+) {
   const contentPayload = { ...payload, error: typeof payload.error === "string" ? payload.error : message };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(contentPayload) }],
+    ...(meta ? { _meta: meta } : {}),
     isError: true
   };
 }

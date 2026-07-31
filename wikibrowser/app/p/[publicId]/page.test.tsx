@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { publicNodeHead, type PublicNodePageData } from "@/app/p/[publicId]/page";
+import {
+  publicNodeDescription,
+  publicNodeHead,
+  publicNodeTitle,
+  type PublicNodePageData
+} from "@/app/p/[publicId]/page";
 
 const publicId = "00112233445566778899aabbccddeeff";
 const data: PublicNodePageData = {
@@ -31,5 +36,33 @@ describe("publicNodeHead", () => {
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:image", content: `${origin}/twitter-image.png` }
     ]));
+  });
+});
+
+describe("publicNodeTitle", () => {
+  it.each([
+    ["Public note\n===========", "Public note"],
+    ["Public note\n-----------", "Public note"],
+    ["Public note\nacross two lines\n-----------", "Public note across two lines"]
+  ])("uses a leading Setext heading as the page title", (content, expected) => {
+    expect(publicNodeTitle(content)).toBe(expected);
+  });
+
+  it.each([
+    { content: "```\nFake title\n---\n```\n\n# Real title", context: "fenced code" },
+    { content: "> Quoted title\n---\n\n# Real title", context: "a blockquote" },
+    { content: "- List item\n---\n\n# Real title", context: "a list" },
+    { content: "    Indented code\n---\n\n# Real title", context: "indented code" }
+  ])("does not treat text in $context as a Setext heading", ({ content }) => {
+    expect(publicNodeTitle(content)).toBe("Real title");
+  });
+});
+
+describe("publicNodeDescription", () => {
+  it.each([
+    "Public note\n===========",
+    "Public note\n-----------"
+  ])("skips a leading Setext heading", (heading) => {
+    expect(publicNodeDescription(`${heading}\n\nVisible paragraph`)).toBe("Visible paragraph");
   });
 });

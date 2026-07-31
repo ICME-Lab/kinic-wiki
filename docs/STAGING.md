@@ -28,6 +28,8 @@ lqfvd-m7ihy-e5dvc-gngvr-blzbt-pupeq-6t7ua-r7v4p-bvqjw-ea7gl-4qe
 
 The authoritative canister mapping is `.icp/data/mappings/staging.ids.json`. The Worker configuration is `wikibrowser/wrangler.jsonc`, and the canister initialization and deploy guard are in `scripts/staging/deploy_wiki.sh`.
 
+The staging Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`. That command fetches `origin/main`, refuses a HEAD that does not contain the fetched commit, rejects unresolved conflicts, and verifies the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
+
 ## Isolation and Safety
 
 Staging uses these dedicated Cloudflare resources:
@@ -107,6 +109,14 @@ The dry run must show the staging canister, staging KV/R2/Queue resources, an em
 ```bash
 pnpm deploy:staging
 ```
+
+The command must print `staging Worker deploy source validated` before the build starts. By default it refuses any staged, unstaged, or untracked content because Wrangler deploys the complete current worktree. If an intentional staging-only change has not been committed, inspect `git status --short` and `git diff` first, then acknowledge that exact risk explicitly:
+
+```bash
+KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
+```
+
+The dirty-worktree acknowledgement does not bypass the fetched `origin/main` ancestry check, unresolved-conflict check, or public-node regression check.
 
 ## Post-deploy Verification
 

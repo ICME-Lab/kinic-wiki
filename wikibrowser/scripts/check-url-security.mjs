@@ -34,6 +34,11 @@ const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
+const nativeAuthLogos = {
+  apple: readFileSync(new URL("../public/native-auth/apple.svg", import.meta.url), "utf8"),
+  google: readFileSync(new URL("../public/native-auth/google.svg", import.meta.url), "utf8"),
+  internetIdentity: readFileSync(new URL("../public/native-auth/internet-identity.svg", import.meta.url), "utf8")
+};
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
@@ -47,7 +52,21 @@ assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)
 assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
 assert.match(nativeAuthRoute, /"content-type": "text\/html; charset=utf-8"/);
 assert.match(nativeAuthRoute, /id="native-auth-message"/);
-assert.match(nativeAuthRoute, /id="native-auth-continue"/);
+assert.match(nativeAuthRoute, /id="native-auth-apple"/);
+assert.match(nativeAuthRoute, /id="native-auth-google"/);
+assert.match(nativeAuthRoute, /id="native-auth-internet-identity"/);
+assert.match(nativeAuthRoute, /Continue with Internet Identity/);
+assert.match(nativeAuthRoute, /Continue with Apple/);
+assert.match(nativeAuthRoute, /Continue with Google/);
+assert.doesNotMatch(nativeAuthRoute, /class="divider"|<span>or<\/span>/);
+assert.match(nativeAuthRoute, /data-provider-logo="internet-identity" src="\/native-auth\/internet-identity\.svg"/);
+assert.match(nativeAuthRoute, /data-provider-logo="apple" src="\/native-auth\/apple\.svg"/);
+assert.match(nativeAuthRoute, /data-provider-logo="google" src="\/native-auth\/google\.svg"/);
+assert.match(nativeAuthRoute, /min-height: 56px/);
+assert.match(nativeAuthRoute, /border: 1px solid var\(--stroke\)/);
+assert.match(nativeAuthRoute, /border-radius: 14px/);
+assert.match(nativeAuthRoute, /role="status" aria-live="polite"/);
+assert.doesNotMatch(nativeAuthRoute, /Passkey or other Internet Identity/);
 assert.match(nativeAuthRoute, /window\.kinicNativeAuthStart/);
 assert.match(nativeAuthRoute, /function nativeAuthScript/);
 assert.match(nativeAuthRoute, /html, body \{ width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; \}/);
@@ -62,6 +81,13 @@ assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
 assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
+assert.match(nativeAuthRoute, /event\.source !== idpWindow/);
+assert.match(nativeAuthLogos.apple, /fill="#000"/);
+assert.match(nativeAuthLogos.google, /#4285F4/);
+assert.match(nativeAuthLogos.google, /#34A853/);
+assert.match(nativeAuthLogos.google, /#FBBC05/);
+assert.match(nativeAuthLogos.google, /#EA4335/);
+assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
 
 {
   const response = appleAppSiteAssociationRouteModule.GET();
@@ -94,6 +120,12 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
   const response = nativeAuthRouteModule.GET();
   assert.equal(response.status, 200);
   const body = await response.text();
+  const internetIdentityButton = body.indexOf('id="native-auth-internet-identity"');
+  const appleButton = body.indexOf('id="native-auth-apple"');
+  const googleButton = body.indexOf('id="native-auth-google"');
+  assert.ok(internetIdentityButton >= 0);
+  assert.ok(internetIdentityButton < appleButton);
+  assert.ok(appleButton < googleButton);
   assert.match(body, /https:\/\/id\.ai/);
   assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
   assert.doesNotMatch(body, /raw\.localhost|id\.ai\.localhost|127\.0\.0\.1:8011/);
@@ -108,6 +140,11 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 
   const runNativeAuthScript = (overrides = {}) => {
     const postMessages = [];
+    const elements = Object.fromEntries(
+      ["native-auth-message", "native-auth-openid-actions", "native-auth-apple", "native-auth-google", "native-auth-internet-identity"].map(
+        (id) => [id, { disabled: false, hidden: id === "native-auth-openid-actions", textContent: "" }]
+      )
+    );
     const sandbox = {
       Uint8Array,
       TextEncoder,
@@ -115,7 +152,7 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
       URLSearchParams,
       atob,
       btoa,
-      document: { getElementById: () => null },
+      document: { getElementById: (id) => elements[id] ?? null },
       sessionStorage: {
         store: {},
         getItem(key) {
@@ -134,6 +171,9 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
         host: overrides.host ?? "wiki.kinic.xyz"
       },
       __listeners: {},
+      __elements: elements,
+      __openedURL: null,
+      __openCount: 0,
       __postMessages: postMessages,
       __openedIdpWindow: null,
       addEventListener(type, handler) {
@@ -146,7 +186,9 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
       clearInterval: () => {}
     };
     sandbox.window = sandbox;
-    sandbox.open = () => {
+    sandbox.open = (url) => {
+      sandbox.__openedURL = url;
+      sandbox.__openCount += 1;
       const idpWindow = {
         closed: false,
         location: { href: "" },
@@ -176,10 +218,27 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
     const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
     return Buffer.from(padded, "base64").toString("utf8");
   };
+  const nativeAuthSuccess = () => ({
+    kind: "authorize-client-success",
+    userPublicKey: new Uint8Array([1, 2, 255]),
+    delegations: [
+      {
+        delegation: {
+          pubkey: [3, 4, 5],
+          expiration: 12345n,
+          targets: [new Uint8Array([6, 7])]
+        },
+        signature: "0A0b"
+      }
+    ]
+  });
 
   {
     const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
-    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__elements["native-auth-openid-actions"].hidden, false);
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openedURL, "https://id.ai/#authorize");
+    assert.equal(sandbox.__elements["native-auth-message"].textContent, "Opening Internet Identity…");
     assert.equal(sandbox.__postMessages.length, 1);
     const request = sandbox.__postMessages[0].message;
     assert.equal(request.kind, "authorize-client");
@@ -189,23 +248,15 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 
     const handlers = sandbox.__listeners.message ?? [];
     assert.equal(handlers.length, 1);
+    const success = nativeAuthSuccess();
     for (const handler of handlers) {
+      handler({ origin: "https://evil.example", source: sandbox.__openedIdpWindow, data: success });
+      handler({ origin: "https://id.ai", source: {}, data: success });
+      assert.equal(sandbox.__openedIdpWindow.location.href, "");
       handler({
         origin: "https://id.ai",
-        data: {
-          kind: "authorize-client-success",
-          userPublicKey: new Uint8Array([1, 2, 255]),
-          delegations: [
-            {
-              delegation: {
-                pubkey: [3, 4, 5],
-                expiration: 12345n,
-                targets: [new Uint8Array([6, 7])]
-              },
-              signature: "0A0b"
-            }
-          ]
-        }
+        source: sandbox.__openedIdpWindow,
+        data: success
       });
     }
 
@@ -222,12 +273,62 @@ assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
         }
       ]
     });
+    const completedRedirect = sandbox.__openedIdpWindow.location.href;
+    for (const handler of handlers) {
+      handler({ origin: "https://id.ai", source: sandbox.__openedIdpWindow, data: success });
+    }
+    assert.equal(sandbox.__openedIdpWindow.location.href, completedRedirect);
+  }
+
+  for (const [flow, expectedURL, expectedStatus] of [
+    ["apple", "https://id.ai/authorize?openid=https%3A%2F%2Fappleid.apple.com", "Opening Apple…"],
+    ["google", "https://id.ai/authorize?openid=https%3A%2F%2Faccounts.google.com", "Opening Google…"]
+  ]) {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart(flow);
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openedURL, expectedURL);
+    assert.equal(sandbox.__elements["native-auth-message"].textContent, expectedStatus);
+    assert.equal(sandbox.__openCount, 1);
+    assert.equal(sandbox.__postMessages.length, 1);
+    for (const id of ["native-auth-apple", "native-auth-google", "native-auth-internet-identity"]) {
+      assert.equal(sandbox.__elements[id].disabled, true);
+    }
+    for (const handler of sandbox.__listeners.message ?? []) {
+      handler({
+        origin: "https://id.ai",
+        source: sandbox.__openedIdpWindow,
+        data: nativeAuthSuccess()
+      });
+    }
+    const redirectUrl = new URL(sandbox.__openedIdpWindow.location.href);
+    assert.equal(redirectUrl.searchParams.get("state"), "state-1");
+    assert.equal(JSON.parse(decodeBase64Url(redirectUrl.searchParams.get("result"))).userPublicKey, "0102ff");
   }
 
   for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {
     const sandbox = runNativeAuthScript({ search: nativeAuthSearch({ maxTimeToLive }) });
-    sandbox.window.kinicNativeAuthStart();
+    sandbox.window.kinicNativeAuthStart("internet-identity");
     assert.equal(sandbox.__postMessages.length, 0);
+  }
+
+  for (const fields of [
+    { callback: "https://evil.example/ios-auth-callback" },
+    { callback: "https://wiki.kinic.xyz/not-ios-auth-callback" },
+    { identityProvider: "https://evil.example/" },
+    { identityProvider: "https://id.ai/authorize" }
+  ]) {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch(fields) });
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openCount, 0);
+    assert.equal(sandbox.__postMessages.length, 0);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("https://appleid.apple.com");
+    assert.equal(sandbox.__openCount, 0);
+    assert.match(sandbox.__elements["native-auth-message"].textContent, /invalid/);
   }
 }
 
@@ -241,6 +342,8 @@ await withEnv(
   async () => {
     const response = nativeAuthRouteModule.GET();
     const body = await response.text();
+    assert.match(body, /http:\/\/id\.ai\.localhost:8011\/#authorize/);
+    assert.match(body, /id="native-auth-openid-actions" hidden/);
     assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
     assert.doesNotMatch(body, /http:\/\/aaaaa-aa\.localhost:8011/);
   }

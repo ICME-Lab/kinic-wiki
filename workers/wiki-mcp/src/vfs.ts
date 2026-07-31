@@ -1,15 +1,16 @@
 // Where: workers/wiki-mcp/src/vfs.ts
-// What: Minimal anonymous Kinic Wiki canister client for public read-only MCP tools.
-// Why: Remote MCP must reuse the canister read contract without depending on the browser app.
+// What: Minimal Kinic Wiki canister client for anonymous or delegated read-only MCP tools.
+// Why: Authenticated identities stay request-scoped while the anonymous production actor may be reused.
 
-import { Actor, HttpAgent } from "@icp-sdk/core/agent";
+import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import {
   candidOptional,
   isLocalReplicaHost as isLocalHost,
-  unwrapCandidResult as unwrap,
+  unwrapCandidResult,
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
+import type { McpAuthStateV2 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, null>;
@@ -18,8 +19,15 @@ type Result<T> = { Ok: T } | { Err: string };
 export type RuntimeEnv = {
   KINIC_WIKI_CANISTER_ID?: string;
   KINIC_WIKI_IC_HOST?: string;
+  KINIC_WIKI_MCP_TARGET_ORIGIN?: string;
   KINIC_WIKI_PUBLIC_ORIGIN?: string;
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
+  MCP_ACCESS_POLICY?: string;
+  MCP_PUBLIC_ORIGIN?: string;
+  MCP_KEY_ENCRYPTION_KEY?: string;
+  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV2>;
+  MCP_REGISTRATION_RATE_LIMIT?: RateLimit;
+  KINIC_WIKI_IDENTITY?: Identity;
 };
 
 export type DatabaseSummary = {
@@ -294,7 +302,7 @@ const actorCache = new Map<string, Promise<VfsActor>>();
 
 export async function listDatabases(env: RuntimeEnv): Promise<DatabaseSummary[]> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.list_databases());
+  const raw = unwrap(await callVfs(env, "list_databases", () => actor.list_databases()), env);
   return raw.map(normalizeDatabaseSummary).filter((database) => database.status === "active");
 }
 
@@ -308,26 +316,37 @@ export async function searchNodes(
 ): Promise<SearchHit[]> {
   const actor = await createVfsActor(env);
   const raw = unwrap(
-    await actor.search_nodes({
-      database_id: databaseId,
-      query_text: query,
-      prefix: candidOptional(prefix),
-      top_k: limit,
-      preview_mode: candidOptional(rawSearchPreviewMode(previewMode))
-    })
+    await callVfs(env, "search_nodes", () =>
+      actor.search_nodes({
+        database_id: databaseId,
+        query_text: query,
+        prefix: candidOptional(prefix),
+        top_k: limit,
+        preview_mode: candidOptional(rawSearchPreviewMode(previewMode))
+      })
+    ),
+    env
   );
   return raw.map(normalizeSearchHit);
 }
 
 export async function listNodes(env: RuntimeEnv, databaseId: string, prefix: string, recursive: boolean, limit: number): Promise<NodeEntry[]> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.list_nodes({ database_id: databaseId, prefix, recursive, limit }));
+  const raw = unwrap(
+    await callVfs(env, "list_nodes", () =>
+      actor.list_nodes({ database_id: databaseId, prefix, recursive, limit })
+    ),
+    env
+  );
   return raw.map(normalizeNodeEntry);
 }
 
 export async function readNode(env: RuntimeEnv, databaseId: string, path: string): Promise<WikiNode | null> {
   const actor = await createVfsActor(env);
-  const raw = unwrap(await actor.read_node(databaseId, path));
+  const raw = unwrap(
+    await callVfs(env, "read_node", () => actor.read_node(databaseId, path)),
+    env
+  );
   return raw[0] ? normalizeNode(raw[0]) : null;
 }
 
@@ -345,27 +364,42 @@ export async function queryContext(
 ): Promise<QueryContext> {
   const actor = await createVfsActor(env);
   const raw = unwrap(
-    await actor.query_context({
-      database_id: request.databaseId,
-      task: request.task,
-      entities: request.entities,
-      namespace: candidOptional(request.namespace),
-      budget_tokens: request.budgetTokens,
-      include_evidence: request.includeEvidence,
-      depth: request.depth
-    })
+    await callVfs(env, "query_context", () =>
+      actor.query_context({
+        database_id: request.databaseId,
+        task: request.task,
+        entities: request.entities,
+        namespace: candidOptional(request.namespace),
+        budget_tokens: request.budgetTokens,
+        include_evidence: request.includeEvidence,
+        depth: request.depth
+      })
+    ),
+    env
   );
   return normalizeQueryContext(raw);
 }
 
 export async function memoryManifest(env: RuntimeEnv, databaseId: string): Promise<MemoryManifest> {
   const actor = await createVfsActor(env);
-  return normalizeMemoryManifest(unwrap(await actor.memory_manifest({ database_id: databaseId })));
+  return normalizeMemoryManifest(
+    unwrap(
+      await callVfs(env, "memory_manifest", () => actor.memory_manifest({ database_id: databaseId })),
+      env
+    )
+  );
 }
 
 export async function sourceEvidence(env: RuntimeEnv, databaseId: string, nodePath: string): Promise<SourceEvidence> {
   const actor = await createVfsActor(env);
-  return normalizeSourceEvidence(unwrap(await actor.source_evidence({ database_id: databaseId, node_path: nodePath })));
+  return normalizeSourceEvidence(
+    unwrap(
+      await callVfs(env, "source_evidence", () =>
+        actor.source_evidence({ database_id: databaseId, node_path: nodePath })
+      ),
+      env
+    )
+  );
 }
 
 export async function queryDatabaseSqlJson(
@@ -375,7 +409,14 @@ export async function queryDatabaseSqlJson(
   limit: number
 ): Promise<IndexSqlJsonQueryResult> {
   const actor = await createVfsActor(env);
-  return normalizeIndexSqlJsonQueryResult(unwrap(await actor.query_database_sql_json(databaseId, sql, limit)));
+  return normalizeIndexSqlJsonQueryResult(
+    unwrap(
+      await callVfs(env, "query_database_sql_json", () =>
+        actor.query_database_sql_json(databaseId, sql, limit)
+      ),
+      env
+    )
+  );
 }
 
 export function resolveCanisterId(env: RuntimeEnv): string {
@@ -394,6 +435,9 @@ function resolveIcHost(env: RuntimeEnv): string {
 async function createVfsActor(env: RuntimeEnv): Promise<VfsActor> {
   const host = resolveIcHost(env);
   const canisterId = resolveCanisterId(env);
+  if (env.KINIC_WIKI_IDENTITY) {
+    return createVfsActorUncached(host, canisterId, env.KINIC_WIKI_IDENTITY);
+  }
   const cacheKey = `${host}\n${canisterId}`;
   const cached = actorCache.get(cacheKey);
   if (cached) {
@@ -407,8 +451,8 @@ async function createVfsActor(env: RuntimeEnv): Promise<VfsActor> {
   return actor;
 }
 
-async function createVfsActorUncached(host: string, canisterId: string): Promise<VfsActor> {
-  const agent = HttpAgent.createSync({ host });
+async function createVfsActorUncached(host: string, canisterId: string, identity?: Identity): Promise<VfsActor> {
+  const agent = HttpAgent.createSync({ host, identity });
   if (isLocalHost(host)) {
     await agent.fetchRootKey();
   }
@@ -416,6 +460,46 @@ async function createVfsActorUncached(host: string, canisterId: string): Promise
     agent,
     canisterId: Principal.fromText(canisterId)
   });
+}
+
+function unwrap<T>(result: Result<T>, env: RuntimeEnv): T {
+  return unwrapCandidResult(result, (message) =>
+    new Error(env.KINIC_WIKI_IDENTITY ? "Kinic Wiki database is unavailable" : message)
+  );
+}
+
+async function callVfs<T>(
+  env: RuntimeEnv,
+  stage: string,
+  call: () => Promise<Result<T>>
+): Promise<Result<T>> {
+  try {
+    const result = await call();
+    if ("Err" in result) {
+      logAuthenticatedVfsFailure(env, `${stage}_result`);
+    }
+    return result;
+  } catch (error) {
+    if (!env.KINIC_WIKI_IDENTITY) {
+      throw error;
+    }
+    logAuthenticatedVfsFailure(env, `${stage}_call`);
+    throw new Error("Kinic Wiki database is unavailable");
+  }
+}
+
+function logAuthenticatedVfsFailure(env: RuntimeEnv, stage: string): void {
+  if (!env.KINIC_WIKI_IDENTITY) {
+    return;
+  }
+  console.error(
+    JSON.stringify({
+      event: "vfs_call",
+      trace_id: crypto.randomUUID(),
+      stage,
+      error_code: "database_unavailable"
+    })
+  );
 }
 
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
