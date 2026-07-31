@@ -168,7 +168,8 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
       location: {
         search: overrides.search ?? "",
         hash: overrides.hash ?? "",
-        host: overrides.host ?? "wiki.kinic.xyz"
+        host: overrides.host ?? "wiki.kinic.xyz",
+        href: ""
       },
       __listeners: {},
       __elements: elements,
@@ -176,14 +177,30 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
       __openCount: 0,
       __postMessages: postMessages,
       __openedIdpWindow: null,
+      __intervals: [],
+      __timeouts: [],
       addEventListener(type, handler) {
         (this.__listeners[type] ??= []).push(handler);
       },
       removeEventListener(type, handler) {
         this.__listeners[type] = (this.__listeners[type] || []).filter((registered) => registered !== handler);
       },
-      setInterval: () => 0,
-      clearInterval: () => {}
+      setInterval(handler, delay) {
+        const timer = { active: true, delay, handler };
+        this.__intervals.push(timer);
+        return timer;
+      },
+      clearInterval(timer) {
+        timer.active = false;
+      },
+      setTimeout(handler, delay) {
+        const timer = { active: true, delay, handler };
+        this.__timeouts.push(timer);
+        return timer;
+      },
+      clearTimeout(timer) {
+        timer.active = false;
+      }
     };
     sandbox.window = sandbox;
     sandbox.open = (url) => {
@@ -278,6 +295,10 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
       handler({ origin: "https://id.ai", source: sandbox.__openedIdpWindow, data: success });
     }
     assert.equal(sandbox.__openedIdpWindow.location.href, completedRedirect);
+    const callbackFallback = sandbox.__timeouts.find((timer) => timer.delay === 750);
+    assert.ok(callbackFallback?.active);
+    callbackFallback.handler();
+    assert.equal(sandbox.location.href, completedRedirect);
   }
 
   for (const [flow, expectedURL, expectedStatus] of [
@@ -304,6 +325,31 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
     const redirectUrl = new URL(sandbox.__openedIdpWindow.location.href);
     assert.equal(redirectUrl.searchParams.get("state"), "state-1");
     assert.equal(JSON.parse(decodeBase64Url(redirectUrl.searchParams.get("result"))).userPublicKey, "0102ff");
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("apple");
+    sandbox.__openedIdpWindow.closed = true;
+    const popupMonitor = sandbox.__intervals[1];
+    assert.ok(popupMonitor?.active);
+    popupMonitor.handler();
+    const callback = new URL(sandbox.location.href);
+    assert.equal(callback.searchParams.get("state"), "state-1");
+    assert.match(decodeBase64Url(callback.searchParams.get("error")), /closed before authorization completed/);
+    assert.equal(sandbox.__listeners.message.length, 0);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("apple");
+    const authorizationTimeout = sandbox.__timeouts.find((timer) => timer.delay === 5 * 60 * 1000);
+    assert.ok(authorizationTimeout?.active);
+    authorizationTimeout.handler();
+    const callback = new URL(sandbox.__openedIdpWindow.location.href);
+    assert.equal(callback.searchParams.get("state"), "state-1");
+    assert.match(decodeBase64Url(callback.searchParams.get("error")), /authorization timed out/);
+    assert.equal(sandbox.__listeners.message.length, 0);
   }
 
   for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {

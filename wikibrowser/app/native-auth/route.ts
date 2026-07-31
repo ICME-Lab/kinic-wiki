@@ -140,7 +140,11 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
   let parseFailed = false;
   let started = false;
   let completed = false;
-  let timer = null;
+  let requestTimer = null;
+  let popupTimer = null;
+  let timeoutTimer = null;
+  const authorizationTimeoutMs = 5 * 60 * 1000;
+  const callbackFallbackDelayMs = 750;
 
   const setMessage = (value) => {
     if (message) message.textContent = value;
@@ -197,15 +201,24 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
       if (completed) return;
       completed = true;
       window.removeEventListener("message", handleMessage);
-      if (timer) window.clearInterval(timer);
+      if (requestTimer) window.clearInterval(requestTimer);
+      if (popupTimer) window.clearInterval(popupTimer);
+      if (timeoutTimer) window.clearTimeout(timeoutTimer);
       query.set("state", requestParams.state);
       const callback = new URL(requestParams.callback.toString());
       callback.search = query.toString();
       if (idpWindow && !idpWindow.closed) {
-        idpWindow.location.href = callback.toString();
-      } else {
-        window.location.href = callback.toString();
+        try {
+          idpWindow.location.href = callback.toString();
+          window.setTimeout(() => {
+            window.location.href = callback.toString();
+          }, callbackFallbackDelayMs);
+          return;
+        } catch {
+          // Fall through to the authentication session's parent window.
+        }
       }
+      window.location.href = callback.toString();
     };
 
     const fail = (value) => {
@@ -242,7 +255,15 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
     window.addEventListener("message", handleMessage);
     const sendRequest = () => idpWindow.postMessage(request, requestParams.identityProvider.origin);
     sendRequest();
-    timer = window.setInterval(sendRequest, 500);
+    requestTimer = window.setInterval(sendRequest, 500);
+    popupTimer = window.setInterval(() => {
+      if (!completed && idpWindow.closed) {
+        fail("Internet Identity was closed before authorization completed. Please try again.");
+      }
+    }, 500);
+    timeoutTimer = window.setTimeout(() => {
+      fail("Internet Identity authorization timed out. Please try again.");
+    }, authorizationTimeoutMs);
   }
 
   function parseNativeAuthLocation(currentLocation) {
