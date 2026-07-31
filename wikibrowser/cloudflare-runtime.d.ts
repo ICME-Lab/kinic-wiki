@@ -1,5 +1,6 @@
 interface CloudflareEnv {
   DEEPSEEK_API_KEY?: string;
+  KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT?: string;
   KINIC_DEPLOYMENT_ENV?: string;
   KINIC_WIKI_CANISTER_ID: string;
   KINIC_WIKI_GENERATOR_URL?: string;

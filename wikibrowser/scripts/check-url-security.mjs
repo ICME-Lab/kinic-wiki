@@ -31,6 +31,7 @@ const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/rout
 const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
+const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -110,6 +111,36 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
       apps: ["AKN976G7AK.xyz.kinic.ios.KinicWiki"]
     }
   });
+}
+
+{
+  const fingerprint = Array.from({ length: 32 }, (_, index) =>
+    index.toString(16).padStart(2, "0").toUpperCase()
+  ).join(":");
+  const response = assetLinksRouteModule.GET(undefined, {
+    KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT: fingerprint
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(JSON.parse(await response.text()), [
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "xyz.kinic.android.kinicwiki",
+        sha256_cert_fingerprints: [fingerprint]
+      }
+    }
+  ]);
+}
+
+{
+  const response = assetLinksRouteModule.GET(undefined, {
+    KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT: "not-a-fingerprint"
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 }
 
 {
