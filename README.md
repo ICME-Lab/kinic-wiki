@@ -34,16 +34,6 @@ The public browser entry point is:
 
 https://wiki.kinic.xyz
 
-The official Kinic Wiki database is:
-
-https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Knowledge
-
-Database ID:
-
-```text
-db_kva4v2twg6jv
-```
-
 The canonical CLI guide is:
 
 https://wiki.kinic.xyz/docs/cli
@@ -112,6 +102,7 @@ The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGP
 Developer and operator guides:
 
 - CLI setup and database operations: [docs/CLI.md](docs/CLI.md)
+- Staging environment and deployment: [docs/STAGING.md](docs/STAGING.md)
 - OKF Context Pack export and verification: [docs/Context Pack.md](docs/Context%20Pack.md)
 - Skill Registry workflows: [docs/SKILL_REGISTRY.md](docs/SKILL_REGISTRY.md)
 - Canister Store API: [docs/STORE_API.md](docs/STORE_API.md)

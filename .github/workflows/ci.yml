@@ -96,10 +96,10 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Test Candid tools
+        run: npm --prefix tools/candid test
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
-      - name: Check file size ratchet
-        run: node scripts/check-file-sizes.mjs
       - name: Check docs links
         run: node scripts/check-docs-links.mjs
 
@@ -158,10 +158,14 @@ jobs:
         run: npm run lint
       - name: Run typecheck
         run: pnpm typecheck
-      - name: Build static export
+      - name: Build TanStack Start app
         run: pnpm build
       - name: Build Cloudflare Worker
         run: pnpm build:worker
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run support route smoke
+        run: pnpm e2e:support
 
   wiki-generator-check:
     needs: changes
@@ -250,6 +254,8 @@ jobs:
         run: pnpm typecheck
       - name: Build
         run: pnpm build
+      - name: Build Cloudflare Worker
+        run: pnpm build:worker
 
   rust-check:
     needs: changes

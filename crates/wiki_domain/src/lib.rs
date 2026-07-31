@@ -12,6 +12,40 @@ pub const KNOWLEDGE_SOURCES_PREFIX: &str = "/Sources";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrontmatterScalarError;
+
+impl std::fmt::Display for FrontmatterScalarError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid quoted frontmatter scalar")
+    }
+}
+
+impl std::error::Error for FrontmatterScalarError {}
+
+pub fn extract_frontmatter_block(content: &str) -> Option<&str> {
+    let rest = content.strip_prefix("---\n")?;
+    let end = rest.find("\n---\n").or_else(|| {
+        rest.ends_with("\n---")
+            .then_some(rest.len() - "\n---".len())
+    })?;
+    Some(&rest[..end])
+}
+
+pub fn decode_frontmatter_scalar(value: &str) -> Result<Option<String>, FrontmatterScalarError> {
+    let value = value.trim();
+    if value == "null" || value == "~" {
+        return Ok(None);
+    }
+    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+        return decode_json_string_literal(value).map(Some);
+    }
+    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        return Ok(Some(value[1..value.len() - 1].replace("''", "'")));
+    }
+    Ok(Some(value.to_string()))
+}
+
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
     validate_knowledge_source_path(path)
 }
@@ -55,12 +89,106 @@ pub fn validate_knowledge_source_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn decode_json_string_literal(value: &str) -> Result<String, FrontmatterScalarError> {
+    let body = value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .ok_or(FrontmatterScalarError)?;
+    let mut chars = body.chars();
+    let mut decoded = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            let escaped = chars.next().ok_or(FrontmatterScalarError)?;
+            decode_json_escape(escaped, &mut chars, &mut decoded)?;
+        } else if ch.is_control() {
+            return Err(FrontmatterScalarError);
+        } else {
+            decoded.push(ch);
+        }
+    }
+    Ok(decoded)
+}
+
+fn decode_json_escape(
+    escaped: char,
+    chars: &mut std::str::Chars<'_>,
+    decoded: &mut String,
+) -> Result<(), FrontmatterScalarError> {
+    match escaped {
+        '"' => decoded.push('"'),
+        '\\' => decoded.push('\\'),
+        '/' => decoded.push('/'),
+        'b' => decoded.push('\u{0008}'),
+        'f' => decoded.push('\u{000c}'),
+        'n' => decoded.push('\n'),
+        'r' => decoded.push('\r'),
+        't' => decoded.push('\t'),
+        'u' => {
+            let code = decode_json_hex4(chars)?;
+            if (0xD800..=0xDBFF).contains(&code) {
+                if chars.next() != Some('\\') || chars.next() != Some('u') {
+                    return Err(FrontmatterScalarError);
+                }
+                let low = decode_json_hex4(chars)?;
+                if !(0xDC00..=0xDFFF).contains(&low) {
+                    return Err(FrontmatterScalarError);
+                }
+                let scalar = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                decoded.push(char::from_u32(scalar).ok_or(FrontmatterScalarError)?);
+            } else if (0xDC00..=0xDFFF).contains(&code) {
+                return Err(FrontmatterScalarError);
+            } else {
+                decoded.push(char::from_u32(code).ok_or(FrontmatterScalarError)?);
+            }
+        }
+        _ => return Err(FrontmatterScalarError),
+    }
+    Ok(())
+}
+
+fn decode_json_hex4(chars: &mut std::str::Chars<'_>) -> Result<u32, FrontmatterScalarError> {
+    let mut code = 0u32;
+    for _ in 0..4 {
+        code = code * 16
+            + chars
+                .next()
+                .and_then(|ch| ch.to_digit(16))
+                .ok_or(FrontmatterScalarError)?;
+    }
+    Ok(code)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        WIKI_ROOT_PATH, normalize_wiki_remote_path, validate_canonical_source_path,
-        validate_knowledge_source_path, wiki_relative_path,
+        WIKI_ROOT_PATH, decode_frontmatter_scalar, extract_frontmatter_block,
+        normalize_wiki_remote_path, validate_canonical_source_path, validate_knowledge_source_path,
+        wiki_relative_path,
     };
+
+    #[test]
+    fn frontmatter_block_requires_whole_line_delimiters() {
+        let content = "---\nkind: note\nvalue: ---not-a-delimiter\n---\nbody\n";
+        assert_eq!(
+            extract_frontmatter_block(content),
+            Some("kind: note\nvalue: ---not-a-delimiter")
+        );
+        assert_eq!(extract_frontmatter_block("---\nkind: note"), None);
+    }
+
+    #[test]
+    fn frontmatter_scalar_decodes_yaml_string_forms() {
+        assert_eq!(
+            decode_frontmatter_scalar("\"a\\n\\uD83D\\uDE00\""),
+            Ok(Some("a\n😀".to_string()))
+        );
+        assert_eq!(
+            decode_frontmatter_scalar("'it''s'"),
+            Ok(Some("it's".to_string()))
+        );
+        assert_eq!(decode_frontmatter_scalar("~"), Ok(None));
+        assert!(decode_frontmatter_scalar("\"bad\\q\"").is_err());
+    }
 
     #[test]
     fn source_path_accepts_safe_sources_children() {

@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuthClient } from "@icp-sdk/auth/client";
-import { useRouter } from "next/navigation";
+import { useAppNavigate } from "@/lib/app-router";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -38,15 +38,15 @@ const CYCLES_HISTORY_LIMIT = 100;
 const MARKET_ENTITLEMENTS_LIMIT = 100;
 
 export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) {
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
-  const router = useRouter();
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
+  const router = useAppNavigate();
   const refreshSeqRef = useRef(0);
   const cyclesHistorySeqRef = useRef(0);
   const { authClient, authReady, principal } = useAppSession();
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [,setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
@@ -97,7 +97,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       const refreshSeq = (refreshSeqRef.current += 1);
       const isCurrentRefresh = () => refreshSeq === refreshSeqRef.current;
       if (!canisterId) {
-        setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured.");
+        setError("VITE_KINIC_WIKI_CANISTER_ID is not configured.");
         setLoadState("error");
         return;
       }

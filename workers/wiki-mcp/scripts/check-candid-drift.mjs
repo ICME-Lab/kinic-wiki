@@ -2,7 +2,7 @@
 // What: Compare the MCP Worker's inline VFS IDL subset with vfs.did.
 // Why: wiki-mcp was the only TS canister client without a drift check in CI.
 import { readFileSync } from "node:fs";
-import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
+import { checkCandidSubset, selectCandidShapes } from "@kinic/candid-tools/subset-check";
 import {
   didTypeAliases as sharedAliases,
   expectedTypes as sharedTypes
@@ -13,22 +13,11 @@ const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8");
 
 const didTypeAliases = {
   ...sharedAliases,
-  ResultNodes: "Result_18"
+  ResultNodes: "Result_19"
 };
 
-function pick(...names) {
-  const picked = {};
-  for (const name of names) {
-    if (!(name in sharedTypes)) {
-      throw new Error(`shared candid shape missing: ${name}`);
-    }
-    picked[name] = sharedTypes[name];
-  }
-  return picked;
-}
-
 const expectedTypes = {
-  ...pick(
+  ...selectCandidShapes(sharedTypes, [
     "DatabaseRole",
     "DatabaseStatus",
     "DatabaseMetadata",
@@ -61,7 +50,7 @@ const expectedTypes = {
     "ResultQueryContext",
     "ResultSourceEvidence",
     "ResultIndexSqlJsonQuery"
-  ),
+  ]),
   NodeEntry: {
     kind: "record",
     fields: {

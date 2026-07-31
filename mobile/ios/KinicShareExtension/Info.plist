@@ -6,6 +6,8 @@
 	<string>$(APP_GROUP_ID)</string>
 	<key>KINIC_API_BASE_URL</key>
 	<string>$(KINIC_API_BASE_URL)</string>
+	<key>KINIC_ASK_AI_URL</key>
+	<string>$(KINIC_ASK_AI_URL)</string>
 	<key>KINIC_AUTH_ORIGIN</key>
 	<string>$(KINIC_AUTH_ORIGIN)</string>
 	<key>KINIC_CALLBACK_DOMAIN</key>

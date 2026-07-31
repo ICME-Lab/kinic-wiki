@@ -23,3 +23,7 @@ environments:
     network: ic
     canisters:
       - wiki
+  - name: staging
+    network: ic
+    canisters:
+      - wiki

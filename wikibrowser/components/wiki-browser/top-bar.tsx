@@ -1,48 +1,15 @@
 "use client";
 
-import { AuthClient } from "@icp-sdk/auth/client";
-import type { Identity } from "@icp-sdk/core/agent";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import Image from "next/image";
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Settings, Share2, Trash2, Wallet, X } from "lucide-react";
-import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
-import { ExplorerTree } from "@/components/explorer-tree";
-import { HelpPanel } from "@/components/help-panel";
-import { Inspector } from "@/components/inspector";
-import { SourceCapturePanel } from "@/components/source-capture-panel";
-import { QueryPanel } from "@/components/query-panel";
-import { PanelHeader } from "@/components/panel";
+import type { ChangeEvent, FormEvent } from "react";
+import { useState } from "react";
+import { Menu, Network, Search, Settings, Share2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
-import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
-import { nodeRequestKey } from "@/lib/request-keys";
-import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
-import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
-import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
-import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
-import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
-import {
-  errorHint,
-  errorMessage,
-  inferNoteRole,
-  isDatabaseNotFoundErrorCode,
-  isNotFoundError,
-  loadingState,
-  parseModeTab,
-  readIdentityMode as resolveReadIdentityMode,
-  ApiError,
-  STORE_ROOT_PATHS,
-  type ModeTab,
-  type PathLoadState,
-  type ViewMode
-} from "@/lib/wiki-helpers";
+import { WikiNavigationLink, useWikiNavigation } from "@/components/wiki-navigation";
+import { databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
+import { hrefForDatabaseSwitch, hrefForGraph, hrefForPath, hrefForSearch } from "@/lib/paths";
+import { type SearchOptions } from "@/lib/search-options";
+import { xShareDatabaseHref } from "@/lib/share-links";
+import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 
 
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
@@ -100,7 +67,7 @@ export function TopBar({
   onMobileSidebarToggle: () => void;
   canLeaveDirtyEdit: () => boolean;
 }) {
-  const router = useRouter();
+  const { navigate } = useWikiNavigation();
   const graphLinkCenter = isGraphPage ? graphCenter : selectedPath;
   const graphHref = isGraphPage
     ? hrefForPath(canisterId, databaseId, graphLinkCenter ?? "/Knowledge")
@@ -112,7 +79,7 @@ export function TopBar({
     const nextDatabaseId = event.target.value;
     if (!nextDatabaseId || nextDatabaseId === databaseId) return;
     if (!canLeaveDirtyEdit()) return;
-    router.replace(
+    navigate(
       hrefForDatabaseSwitch(canisterId, nextDatabaseId, {
         isSearchPage,
         isGraphPage,
@@ -121,21 +88,22 @@ export function TopBar({
         searchKind,
         searchOptions,
         graphDepth
-      })
+      }),
+      { guard: false, replace: true }
     );
   }
 
   return (
     <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Link
+        <WikiNavigationLink
           className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
           href="/dashboard"
           aria-label="Back to database dashboard"
         >
-          <Image className="h-6 w-6 rounded-md" src="/kinic-mark.png" alt="" width={24} height={24} unoptimized />
+          <img className="h-6 w-6 rounded-md" src="/kinic-mark.png" alt="" width={24} height={24} />
           Kinic Wiki
-        </Link>
+        </WikiNavigationLink>
         <div className="flex min-w-0 shrink-0 items-center gap-1 text-xs text-muted">
           <label className="hidden font-mono sm:inline" htmlFor="database-switcher">
             db:
@@ -186,7 +154,7 @@ export function TopBar({
           <Menu size={18} aria-hidden />
           <span className="sr-only sm:not-sr-only">Panel</span>
         </button>
-        <Link
+        <WikiNavigationLink
           className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={graphHref}
           aria-label="Graph"
@@ -194,8 +162,8 @@ export function TopBar({
         >
           <Network size={18} aria-hidden />
           <span className="sr-only sm:not-sr-only">Graph</span>
-        </Link>
-        <Link
+        </WikiNavigationLink>
+        <WikiNavigationLink
           className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
           data-tid="header-manage-link"
           href={`/dashboard/project/${encodeURIComponent(databaseId)}`}
@@ -204,7 +172,7 @@ export function TopBar({
         >
           <Settings aria-hidden size={18} />
           <span className="sr-only sm:not-sr-only">Manage</span>
-        </Link>
+        </WikiNavigationLink>
         <DatabaseCyclesBadge cycles={cycles} database={currentDatabase} />
         {principal ? (
           <Button className="ml-auto rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white lg:ml-0" variant="outline" type="button" onClick={onLogout}>
@@ -246,9 +214,9 @@ function DatabaseCyclesBadge({ cycles, database }: { cycles: ReturnType<typeof d
     );
   }
   return (
-    <Link className={`${className} no-underline`} href={databaseCyclesHref(database)} title={title} aria-label={title}>
+    <WikiNavigationLink className={`${className} no-underline`} href={databaseCyclesHref(database)} title={title} aria-label={title}>
       {content}
-    </Link>
+    </WikiNavigationLink>
   );
 }
 
@@ -316,7 +284,7 @@ function HeaderSearch({
   searchKind: "path" | "full";
   canLeaveDirtyEdit: () => boolean;
 }) {
-  const router = useRouter();
+  const { navigate } = useWikiNavigation();
   const draftKey = `${query}\n${searchKind}`;
   const [draft, setDraft] = useState({ key: draftKey, text: query, kind: searchKind });
   const text = draft.key === draftKey ? draft.text : query;
@@ -325,7 +293,7 @@ function HeaderSearch({
   function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canLeaveDirtyEdit()) return;
-    router.replace(hrefForSearch(canisterId, databaseId, text.trim(), kind));
+    navigate(hrefForSearch(canisterId, databaseId, text.trim(), kind), { guard: false, replace: true });
   }
 
   return (

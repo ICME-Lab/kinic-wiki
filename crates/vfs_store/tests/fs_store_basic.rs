@@ -34,6 +34,34 @@ fn logical_size_bytes_rejects_missing_database_without_creating_file() {
 }
 
 #[test]
+fn source_capture_request_is_stored_as_opaque_vfs_content() {
+    let (_dir, store) = new_store();
+    let path = "/Sources/source-capture-requests/opaque.md";
+    ensure_parent_folders(&store, path, 1);
+    let content = "---\nkind: kinic.source_capture_request\noutput_language: klingon\n---\n";
+
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: path.to_string(),
+                kind: NodeKind::File,
+                content: content.to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("VFS must not interpret source capture output_language");
+
+    let stored = store
+        .read_node(path)
+        .expect("node should load")
+        .expect("node should exist");
+    assert_eq!(stored.content, content);
+}
+
+#[test]
 fn logical_size_bytes_uses_sqlite_page_size() {
     let (_dir, store) = new_store();
     let database_path = store.database_path().to_path_buf();

@@ -1,6 +1,5 @@
 import { SkillRegistryClient } from "../skill-registry-client";
 
-export default async function SkillRegistryPage({ params }: { params: Promise<{ databaseId: string }> }) {
-  const { databaseId } = await params;
+export default function SkillRegistryPage({ databaseId }: { databaseId: string }) {
   return <SkillRegistryClient databaseId={databaseId} />;
 }

@@ -16,6 +16,8 @@ const idl = readProjectFile("../lib/vfs-idl.ts");
 
 assert.match(client, /purchaseCyclesWithWallet/);
 assert.match(client, /listDatabasesAuthenticated/);
+assert.match(client, /data-tid="cycles-login-button"/);
+assert.match(client, /Sign in with Internet Identity/);
 assert.match(client, /Purchase cycles with OISY/);
 assert.match(client, /Purchase cycles with Plug/);
 assertNoAppBalanceSurface(client);

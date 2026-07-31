@@ -1,49 +1,19 @@
 // Where: /docs/skills/[slug].
 // What: renders one documented agent workflow skill.
 // Why: skill docs need stable, deep-linkable pages without touching the Skill Registry UI.
-import type { Metadata } from "next";
-import Link from "next/link";
-import { notFound } from "next/navigation";
+import { AppLink as Link } from "@/components/app-link";
+import { notFound } from "@tanstack/react-router";
 import { ArrowLeft, ShieldCheck, TerminalSquare, Workflow } from "lucide-react";
 import { CliGuideBlock } from "@/app/docs/cli/cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
-import { findSkillDoc, skillDocs } from "../../docs-data";
+import { findSkillDoc } from "../../docs-data";
 
-type SkillDocPageProps = {
-  params: Promise<{ slug: string }>;
-};
+type SkillDocPageProps = { slug: string };
 
-export function generateStaticParams() {
-  return skillDocs.map((doc) => ({ slug: doc.slug }));
-}
-
-export async function generateMetadata({ params }: SkillDocPageProps): Promise<Metadata> {
-  const { slug } = await params;
+export default function SkillDocPage({ slug }: SkillDocPageProps) {
   const doc = findSkillDoc(slug);
-  if (!doc) {
-    return {
-      title: "Kinic Wiki Skill Docs"
-    };
-  }
-  return {
-    title: `Kinic Wiki ${doc.title} Skill`,
-    description: doc.description,
-    openGraph: {
-      title: `Kinic Wiki ${doc.title} Skill`,
-      description: doc.description
-    },
-    twitter: {
-      title: `Kinic Wiki ${doc.title} Skill`,
-      description: doc.description
-    }
-  };
-}
-
-export default async function SkillDocPage({ params }: SkillDocPageProps) {
-  const { slug } = await params;
-  const doc = findSkillDoc(slug);
-  if (!doc) notFound();
+  if (!doc) throw notFound();
 
   return (
     <AdminContent>

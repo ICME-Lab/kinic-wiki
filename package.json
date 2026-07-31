@@ -5,12 +5,11 @@
     "node": ">=24"
   },
   "scripts": {
+    "ios:store-screenshots": "node mobile/ios/scripts/render-app-store-screenshots.mjs",
+    "ios:store-screenshots:test": "node mobile/ios/scripts/check-screenshot-image-validation.mjs",
     "lint:wikibrowser": "npm --prefix wikibrowser run lint",
     "lint:skill-registry-web": "npm --prefix skill-registry-web run lint",
     "lint:web": "npm run lint:wikibrowser && npm run lint:skill-registry-web"
-  },
-  "devDependencies": {
-    "typescript-eslint-compat": "npm:typescript@5.9.3"
   },
   "packageManager": "pnpm@11.0.8"
 }

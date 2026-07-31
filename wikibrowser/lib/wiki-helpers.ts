@@ -34,7 +34,8 @@ export function rootChild(path: StoreRootPath): ChildNode {
     etag: null,
     sizeBytes: null,
     isVirtual: true,
-    hasChildren: true
+    hasChildren: true,
+    isPublished: false
   };
 }
 

@@ -1,0 +1,13 @@
+interface:
+  display_name: "Kinic Wiki MCP"
+  short_description: "Call the public Kinic Wiki MCP safely."
+  default_prompt: "Use $kinic-wiki-mcp to find, search, and read public Kinic Wiki evidence through MCP."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "kinic-wiki-mcp"
+      description: "Anonymous read-only Kinic Wiki public database MCP"
+      transport: "streamable_http"
+      url: "https://wiki-mcp.kinic.xyz/mcp"
+policy:
+  allow_implicit_invocation: true

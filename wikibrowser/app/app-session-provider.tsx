@@ -33,7 +33,7 @@ const WALLET_SESSION_KEY = "kinic-wiki.wallet-session";
 const AppSession = createContext<AppSessionContext | null>(null);
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const walletBalanceSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -91,8 +91,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         setWalletBalance(null);
         setWalletBalanceError(`KINIC balance unavailable: ${errorMessage(cause)}`);
       } finally {
-        if (!isCurrentBalance()) return;
-        setWalletBalanceLoading(false);
+        if (isCurrentBalance()) setWalletBalanceLoading(false);
       }
     },
     [canisterId]

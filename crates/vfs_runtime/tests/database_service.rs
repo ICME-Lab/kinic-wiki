@@ -22,7 +22,8 @@ use vfs_types::{
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
-
+#[path = "database_service/node_publications.rs"]
+mod node_publications;
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 const MARKET_SECOND_BUYER_PRINCIPAL: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
 const IAP_AUTHORITY_PRINCIPAL: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
@@ -576,14 +577,18 @@ fn column_exists(root: &std::path::Path, table_name: &str, column_name: &str) ->
 }
 
 #[test]
-fn fresh_index_schema_records_single_current_marker_without_legacy_tables() {
+fn fresh_index_schema_records_current_migration_chain_without_legacy_tables() {
     let (_service, root) = service_with_root();
     assert_eq!(
         schema_migration_count(&root, "database_index:001_initial"),
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:002_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
         1
     );
     assert!(table_exists(&root, "market_listings"));
@@ -804,7 +809,11 @@ fn index_migrations_create_current_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:002_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
         1
     );
 
@@ -816,7 +825,11 @@ fn index_migrations_create_current_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:002_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
         1
     );
 }
@@ -984,7 +997,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             },
             3,
         )
-        .expect("invalid request node should write");
+        .expect("VFS should store source capture content without interpreting it");
     let invalid_frontmatter = service
         .check_source_capture_trigger_session(
             source_capture_session_check_request(
@@ -994,7 +1007,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             ),
             101,
         )
-        .expect_err("invalid frontmatter should fail");
+        .expect_err("trigger authorization should reject invalid request frontmatter");
     assert!(invalid_frontmatter.contains("frontmatter"));
 
     let mismatch_path = "/Sources/source-capture-requests/mismatch.md";
@@ -1464,7 +1477,7 @@ fn database_create_returns_generated_id_and_name() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:002_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
         1
     );
 

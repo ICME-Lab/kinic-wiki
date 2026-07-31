@@ -1,6 +1,7 @@
 // Where: wikibrowser/app/api/source-capture/trigger/route.ts
 // What: Server-side authenticated trigger for source capture worker requests.
 // Why: Browsers and extensions must not receive the worker bearer token.
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 
 type TriggerRequest = {
   canisterId: string;
@@ -31,7 +32,9 @@ export function OPTIONS(request: Request): Response {
   return new Response(null, { status: 204, headers: corsHeaders(origin) });
 }
 
-export async function POST(request: Request): Promise<Response> {
+type SourceCaptureEnv = Pick<CloudflareEnv, "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_GENERATOR_URL" | "KINIC_WIKI_WORKER_TOKEN">;
+
+export async function POST(request: Request, runtimeEnv: SourceCaptureEnv = process.env as SourceCaptureEnv): Promise<Response> {
   const origin = allowedOrigin(request);
   if (!origin) return jsonError("forbidden", 403);
   let input: TriggerRequest;
@@ -46,11 +49,11 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError("invalid JSON body", 400, origin);
   }
 
-  const generatorUrl = process.env.KINIC_WIKI_GENERATOR_URL?.trim();
+  const generatorUrl = runtimeEnv.KINIC_WIKI_GENERATOR_URL?.trim();
   if (!generatorUrl) {
     return jsonError("KINIC_WIKI_GENERATOR_URL is not configured", 503, origin);
   }
-  const token = process.env.KINIC_WIKI_WORKER_TOKEN?.trim();
+  const token = runtimeEnv.KINIC_WIKI_WORKER_TOKEN?.trim();
   if (!token) {
     return jsonError("KINIC_WIKI_WORKER_TOKEN is not configured", 503, origin);
   }
@@ -62,9 +65,9 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError("KINIC_WIKI_GENERATOR_URL is invalid", 503, origin);
   }
 
-  const configuredCanisterId = (process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? process.env.KINIC_WIKI_CANISTER_ID)?.trim();
+  const configuredCanisterId = runtimeEnv.KINIC_WIKI_CANISTER_ID?.trim();
   if (!configuredCanisterId) {
-    return jsonError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured", 503, origin);
+    return jsonError("KINIC_WIKI_CANISTER_ID is not configured", 503, origin);
   }
   if (input.canisterId !== configuredCanisterId) {
     return jsonError("canisterId does not match configured canister", 400, origin);
@@ -113,12 +116,6 @@ function parseTriggerRequest(value: unknown): TriggerRequest | string {
     return "requestPath must be a source capture request path";
   }
   return { canisterId, databaseId, requestPath, sessionNonce };
-}
-
-function isSourceCaptureRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
-  const name = path.slice("/Sources/source-capture-requests/".length);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

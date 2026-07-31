@@ -1,6 +1,7 @@
 // Where: crates/vfs_canister/src/lib.rs
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
 // Why: The canister now exposes node-oriented operations directly and keeps the runtime boundary thin.
+use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -51,15 +52,18 @@ use vfs_types::{
     MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability,
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
+
+mod candid_normalization;
 
 #[cfg(not(target_arch = "wasm32"))]
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
@@ -398,6 +402,17 @@ fn read_node(database_id: String, path: String) -> Result<Option<Node>, String> 
 }
 
 #[query]
+fn get_node_publication(request: PublishNodeRequest) -> Result<Option<NodePublication>, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.get_node_publication(&caller_text(), request))
+}
+
+#[query]
+fn read_public_node(public_id: String) -> Result<Option<PublicNode>, String> {
+    with_service(|service| service.read_public_node(&public_id))
+}
+
+#[query]
 fn list_nodes(request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
     with_service(|service| service.list_nodes(&caller_text(), request))
 }
@@ -452,6 +467,39 @@ fn update_database_metadata(
         Some(database_id),
         RequiredRole::Owner,
         |service, caller, now| service.update_database_metadata(caller, request, now),
+    )
+}
+
+#[update]
+async fn publish_node(request: PublishNodeRequest) -> Result<NodePublication, String> {
+    let database_id = request.database_id.clone();
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    with_service(|service| {
+        service.require_database_role(&database_id, &caller, RequiredRole::Owner)
+    })?;
+    if let Some(publication) =
+        with_service(|service| service.get_node_publication(&caller, request.clone()))?
+    {
+        return Ok(publication);
+    }
+    let public_id = random_public_node_id().await?;
+    with_role_unmetered_update(
+        "publish_node",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, now| service.publish_node(caller, request, &public_id, now),
+    )
+}
+
+#[update]
+fn unpublish_node(request: PublishNodeRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
+        "unpublish_node",
+        Some(database_id),
+        RequiredRole::Owner,
+        |service, caller, _now| service.unpublish_node(caller, request),
     )
 }
 
@@ -1925,6 +1973,28 @@ fn now_millis() -> i64 {
     }
 }
 
+#[cfg(not(test))]
+async fn random_public_node_id() -> Result<String, String> {
+    let response = Call::bounded_wait(Principal::management_canister(), "raw_rand")
+        .await
+        .map_err(|error| format!("raw_rand call failed: {error:?}"))?;
+    let random_bytes: Vec<u8> = response
+        .candid()
+        .map_err(|error| format!("raw_rand decode failed: {error}"))?;
+    let random_bytes = random_bytes
+        .get(..16)
+        .ok_or_else(|| "raw_rand returned fewer than 16 bytes".to_string())?;
+    Ok(random_bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+#[cfg(test)]
+async fn random_public_node_id() -> Result<String, String> {
+    Ok("00112233445566778899aabbccddeeff".to_string())
+}
+
 fn update_charge_units() -> u128 {
     #[cfg(test)]
     {
@@ -2328,11 +2398,21 @@ fn certified_static_responses() -> Vec<(
     ]
 }
 
-fn ii_alternative_origins_body() -> &'static str {
+fn ii_alternative_origins_body() -> Cow<'static, str> {
     match option_env!("KINIC_VFS_LOCAL_II_ORIGINS") {
-        Some("1") => II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY,
-        _ => II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY,
+        Some("1") => Cow::Borrowed(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY),
+        _ => match option_env!("KINIC_VFS_STAGING_II_ORIGIN") {
+            Some(origin) => Cow::Owned(staging_ii_alternative_origins_body(origin)),
+            None => Cow::Borrowed(II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY),
+        },
     }
+}
+
+fn staging_ii_alternative_origins_body(origin: &str) -> String {
+    let prefix = II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY
+        .strip_suffix("]}")
+        .expect("production II origins JSON should end with ]}");
+    format!("{prefix},\"{origin}\"]}}")
 }
 
 fn certified_static_response_entry(
@@ -2427,99 +2507,7 @@ fn data_certificate() -> Option<Vec<u8>> {
 export_service!();
 
 pub fn candid_interface() -> String {
-    normalize_candid_interface(__export_service())
-}
-
-fn normalize_candid_interface(interface: String) -> String {
-    let normalized = normalize_candid_method_input(
-        &interface,
-        "outgoing_links",
-        "IncomingLinksRequest",
-        "OutgoingLinksRequest",
-    );
-    let normalized = normalize_candid_method_input(
-        &normalized,
-        "authorize_source_capture_trigger_session",
-        "OpsAnswerSessionRequest",
-        "SourceCaptureTriggerSessionRequest",
-    );
-    let normalized = normalize_candid_method_input(
-        &normalized,
-        "rename_database",
-        "CreateDatabaseResult",
-        "RenameDatabaseRequest",
-    );
-    ensure_source_capture_trigger_session_request(ensure_rename_database_request(
-        ensure_update_database_metadata_request(ensure_outgoing_links_request(normalized)),
-    ))
-}
-
-fn normalize_candid_method_input(
-    interface: &str,
-    method: &str,
-    exported_input: &str,
-    public_input: &str,
-) -> String {
-    let mut normalized = interface
-        .lines()
-        .map(|line| {
-            let prefix = format!("  {method} : ({exported_input}) -> (");
-            if line.starts_with(&prefix) {
-                line.replacen(
-                    &format!("{method} : ({exported_input})"),
-                    &format!("{method} : ({public_input})"),
-                    1,
-                )
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if interface.ends_with('\n') {
-        normalized.push('\n');
-    }
-    normalized
-}
-
-fn ensure_outgoing_links_request(interface: String) -> String {
-    if interface.contains("type OutgoingLinksRequest = record {") {
-        return interface;
-    }
-    interface.replace(
-        "type LinkEdge = record {",
-        "type OutgoingLinksRequest = record { path : text; limit : nat32; database_id : text };\ntype LinkEdge = record {",
-    )
-}
-
-fn ensure_update_database_metadata_request(interface: String) -> String {
-    if interface.contains("type UpdateDatabaseMetadataRequest = record {") {
-        return interface;
-    }
-    interface.replace(
-        "type DatabaseMember = record {",
-        "type UpdateDatabaseMetadataRequest = record { llm_summary : opt text; name : text; description : text; database_id : text; tags_json : text };\ntype DatabaseMember = record {",
-    )
-}
-
-fn ensure_rename_database_request(interface: String) -> String {
-    if interface.contains("type RenameDatabaseRequest = record {") {
-        return interface;
-    }
-    interface.replace(
-        "type DeleteNodeRequest = record {",
-        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DeleteNodeRequest = record {",
-    )
-}
-
-fn ensure_source_capture_trigger_session_request(interface: String) -> String {
-    if interface.contains("type SourceCaptureTriggerSessionRequest = record {") {
-        return interface;
-    }
-    interface.replace(
-        "type WriteNodeItem = record {",
-        "type SourceCaptureTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
-    )
+    candid_normalization::normalize(__export_service())
 }
 
 #[cfg(feature = "canbench-rs")]

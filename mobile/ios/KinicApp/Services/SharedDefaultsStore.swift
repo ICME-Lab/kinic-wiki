@@ -16,10 +16,12 @@ struct PendingDatabaseCreditPurchase: Codable, Equatable, Sendable {
 
 struct SharedDefaultsStore: @unchecked Sendable {
     private static let databaseIdKey = "kinic.database-id.v1"
-    private static let browseDatabaseIdKey = "kinic.browse-database-id.v1"
     private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
+    private static let browseDatabaseVisibilityDefaultsVersionKey = "kinic.browse-database-visibility-defaults-version"
+    private static let currentBrowseDatabaseVisibilityDefaultsVersion = 2
     private static let showPublicBrowseDatabasesKey = "kinic.browse-show-public-databases.v1"
     private static let showPurchasedBrowseDatabasesKey = "kinic.browse-show-purchased-databases.v1"
+    private static let wikiOutputLanguageKey = "kinic.wiki-output-language.v1"
     private static let writableDatabasesKey = "kinic.writable-databases.v1"
     private static let pendingDatabaseCreditPurchasesKey = "kinic.pending-database-credit-purchases.v1"
     private let defaults: UserDefaults
@@ -28,10 +30,12 @@ struct SharedDefaultsStore: @unchecked Sendable {
 
     init(appGroupId: String?, strict: Bool = false) throws {
         defaults = try Self.defaults(appGroupId: appGroupId, strict: strict)
+        migrateBrowseDatabaseVisibilityDefaults()
     }
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
+        migrateBrowseDatabaseVisibilityDefaults()
     }
 
     var databaseId: String {
@@ -40,15 +44,6 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.databaseIdKey)
-        }
-    }
-
-    var browseDatabaseId: String {
-        get {
-            defaults.string(forKey: Self.browseDatabaseIdKey) ?? ""
-        }
-        nonmutating set {
-            defaults.set(newValue, forKey: Self.browseDatabaseIdKey)
         }
     }
 
@@ -63,7 +58,9 @@ struct SharedDefaultsStore: @unchecked Sendable {
 
     var showPublicBrowseDatabases: Bool {
         get {
-            defaults.bool(forKey: Self.showPublicBrowseDatabasesKey)
+            defaults.object(forKey: Self.showPublicBrowseDatabasesKey) == nil
+                ? true
+                : defaults.bool(forKey: Self.showPublicBrowseDatabasesKey)
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.showPublicBrowseDatabasesKey)
@@ -76,6 +73,19 @@ struct SharedDefaultsStore: @unchecked Sendable {
         }
         nonmutating set {
             defaults.set(newValue, forKey: Self.showPurchasedBrowseDatabasesKey)
+        }
+    }
+
+    var wikiOutputLanguage: WikiOutputLanguage {
+        get {
+            guard let value = defaults.string(forKey: Self.wikiOutputLanguageKey),
+                  let language = WikiOutputLanguage(rawValue: value) else {
+                return .english
+            }
+            return language
+        }
+        nonmutating set {
+            defaults.set(newValue.rawValue, forKey: Self.wikiOutputLanguageKey)
         }
     }
 
@@ -142,6 +152,18 @@ struct SharedDefaultsStore: @unchecked Sendable {
             return .standard
         }
         return shared
+    }
+
+    private func migrateBrowseDatabaseVisibilityDefaults() {
+        guard defaults.integer(forKey: Self.browseDatabaseVisibilityDefaultsVersionKey)
+                < Self.currentBrowseDatabaseVisibilityDefaultsVersion else {
+            return
+        }
+        defaults.set(true, forKey: Self.showPublicBrowseDatabasesKey)
+        defaults.set(
+            Self.currentBrowseDatabaseVisibilityDefaultsVersion,
+            forKey: Self.browseDatabaseVisibilityDefaultsVersionKey
+        )
     }
 }
 

@@ -1,14 +1,13 @@
 // Where: /docs/skills overview.
 // What: introduces agent workflow skill docs.
 // Why: skills are documentation workflows here, separate from the Skill Registry management UI.
-import type { Metadata } from "next";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { Boxes, ExternalLink, ShieldCheck } from "lucide-react";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
 import { skillDocs } from "../docs-data";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Skills Docs",
   description: "Agent workflow skills for querying, editing, ingesting, linting, exporting, and managing Skill Registry packages.",
   openGraph: {

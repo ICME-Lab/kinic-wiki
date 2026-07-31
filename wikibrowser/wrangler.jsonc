@@ -2,17 +2,17 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-browser",
   "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2026-05-11",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-07-15",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "vars": {
-    "NEXT_PUBLIC_WIKI_IC_HOST": "https://icp0.io",
-    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
-    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
+  "observability": {
+    "enabled": true
   },
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
+  "vars": {
+    "VITE_WIKI_IC_HOST": "https://icp0.io",
+    "VITE_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
   },
   "r2_buckets": [
     {
@@ -34,12 +34,6 @@
       "id": "72995eb374a14e71b1a35a545beca160"
     }
   ],
-  "services": [
-    {
-      "binding": "WORKER_SELF_REFERENCE",
-      "service": "kinic-wiki-browser"
-    }
-  ],
   "routes": [
     {
       "pattern": "kinic.xyz",
@@ -49,5 +43,40 @@
       "pattern": "wiki.kinic.xyz",
       "custom_domain": true
     }
-  ]
+  ],
+  "env": {
+    "staging": {
+      "name": "kinic-wiki-browser-staging",
+      "workers_dev": true,
+      "routes": [],
+      "vars": {
+        "KINIC_DEPLOYMENT_ENV": "staging",
+        "VITE_WIKI_IC_HOST": "https://icp0.io",
+        "VITE_KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+        "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+        "VITE_II_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io",
+        "KINIC_WIKI_GENERATOR_URL": ""
+      },
+      "r2_buckets": [
+        {
+          "binding": "LINK_PREVIEW_IMAGES",
+          "bucket_name": "kinic-wiki-link-preview-images-staging"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "LINK_PREVIEW_QUEUE",
+            "queue": "kinic-wiki-generation-staging"
+          }
+        ]
+      },
+      "kv_namespaces": [
+        {
+          "binding": "QUERY_ANSWER_RATE_LIMIT",
+          "id": "dd821e7a3e4f4f908df20c2cb17abc2d"
+        }
+      ]
+    }
+  }
 }

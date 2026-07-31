@@ -2,8 +2,9 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen } from "lucide-react";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Globe2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
@@ -115,7 +116,8 @@ function TreeNode({
     etag: nodeEtag,
     sizeBytes: nodeSizeBytes,
     isVirtual: nodeIsVirtual,
-    hasChildren: nodeHasChildren
+    hasChildren: nodeHasChildren,
+    isPublished: nodeIsPublished
   } = node;
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const requestKey = nodeRequestKey(canisterId, databaseId, nodePath, readPrincipal);
@@ -152,10 +154,11 @@ function TreeNode({
         etag: nodeEtag,
         sizeBytes: nodeSizeBytes,
         isVirtual: nodeIsVirtual,
-        hasChildren: nodeHasChildren
+        hasChildren: nodeHasChildren,
+        isPublished: nodeIsPublished
       });
     }
-  }, [nodeEtag, nodeHasChildren, nodeIsVirtual, nodeKind, nodeName, nodePath, nodeSizeBytes, nodeUpdatedAt, onSelectedNode, selected]);
+  }, [nodeEtag, nodeHasChildren, nodeIsPublished, nodeIsVirtual, nodeKind, nodeName, nodePath, nodeSizeBytes, nodeUpdatedAt, onSelectedNode, selected]);
 
   useEffect(() => {
     if ((!expanded && !isStoreRoot) || !nodeCanExpand || children.data || children.error || requestedKey.current === requestKey) return;
@@ -213,13 +216,23 @@ function TreeNode({
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
         {directoryIcon(canExpand, expanded)}
-        <Link
+        <WikiNavigationLink
           className="min-w-0 flex-1 truncate no-underline"
           href={hrefForPath(canisterId, databaseId, node.path)}
           aria-current={selected ? "page" : undefined}
         >
           {node.name}
-        </Link>
+        </WikiNavigationLink>
+        {nodeKind === "file" && nodePath.endsWith(".md") && nodeIsPublished ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span aria-label="Published" className="inline-flex shrink-0 text-emerald-700">
+                <Globe2 aria-hidden="true" size={14} />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">Published</TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
       {expanded && canExpand ? (
         <ChildrenList

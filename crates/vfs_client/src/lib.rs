@@ -22,10 +22,11 @@ use vfs_types::{
     MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
     MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodePublication,
+    OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -204,6 +205,25 @@ pub trait VfsApi: Sync {
     }
     async fn delete_database(&self, _request: DeleteDatabaseRequest) -> Result<()> {
         Err(anyhow!("delete_database is not implemented by this client"))
+    }
+    async fn publish_node(&self, _request: PublishNodeRequest) -> Result<NodePublication> {
+        Err(anyhow!("publish_node is not implemented by this client"))
+    }
+    async fn get_node_publication(
+        &self,
+        _request: PublishNodeRequest,
+    ) -> Result<Option<NodePublication>> {
+        Err(anyhow!(
+            "get_node_publication is not implemented by this client"
+        ))
+    }
+    async fn unpublish_node(&self, _request: PublishNodeRequest) -> Result<()> {
+        Err(anyhow!("unpublish_node is not implemented by this client"))
+    }
+    async fn read_public_node(&self, _public_id: &str) -> Result<Option<PublicNode>> {
+        Err(anyhow!(
+            "read_public_node is not implemented by this client"
+        ))
     }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
     async fn read_node_context(&self, _request: NodeContextRequest) -> Result<Option<NodeContext>> {
@@ -714,6 +734,32 @@ impl VfsApi for CanisterVfsClient {
 
     async fn delete_database(&self, request: DeleteDatabaseRequest) -> Result<()> {
         let result: Result<(), String> = self.update("delete_database", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn publish_node(&self, request: PublishNodeRequest) -> Result<NodePublication> {
+        let result: Result<NodePublication, String> = self.update("publish_node", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn get_node_publication(
+        &self,
+        request: PublishNodeRequest,
+    ) -> Result<Option<NodePublication>> {
+        let result: Result<Option<NodePublication>, String> =
+            self.query("get_node_publication", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn unpublish_node(&self, request: PublishNodeRequest) -> Result<()> {
+        let result: Result<(), String> = self.update("unpublish_node", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn read_public_node(&self, public_id: &str) -> Result<Option<PublicNode>> {
+        let result: Result<Option<PublicNode>, String> = self
+            .query("read_public_node", &public_id.to_string())
+            .await?;
         result.map_err(|error| anyhow!(error))
     }
 

@@ -11,6 +11,9 @@ mod index_schema;
 pub(crate) use billing::{DatabaseLedgerInsert, insert_database_ledger};
 mod market;
 mod metrics;
+mod publications;
+#[cfg(any(test, debug_assertions))]
+pub use publications::fail_next_publication_detach_for_test;
 mod sessions;
 pub(crate) use cycles::PendingCyclesLedgerDetails;
 mod sqlite;
@@ -44,20 +47,24 @@ use vfs_types::{
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
     MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
-    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    NodeKind, NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:001_initial";
-const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:002_iap_cycle_grants";
-const INDEX_SCHEMA_002_IAP_CYCLE_GRANTS_SQL: &str =
-    include_str!("../migrations/index_db/002_iap_cycle_grants.sql");
+const INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS: &str = "database_index:002_node_publications";
+const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:003_iap_cycle_grants";
+const INDEX_SCHEMA_VERSIONS: &[&str] = &[
+    INDEX_SCHEMA_VERSION_INITIAL,
+    INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+    INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
+];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -394,9 +401,16 @@ impl VfsService {
         request: ListChildrenRequest,
     ) -> Result<Vec<ChildNode>, String> {
         let database_id = request.database_id.clone();
-        self.with_market_read_database_store(&database_id, caller, |store| {
+        let parent_path = request.path.clone();
+        let mut children = self.with_market_read_database_store(&database_id, caller, |store| {
             store.list_children(request)
-        })
+        })?;
+        let published_paths =
+            self.member_visible_direct_node_publication_paths(&database_id, caller, &parent_path)?;
+        for child in &mut children {
+            child.is_published = published_paths.contains(&child.path);
+        }
+        Ok(children)
     }
 
     pub fn write_node(
@@ -406,10 +420,21 @@ impl VfsService {
         now: i64,
     ) -> Result<WriteNodeResult, String> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.write_node(request, now)
-            });
+        let publication_paths = if request.kind == NodeKind::File {
+            Vec::new()
+        } else {
+            vec![request.path.clone()]
+        };
+        let publication_path_refs = publication_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &publication_path_refs,
+            |store| store.write_node(request, now),
+        );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -445,10 +470,12 @@ impl VfsService {
             metadata_json: request.metadata_json,
             expected_etag: request.expected_etag,
         };
-        let write =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.write_node(write_request, now)
-            })?;
+        let write = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &[path.as_str()],
+            |store| store.write_node(write_request, now),
+        )?;
         let _ = self.write_source_run_session(
             &database_id,
             &path,
@@ -471,10 +498,22 @@ impl VfsService {
         now: i64,
     ) -> Result<Vec<WriteNodeResult>, String> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.write_nodes(request, now)
-            });
+        let publication_paths = request
+            .nodes
+            .iter()
+            .filter(|item| item.kind != NodeKind::File)
+            .map(|item| item.path.clone())
+            .collect::<BTreeSet<_>>();
+        let publication_path_refs = publication_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &publication_path_refs,
+            |store| store.write_nodes(request, now),
+        );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -488,8 +527,9 @@ impl VfsService {
         now: i64,
     ) -> Result<DeleteNodeResult, String> {
         let database_id = request.database_id.clone();
+        let path = request.path.clone();
         let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
+            self.with_detached_node_publications(&database_id, caller, &[path.as_str()], |store| {
                 store.delete_node(request, now)
             });
         if result.is_ok() {
@@ -556,10 +596,14 @@ impl VfsService {
         now: i64,
     ) -> Result<MoveNodeResult, String> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.move_node(request, now)
-            });
+        let from_path = request.from_path.clone();
+        let to_path = request.to_path.clone();
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &[from_path.as_str(), to_path.as_str()],
+            |store| store.move_node(request, now),
+        );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -730,6 +774,31 @@ impl VfsService {
         let meta = self.database_meta(database_id)?;
         let store = self.database_store(&meta)?;
         f(&store)
+    }
+
+    fn with_detached_node_publications<T>(
+        &self,
+        database_id: &str,
+        caller: &str,
+        paths: &[&str],
+        f: impl FnOnce(&FsStore) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.require_role(database_id, caller, RequiredRole::Writer)?;
+        let meta = self.database_meta(database_id)?;
+        let store = self.database_store(&meta)?;
+        if paths.is_empty() {
+            return f(&store);
+        }
+        let detached = self.detach_node_publications_for_paths(database_id, paths)?;
+        match f(&store) {
+            Ok(value) => Ok(value),
+            Err(mutation_error) => match self.restore_node_publications(&detached) {
+                Ok(()) => Err(mutation_error),
+                Err(restore_error) => Err(format!(
+                    "{mutation_error}; published pages remain unpublished because publication restore failed: {restore_error}"
+                )),
+            },
+        }
     }
 
     fn with_market_read_database_store<T>(
@@ -1039,6 +1108,7 @@ const INDEX_SCHEMA_TABLES: &[&str] = &[
     "market_orders",
     "market_purchase_pending_operations",
     "market_entitlements",
+    "node_publications",
 ];
 
 fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, String> {

@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use wiki_domain::extract_frontmatter_block;
 
 pub(super) const PRIVATE_ROOT: &str = "/Skills";
 pub(super) const RUN_ROOT: &str = "/Sources/skill-runs";
@@ -321,19 +322,10 @@ pub(super) fn print(value: serde_json::Value, _json_output: bool) -> Result<()> 
 }
 
 pub(super) fn extract_frontmatter(content: &str) -> Result<&str> {
-    let rest = content
-        .strip_prefix("---\n")
-        .ok_or_else(|| anyhow!("manifest must start with YAML frontmatter"))?;
-    let end = rest
-        .lines()
-        .scan(0_usize, |offset, line| {
-            let start = *offset;
-            *offset += line.len() + 1;
-            Some((start, line))
-        })
-        .find_map(|(offset, line)| (line == "---").then_some(offset.saturating_sub(1)))
-        .ok_or_else(|| anyhow!("manifest frontmatter is not closed"))?;
-    Ok(&rest[..end])
+    if !content.starts_with("---\n") {
+        return Err(anyhow!("manifest must start with YAML frontmatter"));
+    }
+    extract_frontmatter_block(content).ok_or_else(|| anyhow!("manifest frontmatter is not closed"))
 }
 
 fn valid_segment(value: &str) -> bool {

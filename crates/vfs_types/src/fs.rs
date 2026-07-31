@@ -23,6 +23,27 @@ pub struct DatabaseMember {
     pub created_at_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct PublishNodeRequest {
+    pub database_id: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodePublication {
+    pub public_id: String,
+    pub database_id: String,
+    pub path: String,
+    pub published_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct PublicNode {
+    pub content: String,
+    pub updated_at: i64,
+    pub published_at_ms: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseStatus {
@@ -458,6 +479,7 @@ pub struct ChildNode {
     pub size_bytes: Option<u64>,
     pub is_virtual: bool,
     pub has_children: bool,
+    pub is_published: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

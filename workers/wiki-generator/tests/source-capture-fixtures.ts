@@ -11,8 +11,10 @@ import type {
   QueueMessage,
   SearchNodeHit,
   SourceCaptureRequest,
+  SourceJob,
   WikiNode,
   WorkerConfig,
+  WikiGenerationFailureMessage,
   WriteNodeAck,
   WriteNodeRequest
 } from "../src/types.js";
@@ -34,10 +36,11 @@ export function workerConfig(): WorkerConfig {
   };
 }
 
-export function testEnv(queue: TestQueue): RuntimeEnv {
+export function testEnv(queue: TestQueue<QueueMessage>, db: D1Database = new TestD1()): RuntimeEnv {
   return {
-    DB: new TestD1(),
+    DB: db,
     WIKI_GENERATION_QUEUE: queue,
+    WIKI_GENERATION_DLQ: new TestQueue<WikiGenerationFailureMessage>(),
     LINK_PREVIEW_IMAGES: new TestR2Bucket(),
     KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
@@ -81,9 +84,10 @@ export class TestVfsClient implements VfsClient {
   sourceWriteEtags: string[] = [];
   lastRequest: SourceCaptureRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
+  databases: PublicDatabaseSummary[] = [];
 
   async listPublicDatabases(): Promise<PublicDatabaseSummary[]> {
-    return [];
+    return this.databases;
   }
 
   async checkDatabaseWriteCycles(databaseId: string): Promise<void> {
@@ -164,13 +168,15 @@ export class TestVfsClient implements VfsClient {
   }
 }
 
-export class TestQueue implements Queue {
-  messages: QueueMessage[] = [];
+export class TestQueue<T = QueueMessage> implements Queue<T> {
+  messages: T[] = [];
+  sendOptions: ({ delaySeconds?: number } | undefined)[] = [];
   failSend = false;
 
-  async send(message: unknown): Promise<void> {
+  async send(message: T, options?: { delaySeconds?: number }): Promise<void> {
     if (this.failSend) throw new Error("queue unavailable");
-    if (isQueueMessage(message)) this.messages.push(message);
+    this.messages.push(message);
+    this.sendOptions.push(options);
   }
 }
 
@@ -182,16 +188,21 @@ export class TestR2Bucket implements R2Bucket {
   }
 }
 
-class TestD1 implements D1Database {
+export class TestD1 implements D1Database {
+  constructor(private readonly job: SourceJob | null | undefined = undefined) {}
+
   prepare(query: string): D1PreparedStatement {
-    return new TestD1Statement(query);
+    return new TestD1Statement(query, this.job);
   }
 }
 
 class TestD1Statement implements D1PreparedStatement {
   private values: D1Value[] = [];
 
-  constructor(private readonly query: string) {}
+  constructor(
+    private readonly query: string,
+    private readonly job: SourceJob | null | undefined
+  ) {}
 
   bind(...values: D1Value[]): D1PreparedStatement {
     this.values = values;
@@ -199,8 +210,19 @@ class TestD1Statement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(): Promise<T | null> {
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("ELSE 'processing'")) {
+      const completed = this.job === undefined ? completedJobFromQueue(this.values) : this.job;
+      if (completed?.status === "completed") return null;
+      if (this.job && (this.job.database_id !== this.values[0] || this.job.source_path !== this.values[1] || this.job.source_etag !== this.values[2])) return null;
+      return claimedJob(this.values) as T;
+    }
+    if (this.query.includes("UPDATE source_jobs") && this.query.includes("RETURNING database_id")) {
+      return { database_id: this.values[0] } as T;
+    }
     if (this.query.includes("SELECT database_id, source_path, source_etag, status, target_path")) {
-      return completedJobFromQueue(this.values) as T | null;
+      if (this.job === undefined) return completedJobFromQueue(this.values) as T | null;
+      if (this.job?.database_id !== this.values[0] || this.job.source_path !== this.values[1]) return null;
+      return this.job as T;
     }
     return null;
   }
@@ -210,17 +232,46 @@ class TestD1Statement implements D1PreparedStatement {
   }
 }
 
-function completedJobFromQueue(values: D1Value[]): unknown {
+function claimedJob(values: D1Value[]): SourceJob {
+  return {
+    database_id: String(values[0]),
+    source_path: String(values[1]),
+    source_etag: String(values[2]),
+    status: "processing",
+    target_path: null,
+    attempts: 1,
+    last_error: null,
+    lease_owner: String(values[3]),
+    lease_expires_at: String(values[4]),
+    generated_target_path: null,
+    generated_target_etag: null,
+    generated_target_observed: 0,
+    generated_content: null,
+    generated_context_paths: null,
+    llm_duration_ms: null,
+    updated_at: String(values[5])
+  };
+}
+
+function completedJobFromQueue(values: D1Value[]): SourceJob | null {
   const sourcePath = values[1];
   if (sourcePath !== "/Sources/existing/existing.md") return null;
   return {
-    database_id: values[0],
-    source_path: sourcePath,
+    database_id: String(values[0]),
+    source_path: String(sourcePath),
     source_etag: "etag-existing-source",
     status: "completed",
     target_path: "/Knowledge/conversations/a.md",
     attempts: 1,
     last_error: null,
+    lease_owner: null,
+    lease_expires_at: null,
+    generated_target_path: null,
+    generated_target_etag: null,
+    generated_target_observed: 0,
+    generated_content: null,
+    generated_context_paths: null,
+    llm_duration_ms: null,
     updated_at: "2026-05-12T00:00:00.000Z"
   };
 }

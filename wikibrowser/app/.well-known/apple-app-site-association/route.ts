@@ -8,7 +8,7 @@ export const appleAppSiteAssociation = {
     details: [
       {
         appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-        paths: ["/*"]
+        paths: ["NOT /cycles", "NOT /cycles/*", "/*"]
       }
     ]
   },

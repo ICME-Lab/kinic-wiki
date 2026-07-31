@@ -1,0 +1,54 @@
+{
+  "devices": {
+    "iphone": {
+      "width": 1320,
+      "height": 2868
+    },
+    "ipad": {
+      "width": 2064,
+      "height": 2752
+    }
+  },
+  "scenes": [
+    {
+      "id": "01-organized",
+      "title": "Your AI memory, organized",
+      "sources": {
+        "iphone": "iphone/01-organized.png",
+        "ipad": "ipad/01-organized.png"
+      }
+    },
+    {
+      "id": "02-save-from-safari",
+      "title": "Save any web page from Safari",
+      "sources": {
+        "iphone": "iphone/02-save-from-safari.png",
+        "ipad": "ipad/02-save-from-safari.png"
+      }
+    },
+    {
+      "id": "03-lasting-knowledge",
+      "title": "Turn links into lasting knowledge",
+      "sources": {
+        "iphone": "iphone/03-lasting-knowledge.png",
+        "ipad": "ipad/03-lasting-knowledge.png"
+      }
+    },
+    {
+      "id": "04-ask-with-sources",
+      "title": "Ask your memory, with sources",
+      "sources": {
+        "iphone": "iphone/04-ask-with-sources.png",
+        "ipad": "ipad/04-ask-with-sources.png"
+      }
+    },
+    {
+      "id": "05-under-control",
+      "title": "Keep your memory under your control",
+      "sources": {
+        "iphone": "iphone/05-under-control.png",
+        "ipad": "ipad/05-under-control.png"
+      }
+    }
+  ]
+}

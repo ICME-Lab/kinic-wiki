@@ -6,6 +6,8 @@ import Foundation
 import ICNativeClient
 
 struct AppConfiguration: Equatable, Sendable {
+    static let privacyPolicyURL = URL(string: "https://wiki.kinic.xyz/privacy-policy")!
+
     let canisterId: String
     let apiBaseURL: URL
     let identityProvider: URL
@@ -16,6 +18,7 @@ struct AppConfiguration: Equatable, Sendable {
     let appGroupId: String?
     let keychainAccessGroup: String?
     let iapProductIds: [String]
+    let askAIURL: URL
 
     var icClientConfiguration: ICClientConfiguration {
         ICClientConfiguration(
@@ -48,7 +51,8 @@ struct AppConfiguration: Equatable, Sendable {
         callbackDomain: "wiki.kinic.xyz",
         appGroupId: nil,
         keychainAccessGroup: nil,
-        iapProductIds: ["xyz.kinic.dbcredits.small", "xyz.kinic.dbcredits.medium", "xyz.kinic.dbcredits.large"]
+        iapProductIds: ["xyz.kinic.dbcredits.small", "xyz.kinic.dbcredits.medium", "xyz.kinic.dbcredits.large"],
+        askAIURL: URL(string: "https://api.kinic.io/chat")!
     )
 
     static func liveFromBundle(_ bundle: Bundle = .main) -> AppConfiguration {
@@ -63,7 +67,8 @@ struct AppConfiguration: Equatable, Sendable {
             callbackDomain: bundle.requiredString("KINIC_CALLBACK_DOMAIN"),
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
             keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
-            iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS"))
+            iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS")),
+            askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL")
         )
     }
 

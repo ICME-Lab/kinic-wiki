@@ -5,6 +5,8 @@
 import SwiftUI
 
 struct KinicHeaderTitle: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         HStack(spacing: 8) {
             Image("KinicMark")
@@ -16,7 +18,7 @@ struct KinicHeaderTitle: View {
             Text("KinicWiki")
                 .font(.headline)
                 .bold()
-                .foregroundStyle(.black)
+                .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
         }
         .fixedSize()
         .accessibilityLabel("KinicWiki")

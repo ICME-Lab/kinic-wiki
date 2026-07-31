@@ -11,6 +11,19 @@ export type WikiNode = {
   metadataJson: string;
 };
 
+export type NodePublication = {
+  publicId: string;
+  databaseId: string;
+  path: string;
+  publishedAtMs: string;
+};
+
+export type PublicNode = {
+  content: string;
+  updatedAt: string;
+  publishedAtMs: string;
+};
+
 export type WriteNodeRequest = {
   databaseId: string;
   path: string;
@@ -361,6 +374,7 @@ export type ChildNode = {
   sizeBytes: string | null;
   isVirtual: boolean;
   hasChildren: boolean;
+  isPublished: boolean;
 };
 
 export type RecentNode = {

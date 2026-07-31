@@ -73,7 +73,7 @@ require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env BILLING_AUTHORITY_ID
 require_principal_env IAP_AUTHORITY_ID
 
-ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX.did")"
+ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
 
 cat >"${ARGS_FILE}" <<EOF

@@ -241,3 +241,15 @@ CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
 
 CREATE INDEX market_entitlements_buyer_idx
   ON market_entitlements(buyer_principal, database_id);
+
+CREATE TABLE node_publications (
+  public_id TEXT PRIMARY KEY,
+  database_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  published_at_ms INTEGER NOT NULL,
+  UNIQUE (database_id, path),
+  FOREIGN KEY (database_id) REFERENCES databases(database_id)
+);
+
+CREATE INDEX node_publications_database_idx
+  ON node_publications(database_id, path);

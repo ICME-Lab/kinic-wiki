@@ -80,6 +80,8 @@ export type WikiDraft = {
   follow_ups: WikiDraftItem[];
 };
 
+export type OutputLanguage = "en" | "ja" | "zh-Hans" | "ko" | "es" | "fr" | "de" | "pt";
+
 export type SourceQueueMessage = {
   kind: "source";
   databaseId: string;
@@ -87,6 +89,7 @@ export type SourceQueueMessage = {
   sourceEtag: string;
   requestPath?: string;
   sessionNonce?: string;
+  outputLanguage?: OutputLanguage;
 };
 
 export type SourceCaptureQueueMessage = {
@@ -135,7 +138,7 @@ export type WorkerConfig = {
   maxOutputTokens: number;
 };
 
-export type JobStatus = "queued" | "processing" | "completed" | "failed";
+export type JobStatus = "queued" | "processing" | "generated" | "completed" | "failed";
 
 export type SourceJob = {
   database_id: string;
@@ -145,7 +148,26 @@ export type SourceJob = {
   target_path: string | null;
   attempts: number;
   last_error: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  generated_target_path: string | null;
+  generated_target_etag: string | null;
+  generated_target_observed: number;
+  generated_content: string | null;
+  generated_context_paths: string | null;
+  llm_duration_ms: number | null;
   updated_at: string;
+};
+
+export type WikiGenerationFailureMessage = {
+  messageId: string;
+  messageKind: QueueMessage["kind"] | "invalid";
+  databaseId?: string;
+  sourcePath?: string;
+  sourceEtag?: string;
+  attempt: number;
+  errorCode: string;
+  failedAt: string;
 };
 
 export type SourceCaptureRequestStatus = "queued" | "fetching" | "source_written" | "generating" | "completed" | "failed";
@@ -157,6 +179,7 @@ export type SourceCaptureRequest = {
   url: string;
   requestedBy: string;
   requestedAt: string;
+  outputLanguage: OutputLanguage;
   claimedAt: string | null;
   sourcePath: string | null;
   targetPath: string | null;

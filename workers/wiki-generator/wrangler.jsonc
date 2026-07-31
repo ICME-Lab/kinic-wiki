@@ -41,13 +41,19 @@
       {
         "binding": "WIKI_GENERATION_QUEUE",
         "queue": "kinic-wiki-generation"
+      },
+      {
+        "binding": "WIKI_GENERATION_DLQ",
+        "queue": "kinic-wiki-generation-failures"
       }
     ],
     "consumers": [
       {
         "queue": "kinic-wiki-generation",
-        "max_batch_size": 5,
-        "max_batch_timeout": 30
+        "max_batch_size": 4,
+        "max_batch_timeout": 1,
+        "max_concurrency": 5,
+        "max_retries": 5
       }
     ]
   }

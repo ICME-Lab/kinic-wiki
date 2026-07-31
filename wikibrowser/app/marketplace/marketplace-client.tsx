@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { ArrowDownAZ, Clock3, Search, Sparkles, TrendingUp } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useAppNavigate, useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminPanel } from "@/components/admin-ui";
@@ -30,9 +30,9 @@ const SORT_ITEMS = [
 ] as const;
 
 export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const pathname = useAppPathname();
+  const router = useAppNavigate();
+  const searchParams = useAppSearchParams();
   const [listings, setListings] = useState<MarketListingView[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("idle");
@@ -60,7 +60,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
 
   const load = useCallback(async (nextCursor: string | null, append: boolean) => {
     if (!canisterId) {
-      setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
+      setError("VITE_KINIC_WIKI_CANISTER_ID is not configured");
       setState("error");
       return;
     }

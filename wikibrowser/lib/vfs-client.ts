@@ -1,47 +1,29 @@
-import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
-import { Principal } from "@icp-sdk/core/principal";
-import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
+import { type Identity } from "@icp-sdk/core/agent";
 import { sortChildNodes } from "@/lib/child-sort";
-import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
+import { normalizeSearchHit } from "@/lib/search-normalizer";
 import type { SearchPreviewMode } from "@/lib/search-options";
-import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
-  CyclesBillingConfig,
   ChildNode,
-  DatabaseCycleEntry,
-  DatabaseCycleEntryPage,
-  DatabaseCyclesPendingPurchase,
   DatabaseMetadata,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
   DeleteNodeResult,
   DatabaseMember,
   DatabaseRole,
-  DatabaseStatus,
-  DatabaseSummary,
   InitialFreeDatabaseGrantStatus,
-  IndexSqlJsonQueryResult,
   LinkEdge,
-  MarketCreateListingRequest,
-  MarketEntitlementPage,
-  MarketListing,
-  MarketListingDetail,
-  MarketListingPage,
-  MarketListingStatus,
-  MarketOrder,
-  MarketOrderPage,
-  MarketPurchasePreview,
-  MarketUpdateListingRequest,
   UpdateDatabaseMetadataRequest,
   MkdirNodeRequest,
   MkdirNodeResult,
   MoveNodeRequest,
   MoveNodeResult,
+  NodePublication,
   NodeContext,
   NodeEntryKind,
   NodeKind,
   QueryContext,
+  PublicNode,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
@@ -51,22 +33,19 @@ import type {
   SourceRunSessionCheckRequest,
   SourceCaptureTriggerSessionCheckRequest,
   SourceCaptureTriggerSessionRequest,
-  WikiMetrics,
-  WikiMetricsPoint,
   WikiNode,
   WriteNodeRequest,
   WriteNodeResult,
   WriteSourceForGenerationRequest,
   WriteSourceForGenerationResult
 } from "@/lib/types";
-import { ApiError } from "@/lib/wiki-helpers";
 
 export * from "./vfs-client/raw-types";
 export * from "./vfs-client/actor";
 export * from "./vfs-client/cycles";
 export * from "./vfs-client/market";
-import type { CreateDatabaseResult, DatabaseCyclesPurchaseRequest, RawCanisterHealth, RawChild, RawCreateDatabaseResult, RawCyclesBillingConfig, RawDatabaseCycleEntry, RawDatabaseCycleEntryPage, RawDatabaseCyclesPendingPurchase, RawDatabaseMember, RawDatabaseMetadata, RawDatabaseSummary, RawDeleteDatabaseRequest, RawDeleteNodeRequest, RawDeleteNodeResult, RawIndexSqlJsonQueryResult, RawInitialFreeDatabaseGrantStatus, RawLinkEdge, RawMarketCategoryGraph, RawMarketCategoryGraphEdge, RawMarketCategoryGraphNode, RawMarketCreateListingRequest, RawMarketEntitlement, RawMarketEntitlementPage, RawMarketListing, RawMarketListingDetail, RawMarketListingPage, RawMarketListingPreview, RawMarketListingStatus, RawMarketListingVerifiedStats, RawMarketListingView, RawMarketOrder, RawMarketOrderPage, RawMarketPreviewExcerpt, RawMarketPurchasePreview, RawMarketPurchaseRequest, RawMarketUpdateListingRequest, RawMkdirNodeRequest, RawMkdirNodeResult, RawMoveNodeRequest, RawMoveNodeResult, RawNode, RawNodeContext, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionCheckResult, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceEvidenceRef, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, RawWikiMetrics, RawWikiMetricsPoint, RawWriteNodeRequest, RawWriteNodeResult, RawWriteSourceForGenerationRequest, RawWriteSourceForGenerationResult, Variant, VfsActor } from "./vfs-client/raw-types";
-import { callVfs, createAuthenticatedActor, createReadActor, createActor, healthCache, isLocalHost, normalizeDatabaseRole, normalizeDatabaseStatus, normalizeLinkEdge, normalizeDatabaseMetadata, normalizeDatabaseSummary, rawDatabaseCycleCursor, rawOptionalText, rawTextCursor, throwCanisterError, validateCanisterId, createVfsActor } from "./vfs-client/actor";
+import type { CreateDatabaseResult, RawCanisterHealth, RawChild, RawDatabaseMember, RawNode, RawNodeContext, RawNodePublication, RawPublicNode, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, Variant } from "./vfs-client/raw-types";
+import { callVfs, createAuthenticatedActor, createReadActor, healthCache, normalizeDatabaseRole, normalizeDatabaseStatus, normalizeLinkEdge, normalizeDatabaseMetadata, rawOptionalText, throwCanisterError, createVfsActor } from "./vfs-client/actor";
 import { normalizeInitialFreeDatabaseGrantStatus } from "./vfs-client/cycles";
 export async function readNode(canisterId: string, databaseId: string, path: string, identity?: Identity): Promise<WikiNode | null> {
   return callVfs(async () => {
@@ -78,6 +57,58 @@ export async function readNode(canisterId: string, databaseId: string, path: str
     const raw = result.Ok[0];
     return raw ? normalizeNode(raw) : null;
   });
+}
+
+export async function getNodePublication(canisterId: string, databaseId: string, path: string, identity: Identity): Promise<NodePublication | null> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.get_node_publication({ database_id: databaseId, path });
+    if ("Err" in result) throwCanisterError(result.Err);
+    return result.Ok[0] ? normalizeNodePublication(result.Ok[0]) : null;
+  });
+}
+
+export async function publishNodeAuthenticated(canisterId: string, databaseId: string, path: string, identity: Identity): Promise<NodePublication> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.publish_node({ database_id: databaseId, path });
+    if ("Err" in result) throwCanisterError(result.Err);
+    return normalizeNodePublication(result.Ok);
+  });
+}
+
+export async function unpublishNodeAuthenticated(canisterId: string, databaseId: string, path: string, identity: Identity): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.unpublish_node({ database_id: databaseId, path });
+    if ("Err" in result) throwCanisterError(result.Err);
+  });
+}
+
+export async function readPublicNode(canisterId: string, publicId: string): Promise<PublicNode | null> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.read_public_node(publicId);
+    if ("Err" in result) throwCanisterError(result.Err);
+    return result.Ok[0] ? normalizePublicNode(result.Ok[0]) : null;
+  });
+}
+
+function normalizeNodePublication(raw: RawNodePublication): NodePublication {
+  return {
+    publicId: raw.public_id,
+    databaseId: raw.database_id,
+    path: raw.path,
+    publishedAtMs: raw.published_at_ms.toString()
+  };
+}
+
+function normalizePublicNode(raw: RawPublicNode): PublicNode {
+  return {
+    content: raw.content,
+    updatedAt: raw.updated_at.toString(),
+    publishedAtMs: raw.published_at_ms.toString()
+  };
 }
 
 export function canisterHealth(canisterId: string): Promise<CanisterHealth> {
@@ -577,7 +608,8 @@ function normalizeChild(raw: RawChild): ChildNode {
     etag: raw.etag[0] ?? null,
     sizeBytes: raw.size_bytes[0]?.toString() ?? null,
     isVirtual: raw.is_virtual,
-    hasChildren: raw.has_children
+    hasChildren: raw.has_children,
+    isPublished: raw.is_published
   };
 }
 

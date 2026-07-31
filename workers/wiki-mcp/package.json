@@ -5,19 +5,26 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --config wrangler.jsonc",
+    "build:staging": "wrangler deploy --dry-run --config wrangler.staging.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
-    "test": "node scripts/check-candid-drift.mjs && vitest run",
+    "review:smoke": "node scripts/check-submission-cases.mjs",
+    "smoke:staging": "node scripts/staging-smoke.mjs",
+    "test": "node scripts/check-candid-drift.mjs && node --test scripts/*.node-test.mjs scripts/staging-smoke.test.mjs && vitest run && vitest run --config vitest.worker.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@icp-sdk/core": "^5.4.0",
+    "@icp-sdk/core": "6.0.0",
+    "@kinic/vfs-client-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.12.21",
     "@cloudflare/workers-types": "^4.20260408.0",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
+    "ajv": "^8.20.0",
+    "js-yaml": "^4.3.0",
     "typescript": "7.0.2",
     "vitest": "^3.2.4",
     "wrangler": "^4.103.0"

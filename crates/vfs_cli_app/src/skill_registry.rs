@@ -3,6 +3,7 @@ use crate::github_source::{
     fetch_github_optional_package_file, fetch_github_skill_package, github_source_string,
     github_source_url, parse_github_skill_source,
 };
+use vfs_cli::folders::{ensure_parent_folders, ensure_parent_folders_for_paths};
 mod model;
 use anyhow::{Context, Result, anyhow};
 use model::{
@@ -21,8 +22,8 @@ use std::process::{Command, Output, Stdio};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
-    DeleteNodeRequest, ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, WriteNodeItem,
-    WriteNodeRequest, WriteNodesRequest,
+    DeleteNodeRequest, ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 const SKILL_PACKAGE_FILE_LIMIT_MAX: usize = 100;
@@ -197,7 +198,7 @@ async fn write_skill_package(
         .collect::<Vec<_>>();
     let snapshot_version_id =
         snapshot_existing_skill_version(client, database_id, &base_path).await?;
-    ensure_parent_folders_for_paths(client, database_id, &paths).await?;
+    ensure_parent_folders_for_paths(client, database_id, paths.iter().map(String::as_str)).await?;
     let mut written_paths = Vec::new();
     let mut nodes = Vec::new();
     for ((_, content), path) in entries.into_iter().zip(paths) {
@@ -665,7 +666,7 @@ async fn snapshot_current_skill_version(
         .iter()
         .map(|node| node.path.clone())
         .collect::<Vec<_>>();
-    ensure_parent_folders_for_paths(client, database_id, &paths).await?;
+    ensure_parent_folders_for_paths(client, database_id, paths.iter().map(String::as_str)).await?;
     client
         .write_nodes(WriteNodesRequest {
             database_id: database_id.to_string(),
@@ -934,30 +935,6 @@ fn truncate_error(error: &str) -> String {
     value
 }
 
-async fn ensure_parent_folders(client: &impl VfsApi, database_id: &str, path: &str) -> Result<()> {
-    ensure_parent_folders_for_paths(client, database_id, &[path.to_string()]).await
-}
-
-async fn ensure_parent_folders_for_paths(
-    client: &impl VfsApi,
-    database_id: &str,
-    paths: &[String],
-) -> Result<()> {
-    let mut folders = BTreeSet::new();
-    for path in paths {
-        collect_parent_folders(path, &mut folders);
-    }
-    for folder in folders {
-        client
-            .mkdir_node(MkdirNodeRequest {
-                database_id: database_id.to_string(),
-                path: folder,
-            })
-            .await?;
-    }
-    Ok(())
-}
-
 fn validate_skill_package_file_count(count: usize) -> Result<()> {
     if count == 0 || count > SKILL_PACKAGE_FILE_LIMIT_MAX {
         return Err(anyhow!(
@@ -965,19 +942,6 @@ fn validate_skill_package_file_count(count: usize) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn collect_parent_folders(path: &str, folders: &mut BTreeSet<String>) {
-    let segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    let mut current = String::new();
-    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
-        current.push('/');
-        current.push_str(segment);
-        folders.insert(current.clone());
-    }
 }
 
 async fn prune_package_files(

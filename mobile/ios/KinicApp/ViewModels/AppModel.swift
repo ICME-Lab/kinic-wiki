@@ -11,12 +11,137 @@ import StoreKit
 enum AppTab: Hashable {
     case home
     case browse
+    case askAI
     case manage
 }
 
 enum BrowseNavigationTarget: Equatable {
     case folder(String)
     case document(path: String, parentPath: String)
+}
+
+extension AppModel: AskAIKnowledgeProviding {
+    var selectedAskAIDatabaseId: String {
+        selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var selectedAskAIDatabaseTitle: String {
+        selectedBrowseDatabase?.displayTitle ?? selectedAskAIDatabaseId
+    }
+
+    var canAskAI: Bool {
+        canBrowse
+    }
+
+    var askAIDatabaseCandidates: [DatabaseSummary] {
+        browseListDatabases.filter { $0.status != .deleted }
+    }
+
+    func selectAskAIDatabase(_ databaseId: String) {
+        selectBrowseDatabase(databaseId)
+    }
+
+    func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else {
+            throw AskAIKnowledgeError.missingDatabase
+        }
+        guard isAskAIDatabaseAvailable(databaseId) else {
+            throw AskAIKnowledgeError.unavailableDatabase
+        }
+
+        let queries = Array(queryPlan.queries.prefix(AskAIQueryPlanner.maximumQueries))
+        guard !queries.isEmpty else {
+            return AskAIRetrievalResult(searchQueries: [], sources: [])
+        }
+        let session = browseSession(for: databaseId)
+        let searchClient = client
+        let hitsByQuery = try await withThrowingTaskGroup(
+            of: (String, [SearchNodeHit]).self,
+            returning: [String: [SearchNodeHit]].self
+        ) { group in
+            for query in queries {
+                group.addTask {
+                    let hits = try await searchClient.searchBrowseNodes(
+                        databaseId: databaseId,
+                        query: query.text,
+                        prefix: nil,
+                        limit: AskAIRetrievalPlanner.searchLimitPerQuery,
+                        session: session
+                    )
+                    return (query.text, hits)
+                }
+            }
+            var results: [String: [SearchNodeHit]] = [:]
+            for try await (query, hits) in group {
+                results[query] = hits
+            }
+            return results
+        }
+        let rankedCandidates = AskAIRetrievalPlanner.rankedCandidates(
+            queryPlan: queryPlan,
+            hitsByQuery: hitsByQuery
+        )
+
+        var contexts: [AskAIContextSource] = []
+        for candidate in rankedCandidates where contexts.count < AskAIRetrievalPlanner.maximumSources {
+            let hit = candidate.hit
+            guard let node = try await client.readBrowseNode(
+                databaseId: databaseId,
+                path: hit.path,
+                session: session
+            ), node.kind != .folder else {
+                continue
+            }
+            guard let evidence = await askAIRetrievalVerifier.prepareVerifiedEvidence(
+                queryPlan: queryPlan,
+                hit: hit,
+                content: node.content
+            ) else {
+                continue
+            }
+            let source = AskAISource(
+                id: "S\(contexts.count + 1)",
+                path: hit.path,
+                excerpt: evidence.excerpt,
+                score: hit.score,
+                matchReasons: hit.matchReasons
+            )
+            contexts.append(
+                AskAIContextSource(
+                    source: source,
+                    content: evidence.content
+                )
+            )
+        }
+        return AskAIRetrievalResult(searchQueries: queries.map(\.text), sources: contexts)
+    }
+
+    func openAskAISource(databaseId: String, path: String) {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else { return }
+        openBrowseDeepLink(databaseId: databaseId, nodePath: path)
+    }
+
+    private func isAskAIDatabaseAvailable(_ databaseId: String) -> Bool {
+        session != nil
+            || publicBrowseDatabaseIds.contains(databaseId)
+            || directBrowseDatabaseIds.contains(databaseId)
+    }
+}
+
+enum AskAIKnowledgeError: Error, LocalizedError, Equatable {
+    case missingDatabase
+    case unavailableDatabase
+
+    var errorDescription: String? {
+        switch self {
+        case .missingDatabase:
+            "Select a database before asking a question."
+        case .unavailableDatabase:
+            "This database is not currently available to Ask AI."
+        }
+    }
 }
 
 enum AppOpenURLDestination: Equatable {
@@ -71,13 +196,44 @@ enum PendingSubmissionDatabaseResolution: Equatable, Sendable {
     }
 }
 
+enum SourceCaptureRetryError: Error, LocalizedError, Equatable {
+    case historyUnavailable
+    case requestNotFound(String)
+    case requestNotRetryable(SourceCaptureHistoryStatus)
+    case callerMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .historyUnavailable:
+            "Capture history is unavailable on this device."
+        case let .requestNotFound(path):
+            "Capture request is no longer available: \(path)"
+        case let .requestNotRetryable(status):
+            switch status {
+            case .fetching:
+                "Capture is still being fetched. Refresh the history and try again later."
+            case .generating:
+                "Capture is already being generated."
+            case .completed:
+                "Capture is already completed."
+            case .queued, .sourceWritten, .failed:
+                "Capture cannot be retried in its current state."
+            }
+        case .callerMismatch:
+            "Only the account that submitted this capture can retry it."
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppModel {
     private let authService: KinicAuthService
     private let client: KinicICClient
     private let creditStore: any DatabaseCreditStoreProtocol
+    private let askAIRetrievalVerifier = AskAIRetrievalVerifier()
     private let shareInbox: ShareInbox
+    private let sourceCaptureHistoryStore: SourceCaptureHistoryStore?
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
     private var databaseCreditTransactionUpdatesTask: Task<Void, Never>?
@@ -88,6 +244,8 @@ final class AppModel {
     private var databaseManagementRequestID: Int
     private var deepLinkResolveRequestID: Int
     private var isRecoveringDatabaseCredits: Bool
+    private var sourceCaptureHistoryRequestID: Int
+    private var sourceCaptureRetryPaths: Set<String>
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
@@ -107,6 +265,11 @@ final class AppModel {
             settingsStore.showPurchasedBrowseDatabases = showPurchasedBrowseDatabases
         }
     }
+    var wikiOutputLanguage: WikiOutputLanguage {
+        didSet {
+            settingsStore.wikiOutputLanguage = wikiOutputLanguage
+        }
+    }
     var databases: [DatabaseSummary]
     var readableDatabases: [DatabaseSummary]
     var memberBrowseDatabaseIds: Set<String>
@@ -114,6 +277,7 @@ final class AppModel {
     var purchasedBrowseDatabaseIds: Set<String>
     var directBrowseDatabaseIds: Set<String>
     var pendingURLs: [PendingSharedURL]
+    var sourceCaptureHistory: [SourceCaptureHistoryRecord]
     var rootNavigationID: Int
     var requestedTab: AppTab
     var tabSelectionRequestID: Int
@@ -167,9 +331,14 @@ final class AppModel {
     var isUpdatingDatabaseMetadata: Bool
     var databaseAccessBusyAction: DatabaseAccessBusyAction?
     var isSubmitting: Bool
+    var isLoadingSourceCaptureHistory: Bool
 
     var principalText: String {
         session?.principal ?? "Not signed in"
+    }
+
+    var askAIHistoryScope: AskAIHistoryScope {
+        AskAIHistoryScope(principal: session?.principal)
     }
 
     var isSignedIn: Bool {
@@ -202,6 +371,10 @@ final class AppModel {
 
     var managementDatabases: [DatabaseSummary] {
         readableDatabases.filter { memberBrowseDatabaseIds.contains($0.databaseId) }
+    }
+
+    var captureDatabaseCandidates: [DatabaseSummary] {
+        managementDatabases.filter { $0.role.canWrite && $0.status != .deleted }
     }
 
     var canListBrowseDatabases: Bool {
@@ -246,21 +419,24 @@ final class AppModel {
         client: KinicICClient,
         creditStore: (any DatabaseCreditStoreProtocol)? = nil,
         shareInbox: ShareInbox,
-        settingsStore: SharedDefaultsStore
+        settingsStore: SharedDefaultsStore,
+        sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil
     ) {
         self.configuration = configuration
         self.authService = authService
         self.client = client
         self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration, settingsStore: settingsStore)
         self.shareInbox = shareInbox
+        self.sourceCaptureHistoryStore = sourceCaptureHistoryStore
         self.settingsStore = settingsStore
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         databaseCreditTransactionUpdatesTask = nil
         selectedDatabaseId = settingsStore.databaseId
-        selectedBrowseDatabaseId = settingsStore.browseDatabaseId
+        selectedBrowseDatabaseId = ""
         isDarkAppearanceEnabled = settingsStore.isDarkAppearanceEnabled
         showPublicBrowseDatabases = settingsStore.showPublicBrowseDatabases
         showPurchasedBrowseDatabases = settingsStore.showPurchasedBrowseDatabases
+        wikiOutputLanguage = settingsStore.wikiOutputLanguage
         databases = []
         readableDatabases = []
         memberBrowseDatabaseIds = []
@@ -268,6 +444,7 @@ final class AppModel {
         purchasedBrowseDatabaseIds = []
         directBrowseDatabaseIds = []
         pendingURLs = shareInbox.loadPendingURLs()
+        sourceCaptureHistory = []
         rootNavigationID = 0
         requestedTab = .home
         tabSelectionRequestID = 0
@@ -301,6 +478,8 @@ final class AppModel {
         databaseManagementRequestID = 0
         deepLinkResolveRequestID = 0
         isRecoveringDatabaseCredits = false
+        sourceCaptureHistoryRequestID = 0
+        sourceCaptureRetryPaths = []
         browseError = nil
         documentError = nil
         cyclesConfigError = nil
@@ -327,6 +506,7 @@ final class AppModel {
         isUpdatingDatabaseMetadata = false
         databaseAccessBusyAction = nil
         isSubmitting = false
+        isLoadingSourceCaptureHistory = false
     }
 
     static func live() -> AppModel {
@@ -339,7 +519,8 @@ final class AppModel {
                 authService: KinicAuthService(configuration: configuration),
                 client: KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: configuration.appGroupId, strict: strictAppGroup),
-                settingsStore: settingsStore
+                settingsStore: settingsStore,
+                sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: configuration.appGroupId, strict: strictAppGroup)
             )
         } catch {
             fatalError(error.localizedDescription)
@@ -360,7 +541,8 @@ final class AppModel {
                 authService: KinicAuthService(configuration: configuration),
                 client: KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: nil),
-                settingsStore: settingsStore
+                settingsStore: settingsStore,
+                sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: nil)
             )
         } catch {
             fatalError(error.localizedDescription)
@@ -369,6 +551,10 @@ final class AppModel {
 
     func refreshInbox() {
         pendingURLs = shareInbox.loadPendingURLs()
+    }
+
+    func isRetryingSourceCapture(path: String) -> Bool {
+        sourceCaptureRetryPaths.contains(path)
     }
 
     func setDarkAppearanceEnabled(_ enabled: Bool) {
@@ -450,7 +636,7 @@ final class AppModel {
         }
         do {
             let normalizedURL = try URLNormalizer.normalizedHTTPURL(rawURL)
-            try shareInbox.enqueue(normalizedURL)
+            try shareInbox.enqueue(normalizedURL, outputLanguage: wikiOutputLanguage)
             refreshInbox()
             statusMessage = nil
             autoSubmitPendingURL()
@@ -464,7 +650,22 @@ final class AppModel {
     func selectDatabase(_ databaseId: String) {
         setSelectedDatabase(databaseId)
         statusMessage = nil
+        Task {
+            await refreshSourceCaptureHistory()
+        }
         autoSubmitPendingURL()
+    }
+
+    func startRefreshSourceCaptureHistory(refreshAll: Bool = false) {
+        Task {
+            await refreshSourceCaptureHistory(refreshAll: refreshAll)
+        }
+    }
+
+    func openSourceCaptureTarget(_ path: String) {
+        let databaseId = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else { return }
+        openBrowseDeepLink(databaseId: databaseId, nodePath: path)
     }
 
     func selectBrowseDatabase(_ databaseId: String) {
@@ -607,7 +808,6 @@ final class AppModel {
             resetDatabaseManagementState()
         }
         selectedBrowseDatabaseId = databaseId
-        settingsStore.browseDatabaseId = databaseId
     }
 
     func startSignIn() {
@@ -641,6 +841,9 @@ final class AppModel {
         databaseMetadataError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
+        sourceCaptureHistoryRequestID += 1
+        sourceCaptureHistory = []
+        isLoadingSourceCaptureHistory = false
         statusMessage = nil
         if showPublicBrowseDatabases {
             startRefreshDatabases()
@@ -1032,17 +1235,13 @@ final class AppModel {
                let first = databases.first {
                 selectDatabase(first.databaseId)
             }
-            if selectFirstIfNeeded,
-               selectedBrowseDatabaseId.isEmpty,
-               let first = readableDatabases.first {
-                setSelectedBrowseDatabase(first.databaseId)
-                await loadBrowsePath("/")
-            } else if !selectedBrowseDatabaseId.isEmpty {
+            if !selectedBrowseDatabaseId.isEmpty {
                 await loadBrowsePath(currentPath)
             }
             if currentSession != nil {
                 await loadCyclesBillingConfigIfNeeded()
                 await loadDatabaseCreditProductsIfNeeded()
+                await refreshSourceCaptureHistory()
             } else {
                 cyclesBillingConfig = nil
                 cyclesConfigError = nil
@@ -1551,6 +1750,20 @@ final class AppModel {
                 requestedBy: session.principal
             )
             let submission = try await client.saveSourceCaptureRequest(request, session: session)
+            guard let sourceCaptureHistoryStore else {
+                statusMessage = "Source request saved, but local history is unavailable. It remains queued for retry."
+                return
+            }
+            do {
+                try sourceCaptureHistoryStore.save(
+                    SourceCaptureHistoryRecord(request: request, requestedAt: item.receivedAt)
+                )
+            } catch {
+                statusMessage = "Source request saved, but local history could not be saved. It remains queued for retry."
+                return
+            }
+            shareInbox.remove(item)
+            refreshInbox()
             do {
                 try await client.triggerSourceCapture(
                     databaseId: submission.databaseId,
@@ -1558,14 +1771,167 @@ final class AppModel {
                     sessionNonce: submission.sessionNonce,
                     session: session
                 )
-                shareInbox.remove(item)
-                refreshInbox()
+                await refreshSourceCaptureHistory()
                 statusMessage = nil
             } catch {
-                statusMessage = "Source saved, but capture could not start for \(submission.requestPath). It remains queued for retry: \(error.localizedDescription)"
+                markSourceCaptureHistorySyncError(
+                    databaseId: submission.databaseId,
+                    requestPath: submission.requestPath,
+                    message: error.localizedDescription
+                )
+                statusMessage = "Source request saved, but capture could not start. The local history will keep its last status: \(error.localizedDescription)"
             }
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    func refreshSourceCaptureHistory(refreshAll: Bool = false) async {
+        sourceCaptureHistoryRequestID += 1
+        let requestID = sourceCaptureHistoryRequestID
+        let databaseId = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty,
+              let sourceCaptureHistoryStore else {
+            sourceCaptureHistory = []
+            return
+        }
+        sourceCaptureHistory = sourceCaptureHistoryStore.load(databaseId: databaseId)
+        guard let session else { return }
+        isLoadingSourceCaptureHistory = true
+        defer {
+            if sourceCaptureHistoryRequestID == requestID {
+                isLoadingSourceCaptureHistory = false
+            }
+        }
+
+        let recordsToRefresh = refreshAll ? sourceCaptureHistory : Array(sourceCaptureHistory.prefix(10))
+        for record in recordsToRefresh {
+            guard sourceCaptureHistoryRequestID == requestID,
+                  selectedDatabaseId == databaseId else { return }
+            var updatedRecord = record
+            let checkedAt = Int64((Date.now.timeIntervalSince1970 * 1_000).rounded(.down))
+            do {
+                guard let node = try await client.readNode(
+                    databaseId: databaseId,
+                    path: record.item.requestPath,
+                    session: session
+                ) else {
+                    updatedRecord.item = record.item.withSyncState(
+                        lastCheckedAtMilliseconds: checkedAt,
+                        syncError: "Request node is no longer available."
+                    )
+                    try? sourceCaptureHistoryStore.save(updatedRecord)
+                    updateSourceCaptureHistory(updatedRecord, requestID: requestID)
+                    continue
+                }
+                let item = try SourceCaptureHistoryParser.item(from: node)
+                updatedRecord.item = item.withSyncState(
+                    lastCheckedAtMilliseconds: checkedAt,
+                    syncError: nil
+                )
+            } catch {
+                updatedRecord.item = record.item.withSyncState(
+                    lastCheckedAtMilliseconds: checkedAt,
+                    syncError: error.localizedDescription
+                )
+            }
+            try? sourceCaptureHistoryStore.save(updatedRecord)
+            updateSourceCaptureHistory(updatedRecord, requestID: requestID)
+        }
+    }
+
+    func retrySourceCapture(_ record: SourceCaptureHistoryRecord) async {
+        let databaseId = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestPath = record.item.requestPath
+        guard !databaseId.isEmpty,
+              databaseId == record.databaseId else {
+            statusMessage = "Select the database that owns this capture before retrying."
+            return
+        }
+        guard let session else {
+            statusMessage = "Sign in before retrying a capture."
+            return
+        }
+        guard sourceCaptureHistoryStore != nil else {
+            statusMessage = SourceCaptureRetryError.historyUnavailable.localizedDescription
+            return
+        }
+        guard sourceCaptureRetryPaths.insert(requestPath).inserted else {
+            return
+        }
+        defer {
+            sourceCaptureRetryPaths.remove(requestPath)
+        }
+
+        do {
+            guard let node = try await client.readNode(
+                databaseId: databaseId,
+                path: requestPath,
+                session: session
+            ) else {
+                throw SourceCaptureRetryError.requestNotFound(requestPath)
+            }
+            let request = try SourceCaptureHistoryParser.request(from: node)
+            guard request.requestedBy == session.principal else {
+                throw SourceCaptureRetryError.callerMismatch
+            }
+            guard request.isRetryable else {
+                throw SourceCaptureRetryError.requestNotRetryable(request.item.status)
+            }
+
+            let retryWrite = request.retryWrite()
+            if request.item.status == .failed {
+                try await client.writeNode(
+                    databaseId: databaseId,
+                    path: requestPath,
+                    kind: .file,
+                    content: retryWrite.content,
+                    metadataJson: retryWrite.metadataJson,
+                    expectedEtag: node.etag,
+                    session: session
+                )
+            }
+
+            try await client.triggerSourceCapture(
+                databaseId: databaseId,
+                requestPath: requestPath,
+                sessionNonce: UUID().uuidString.lowercased(),
+                session: session
+            )
+            await refreshSourceCaptureHistory(refreshAll: true)
+            statusMessage = nil
+        } catch {
+            await refreshSourceCaptureHistory(refreshAll: true)
+            markSourceCaptureHistorySyncError(
+                databaseId: databaseId,
+                requestPath: requestPath,
+                message: error.localizedDescription
+            )
+            statusMessage = "Capture retry failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateSourceCaptureHistory(_ record: SourceCaptureHistoryRecord, requestID: Int) {
+        guard sourceCaptureHistoryRequestID == requestID,
+              let index = sourceCaptureHistory.firstIndex(where: { $0.id == record.id }) else {
+            return
+        }
+        sourceCaptureHistory[index] = record
+    }
+
+    private func markSourceCaptureHistorySyncError(databaseId: String, requestPath: String, message: String) {
+        guard let sourceCaptureHistoryStore,
+              let record = sourceCaptureHistoryStore.load(databaseId: databaseId).first(where: { $0.item.requestPath == requestPath }) else {
+            return
+        }
+        var updatedRecord = record
+        updatedRecord.item = record.item.withSyncState(
+            lastCheckedAtMilliseconds: record.item.lastCheckedAtMilliseconds,
+            syncError: message
+        )
+        try? sourceCaptureHistoryStore.save(updatedRecord)
+        if let index = sourceCaptureHistory.firstIndex(where: { $0.id == record.id }) {
+            sourceCaptureHistory[index] = updatedRecord
         }
     }
 
@@ -1580,6 +1946,7 @@ final class AppModel {
             requestedBy: requestedBy,
             requestId: item.requestId,
             now: item.receivedAt,
+            outputLanguage: item.outputLanguage,
             captureMetadata: item.captureMetadata
         )
     }
@@ -1735,6 +2102,22 @@ final class AppModel {
             routes.append(BrowseFolderRoute(path: currentPath))
         }
         return routes
+    }
+
+    nonisolated static func browseNavigationRoutes(
+        for target: BrowseNavigationTarget,
+        includeDocument: Bool
+    ) -> [BrowseFolderRoute] {
+        switch target {
+        case let .folder(path):
+            return folderRoutes(to: path)
+        case let .document(path, parentPath):
+            var routes = folderRoutes(to: parentPath)
+            if includeDocument {
+                routes.append(.document(path: normalizedBrowsePath(path)))
+            }
+            return routes
+        }
     }
 
     nonisolated private static func decodedPathSegments(from url: URL) -> [String] {

@@ -3,8 +3,8 @@
 // Why: the final purchase amount belongs to wallet-facing UI state.
 "use client";
 
-import { useRouter } from "next/navigation";
-import { PlugZap, Wallet } from "lucide-react";
+import { useAppNavigate } from "@/lib/app-router";
+import { LogIn, PlugZap, Wallet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
@@ -29,8 +29,19 @@ type CyclesClientProps = {
 };
 
 export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesClientProps) {
-  const router = useRouter();
-  const { authClient, principal, refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
+  const router = useAppNavigate();
+  const {
+    authClient,
+    authError,
+    authLoading,
+    authReady,
+    login,
+    principal,
+    refreshWalletBalance,
+    wallet,
+    walletBalanceError,
+    walletBusyProvider
+  } = useAppSession();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [amount, setAmount] = useState("1");
@@ -38,7 +49,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const [databaseLoadError, setDatabaseLoadError] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
   const [cyclesConfig, setCyclesConfig] = useState<CyclesBillingConfig | null>(null);
-  const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const configuredCanisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
     params.set("database_id", databaseId);
@@ -53,7 +64,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const error =
     targetError ??
     (!configuredCanisterId
-        ? "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured"
+        ? "VITE_KINIC_WIKI_CANISTER_ID is not configured"
         : null);
   const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
   const busy = status === "running" || walletBusyProvider !== null;
@@ -172,7 +183,22 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
           </label>
         </AdminPanel>
 
-        {!principal ? <Notice tone="info" text="Login with Internet Identity to select a database." /> : null}
+        {!principal ? (
+          <div className="grid gap-3">
+            <Notice tone="info" text="Login with Internet Identity to select a database." />
+            <button
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              data-tid="cycles-login-button"
+              disabled={!authReady || authLoading}
+              type="button"
+              onClick={() => void login()}
+            >
+              <LogIn aria-hidden size={18} />
+              <span>{authLoading ? "Preparing Internet Identity" : "Sign in with Internet Identity"}</span>
+            </button>
+            {authError ? <Notice tone="error" text={authError} /> : null}
+          </div>
+        ) : null}
         {principal && databaseLoadState === "loading" ? <Notice tone="info" text="Loading linked databases." /> : null}
         {databaseLoadError ? <Notice tone="error" text={databaseLoadError} /> : null}
         {hasNoFundableDatabases ? <Notice tone="info" text="No fundable databases linked to this principal." /> : null}

@@ -3,6 +3,11 @@
 // Why: Mechanical split out of lib.rs; a child module keeps same-crate private access.
 use super::*;
 
+const INDEX_SCHEMA_MIGRATION_002: &str =
+    include_str!("../migrations/index_db/002_node_publications.sql");
+const INDEX_SCHEMA_MIGRATION_003: &str =
+    include_str!("../migrations/index_db/003_iap_cycle_grants.sql");
+
 impl VfsService {
     pub fn run_index_migrations(&self) -> Result<(), String> {
         self.run_index_migrations_with_config(default_cycles_billing_config())
@@ -75,7 +80,8 @@ fn run_index_migrations(
     create_fresh_index_schema(&tx)?;
     insert_cycles_billing_config(&tx, config)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_INITIAL)?;
-    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(IndexPostMigrationAction::None)
 }
@@ -121,7 +127,8 @@ fn run_index_migrations_in_tx(
     create_fresh_index_schema(conn)?;
     insert_cycles_billing_config(conn, config)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_INITIAL)?;
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     validate_index_schema(conn)?;
     Ok(IndexPostMigrationAction::None)
 }
@@ -177,8 +184,7 @@ fn reject_existing_index_tables_without_migrations_tx(
 
 fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     let versions = applied_index_versions(conn)?;
-    let expected = [INDEX_SCHEMA_VERSION_INITIAL, INDEX_SCHEMA_VERSION_CURRENT];
-    if versions != expected {
+    if versions.iter().map(String::as_str).collect::<Vec<_>>() != INDEX_SCHEMA_VERSIONS {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
             versions.join(", ")
@@ -192,21 +198,32 @@ fn apply_pending_index_migrations(
     config: &CyclesBillingConfig,
 ) -> Result<(), String> {
     let versions = applied_index_versions(conn)?;
-    if versions == [INDEX_SCHEMA_VERSION_INITIAL] {
-        conn.execute_batch(INDEX_SCHEMA_002_IAP_CYCLE_GRANTS_SQL)
+    let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    if version_refs == INDEX_SCHEMA_VERSIONS {
+        return Ok(());
+    }
+    if version_refs == [INDEX_SCHEMA_VERSION_INITIAL] {
+        conn.execute_batch(INDEX_SCHEMA_MIGRATION_002)
             .map_err(|error| error.to_string())?;
-        validate_principal_text(&config.iap_authority_id)?;
-        set_cycles_billing_config_text(conn, "iap_authority_id", &config.iap_authority_id)?;
-        insert_schema_migration(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
-        return Ok(());
+        insert_schema_migration(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+    } else if version_refs
+        != [
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+        ]
+    {
+        return Err(format!(
+            "unsupported index schema version; recreate the index database: {}",
+            versions.join(", ")
+        ));
     }
-    if versions == [INDEX_SCHEMA_VERSION_INITIAL, INDEX_SCHEMA_VERSION_CURRENT] {
-        return Ok(());
-    }
-    Err(format!(
-        "unsupported index schema version; recreate the index database: {}",
-        versions.join(", ")
-    ))
+
+    conn.execute_batch(INDEX_SCHEMA_MIGRATION_003)
+        .map_err(|error| error.to_string())?;
+    validate_principal_text(&config.iap_authority_id)?;
+    set_cycles_billing_config_text(conn, "iap_authority_id", &config.iap_authority_id)?;
+    insert_schema_migration(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    Ok(())
 }
 
 fn applied_index_versions(conn: &Transaction<'_>) -> Result<Vec<String>, String> {
@@ -285,6 +302,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_orders",
         "market_purchase_pending_operations",
         "market_entitlements",
+        "node_publications",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -487,6 +505,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "status",
             ][..],
         ),
+        (
+            "node_publications",
+            &["public_id", "database_id", "path", "published_at_ms"][..],
+        ),
     ] {
         for column in columns {
             if !index_column_exists(conn, table, column)? {
@@ -530,6 +552,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_purchase_pending_buyer_idx",
         "market_entitlements_database_buyer_active_idx",
         "market_entitlements_buyer_idx",
+        "node_publications_database_idx",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));

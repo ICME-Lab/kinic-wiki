@@ -1,8 +1,7 @@
 // Where: shared admin pages in wikibrowser.
 // What: renders the common Kinic Wiki admin header shell.
 // Why: dashboard, database management, and Skill Registry should present one management UI shape.
-import Image from "next/image";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import type { ReactNode } from "react";
 
 export function AdminHeader({ actions, nav, title, titleAction }: { actions?: ReactNode; nav?: ReactNode; title: string; titleAction?: ReactNode }) {
@@ -12,7 +11,7 @@ export function AdminHeader({ actions, nav, title, titleAction }: { actions?: Re
         {nav ? <nav className="flex flex-wrap items-center gap-2 text-sm text-muted">{nav}</nav> : null}
         <div className={`flex min-w-0 items-center gap-3 ${nav ? "mt-3" : ""}`}>
           <Link className="shrink-0 rounded-xl no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/dashboard" aria-label="Back to dashboard">
-            <Image className="h-12 w-12 rounded-xl shadow-sm" src="/kinic-mark.png" alt="" width={48} height={48} unoptimized />
+            <img className="h-12 w-12 rounded-xl shadow-sm" src="/kinic-mark.png" alt="" width={48} height={48} />
           </Link>
           <div className="min-w-0">
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Kinic Wiki</p>

@@ -18,10 +18,10 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, StorageBillingBatchRequest, UpdateDatabaseMetadataRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, PublishNodeRequest,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
+    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 mod fs_entrypoints;
@@ -35,9 +35,9 @@ use super::{
     cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config,
-    get_initial_free_database_grant_status, glob_nodes, grant_database_access, graph_links,
-    graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    get_initial_free_database_grant_status, get_node_publication, glob_nodes,
+    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
+    incoming_links, last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     mark_initial_free_database_grant_used_for_test, market_create_listing, market_get_listing,
@@ -2631,6 +2631,19 @@ fn check_database_write_cycles_requires_authenticated_writer() {
 
     let _caller = AuthenticatedCallerGuard::install_principal(owner);
     check_database_write_cycles(database_id).expect("owner should pass write cycles check");
+}
+
+#[test]
+fn get_node_publication_rejects_anonymous_at_entrypoint() {
+    install_test_service();
+
+    let error = get_node_publication(PublishNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Knowledge/public.md".to_string(),
+    })
+    .expect_err("anonymous caller should fail before publication lookup");
+
+    assert!(error.contains("anonymous caller not allowed"));
 }
 
 #[test]

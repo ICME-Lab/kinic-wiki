@@ -1,65 +1,7 @@
-import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
-import { Principal } from "@icp-sdk/core/principal";
-import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
-import { sortChildNodes } from "@/lib/child-sort";
-import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import type { SearchPreviewMode } from "@/lib/search-options";
-import { idlFactory } from "@/lib/vfs-idl";
+import { type RawSearchHit } from "@/lib/search-normalizer";
 import type {
-  CanisterHealth,
-  CyclesBillingConfig,
-  ChildNode,
-  DatabaseCycleEntry,
-  DatabaseCycleEntryPage,
-  DatabaseCyclesPendingPurchase,
-  DatabaseMetadata,
-  DeleteDatabaseRequest,
-  DeleteNodeRequest,
-  DeleteNodeResult,
-  DatabaseMember,
-  DatabaseRole,
-  DatabaseStatus,
-  DatabaseSummary,
-  InitialFreeDatabaseGrantStatus,
-  IndexSqlJsonQueryResult,
-  LinkEdge,
-  MarketCreateListingRequest,
-  MarketEntitlementPage,
-  MarketListing,
-  MarketListingDetail,
-  MarketListingPage,
-  MarketListingStatus,
-  MarketOrder,
-  MarketOrderPage,
-  MarketPurchasePreview,
-  MarketUpdateListingRequest,
-  UpdateDatabaseMetadataRequest,
-  MkdirNodeRequest,
-  MkdirNodeResult,
-  MoveNodeRequest,
-  MoveNodeResult,
-  NodeContext,
-  NodeEntryKind,
-  NodeKind,
-  QueryContext,
-  QueryAnswerSessionCheckRequest,
-  QueryAnswerSessionCheckResult,
-  QueryAnswerSessionRequest,
-  RecentNode,
-  SearchNodeHit,
-  SourceEvidence,
-  SourceRunSessionCheckRequest,
-  SourceCaptureTriggerSessionCheckRequest,
-  SourceCaptureTriggerSessionRequest,
-  WikiMetrics,
-  WikiMetricsPoint,
-  WikiNode,
-  WriteNodeRequest,
-  WriteNodeResult,
-  WriteSourceForGenerationRequest,
-  WriteSourceForGenerationResult
+  DatabaseStatus
 } from "@/lib/types";
-import { ApiError } from "@/lib/wiki-helpers";
 
 export type Variant = Record<string, null>;
 
@@ -71,6 +13,19 @@ export type RawNode = {
   updated_at: bigint;
   etag: string;
   metadata_json: string;
+};
+
+export type RawNodePublication = {
+  public_id: string;
+  database_id: string;
+  path: string;
+  published_at_ms: bigint;
+};
+
+export type RawPublicNode = {
+  content: string;
+  updated_at: bigint;
+  published_at_ms: bigint;
 };
 
 export type RawCanisterHealth = {
@@ -360,6 +315,7 @@ export type RawChild = {
   size_bytes: [] | [bigint];
   is_virtual: boolean;
   has_children: boolean;
+  is_published: boolean;
 };
 
 export type RawRecent = {
@@ -519,6 +475,7 @@ export type VfsActor = {
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
   get_initial_free_database_grant_status: () => Promise<{ Ok: RawInitialFreeDatabaseGrantStatus } | { Err: string }>;
+  get_node_publication: (request: { database_id: string; path: string }) => Promise<{ Ok: [] | [RawNodePublication] } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
@@ -543,6 +500,9 @@ export type VfsActor = {
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
   update_database_metadata: (request: RawUpdateDatabaseMetadataRequest) => Promise<{ Ok: RawDatabaseMetadata } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
+  read_public_node: (publicId: string) => Promise<{ Ok: [] | [RawPublicNode] } | { Err: string }>;
+  publish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: RawNodePublication } | { Err: string }>;
+  unpublish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: null } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;

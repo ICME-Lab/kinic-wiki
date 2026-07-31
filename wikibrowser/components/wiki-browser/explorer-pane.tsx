@@ -1,47 +1,20 @@
 "use client";
 
-import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import Image from "next/image";
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Settings, Share2, Trash2, Wallet, X } from "lucide-react";
-import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
+import type { FormEvent, ReactNode } from "react";
+import { Check, FilePlus, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
 import { ExplorerTree } from "@/components/explorer-tree";
-import { HelpPanel } from "@/components/help-panel";
-import { Inspector } from "@/components/inspector";
 import { SourceCapturePanel } from "@/components/source-capture-panel";
 import { QueryPanel } from "@/components/query-panel";
-import { PanelHeader } from "@/components/panel";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
-import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForCanonicalDatabaseRoute, hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath, parseWikiRoute } from "@/lib/paths";
-import { nodeRequestKey } from "@/lib/request-keys";
-import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
-import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
-import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
-import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
-import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
+import { parentPath } from "@/lib/paths";
+import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
+import { isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
 import {
-  errorHint,
-  errorMessage,
-  inferNoteRole,
-  isDatabaseNotFoundErrorCode,
-  isNotFoundError,
-  loadingState,
-  parseModeTab,
-  readIdentityMode as resolveReadIdentityMode,
-  ApiError,
   STORE_ROOT_PATHS,
   type ModeTab,
-  type PathLoadState,
-  type ViewMode
+  type PathLoadState
 } from "@/lib/wiki-helpers";
 
 
@@ -263,7 +236,6 @@ export function ExplorerCreateForm({
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           aria-label={label}
-          autoFocus
         />
         <button
           type="submit"
@@ -477,7 +449,8 @@ export function explorerNodeFromSelection(
       etag: node.data.etag,
       sizeBytes: null,
       isVirtual: false,
-      hasChildren: node.data.kind === "folder" && Boolean(children.data && visibleChildren(children.data, node.data.path).length)
+      hasChildren: node.data.kind === "folder" && Boolean(children.data && visibleChildren(children.data, node.data.path).length),
+      isPublished: false
     };
   }
   if (children.data) {
@@ -489,7 +462,8 @@ export function explorerNodeFromSelection(
       etag: null,
       sizeBytes: null,
       isVirtual: true,
-      hasChildren: true
+      hasChildren: true,
+      isPublished: false
     };
   }
   return null;

@@ -4,6 +4,7 @@
 
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import { isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
@@ -31,7 +32,14 @@ type VfsActor = {
   write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
 };
 
+const DEFAULT_WIKI_IC_HOST = "https://icp0.io";
 const actorCache = new Map<string, Promise<VfsActor>>();
+
+function wikiIcHost(): string {
+  const viteHost = import.meta.env?.VITE_WIKI_IC_HOST;
+  if (viteHost) return viteHost;
+  return typeof process !== "undefined" ? process.env.VITE_WIKI_IC_HOST ?? DEFAULT_WIKI_IC_HOST : DEFAULT_WIKI_IC_HOST;
+}
 
 export function validateCanisterId(canisterId: string): Principal | string {
   try {
@@ -120,7 +128,7 @@ export async function mkdirNodeAuthenticated(canisterId: string, identity: Ident
 
 async function createVfsActor(canisterId: string): Promise<VfsActor> {
   const principal = principalOrThrow(canisterId);
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const cacheKey = `${host}\n${canisterId}`;
   const cached = actorCache.get(cacheKey);
   if (cached) return cached;
@@ -131,9 +139,9 @@ async function createVfsActor(canisterId: string): Promise<VfsActor> {
 
 async function createAuthenticatedActor(canisterId: string, identity: Identity): Promise<VfsActor> {
   const principal = principalOrThrow(canisterId);
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const agent = HttpAgent.createSync({ host, identity });
-  if (isLocalHost(host)) await agent.fetchRootKey();
+  if (isLocalReplicaHost(host)) await agent.fetchRootKey();
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), { agent, canisterId: principal });
 }
 
@@ -143,7 +151,7 @@ async function createReadActor(canisterId: string, identity?: Identity): Promise
 
 async function createActor(principal: Principal, host: string): Promise<VfsActor> {
   const agent = HttpAgent.createSync({ host });
-  if (isLocalHost(host)) await agent.fetchRootKey();
+  if (isLocalReplicaHost(host)) await agent.fetchRootKey();
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), { agent, canisterId: principal });
 }
 
@@ -152,7 +160,7 @@ async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
     return await operation();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+    const host = wikiIcHost();
     const publicError = classifyApiError(error, host);
     throw new ApiError(publicError.error, 502, publicError.hint, publicError.code);
   }
@@ -246,8 +254,4 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
 
 function nodeKindVariant(kind: NodeKind): Variant {
   return kind === "folder" ? { Folder: null } : kind === "source" ? { Source: null } : { File: null };
-}
-
-function isLocalHost(host: string): boolean {
-  return host.includes("127.0.0.1") || host.includes("localhost");
 }

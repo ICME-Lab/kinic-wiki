@@ -45,33 +45,55 @@ function localHttpUrl(value: string): URL | null {
 }
 
 function localIiE2eEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_ENABLE_LOCAL_II_E2E === "1";
+  return publicEnv("VITE_ENABLE_LOCAL_II_E2E") === "1";
 }
 
 export function identityProviderUrl(): string {
-  if (localIiE2eEnabled() && process.env.NEXT_PUBLIC_II_PROVIDER_URL) {
-    return process.env.NEXT_PUBLIC_II_PROVIDER_URL;
+  const providerUrl = publicEnv("VITE_II_PROVIDER_URL");
+  if (localIiE2eEnabled() && providerUrl) {
+    return providerUrl;
   }
   return MAINNET_II_PROVIDER_URL;
 }
 
 export function derivationOriginUrl(locationLike: LocationLike | null = currentLocation()): string {
+  const configuredOrigin = configuredDerivationOrigin();
   if (!localIiE2eEnabled()) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   if (!locationLike || !isLocalHostname(locationLike.hostname)) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = publicEnv("VITE_KINIC_WIKI_CANISTER_ID") ?? "";
   if (!CANISTER_ID_PATTERN.test(canisterId)) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
-  const wikiHost = process.env.NEXT_PUBLIC_WIKI_IC_HOST || DEFAULT_LOCAL_WIKI_IC_HOST;
+  const wikiHost = publicEnv("VITE_WIKI_IC_HOST") || DEFAULT_LOCAL_WIKI_IC_HOST;
   const wikiUrl = localHttpUrl(wikiHost);
   if (!wikiUrl) {
-    return DERIVATION_ORIGIN;
+    return configuredOrigin;
   }
   return `http://${canisterId}.localhost:${wikiUrl.port || "80"}`;
+}
+
+function configuredDerivationOrigin(): string {
+  const value = publicEnv("VITE_II_DERIVATION_ORIGIN");
+  if (!value) return DERIVATION_ORIGIN;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:" && !url.username && !url.password && url.origin === value) {
+      return value;
+    }
+  } catch {
+    // Invalid build configuration falls back to the production derivation origin.
+  }
+  return DERIVATION_ORIGIN;
+}
+
+function publicEnv(name: keyof ImportMetaEnv): string | undefined {
+  const viteValue = import.meta.env?.[name];
+  if (viteValue !== undefined) return viteValue;
+  return typeof process !== "undefined" ? process.env[name] : undefined;
 }
 
 export function authLoginOptions() {

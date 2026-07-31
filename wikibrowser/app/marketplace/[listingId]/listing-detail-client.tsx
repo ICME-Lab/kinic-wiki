@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { CheckCircle, Database, FileText, GitBranch, ShoppingCart, Tag, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -359,7 +359,8 @@ function RelationshipGraph({ links }: { links: LinkEdge[] }) {
       </div>
       {truncated ? <p className="text-sm text-muted">Showing first {GRAPH_LIMIT} links only.</p> : null}
       {graph.nodes.length ? (
-        <svg className="h-80 w-full rounded border border-line bg-paper" viewBox="0 0 600 340" role="img" aria-label="Marketplace relationship graph">
+        <svg className="h-80 w-full rounded border border-line bg-paper" viewBox="0 0 600 340">
+          <title>Marketplace relationship graph</title>
           {visibleLinks.map((edge) => {
             const source = graph.byPath.get(edge.sourcePath);
             const target = graph.byPath.get(edge.targetPath);

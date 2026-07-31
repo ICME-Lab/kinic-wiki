@@ -1,13 +1,13 @@
 // Where: wikibrowser/scripts/generate-link-preview-images.mjs
 // What: Generates static top-level and DB-specific link preview PNGs outside the Worker bundle.
-// Why: next/og pulls WASM assets into Workers when imported by app routes, which exceeds the Free plan size limit.
+// Why: image generation stays outside the Worker bundle to keep the deployed Worker small.
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import React from "react";
-import { ImageResponse } from "next/og.js";
+import { ImageResponse } from "@vercel/og";
 
 export const LINK_PREVIEW_SIZE = {
   width: 1200,

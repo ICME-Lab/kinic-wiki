@@ -2,6 +2,7 @@
 // What: Local Hermes setup, status, pending replay, and projection sync.
 // Why: Hermes owns local projection while Kinic owns registry state.
 use crate::cli::HermesCommand;
+use crate::local_fs::{backup_existing_file, required_home_dir};
 use crate::plugin_payload::{HERMES_PLUGIN_FILES, RUNTIME_FILES, replace_dir_with_payload};
 use crate::skill_registry::{SkillRunEvidenceInput, export_skill, record_skill_run_evidence};
 use anyhow::{Context, Result, anyhow};
@@ -13,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, NodeEntryKind};
+use wiki_domain::{decode_frontmatter_scalar, extract_frontmatter_block};
 
 const PRIVATE_SKILL_ROOT: &str = "/Skills";
 #[derive(Debug, Clone)]
@@ -422,48 +424,10 @@ fn enable_hermes_plugin(config_path: &Path) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    backup_existing_file(config_path)?;
+    backup_existing_file(config_path, "config.yaml", "Hermes config before rewrite")?;
     fs::write(config_path, serde_yaml::to_string(&config)?)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
     Ok(())
-}
-
-fn backup_existing_file(path: &Path) -> Result<()> {
-    if !path.is_file() {
-        return Ok(());
-    }
-    let backup = unique_config_backup_path(path);
-    fs::copy(path, &backup).with_context(|| {
-        format!(
-            "failed to backup {} to {}",
-            path.display(),
-            backup.display()
-        )
-    })?;
-    eprintln!(
-        "warning: backed up Hermes config before rewrite: {}",
-        backup.display()
-    );
-    Ok(())
-}
-
-fn unique_config_backup_path(path: &Path) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("config.yaml");
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|value| value.as_millis())
-        .unwrap_or(0);
-    let mut candidate = parent.join(format!("{name}.backup.{millis}"));
-    let mut suffix = 1;
-    while candidate.exists() {
-        candidate = parent.join(format!("{name}.backup.{millis}.{suffix}"));
-        suffix += 1;
-    }
-    candidate
 }
 
 fn write_setup_config(paths: &HermesPaths, database_id: &str) -> Result<()> {
@@ -520,10 +484,7 @@ fn env_path(name: &str) -> Result<Option<PathBuf>> {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("HOME is required for Hermes setup"))
+    required_home_dir("Hermes setup")
 }
 
 fn approved_manifest(content: &str) -> Result<bool> {
@@ -544,12 +505,8 @@ fn skill_id_from_manifest_path(root: &str, path: &str) -> Option<String> {
 }
 
 fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let rest = &content[4..];
-    let end = frontmatter_end(rest)? + 4;
-    for line in content[4..end].lines() {
+    let frontmatter = extract_frontmatter_block(content)?;
+    for line in frontmatter.lines() {
         if line.starts_with(' ') || !line.contains(':') {
             continue;
         }
@@ -561,22 +518,12 @@ fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
     None
 }
 
-fn frontmatter_end(rest: &str) -> Option<usize> {
-    rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })
-}
-
 fn clean_yaml_value(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.starts_with('"') && trimmed.ends_with('"') {
-        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
-    }
-    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-        return trimmed[1..trimmed.len() - 1].replace("''", "'");
-    }
-    trimmed.to_string()
+    decode_frontmatter_scalar(trimmed)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn pending_json_files(pending_dir: &Path) -> Result<Vec<PathBuf>> {

@@ -39,6 +39,12 @@ struct MockClient {
     write_cycle_check_error: Mutex<Option<String>>,
     writes: Mutex<Vec<WriteNodeRequest>>,
     write_batches: Mutex<Vec<WriteNodesRequest>>,
+    published_nodes: Mutex<Vec<PublishNodeRequest>>,
+    publication_queries: Mutex<Vec<PublishNodeRequest>>,
+    unpublished_nodes: Mutex<Vec<PublishNodeRequest>>,
+    public_node_reads: Mutex<Vec<String>>,
+    node_publication: Mutex<Option<NodePublication>>,
+    public_node: Mutex<Option<PublicNode>>,
     deletes: Mutex<Vec<DeleteNodeRequest>>,
     node_lists: Mutex<Vec<ListNodesRequest>>,
     child_lists: Mutex<Vec<ListChildrenRequest>>,
@@ -243,6 +249,33 @@ impl VfsApi for MockClient {
     async fn read_node(&self, _database_id: &str, path: &str) -> Result<Option<Node>> {
         Ok(self.nodes.iter().find(|node| node.path == path).cloned())
     }
+    async fn publish_node(&self, request: PublishNodeRequest) -> Result<NodePublication> {
+        self.published_nodes.lock().unwrap().push(request.clone());
+        Ok(NodePublication {
+            public_id: "0123456789abcdef0123456789abcdef".to_string(),
+            database_id: request.database_id,
+            path: request.path,
+            published_at_ms: 10,
+        })
+    }
+    async fn get_node_publication(
+        &self,
+        request: PublishNodeRequest,
+    ) -> Result<Option<NodePublication>> {
+        self.publication_queries.lock().unwrap().push(request);
+        Ok(self.node_publication.lock().unwrap().clone())
+    }
+    async fn unpublish_node(&self, request: PublishNodeRequest) -> Result<()> {
+        self.unpublished_nodes.lock().unwrap().push(request);
+        Ok(())
+    }
+    async fn read_public_node(&self, public_id: &str) -> Result<Option<PublicNode>> {
+        self.public_node_reads
+            .lock()
+            .unwrap()
+            .push(public_id.to_string());
+        Ok(self.public_node.lock().unwrap().clone())
+    }
     async fn query_database_sql_json(
         &self,
         database_id: &str,
@@ -343,6 +376,7 @@ impl VfsApi for MockClient {
             size_bytes: Some(5),
             is_virtual: false,
             has_children: false,
+            is_published: false,
         }])
     }
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
@@ -611,6 +645,18 @@ fn cycles_gate_covers_content_mutation_commands_only() {
         }
     ));
     assert!(!command_requires_write_cycles_available(
+        &VfsCommand::PublishNode {
+            path: "/Knowledge/a.md".to_string(),
+            json: false,
+        }
+    ));
+    assert!(!command_requires_write_cycles_available(
+        &VfsCommand::UnpublishNode {
+            path: "/Knowledge/a.md".to_string(),
+            json: false,
+        }
+    ));
+    assert!(!command_requires_write_cycles_available(
         &VfsCommand::Database {
             command: super::DatabaseCommand::PurchaseCycles {
                 database_id: "alpha".to_string(),
@@ -618,6 +664,140 @@ fn cycles_gate_covers_content_mutation_commands_only() {
             },
         }
     ));
+}
+
+#[tokio::test]
+async fn node_publication_commands_dispatch_without_cycles_preflight() {
+    let publication = NodePublication {
+        public_id: "0123456789abcdef0123456789abcdef".to_string(),
+        database_id: "alpha".to_string(),
+        path: "/Knowledge/a.md".to_string(),
+        published_at_ms: 10,
+    };
+    let client = MockClient {
+        node_publication: Mutex::new(Some(publication)),
+        ..MockClient::default()
+    };
+
+    for json in [false, true] {
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::PublishNode {
+                path: "/Knowledge/a.md".to_string(),
+                json,
+            },
+        )
+        .await
+        .expect("publish-node should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::GetNodePublication {
+                path: "/Knowledge/a.md".to_string(),
+                json,
+            },
+        )
+        .await
+        .expect("get-node-publication should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::UnpublishNode {
+                path: "/Knowledge/a.md".to_string(),
+                json,
+            },
+        )
+        .await
+        .expect("unpublish-node should succeed");
+    }
+
+    for requests in [
+        &client.published_nodes,
+        &client.publication_queries,
+        &client.unpublished_nodes,
+    ] {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].database_id, "alpha");
+        assert_eq!(requests[0].path, "/Knowledge/a.md");
+    }
+    assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn get_node_publication_reports_unpublished_as_success() {
+    let client = MockClient::default();
+
+    for json in [false, true] {
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::GetNodePublication {
+                path: "/Knowledge/unpublished.md".to_string(),
+                json,
+            },
+        )
+        .await
+        .expect("an unpublished node should be a successful empty result");
+    }
+}
+
+#[tokio::test]
+async fn read_public_node_does_not_require_database_selection() {
+    let client = MockClient {
+        public_node: Mutex::new(Some(PublicNode {
+            content: "# Published".to_string(),
+            updated_at: 20,
+            published_at_ms: 10,
+        })),
+        ..MockClient::default()
+    };
+    let mut connection = test_connection();
+    connection.database_id = None;
+    connection.database_id_source = None;
+
+    for json in [false, true] {
+        run_vfs_command(
+            &client,
+            &connection,
+            VfsCommand::ReadPublicNode {
+                public_id: "0123456789abcdef0123456789abcdef".to_string(),
+                json,
+            },
+        )
+        .await
+        .expect("read-public-node should not require a database");
+    }
+
+    assert_eq!(
+        *client.public_node_reads.lock().unwrap(),
+        vec![
+            "0123456789abcdef0123456789abcdef".to_string(),
+            "0123456789abcdef0123456789abcdef".to_string()
+        ]
+    );
+}
+
+#[tokio::test]
+async fn read_public_node_errors_when_public_id_is_missing() {
+    let client = MockClient::default();
+    let error = run_vfs_command(
+        &client,
+        &test_connection(),
+        VfsCommand::ReadPublicNode {
+            public_id: "ffffffffffffffffffffffffffffffff".to_string(),
+            json: false,
+        },
+    )
+    .await
+    .expect_err("missing public id should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("public node not found: ffffffffffffffffffffffffffffffff")
+    );
 }
 
 #[tokio::test]

@@ -133,10 +133,10 @@ Database metadata input example:
 
 ```json
 {
-  "name": "KINIC-WIKI",
-  "description": "Public Kinic Wiki knowledge for operations, structure, clipper usage, and agent workflows.",
-  "llm_summary": "Covers Kinic Wiki operations, VFS structure, wiki browser behavior, clipper usage, agent query/ingest/lint workflows, compatibility decisions, and repo documentation. Useful FTS queries include \"clipper usage\", \"wiki structure\", \"operation skills\", \"agent docs\", and \"database lifecycle\". Does not cover private user memory or non-public DB content.",
-  "tags_json": "[\"kinic-wiki\",\"wiki\",\"vfs\",\"clipper\",\"agent\",\"operations\",\"ingest\",\"query\",\"lint\",\"architecture\"]"
+  "name": "Project Knowledge",
+  "description": "Public project documentation and operational knowledge.",
+  "llm_summary": "Covers project architecture, operations, decisions, and source-backed implementation guidance.",
+  "tags_json": "[\"project\",\"documentation\",\"operations\",\"architecture\"]"
 }
 ```
 
@@ -145,6 +145,38 @@ kinic-vfs-cli database metadata "$DB_ID" --input metadata.json --json
 ```
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
+
+## Public Node Sharing
+
+Publishing exposes one Markdown file through an opaque public ID without making the rest of its database anonymously readable. Publication management uses the selected `icp identity`; `publish-node` and `unpublish-node` require the database owner, while `get-node-publication` is available to database members with read access.
+
+```bash
+PUBLIC_ID="$(kinic-vfs-cli --database-id <database-id> \
+  publish-node --path /Knowledge/share.md)"
+
+kinic-vfs-cli --database-id <database-id> \
+  get-node-publication --path /Knowledge/share.md --json
+
+printf 'https://wiki.kinic.xyz/p/%s\n' "$PUBLIC_ID"
+```
+
+Without `--json`, `publish-node` and `get-node-publication` print the public ID. An unpublished node prints `unpublished`; with `--json`, the same state is `null`. Re-publishing an already published node returns its existing publication record.
+
+`read-public-node` takes only the public ID, does not require `--database-id`, and uses anonymous access in the default `auto` identity mode:
+
+```bash
+kinic-vfs-cli read-public-node --public-id "$PUBLIC_ID"
+kinic-vfs-cli read-public-node --public-id "$PUBLIC_ID" --json
+```
+
+Remove public access with:
+
+```bash
+kinic-vfs-cli --database-id <database-id> \
+  unpublish-node --path /Knowledge/share.md
+```
+
+The text output is the unpublished path; `--json` prints `null`, matching the canister's unit response. Publication updates are not content writes and do not run the database cycles preflight. Local and staging deployments should combine the returned public ID with their own browser origin instead of the production URL above.
 
 ## Marketplace Entitlements
 

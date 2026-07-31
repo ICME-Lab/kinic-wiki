@@ -10,6 +10,7 @@ struct PendingSharedURL: Identifiable, Equatable, Sendable {
     let receivedAt: Date
     let requestId: String
     let databaseId: String?
+    let outputLanguage: WikiOutputLanguage
     let captureMetadata: ShareCaptureMetadata?
 
     init(
@@ -18,6 +19,7 @@ struct PendingSharedURL: Identifiable, Equatable, Sendable {
         receivedAt: Date,
         requestId: String,
         databaseId: String? = nil,
+        outputLanguage: WikiOutputLanguage = .english,
         captureMetadata: ShareCaptureMetadata? = nil
     ) {
         self.id = id
@@ -25,6 +27,7 @@ struct PendingSharedURL: Identifiable, Equatable, Sendable {
         self.receivedAt = receivedAt
         self.requestId = requestId
         self.databaseId = databaseId
+        self.outputLanguage = outputLanguage
         self.captureMetadata = captureMetadata
     }
 }

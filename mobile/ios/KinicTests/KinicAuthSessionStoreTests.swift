@@ -20,7 +20,8 @@ struct KinicAuthSessionStoreTests {
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
             keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-            iapProductIds: []
+            iapProductIds: [],
+            askAIURL: URL(string: "https://api.kinic.io/chat")!
         )
 
         let store = KinicAuthSessionStore(configuration: configuration, service: "test.service")

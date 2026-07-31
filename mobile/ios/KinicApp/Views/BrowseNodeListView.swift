@@ -7,6 +7,7 @@ import SwiftUI
 struct BrowseNodeListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isSearchPresented = false
+    @AppStorage("browseNodeSortOrder") private var sortOrder = BrowseNodeSortOrder.name
     @Bindable var model: AppModel
     let folderPath: String
     @Binding var selectedDocumentPath: String?
@@ -38,6 +39,15 @@ struct BrowseNodeListView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu("Sort", systemImage: "arrow.up.arrow.down") {
+                    Picker("Sort by", selection: $sortOrder) {
+                        ForEach(BrowseNodeSortOrder.allCases) { order in
+                            Label(order.title, systemImage: order.systemImage)
+                                .tag(order)
+                        }
+                    }
+                }
+
                 Button("Search", systemImage: "magnifyingglass", action: showSearch)
                     .disabled(!model.canBrowse)
 
@@ -72,9 +82,10 @@ struct BrowseNodeListView: View {
     }
 
     private var visibleChildNodes: [ChildNode] {
-        model.childNodes.filter { child in
+        let visibleNodes = model.childNodes.filter { child in
             child.kind != .folder || child.hasChildren
         }
+        return sortOrder.sorted(visibleNodes)
     }
 
     private var isSearching: Bool {

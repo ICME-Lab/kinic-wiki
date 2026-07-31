@@ -6,6 +6,7 @@ export const LINK_PREVIEW_IMAGE_CACHE_CONTROL = "public, max-age=300, s-maxage=8
 export const LINK_PREVIEW_IMAGE_CONTENT_TYPE = "image/png";
 const LINK_PREVIEW_PENDING_TTL_MS = 10 * 60 * 1000;
 const LINK_PREVIEW_PENDING_CACHE_CONTROL = "no-store";
+const LINK_PREVIEW_FALLBACK_CACHE_CONTROL = "no-store";
 
 export type LinkPreviewImageObject = {
   body: ReadableStream<Uint8Array> | null;
@@ -41,30 +42,11 @@ export type LinkPreviewQueue = {
   send: (message: LinkPreviewQueueMessage) => Promise<unknown>;
 };
 
-type LinkPreviewRuntime = {
-  bucket: LinkPreviewImageBucket | null;
-  queue: LinkPreviewQueue | null;
-  canisterId: string;
-};
-
 export type LinkPreviewReadOptions = {
   queue?: LinkPreviewQueue | null;
   canisterId?: string;
   nowMs?: number;
 };
-
-type CloudflareContextModule = {
-  getCloudflareContext: (options: { async: true }) => Promise<{ env: CloudflareEnv }>;
-};
-
-declare global {
-  interface CloudflareEnv {
-    LINK_PREVIEW_IMAGES?: LinkPreviewImageBucket;
-    LINK_PREVIEW_QUEUE?: LinkPreviewQueue;
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID?: string;
-    KINIC_WIKI_CANISTER_ID?: string;
-  }
-}
 
 export function databaseLinkPreviewImageKey(databaseId: string): string {
   return `db-link-preview/v1/${encodeURIComponent(databaseId.trim())}.png`;
@@ -74,24 +56,6 @@ export function pendingDatabaseLinkPreviewImageKey(databaseId: string): string {
   return `db-link-preview/pending/v1/${encodeURIComponent(databaseId.trim())}.json`;
 }
 
-export async function linkPreviewImageBucket(): Promise<LinkPreviewImageBucket | null> {
-  return (await linkPreviewRuntime())?.bucket ?? null;
-}
-
-async function linkPreviewRuntime(): Promise<LinkPreviewRuntime | null> {
-  try {
-    const cloudflare: CloudflareContextModule = await import("@opennextjs/cloudflare");
-    const context = await cloudflare.getCloudflareContext({ async: true });
-    return {
-      bucket: context.env.LINK_PREVIEW_IMAGES ?? null,
-      queue: context.env.LINK_PREVIEW_QUEUE ?? null,
-      canisterId: context.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? context.env.KINIC_WIKI_CANISTER_ID ?? ""
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function readCachedDatabaseLinkPreviewImage(
   request: Request,
   databaseId: string,
@@ -99,17 +63,16 @@ export async function readCachedDatabaseLinkPreviewImage(
   bucket?: LinkPreviewImageBucket | null,
   options: LinkPreviewReadOptions = {}
 ): Promise<Response> {
-  const runtime = bucket === undefined ? await linkPreviewRuntime() : null;
-  const store = bucket === undefined ? (runtime?.bucket ?? null) : bucket;
-  if (!store) return staticImageRedirect(request, fallbackPath);
+  const store = bucket ?? null;
+  if (!store) return temporaryStaticImageRedirect(request, fallbackPath);
   const object = await store.get(databaseLinkPreviewImageKey(databaseId));
   if (!object?.body) {
     await bestEffortEnqueueDatabaseLinkPreview(store, databaseId, {
-      queue: options.queue ?? runtime?.queue ?? null,
-      canisterId: options.canisterId ?? runtime?.canisterId ?? "",
+      queue: options.queue ?? null,
+      canisterId: options.canisterId ?? "",
       nowMs: options.nowMs
     });
-    return staticImageRedirect(request, fallbackPath);
+    return temporaryStaticImageRedirect(request, fallbackPath);
   }
   const headers = new Headers();
   object.writeHttpMetadata?.(headers);
@@ -168,6 +131,15 @@ function isQueueableDatabaseId(databaseId: string): boolean {
   return databaseId.length > 0 && databaseId.length <= 128;
 }
 
-function staticImageRedirect(request: Request, fallbackPath: "/opengraph-image.png" | "/twitter-image.png"): Response {
-  return Response.redirect(new URL(fallbackPath, request.url), 308);
+function temporaryStaticImageRedirect(
+  request: Request,
+  fallbackPath: "/opengraph-image.png" | "/twitter-image.png"
+): Response {
+  return new Response(null, {
+    status: 307,
+    headers: {
+      Location: new URL(fallbackPath, request.url).toString(),
+      "Cache-Control": LINK_PREVIEW_FALLBACK_CACHE_CONTROL
+    }
+  });
 }

@@ -2,8 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { WikiNavigationLink, useWikiNavigation } from "@/components/wiki-navigation";
 import { displayPathForFolderIndex } from "@/lib/folder-index";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { searchRequestKey } from "@/lib/request-keys";
@@ -44,7 +43,7 @@ export function SearchPanel({
   eyebrow?: string;
   title?: string;
 }) {
-  const router = useRouter();
+  const { navigate } = useWikiNavigation();
   const latestRequest = useRef(0);
   const lastRequestedKey = useRef<string | null>(null);
   const urlQuery = query.trim();
@@ -102,15 +101,16 @@ export function SearchPanel({
     const scope = next.scope ?? searchOptions.scope;
     const prefix = next.prefix ?? (scope === searchOptions.scope ? searchOptions.prefix : prefixForSearchScope(scope, null));
     const normalizedPrefix = scope === "custom" ? normalizeSearchPrefix(prefix) ?? DEFAULT_SEARCH_OPTIONS.prefix : prefixForSearchScope(scope, null);
-    router.replace(
+    navigate(
       hrefForSearch(canisterId, databaseId, urlQuery, initialKind, {
         scope,
         prefix: normalizedPrefix,
         limit: next.limit ?? searchOptions.limit,
         preview: next.preview ?? searchOptions.preview
-      })
+      }),
+      { replace: true }
     );
-  }, [canisterId, databaseId, initialKind, router, searchOptions.limit, searchOptions.prefix, searchOptions.preview, searchOptions.scope, urlQuery]);
+  }, [canisterId, databaseId, initialKind, navigate, searchOptions.limit, searchOptions.prefix, searchOptions.preview, searchOptions.scope, urlQuery]);
 
   useEffect(() => {
     if (!urlQuery) {
@@ -151,14 +151,14 @@ export function SearchPanel({
             const excerpt = resultExcerpt(hit);
             const displayPath = displayPathForFolderIndex(hit.path);
             return (
-              <Link
+              <WikiNavigationLink
                 key={`${hit.path}-${hit.score}`}
                 href={hrefForPath(canisterId, databaseId, displayPath)}
                 className="block rounded-xl border border-line bg-white p-3 text-sm no-underline hover:border-accent"
               >
                 <div className="truncate font-mono text-xs text-accent">{displayPath}</div>
                 {excerpt ? <p className="mt-2 text-xs text-ink">{excerpt}</p> : null}
-              </Link>
+              </WikiNavigationLink>
             );
           })}
         </div>
