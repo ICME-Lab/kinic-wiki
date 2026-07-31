@@ -23,7 +23,7 @@ pub fn resolve_client_identity_mode(
         IdentityModeArg::Anonymous => {
             if command.requires_identity() {
                 bail!(
-                    "`--identity-mode anonymous` cannot run mutating or owner commands; use `--identity-mode identity`"
+                    "`--identity-mode anonymous` cannot run authenticated commands; use `--identity-mode identity`"
                 );
             }
             Ok(ClientIdentityMode::Anonymous)
@@ -146,6 +146,50 @@ mod tests {
         );
         assert!(
             resolve_client_identity_mode(&command, IdentityModeArg::Anonymous, None, None).is_err()
+        );
+    }
+
+    #[test]
+    fn publication_management_requires_identity() {
+        for command in [
+            Command::PublishNode {
+                path: "/Knowledge/index.md".to_string(),
+                json: false,
+            },
+            Command::GetNodePublication {
+                path: "/Knowledge/index.md".to_string(),
+                json: false,
+            },
+            Command::UnpublishNode {
+                path: "/Knowledge/index.md".to_string(),
+                json: false,
+            },
+        ] {
+            assert_eq!(
+                resolve_client_identity_mode(&command, IdentityModeArg::Auto, None, None).unwrap(),
+                ClientIdentityMode::Identity
+            );
+            let error =
+                resolve_client_identity_mode(&command, IdentityModeArg::Anonymous, None, None)
+                    .expect_err("publication management should reject anonymous mode");
+            assert!(
+                error
+                    .to_string()
+                    .contains("cannot run authenticated commands")
+            );
+        }
+    }
+
+    #[test]
+    fn public_id_read_uses_anonymous_without_database_probe() {
+        let command = Command::ReadPublicNode {
+            public_id: "0123456789abcdef0123456789abcdef".to_string(),
+            json: false,
+        };
+
+        assert_eq!(
+            resolve_client_identity_mode(&command, IdentityModeArg::Auto, None, None).unwrap(),
+            ClientIdentityMode::Anonymous
         );
     }
 

@@ -27,9 +27,9 @@ use vfs_types::{
     IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
     ListChildrenRequest, ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidenceRequest, UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest, kinic_base_units_per_token,
+    OutgoingLinksRequest, PublishNodeRequest, QueryContextRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidenceRequest, UpdateDatabaseMetadataRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -54,6 +54,18 @@ pub async fn run_vfs_command(
             run_market_command(client, command).await?;
             return Ok(());
         }
+        VfsCommand::ReadPublicNode { public_id, json } => {
+            let node = client
+                .read_public_node(&public_id)
+                .await?
+                .ok_or_else(|| anyhow!("public node not found: {public_id}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&node)?);
+            } else {
+                println!("{}", node.content);
+            }
+            return Ok(());
+        }
         command => command,
     };
     let database_id = require_database_id(database_id)?;
@@ -69,6 +81,9 @@ pub async fn run_vfs_command(
         }
         VfsCommand::Market { .. } => {
             unreachable!("market command handled before db requirement")
+        }
+        VfsCommand::ReadPublicNode { .. } => {
+            unreachable!("public node read handled before db requirement")
         }
         VfsCommand::ReadNode {
             path,
@@ -93,6 +108,47 @@ pub async fn run_vfs_command(
                 println!("{}", serde_json::to_string_pretty(&node)?);
             } else {
                 println!("{}", node.content);
+            }
+        }
+        VfsCommand::PublishNode { path, json } => {
+            let publication = client
+                .publish_node(PublishNodeRequest {
+                    database_id: database_id.to_string(),
+                    path,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&publication)?);
+            } else {
+                println!("{}", publication.public_id);
+            }
+        }
+        VfsCommand::GetNodePublication { path, json } => {
+            let publication = client
+                .get_node_publication(PublishNodeRequest {
+                    database_id: database_id.to_string(),
+                    path,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&publication)?);
+            } else if let Some(publication) = publication {
+                println!("{}", publication.public_id);
+            } else {
+                println!("unpublished");
+            }
+        }
+        VfsCommand::UnpublishNode { path, json } => {
+            client
+                .unpublish_node(PublishNodeRequest {
+                    database_id: database_id.to_string(),
+                    path: path.clone(),
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&())?);
+            } else {
+                println!("{path}");
             }
         }
         VfsCommand::ListNodes {
