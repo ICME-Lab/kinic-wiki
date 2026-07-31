@@ -1,7 +1,10 @@
 // Where: workers/wiki-generator/src/wiki-skill.ts
 // What: Versioned core wiki-generation rules for worker pages.
 // Why: source capture should follow wiki semantics without depending on Skill Registry packages.
-export const WIKI_SKILL_VERSION = 1;
+import { outputLanguageName } from "./output-language.js";
+import type { OutputLanguage } from "./types.js";
+
+export const WIKI_SKILL_VERSION = 2;
 
 const WIKI_RULES = [
   "Treat /Sources as evidence storage and /Knowledge as the review surface.",
@@ -9,7 +12,6 @@ const WIKI_RULES = [
   "Do not paste raw page text or transcript dumps into wiki pages.",
   "Keep only claims directly supported by the source.",
   "Prefer omission over low-confidence pseudo-facts.",
-  "Write title, slug, section labels, summary, and generated prose in the source material's primary language.",
   "Section labels must be non-empty single-line strings.",
   "Preserve exact values, names, dates, money, and spelling from the source when they matter.",
   "Use the schema sections only when supported.",
@@ -18,10 +20,11 @@ const WIKI_RULES = [
   "Keep the generated page concise enough for human review."
 ];
 
-export function buildWikiDraftSystemPrompt(): string {
+export function buildWikiDraftSystemPrompt(outputLanguage: OutputLanguage = "en"): string {
   return [
     `You are using Kinic Wiki Core Skill v${WIKI_SKILL_VERSION}.`,
     "Generate one review-ready wiki page from evidence source material.",
+    `Write the title, slug, section labels, summary, and all generated prose in ${outputLanguageName(outputLanguage)}.`,
     ...WIKI_RULES.map((rule) => `- ${rule}`)
   ].join("\n");
 }

@@ -277,6 +277,34 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Publish one Markdown node and print its public id")]
+    PublishNode {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Show the publication record for one node")]
+    GetNodePublication {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Remove public access from one published node")]
+    UnpublishNode {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Read one published node by public id without a database selection")]
+    ReadPublicNode {
+        #[arg(long)]
+        public_id: String,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "List nodes under a prefix", after_help = LIST_NODES_AFTER_HELP)]
     ListNodes {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -931,6 +959,9 @@ impl Command {
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
             | Self::GenerateConversationWiki { .. }
+            | Self::PublishNode { .. }
+            | Self::GetNodePublication { .. }
+            | Self::UnpublishNode { .. }
             | Self::WriteNode { .. }
             | Self::WriteNodes { .. }
             | Self::AppendNode { .. }
@@ -942,6 +973,7 @@ impl Command {
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => true,
             Self::ReadNode { .. }
+            | Self::ReadPublicNode { .. }
             | Self::ListNodes { .. }
             | Self::ListChildren { .. }
             | Self::GlobNodes { .. }
@@ -1009,6 +1041,10 @@ impl Command {
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
             | Self::GenerateConversationWiki { .. }
+            | Self::PublishNode { .. }
+            | Self::GetNodePublication { .. }
+            | Self::UnpublishNode { .. }
+            | Self::ReadPublicNode { .. }
             | Self::WriteNode { .. }
             | Self::WriteNodes { .. }
             | Self::AppendNode { .. }
@@ -1054,6 +1090,22 @@ impl Command {
                 path: path.clone(),
                 metadata_only: *metadata_only,
                 fields: fields.clone(),
+                json: *json,
+            }),
+            Self::PublishNode { path, json } => Some(VfsCommand::PublishNode {
+                path: path.clone(),
+                json: *json,
+            }),
+            Self::GetNodePublication { path, json } => Some(VfsCommand::GetNodePublication {
+                path: path.clone(),
+                json: *json,
+            }),
+            Self::UnpublishNode { path, json } => Some(VfsCommand::UnpublishNode {
+                path: path.clone(),
+                json: *json,
+            }),
+            Self::ReadPublicNode { public_id, json } => Some(VfsCommand::ReadPublicNode {
+                public_id: public_id.clone(),
                 json: *json,
             }),
             Self::ListNodes {

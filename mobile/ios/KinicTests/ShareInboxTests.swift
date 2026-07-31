@@ -25,6 +25,22 @@ struct ShareInboxTests {
         #expect(pendingURLs.first?.url.absoluteString == "https://example.com/page")
         #expect(pendingURLs.first?.receivedAt == receivedAt)
         #expect(pendingURLs.first?.requestId == "1700000000000-00000000-0000-4000-8000-000000000000")
+        #expect(pendingURLs.first?.outputLanguage == .english)
+    }
+
+    @Test
+    func enqueuesAndLoadsOutputLanguage() throws {
+        let queueDirectory = makeQueueDirectory()
+        defer { removeQueueDirectory(queueDirectory) }
+
+        let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+        try inbox.enqueue(
+            URL(string: "https://example.com/page")!,
+            requestId: "1700000000000-00000000-0000-4000-8000-000000000000",
+            outputLanguage: .portuguese
+        )
+
+        #expect(try #require(inbox.loadPendingURLs().first).outputLanguage == .portuguese)
     }
 
     @Test
@@ -86,6 +102,7 @@ struct ShareInboxTests {
             requestedBy: "aaaaa-aa",
             now: receivedAt,
             uuid: uuid,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
         let pendingURL = PendingSharedURL(
@@ -93,6 +110,7 @@ struct ShareInboxTests {
             url: url,
             receivedAt: receivedAt,
             requestId: initialRequest.requestId,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
 
@@ -107,11 +125,13 @@ struct ShareInboxTests {
             requestedBy: "aaaaa-aa",
             requestId: initialRequest.requestId,
             now: retryAt,
+            outputLanguage: .japanese,
             captureMetadata: metadata
         )
 
         #expect(retryRequest.content == initialRequest.content)
         #expect(retryRequest.metadataJson == initialRequest.metadataJson)
+        #expect(retryRequest.outputLanguage == .japanese)
         #expect(retryRequest.content.contains(receivedAt.formatted(.iso8601)))
         #expect(!retryRequest.content.contains(retryAt.formatted(.iso8601)))
         #expect(retryRequest.content != retryTimeRequest.content)
@@ -395,6 +415,27 @@ struct ShareInboxTests {
     }
 
     @Test
+    func sharedDefaultsStorePersistsOutputLanguageAndDefaultsToEnglish() throws {
+        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(store.wikiOutputLanguage == .english)
+
+        for language in WikiOutputLanguage.allCases {
+            store.wikiOutputLanguage = language
+            #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).wikiOutputLanguage == language)
+        }
+
+        defaults.set("unsupported", forKey: "kinic.wiki-output-language.v1")
+        #expect(store.wikiOutputLanguage == .english)
+    }
+
+    @Test
     func sharedDefaultsStorePersistsBrowseDatabaseVisibilityToggles() throws {
         let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -404,7 +445,7 @@ struct ShareInboxTests {
         }
 
         let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
-        #expect(store.showPublicBrowseDatabases == false)
+        #expect(store.showPublicBrowseDatabases == true)
         #expect(store.showPurchasedBrowseDatabases == false)
 
         store.showPublicBrowseDatabases = true
@@ -416,6 +457,23 @@ struct ShareInboxTests {
         store.showPurchasedBrowseDatabases = false
         #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
         #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPurchasedBrowseDatabases == false)
+    }
+
+    @Test
+    func sharedDefaultsStoreMigratesExistingPublicDatabaseVisibilityOnce() throws {
+        let suiteName = "kinic.shared-defaults-migration.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        defaults.set(false, forKey: "kinic.browse-show-public-databases.v1")
+        let migratedStore = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
+        #expect(migratedStore.showPublicBrowseDatabases == true)
+
+        migratedStore.showPublicBrowseDatabases = false
+        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).showPublicBrowseDatabases == false)
     }
 
     @Test
@@ -451,7 +509,7 @@ struct ShareInboxTests {
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/marketplace/listing-1")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .home("Opened /marketplace/listing-1 in KinicWiki."))
+        ) == .home(nil))
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/")!,
             callbackDomain: "wiki.kinic.xyz"
@@ -520,12 +578,61 @@ struct ShareInboxTests {
             settingsStore: store
         )
 
-        #expect(model.showPublicBrowseDatabases == false)
+        #expect(model.showPublicBrowseDatabases == true)
         #expect(model.showPurchasedBrowseDatabases == false)
         model.setShowPublicBrowseDatabases(true)
         model.setShowPurchasedBrowseDatabases(true)
         #expect(store.showPublicBrowseDatabases == true)
         #expect(store.showPurchasedBrowseDatabases == true)
+    }
+
+    @MainActor
+    @Test
+    func appModelStartsBrowseWithoutRestoringAStoredDatabaseSelection() throws {
+        let suiteName = "kinic.app-model-browse-selection.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        defaults.set("db_first", forKey: "kinic.browse-database-id.v1")
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.selectedBrowseDatabaseId.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func appModelPersistsOutputLanguage() throws {
+        let suiteName = "kinic.app-model-output-language.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let store = SharedDefaultsStore(defaults: defaults)
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: store
+        )
+
+        #expect(model.wikiOutputLanguage == .english)
+        model.wikiOutputLanguage = .korean
+        #expect(store.wikiOutputLanguage == .korean)
     }
 
     @MainActor
@@ -839,6 +946,43 @@ struct ShareInboxTests {
         #expect(BrowseFolderRoute(path: "/Knowledge").kind == .folder)
         #expect(BrowseFolderRoute.document(path: "/Knowledge/Page.md").kind == .document)
         #expect(BrowseFolderRoute.document(path: "/Knowledge/Page.md").path == "/Knowledge/Page.md")
+    }
+
+    @Test
+    func buildsBrowseNavigationRoutesForSizeClass() {
+        let documentTarget = BrowseNavigationTarget.document(
+            path: "/Knowledge/Design/Page.md",
+            parentPath: "/Knowledge/Design"
+        )
+
+        #expect(AppModel.browseNavigationRoutes(
+            for: documentTarget,
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+            BrowseFolderRoute.document(path: "/Knowledge/Design/Page.md"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: documentTarget,
+            includeDocument: false
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: .folder("/Knowledge/Design"),
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute(path: "/Knowledge"),
+            BrowseFolderRoute(path: "/Knowledge/Design"),
+        ])
+        #expect(AppModel.browseNavigationRoutes(
+            for: .document(path: "/Page.md", parentPath: "/"),
+            includeDocument: true
+        ) == [
+            BrowseFolderRoute.document(path: "/Page.md"),
+        ])
     }
 
     @MainActor

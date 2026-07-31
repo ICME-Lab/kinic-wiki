@@ -1,67 +1,31 @@
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
+import { candidOptional, isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
-import { sortChildNodes } from "@/lib/child-sort";
-import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import type { SearchPreviewMode } from "@/lib/search-options";
 import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
-  CyclesBillingConfig,
-  ChildNode,
-  DatabaseCycleEntry,
-  DatabaseCycleEntryPage,
-  DatabaseCyclesPendingPurchase,
   DatabaseMetadata,
-  DeleteDatabaseRequest,
-  DeleteNodeRequest,
-  DeleteNodeResult,
-  DatabaseMember,
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
-  InitialFreeDatabaseGrantStatus,
   IndexSqlJsonQueryResult,
   LinkEdge,
-  MarketCreateListingRequest,
-  MarketEntitlementPage,
-  MarketListing,
-  MarketListingDetail,
-  MarketListingPage,
-  MarketListingStatus,
-  MarketOrder,
-  MarketOrderPage,
-  MarketPurchasePreview,
-  MarketUpdateListingRequest,
-  UpdateDatabaseMetadataRequest,
-  MkdirNodeRequest,
-  MkdirNodeResult,
-  MoveNodeRequest,
-  MoveNodeResult,
-  NodeContext,
-  NodeEntryKind,
-  NodeKind,
-  QueryContext,
-  QueryAnswerSessionCheckRequest,
-  QueryAnswerSessionCheckResult,
-  QueryAnswerSessionRequest,
-  RecentNode,
-  SearchNodeHit,
-  SourceEvidence,
-  SourceRunSessionCheckRequest,
-  SourceCaptureTriggerSessionCheckRequest,
-  SourceCaptureTriggerSessionRequest,
   WikiMetrics,
-  WikiMetricsPoint,
-  WikiNode,
-  WriteNodeRequest,
-  WriteNodeResult,
-  WriteSourceForGenerationRequest,
-  WriteSourceForGenerationResult
+  WikiMetricsPoint
 } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
-import type { CreateDatabaseResult, DatabaseCyclesPurchaseRequest, RawCanisterHealth, RawChild, RawCreateDatabaseResult, RawCyclesBillingConfig, RawDatabaseCycleEntry, RawDatabaseCycleEntryPage, RawDatabaseCyclesPendingPurchase, RawDatabaseMember, RawDatabaseMetadata, RawDatabaseSummary, RawDeleteDatabaseRequest, RawDeleteNodeRequest, RawDeleteNodeResult, RawIndexSqlJsonQueryResult, RawInitialFreeDatabaseGrantStatus, RawLinkEdge, RawMarketCategoryGraph, RawMarketCategoryGraphEdge, RawMarketCategoryGraphNode, RawMarketCreateListingRequest, RawMarketEntitlement, RawMarketEntitlementPage, RawMarketListing, RawMarketListingDetail, RawMarketListingPage, RawMarketListingPreview, RawMarketListingStatus, RawMarketListingVerifiedStats, RawMarketListingView, RawMarketOrder, RawMarketOrderPage, RawMarketPreviewExcerpt, RawMarketPurchasePreview, RawMarketPurchaseRequest, RawMarketUpdateListingRequest, RawMkdirNodeRequest, RawMkdirNodeResult, RawMoveNodeRequest, RawMoveNodeResult, RawNode, RawNodeContext, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionCheckResult, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceEvidenceRef, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, RawWikiMetrics, RawWikiMetricsPoint, RawWriteNodeRequest, RawWriteNodeResult, RawWriteSourceForGenerationRequest, RawWriteSourceForGenerationResult, Variant, VfsActor } from "./raw-types";
+import type { RawDatabaseMetadata, RawDatabaseSummary, RawIndexSqlJsonQueryResult, RawLinkEdge, RawWikiMetrics, RawWikiMetricsPoint, Variant, VfsActor } from "./raw-types";
+
+const DEFAULT_WIKI_IC_HOST = "https://icp0.io";
+
+function wikiIcHost(): string {
+  const viteHost = import.meta.env?.VITE_WIKI_IC_HOST;
+  if (viteHost) return viteHost;
+  return typeof process !== "undefined" ? process.env.VITE_WIKI_IC_HOST ?? DEFAULT_WIKI_IC_HOST : DEFAULT_WIKI_IC_HOST;
+}
+
 export function validateCanisterId(canisterId: string): Principal | string {
   try {
     return Principal.fromText(canisterId);
@@ -78,7 +42,7 @@ export async function createVfsActor(canisterId: string): Promise<VfsActor> {
     const error = invalidCanisterIdError(principal);
     throw new ApiError(error.error, 400, error.hint, error.code);
   }
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const cacheKey = `${host}\n${canisterId}`;
   const cached = actorCache.get(cacheKey);
   if (cached) {
@@ -91,7 +55,7 @@ export async function createVfsActor(canisterId: string): Promise<VfsActor> {
 
 export async function createActor(principal: Principal, host: string): Promise<VfsActor> {
   const agent = HttpAgent.createSync({ host });
-  if (isLocalHost(host)) {
+  if (isLocalReplicaHost(host)) {
     await agent.fetchRootKey();
   }
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
@@ -106,9 +70,9 @@ export async function createAuthenticatedActor(canisterId: string, identity: Ide
     const error = invalidCanisterIdError(principal);
     throw new ApiError(error.error, 400, error.hint, error.code);
   }
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const host = wikiIcHost();
   const agent = HttpAgent.createSync({ host, identity });
-  if (isLocalHost(host)) {
+  if (isLocalReplicaHost(host)) {
     await agent.fetchRootKey();
   }
   return Actor.createActor<VfsActor>((idl) => idlFactory(idl), {
@@ -128,7 +92,7 @@ export async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
     if (error instanceof ApiError) {
       throw error;
     }
-    const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+    const host = wikiIcHost();
     const publicError = classifyApiError(error, host);
     throw new ApiError(publicError.error, 502, publicError.hint, publicError.code);
   }
@@ -149,11 +113,11 @@ export function rawDatabaseCycleCursor(cursor: string | null): [] | [bigint] {
 }
 
 export function rawTextCursor(cursor: string | null): [] | [string] {
-  return cursor ? [cursor] : [];
+  return cursor ? candidOptional(cursor) : [];
 }
 
 export function rawOptionalText(value: string | null): [] | [string] {
-  return value === null ? [] : [value];
+  return candidOptional(value);
 }
 
 export function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
@@ -218,9 +182,7 @@ export function normalizeWikiMetricsPoint(raw: RawWikiMetricsPoint): WikiMetrics
   };
 }
 
-export function isLocalHost(host: string): boolean {
-  return host.includes("127.0.0.1") || host.includes("localhost");
-}
+export { isLocalReplicaHost as isLocalHost };
 
 export function normalizeDatabaseRole(role: Variant): DatabaseRole {
   if ("Owner" in role) {

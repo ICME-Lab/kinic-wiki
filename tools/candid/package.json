@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Shared vfs.did shape definitions, subset drift checks, and TS IDL generation.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
   "exports": {
     "./shapes": "./shapes.mjs",
     "./subset-check": "./subset-check.mjs",

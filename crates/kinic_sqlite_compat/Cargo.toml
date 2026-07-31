@@ -1,0 +1,11 @@
+[package]
+name = "kinic-sqlite-compat"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled", "hooks"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ic-sqlite-vfs = { workspace = true, features = ["sqlite-precompiled"] }

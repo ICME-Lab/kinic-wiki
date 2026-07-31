@@ -82,6 +82,30 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    PublishNode {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    GetNodePublication {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    UnpublishNode {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
+    ReadPublicNode {
+        #[arg(long)]
+        public_id: String,
+        #[arg(long)]
+        json: bool,
+    },
     ListNodes {
         #[arg(long, default_value = DEFAULT_VFS_ROOT_PATH)]
         prefix: String,

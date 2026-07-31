@@ -1,14 +1,13 @@
 // Where: /docs index.
 // What: provides the top-level documentation landing page.
 // Why: CLI, Canister API, and Skills docs need one stable operator entrypoint.
-import type { Metadata } from "next";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, Boxes, ExternalLink, FileText } from "lucide-react";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
 import { primaryDocs, skillDocs } from "./docs-data";
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Docs",
   description: "Documentation for Kinic Wiki CLI, Canister API, and agent skill workflows.",
   openGraph: {

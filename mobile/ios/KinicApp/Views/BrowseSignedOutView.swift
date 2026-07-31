@@ -16,8 +16,7 @@ struct BrowseSignedOutView: View {
                 .disabled(model.isSigningIn)
 
             if model.isSigningIn {
-                ProgressView("Starting sign in...")
-                    .font(.footnote)
+                ProgressView()
             } else if let message = model.statusMessage {
                 Text(message)
                     .font(.footnote)

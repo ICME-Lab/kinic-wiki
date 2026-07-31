@@ -22,10 +22,10 @@ use vfs_types::{
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
-
+#[path = "database_service/node_publications.rs"]
+mod node_publications;
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 const MARKET_SECOND_BUYER_PRINCIPAL: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
-
 fn service() -> VfsService {
     service_with_root().0
 }
@@ -947,7 +947,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             },
             3,
         )
-        .expect("invalid request node should write");
+        .expect("VFS should store source capture content without interpreting it");
     let invalid_frontmatter = service
         .check_source_capture_trigger_session(
             source_capture_session_check_request(
@@ -957,7 +957,7 @@ fn source_capture_trigger_session_rejects_invalid_request_nodes() {
             ),
             101,
         )
-        .expect_err("invalid frontmatter should fail");
+        .expect_err("trigger authorization should reject invalid request frontmatter");
     assert!(invalid_frontmatter.contains("frontmatter"));
 
     let mismatch_path = "/Sources/source-capture-requests/mismatch.md";

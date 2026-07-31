@@ -32,10 +32,26 @@ struct VFSCandidCodecTests {
             requestPath: "/Sources/page.md",
             content: "hello world",
             metadataJson: "{\"a\":1}",
-            normalizedURL: URL(string: "https://example.com")!
+            normalizedURL: URL(string: "https://example.com")!,
+            outputLanguage: .english
         )
         let data = VFSCandidEncoder.writeNode(request)
         #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c036b03ced593f1027f9cf5d3f4027ffbc998b6067f6e716c06b99adecb0171d4c2a7b80400a5cbc7d20471fcc2a1eb0601b8c8dc8509719f9bbd940a7101020b68656c6c6f20776f726c6401102f536f75726365732f706167652e6d6400077b2261223a317d0764625f64656d6f")
+    }
+
+    @Test
+    func encodesWriteNodeExpectedEtag() {
+        let data = VFSCandidEncoder.writeNode(
+            databaseId: "db_demo",
+            path: "/Sources/page.md",
+            kind: .file,
+            content: "retry",
+            metadataJson: "{}",
+            expectedEtag: "etag-current"
+        )
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("etag-current".utf8)) != nil)
+        #expect(data.range(of: Data("/Sources/page.md".utf8)) != nil)
     }
 
     @Test
@@ -46,7 +62,8 @@ struct VFSCandidCodecTests {
             requestPath: "/Sources/source-capture-requests/req_1.md",
             content: "kind: kinic.source_capture_request",
             metadataJson: "{\"request_type\":\"source_capture\"}",
-            normalizedURL: URL(string: "https://example.com")!
+            normalizedURL: URL(string: "https://example.com")!,
+            outputLanguage: .english
         )
         let data = VFSCandidEncoder.writeNodes(request)
         #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
@@ -61,6 +78,38 @@ struct VFSCandidCodecTests {
         #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
         #expect(String(data: data.dropLast(20).suffix(7), encoding: .utf8) == "db_demo")
         #expect(String(data: data.suffix(19), encoding: .utf8) == "/Sources/request.md")
+    }
+
+    @Test
+    func encodesQueryDatabaseSQLJSONArgs() {
+        let sql = "SELECT json_object('path', path) FROM fs_nodes LIMIT 1"
+        let data = VFSCandidEncoder.queryDatabaseSQLJSON(databaseId: "db_demo", sql: sql, limit: 1)
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.range(of: Data(sql.utf8)) != nil)
+        #expect(data.suffix(4) == Data([1, 0, 0, 0]))
+    }
+
+    @Test
+    func buildsExactSourceURLLookupSQL() {
+        let sql = VFSClient.sourceURLExistsSQL(normalizedURLs: ["https://example.com/?author=O'Reilly"])
+        #expect(sql.contains("path >= '/Sources/web/'"))
+        #expect(sql.contains("path < '/Sources/web0'"))
+        #expect(sql.contains("json_extract(metadata_json, '$.url') = 'https://example.com/?author=O''Reilly'"))
+        #expect(sql.contains("json_extract(metadata_json, '$.final_url') = 'https://example.com/?author=O''Reilly'"))
+        #expect(sql.hasSuffix("LIMIT 1"))
+    }
+
+    @Test
+    func sourceLookupIncludesWorkerURLNormalization() throws {
+        #expect(
+            try VFSClient.sourceLookupURLs(for: URL(string: "https://EXAMPLE.com:443")!)
+                == ["https://EXAMPLE.com:443", "https://example.com/"]
+        )
+        #expect(
+            try VFSClient.sourceLookupURLs(for: URL(string: "https://example.com/article#section")!)
+                == ["https://example.com/article"]
+        )
     }
 
     @Test
@@ -169,6 +218,14 @@ struct VFSCandidCodecTests {
         #expect(node.content == "kind: kinic.source_capture_request")
         #expect(node.metadataJson == "{\"request_type\":\"source_capture\",\"url\":\"https://example.com/page\"}")
         #expect(node.etag == "etag_1")
+    }
+
+    @Test
+    func decodesSQLJSONQueryRowsResult() throws {
+        let rows = try VFSCandidDecoder.decodeSQLJSONQueryRowsResult(
+            candidSQLJSONQueryOk(rows: ["{\"path\":\"/Sources/web/example.md\"}"])
+        )
+        #expect(rows == ["{\"path\":\"/Sources/web/example.md\"}"])
     }
 
     @Test
@@ -328,6 +385,48 @@ struct VFSCandidCodecTests {
     func decodesWriteNodesResult() throws {
         try VFSCandidDecoder.decodeWriteNodesResult(candidWriteNodesOk())
     }
+
+    #if false
+    @Test
+    func decodesSourceCaptureURLStates() throws {
+        let none = try VFSCandidDecoder.decodeSourceCaptureURLStateResult(dataFromHex(
+            "4449444c056b02bc8a0101c5fed201716b04e7f4e65502ddf3cce40102d8fd8c9f037ff3bb99ef0c026c0aefd6e40271b2ceef2f03d5879d3071978ec19e0104aec4e9f90574c897a7990704c9adedc90904a1e3fdeb0b7493d1b5d40f04e095c8ed0f046b06d38b971f7fddf3cce4017f9c8abb98047fd287d3a8047f88aa8a970b7feb82ae880f7f6e7101000002"
+        ))
+        #expect(none == .none)
+
+        let saved = try VFSCandidDecoder.decodeSourceCaptureURLStateResult(dataFromHex(
+            "4449444c056b02bc8a0101c5fed201716b04e7f4e65502ddf3cce40102d8fd8c9f037ff3bb99ef0c026c0aefd6e40271b2ceef2f03d5879d3071978ec19e0104aec4e9f90574c897a7990704c9adedc90904a1e3fdeb0b7493d1b5d40f04e095c8ed0f046b06d38b971f7fddf3cce4017f9c8abb98047fd287d3a8047f88aa8a970b7feb82ae880f7f6e71010000001368747470733a2f2f6578616d706c652e636f6d05252f536f75726365732f736f757263652d636170747572652d72657175657374732f312e6d640014000000000000000001112f536f75726365732f7765622f612e6d640a00000000000000010f2f4b6e6f776c656467652f612e6d640114323032362d30312d30315430303a30303a30305a"
+        ))
+        guard case let .saved(item) = saved else {
+            Issue.record("Expected saved URL state")
+            return
+        }
+        #expect(item.status == .completed)
+        #expect(item.targetPath == "/Knowledge/a.md")
+    }
+
+    @Test
+    func decodesSourceCaptureHistoryPage() throws {
+        let page = try VFSCandidDecoder.decodeSourceCaptureHistoryPageResult(dataFromHex(
+            "4449444c066b02bc8a0101c5fed201716c02c48cfafd0a02e2dfdfb20b056d036c0aefd6e40271b2ceef2f04d5879d3071978ec19e0105aec4e9f90574c897a7990705c9adedc90905a1e3fdeb0b7493d1b5d40f05e095c8ed0f056b06d38b971f7fddf3cce4017f9c8abb98047fd287d3a8047f88aa8a970b7feb82ae880f7f6e71010000011368747470733a2f2f6578616d706c652e636f6d01252f536f75726365732f736f757263652d636170747572652d72657175657374732f312e6d64001400000000000000010c6665746368206661696c6564000a00000000000000000114323032362d30312d30315430303a30303a30305a0108637572736f722d31"
+        ))
+        #expect(page.nextCursor == "cursor-1")
+        #expect(page.requests.count == 1)
+        #expect(page.requests[0].status == .failed)
+        #expect(page.requests[0].error == "fetch failed")
+    }
+    #endif
+}
+
+private func dataFromHex(_ hex: String) -> Data {
+    var data = Data()
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2)
+        data.append(UInt8(hex[index..<next], radix: 16)!)
+        index = next
+    }
+    return data
 }
 
 private func candidWriteNodesOk() -> Data {
@@ -1912,6 +2011,116 @@ private func candidMarketEntitlementPageOk() -> Data {
     appendSigned(0, to: &data)
     appendVariantValue("Ok", cases: ["Ok", "Err"])
     appendPage()
+    return data
+}
+
+private func candidSQLJSONQueryOk(rows: [String]) -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeNat32: Int64 = -7
+    let typeText: Int64 = -15
+    let typeVec: Int64 = -19
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func fields(_ raw: [(String, Ref)]) -> [(String, Ref)] {
+        raw.sorted { label($0.0) < label($1.0) }
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = fields(raw)
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendRecord(_ raw: [(String, Ref)]) {
+        appendSigned(typeRecord, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVariant(_ raw: [(String, Ref)]) {
+        appendSigned(typeVariant, to: &data)
+        appendFields(raw)
+    }
+
+    func appendVec(_ ref: Ref) {
+        appendSigned(typeVec, to: &data)
+        appendRef(ref)
+    }
+
+    func appendText(_ text: String) {
+        let bytes = Data(text.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    func appendNat32(_ value: UInt32) {
+        for offset in 0..<4 {
+            data.append(UInt8(truncatingIfNeeded: value >> UInt32(offset * 8)))
+        }
+    }
+
+    func appendVariantValue(_ selected: String, cases: [String]) {
+        let sorted = cases.sorted { label($0) < label($1) }
+        guard let index = sorted.firstIndex(of: selected) else {
+            preconditionFailure("unknown fixture variant case")
+        }
+        appendUnsigned(UInt64(index), to: &data)
+    }
+
+    appendUnsigned(3, to: &data)
+    appendVariant([
+        ("Ok", .table(1)),
+        ("Err", .primitive(typeText))
+    ])
+    appendRecord([
+        ("rows", .table(2)),
+        ("row_count", .primitive(typeNat32)),
+        ("limit", .primitive(typeNat32))
+    ])
+    appendVec(.primitive(typeText))
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendVariantValue("Ok", cases: ["Ok", "Err"])
+    for field in fields([
+        ("rows", .table(2)),
+        ("row_count", .primitive(typeNat32)),
+        ("limit", .primitive(typeNat32))
+    ]) {
+        switch field.0 {
+        case "rows":
+            appendUnsigned(UInt64(rows.count), to: &data)
+            rows.forEach(appendText)
+        case "row_count":
+            appendNat32(UInt32(rows.count))
+        case "limit":
+            appendNat32(1)
+        default:
+            preconditionFailure("unknown SQL JSON query field")
+        }
+    }
     return data
 }
 

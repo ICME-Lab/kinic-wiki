@@ -11,15 +11,15 @@ struct ShareCaptureSubmitterTests {
     @Test
     func queuesWhenSessionIsMissing() async throws {
         let harness = try ShareCaptureHarness()
-        let submitter = harness.submitter(session: nil, databaseId: "db_demo")
+        let submitter = harness.submitter(session: nil, databaseId: "db_demo", outputLanguage: .japanese)
 
         let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
-
         guard case .queued = result else {
             Issue.record("Expected queued result, got \(result)")
             return
         }
         #expect(harness.pendingURLs().map(\.url.absoluteString) == ["https://example.com/page"])
+        #expect(harness.pendingURLs().map(\.outputLanguage) == [.japanese])
     }
 
     @Test
@@ -85,6 +85,7 @@ struct ShareCaptureSubmitterTests {
         }
 
         let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
+        await Task.yield()
 
         guard case let .saved(requestPath) = result else {
             Issue.record("Expected saved result, got \(result)")
@@ -124,6 +125,24 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
+    func immediateSubmissionIncludesSelectedOutputLanguage() async throws {
+        let harness = try ShareCaptureHarness()
+        let probe = RequestMetadataProbe()
+        let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo", outputLanguage: .simplifiedChinese) { request, _ in
+            await probe.record(request.metadataJson)
+            return CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-language")
+        }
+
+        let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
+
+        guard case .saved = result else {
+            Issue.record("Expected saved result, got \(result)")
+            return
+        }
+        #expect(await probe.load().contains("\"output_language\":\"zh-Hans\""))
+    }
+
+    @Test
     func explicitDatabaseOverrideSelectsSubmissionDatabase() async throws {
         let harness = try ShareCaptureHarness()
         let databaseProbe = RequestDatabaseProbe()
@@ -145,27 +164,94 @@ struct ShareCaptureSubmitterTests {
     }
 
     @Test
-    func queuesSameRequestWhenWorkerTriggerFailsAfterSave() async throws {
+    func keepsRemoteRequestInLocalHistoryWhenWorkerTriggerFailsAfterSave() async throws {
         let harness = try ShareCaptureHarness()
         let probe = RequestPathProbe()
-        let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo") { request, _ in
+        let metadata = ShareCaptureMetadata(
+            title: "Example",
+            description: "A shared page",
+            imageURL: nil,
+            source: ShareCaptureMetadata.xOpenGraphSource,
+            fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let submitter = harness.submitter(session: makeSession(), databaseId: "db_demo", outputLanguage: .japanese) { request, _ in
             await probe.record(request.requestPath)
             return CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-failed-trigger")
         } triggerSourceCapture: { _, _ in
             throw ShareCaptureTestError.triggerFailed
         }
 
-        let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
+        let result = await submitter.submitSharedURL(
+            URL(string: "https://example.com/page")!,
+            captureMetadata: metadata
+        )
 
-        guard case let .queued(reason) = result else {
-            Issue.record("Expected queued result, got \(result)")
+        guard case let .savedPendingRetry(requestPath) = result else {
+            Issue.record("Expected saved-pending-retry result, got \(result)")
             return
         }
-        let queued = try #require(harness.pendingURLs().first)
         let attemptedRequestPath = await probe.load()
-        #expect(reason.contains("capture could not start"))
-        #expect(attemptedRequestPath == "/Sources/source-capture-requests/\(queued.requestId).md")
-        #expect(queued.databaseId == "db_demo")
+        #expect(requestPath == attemptedRequestPath)
+        #expect(harness.pendingURLs().isEmpty)
+        #expect(harness.history(databaseId: "db_demo").map(\.item.requestPath) == [requestPath])
+    }
+
+    @Test
+    func doesNotCreateRetryQueueWhenWorkerTriggerFailsAfterRemoteSave() async throws {
+        let harness = try ShareCaptureHarness()
+        let submitter = harness.submitter(
+            session: makeSession(),
+            databaseId: "db_demo",
+            saveRequest: { request, _ in
+                CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-queue-failed")
+            },
+            triggerSourceCapture: { _, _ in
+                throw ShareCaptureTestError.triggerFailed
+            },
+        )
+
+        let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
+
+        guard case .savedPendingRetry = result else {
+            Issue.record("Expected saved-pending-retry result, got \(result)")
+            return
+        }
+        #expect(harness.pendingURLs().isEmpty)
+    }
+
+    @Test
+    func shareExtensionCopyDistinguishesStartedAndPendingRetry() {
+        let requestPath = "/Sources/source-capture-requests/request.md"
+
+        let started = ShareCaptureResult.saved(requestPath: requestPath)
+        #expect(started.shareExtensionTitleText == "Capture started")
+        #expect(started.shareExtensionMessageText == "KinicWiki is generating the source capture.")
+
+        let pendingRetry = ShareCaptureResult.savedPendingRetry(requestPath: requestPath)
+        #expect(pendingRetry.shareExtensionTitleText == "Saved, retry required")
+        #expect(pendingRetry.shareExtensionMessageText.contains("Capture history"))
+    }
+
+    @Test
+    func keepsRemoteRequestWhenWorkerTriggerTimesOutAfterSave() async throws {
+        let harness = try ShareCaptureHarness()
+        let submitter = harness.submitter(
+            session: makeSession(),
+            databaseId: "db_demo",
+            timeoutNanoseconds: 50_000_000
+        ) { request, _ in
+            CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-timeout")
+        } triggerSourceCapture: { _, _ in
+            try await Task.sleep(for: .seconds(1))
+        }
+
+        let result = await submitter.submitSharedURL(URL(string: "https://example.com/page")!)
+
+        guard case .savedPendingRetry = result else {
+            Issue.record("Expected saved-pending-retry result, got \(result)")
+            return
+        }
+        #expect(harness.pendingURLs().isEmpty)
     }
 
     @Test
@@ -252,12 +338,14 @@ private actor RequestMetadataProbe {
 
 private struct ShareCaptureHarness {
     let queueDirectory: URL
+    let historyDirectory: URL
     let configuration: AppConfiguration
 
     init() throws {
         queueDirectory = FileManager.default.temporaryDirectory
             .appending(path: "kinic-share-capture-tests")
             .appending(path: UUID().uuidString)
+        historyDirectory = queueDirectory.appending(path: "history")
         configuration = AppConfiguration(
             canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
             apiBaseURL: URL(string: "https://icp0.io")!,
@@ -266,7 +354,8 @@ private struct ShareCaptureHarness {
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
-            keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki"
+            keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+            askAIURL: URL(string: "https://api.kinic.io/chat")!
         )
         try FileManager.default.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
     }
@@ -274,34 +363,46 @@ private struct ShareCaptureHarness {
     func submitter(
         session: ICAuthSession?,
         databaseId: String,
+        outputLanguage: WikiOutputLanguage = .english,
+        timeoutNanoseconds: UInt64? = nil,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission = { request, _ in
             CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-default")
         },
-        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void = { _, _ in
-        }
+        saveHistory: (@Sendable (SourceCaptureRequest, Date) throws -> Void)? = nil,
+        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void = { _, _ in },
+        enqueueURL: (@Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void)? = nil
     ) -> ShareCaptureSubmitter {
         let queueDirectory = queueDirectory
+        let historyDirectory = historyDirectory
+        let resolvedEnqueueURL = enqueueURL ?? { url, receivedAt, requestId, databaseId, outputLanguage, captureMetadata in
+            let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
+            try inbox.enqueue(
+                url,
+                receivedAt: receivedAt,
+                requestId: requestId,
+                databaseId: databaseId,
+                outputLanguage: outputLanguage,
+                captureMetadata: captureMetadata
+            )
+        }
+        let resolvedSaveHistory = saveHistory ?? { request, receivedAt in
+            let store = try SourceCaptureHistoryStore(testHistoryDirectory: historyDirectory)
+            try store.save(SourceCaptureHistoryRecord(request: request, requestedAt: receivedAt))
+        }
         return ShareCaptureSubmitter(
             configuration: configuration,
-            timeoutNanoseconds: nil,
+            timeoutNanoseconds: timeoutNanoseconds,
             restoreSession: {
                 session
             },
             selectedDatabaseId: {
                 databaseId
             },
-            enqueueURL: { url, receivedAt, requestId, databaseId, captureMetadata in
-                let inbox = try ShareInbox(testQueueDirectory: queueDirectory)
-                try inbox.enqueue(
-                    url,
-                    receivedAt: receivedAt,
-                    requestId: requestId,
-                    databaseId: databaseId,
-                    captureMetadata: captureMetadata
-                )
-            },
+            enqueueURL: resolvedEnqueueURL,
             saveRequest: saveRequest,
-            triggerSourceCapture: triggerSourceCapture
+            saveHistory: resolvedSaveHistory,
+            triggerSourceCapture: triggerSourceCapture,
+            selectedOutputLanguage: { outputLanguage }
         )
     }
 
@@ -310,6 +411,15 @@ private struct ShareCaptureHarness {
             return try ShareInbox(testQueueDirectory: queueDirectory).loadPendingURLs()
         } catch {
             Issue.record("Could not load pending URLs: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    func history(databaseId: String) -> [SourceCaptureHistoryRecord] {
+        do {
+            return try SourceCaptureHistoryStore(testHistoryDirectory: historyDirectory).load(databaseId: databaseId)
+        } catch {
+            Issue.record("Could not load capture history: \(error.localizedDescription)")
             return []
         }
     }

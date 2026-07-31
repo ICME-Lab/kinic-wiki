@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { isLocalReplicaHost } from "@kinic/vfs-client-core";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const { classifyApiError, classifyCanisterError, invalidCanisterIdError } = await importTs("../lib/api-errors.ts");
 
@@ -31,13 +32,10 @@ console.log("API error checks OK");
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
-  const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  const source = readFileSync(sourcePath, "utf8").replace(
+    'import { isLocalReplicaHost } from "@kinic/vfs-client-core";',
+    "const { isLocalReplicaHost } = globalThis.__kinicVfsClientCore;"
+  );
+  globalThis.__kinicVfsClientCore = { isLocalReplicaHost };
+  return importStrippedTsForTest(source);
 }

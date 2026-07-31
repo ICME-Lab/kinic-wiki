@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import ts from "typescript";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const frontmatterPath = new URL("../lib/markdown-frontmatter.ts", import.meta.url);
 const seoPath = new URL("../lib/wiki-seo.ts", import.meta.url);
+const dynamicRoutePaths = [
+  "../src/routes/marketplace.$listingId.tsx",
+  "../src/routes/marketplace.seller.$principal.tsx",
+  "../src/routes/docs.skills.$slug.tsx",
+  "../src/routes/dashboard.project.$databaseId.tsx",
+  "../src/routes/skills.$databaseId.tsx"
+];
 const source = `${readFileSync(frontmatterPath, "utf8")}\n${readFileSync(seoPath, "utf8")
   .replace('import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";', "")
   .replace('import type { ChildNode, DatabaseSummary, WikiNode } from "@/lib/types";', "")}`;
-const compiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022
-  }
-}).outputText;
-const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { descriptionFromNode, markdownBody, titleFromNode, titleFromPath, wikiSeoDescription, wikiSeoRouteFromSegments, wikiSeoTitle } = await import(moduleUrl);
+const { descriptionFromNode, markdownBody, titleFromNode, titleFromPath, wikiSeoDescription, wikiSeoRouteFromSegments, wikiSeoTitle } = await importStrippedTsForTest(source);
 
 const node = {
   path: "/Knowledge/product-roadmap.md",
@@ -44,5 +44,13 @@ assert.equal(
   ]),
   "Browse a.md, b.md in this Kinic Wiki folder."
 );
+
+for (const routePath of dynamicRoutePaths) {
+  const routeSource = readFileSync(new URL(routePath, import.meta.url), "utf8");
+  assert.match(routeSource, /head:\s*\(/, `${routePath} must own TanStack route metadata`);
+}
+const docsSkillRoute = readFileSync(new URL("../src/routes/docs.skills.$slug.tsx", import.meta.url), "utf8");
+assert.match(docsSkillRoute, /findSkillDoc\(params\.slug\)/);
+assert.match(docsSkillRoute, /Kinic Wiki \$\{doc\.title\} Skill/);
 
 console.log(`SEO helpers OK: ${pathToFileURL(seoPath.pathname).pathname}`);

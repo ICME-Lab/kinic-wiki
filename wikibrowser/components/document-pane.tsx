@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import dynamic from "next/dynamic";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
@@ -10,19 +9,16 @@ import { toast } from "sonner";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
-import { isDatabaseNotFoundErrorCode, isKnowledgeSourcePath, type LoadState, type ModeTab, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
+import { isDatabaseNotFoundErrorCode, isKnowledgeSourcePath, type LoadState, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
 import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
 import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
 import { MarkdownEditDocument } from "@/components/markdown-edit-document";
+import { MarkdownPreview } from "@/components/markdown-preview";
 
 const LARGE_CONTENT_BYTES = 1024 * 1024;
 const RAW_INITIAL_CHARS = 64 * 1024;
 const RAW_LOAD_STEP_CHARS = 64 * 1024;
-const MarkdownPreview = dynamic(() => import("@/components/markdown-preview").then((module) => module.MarkdownPreview), {
-  ssr: false,
-  loading: () => <p className="text-sm text-muted">Loading markdown preview...</p>
-});
 
 export type DocumentEditState = {
   dirty: boolean;
@@ -38,7 +34,8 @@ export function DocumentHeader({
   isDirectory,
   canEditDirectory,
   editState,
-  rawContent
+  rawContent,
+  actions
 }: {
   canisterId: string;
   databaseId: string;
@@ -49,6 +46,7 @@ export function DocumentHeader({
   canEditDirectory: boolean;
   editState: DocumentEditState;
   rawContent: string | null;
+  actions?: ReactNode;
 }) {
   async function copyText(label: string, value: string) {
     try {
@@ -68,6 +66,7 @@ export function DocumentHeader({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {actions}
           <MobileCopyPathButton onCopyPath={() => void copyText("Path", path)} />
           <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
             <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
@@ -147,12 +146,12 @@ function DocumentHeaderPath({
             {last ? (
               <span className="max-w-[24rem] truncate font-medium text-ink">{segment}</span>
             ) : (
-              <Link
+              <WikiNavigationLink
                 className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-white hover:text-ink"
                 href={hrefForPath(canisterId, databaseId, crumbPath)}
               >
                 {segment}
-              </Link>
+              </WikiNavigationLink>
             )}
           </Fragment>
         );
@@ -194,8 +193,7 @@ export function DocumentPane({
   databaseCyclesError,
   onNodeSaved,
   onFolderIndexSaved,
-  onEditStateChange,
-  tab
+  onEditStateChange
 }: {
   node: PathLoadState<WikiNode>;
   folderIndexNode: PathLoadState<WikiNode>;
@@ -213,7 +211,6 @@ export function DocumentPane({
   onNodeSaved?: () => Promise<WikiNode>;
   onFolderIndexSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
-  tab?: ModeTab;
 }) {
   if (node.loading && childrenState.loading) return <PaneBody><LoadingBlock /></PaneBody>;
   if (authPrompt && onLogin) {
@@ -229,7 +226,6 @@ export function DocumentPane({
           view={view}
           canisterId={canisterId}
           databaseId={databaseId}
-          tab={tab}
           authReady={Boolean(authReady)}
           onLogin={onLogin}
           writeIdentity={writeIdentity ?? null}
@@ -258,7 +254,6 @@ export function DocumentPane({
           databaseCyclesError={databaseCyclesError ?? null}
           onNodeSaved={onNodeSaved}
           onEditStateChange={onEditStateChange}
-          tab={tab}
         />
       </PaneBody>
     );
@@ -320,9 +315,9 @@ function DatabaseNotFoundState({ databaseId }: { databaseId: string }) {
         <p className="mt-3 text-sm leading-6 text-muted">No readable wiki database exists for this database ID.</p>
         <p className="mt-3 break-all font-mono text-xs text-muted">{databaseId}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
-          <Link className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent" href="/dashboard">
+          <WikiNavigationLink className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent" href="/dashboard">
             Open dashboard
-          </Link>
+          </WikiNavigationLink>
         </div>
       </section>
     </div>
@@ -345,21 +340,21 @@ function NotFoundState({
         <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No knowledge node at this path</h3>
         <p className="mt-3 break-all font-mono text-xs text-muted">{path}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
-          <Link
+          <WikiNavigationLink
             className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
             href={hrefForPath(canisterId, databaseId, "/Knowledge")}
           >
             Open /Knowledge
-          </Link>
-          <Link
+          </WikiNavigationLink>
+          <WikiNavigationLink
             className="rounded-lg border border-line bg-white px-3 py-2 no-underline"
             href={hrefForPath(canisterId, databaseId, "/Sources")}
           >
             Open /Sources
-          </Link>
-          <Link className="rounded-lg border border-line bg-white px-3 py-2 no-underline" href={hrefForSearch(canisterId, databaseId, path.split("/").filter(Boolean).at(-1) ?? path, "path")}>
+          </WikiNavigationLink>
+          <WikiNavigationLink className="rounded-lg border border-line bg-white px-3 py-2 no-underline" href={hrefForSearch(canisterId, databaseId, path.split("/").filter(Boolean).at(-1) ?? path, "path")}>
             Search this path
-          </Link>
+          </WikiNavigationLink>
         </div>
       </section>
     </div>
@@ -371,7 +366,6 @@ function NodeDocument({
   view,
   canisterId,
   databaseId,
-  tab,
   authReady,
   onLogin,
   writeIdentity,
@@ -385,7 +379,6 @@ function NodeDocument({
   view: ViewMode;
   canisterId: string;
   databaseId: string;
-  tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
   writeIdentity: Identity | null;
@@ -405,7 +398,6 @@ function NodeDocument({
         node={node}
         isLargeContent={isLargeContent}
         contentBytes={contentBytes}
-        tab={tab}
         authReady={authReady}
         onLogin={onLogin}
         writeIdentity={writeIdentity}
@@ -438,7 +430,6 @@ function EditDocument({
   node,
   isLargeContent,
   contentBytes,
-  tab,
   authReady,
   onLogin,
   writeIdentity,
@@ -453,7 +444,6 @@ function EditDocument({
   node: WikiNode;
   isLargeContent: boolean;
   contentBytes: number;
-  tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
   writeIdentity: Identity | null;
@@ -622,12 +612,12 @@ function LargeContentState({
         This node is {contentBytes.toLocaleString()} bytes. Markdown preview is disabled to keep the browser responsive.
       </p>
       {reason ? <p className="mt-3 text-muted">{reason}</p> : null}
-      <Link
+      <WikiNavigationLink
         className="mt-5 inline-flex rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
         href={hrefForPath(canisterId, databaseId, nodePath, "raw")}
       >
         Open raw view
-      </Link>
+      </WikiNavigationLink>
     </div>
   );
 }
@@ -639,7 +629,6 @@ function FolderDocument({
   view,
   canisterId,
   databaseId,
-  tab,
   authReady,
   onLogin,
   writeIdentity,
@@ -655,7 +644,6 @@ function FolderDocument({
   view: ViewMode;
   canisterId: string;
   databaseId: string;
-  tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
   writeIdentity: Identity | null;
@@ -676,7 +664,6 @@ function FolderDocument({
         node={indexNode}
         isLargeContent={isLargeContent}
         contentBytes={contentBytes}
-        tab={tab}
         authReady={authReady}
         onLogin={onLogin}
         writeIdentity={writeIdentity}
@@ -789,7 +776,7 @@ function DirectoryChildrenCard({
         {childrenState.loading ? <p className="text-sm text-muted">Loading children...</p> : null}
         {!childrenState.loading && children?.length === 0 ? <p className="text-sm text-muted">No children.</p> : null}
         {children?.map((child) => (
-          <Link
+          <WikiNavigationLink
             key={child.path}
             href={hrefForPath(canisterId, databaseId, child.path)}
             className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm no-underline hover:border-accent"
@@ -799,7 +786,7 @@ function DirectoryChildrenCard({
               <span className="truncate">{child.name}</span>
             </span>
             <span className="font-mono text-xs text-muted">{child.kind}</span>
-          </Link>
+          </WikiNavigationLink>
         ))}
       </div>
     </div>
@@ -849,9 +836,9 @@ function EditorUnavailable({ title, message, actionHref, actionLabel }: { title:
         <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">{title}</h3>
         <p className="mt-3 text-sm leading-6 text-muted">{message}</p>
         {actionHref && actionLabel ? (
-          <Link className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href={actionHref}>
+          <WikiNavigationLink className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href={actionHref}>
             {actionLabel}
-          </Link>
+          </WikiNavigationLink>
         ) : null}
       </section>
     </div>

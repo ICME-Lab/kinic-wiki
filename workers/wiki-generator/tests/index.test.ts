@@ -1,11 +1,12 @@
 // Where: workers/wiki-generator/tests/index.test.ts
 // What: Entrypoint authorization and handler-shape tests.
-// Why: Public triggers must stay bearer-protected, and cron polling is disabled.
+// Why: Public triggers must stay bearer-protected and processing must remain Queue-driven.
 import assert from "node:assert/strict";
 import test from "node:test";
-import worker from "../src/index.js";
+import worker, { processQueueBatchForTest } from "../src/index.js";
 import { processQueueMessage } from "../src/processing.js";
 import { testEnv, TestQueue } from "./source-capture-fixtures.js";
+import type { QueueMessage, SourceQueueMessage, WikiGenerationFailureMessage } from "../src/types.js";
 
 Object.defineProperty(crypto.subtle, "timingSafeEqual", {
   configurable: true,
@@ -100,8 +101,134 @@ test("queue source capture message propagates config failures", async () => {
   );
 });
 
-test("worker does not expose scheduled cron handler", () => {
-  assert.equal("scheduled" in worker, false);
+test("queue entrypoint applies retry disposition without acknowledging", async () => {
+  const message = recordingMessage({ ...sourceMessage(0), sourcePath: "/Outside/0.md" }, "entrypoint-retry");
+  if (!worker.queue) throw new Error("queue handler is required");
+
+  await worker.queue({ messages: [message] }, testEnv(new TestQueue()));
+
+  assert.equal(message.acks, 0);
+  assert.equal(message.retries, 1);
+});
+
+test("queue batch overlaps four source jobs and acknowledges each once", async () => {
+  const messages = Array.from({ length: 4 }, (_, index) => recordingMessage(sourceMessage(index), `source-${index}`));
+  let active = 0;
+  let maxActive = 0;
+  const executions = new Map<string, number>();
+  let release: (() => void) | undefined;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await processQueueBatchForTest(testEnv(new TestQueue()), messages, async (_envelope, execution) => {
+    executions.set(execution.leaseOwner, execution.attempts);
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    if (active === 4) release?.();
+    await barrier;
+    active -= 1;
+    return { kind: "ack" };
+  });
+
+  assert.equal(maxActive, 4);
+  assert.deepEqual(messages.map((message) => [message.acks, message.retries]), [[1, 0], [1, 0], [1, 0], [1, 0]]);
+  assert.deepEqual([...executions.entries()].sort(), messages.map((message) => [message.id, message.attempts]).sort());
+});
+
+test("queue batch keeps operational jobs sequential", async () => {
+  const messages = [
+    recordingMessage({ kind: "source_capture", canisterId: "6emaw-iyaaa-aaaay-aacka-cai", databaseId: "db_1", requestPath: "/Sources/source-capture-requests/1.md", sessionNonce: "nonce" }, "capture"),
+    recordingMessage({ kind: "link_preview", canisterId: "6emaw-iyaaa-aaaay-aacka-cai", databaseId: "db_1", requestedAt: "2026-07-16T00:00:00.000Z" }, "preview")
+  ];
+  let active = 0;
+  let maxActive = 0;
+
+  await processQueueBatchForTest(testEnv(new TestQueue()), messages, async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await Promise.resolve();
+    active -= 1;
+    return { kind: "ack" };
+  });
+
+  assert.equal(maxActive, 1);
+  assert.deepEqual(messages.map((message) => message.acks), [1, 1]);
+});
+
+test("active lease reschedules the source before acknowledging the original", async () => {
+  const mainQueue = new TestQueue();
+  const failureQueue = new TestQueue<WikiGenerationFailureMessage>();
+  const env = { ...testEnv(mainQueue), WIKI_GENERATION_DLQ: failureQueue };
+  const body = { ...sourceMessage(3), sessionNonce: "same-primary-queue-only" };
+  const message = recordingMessage(body, "source-busy", 5);
+
+  await processQueueBatchForTest(env, [message], async () => ({
+    kind: "reschedule",
+    delaySeconds: 241,
+    code: "source_job_busy",
+    message: "source generation is already leased"
+  }));
+
+  assert.deepEqual(mainQueue.messages, [body]);
+  assert.deepEqual(mainQueue.sendOptions, [{ delaySeconds: 241 }]);
+  assert.equal(message.acks, 1);
+  assert.equal(message.retries, 0);
+  assert.equal(failureQueue.messages.length, 0);
+});
+
+test("active lease reschedule failure retries without acknowledging", async () => {
+  const mainQueue = new TestQueue();
+  mainQueue.failSend = true;
+  const message = recordingMessage(sourceMessage(4), "source-busy-send-failed", 5);
+
+  await processQueueBatchForTest(testEnv(mainQueue), [message], async () => ({
+    kind: "reschedule",
+    delaySeconds: 120,
+    code: "source_job_busy",
+    message: "source generation is already leased"
+  }));
+
+  assert.equal(message.acks, 0);
+  assert.equal(message.retries, 1);
+  assert.deepEqual(message.retryOptions, [{ delaySeconds: 120 }]);
+});
+
+test("fifth failed attempt sends only sanitized failure data then acknowledges", async () => {
+  const mainQueue = new TestQueue();
+  const failureQueue = new TestQueue<WikiGenerationFailureMessage>();
+  const env = { ...testEnv(mainQueue), WIKI_GENERATION_DLQ: failureQueue };
+  const message = recordingMessage({ ...sourceMessage(1), sessionNonce: "secret-nonce" }, "source-final", 5);
+
+  await processQueueBatchForTest(env, [message], async () => ({ kind: "retry", delaySeconds: 30, code: "deepseek_http_429", message: "provider payload" }));
+
+  assert.equal(message.acks, 1);
+  assert.equal(message.retries, 0);
+  assert.equal(failureQueue.messages.length, 1);
+  assert.deepEqual(failureQueue.messages[0], {
+    messageId: "source-final",
+    messageKind: "source",
+    databaseId: "db_1",
+    sourcePath: "/Sources/a/1.md",
+    sourceEtag: "etag-1",
+    attempt: 5,
+    errorCode: "deepseek_http_429",
+    failedAt: failureQueue.messages[0]?.failedAt
+  });
+  assert.doesNotMatch(JSON.stringify(failureQueue.messages[0]), /secret-nonce|provider payload/);
+});
+
+test("failure Queue outage retries the original message without acknowledging", async () => {
+  const failureQueue = new TestQueue<WikiGenerationFailureMessage>();
+  failureQueue.failSend = true;
+  const env = { ...testEnv(new TestQueue()), WIKI_GENERATION_DLQ: failureQueue };
+  const message = recordingMessage(sourceMessage(2), "source-dlq-outage", 5);
+
+  await processQueueBatchForTest(env, [message], async () => ({ kind: "dead_letter", code: "source_commit_transient", message: "VFS unavailable" }));
+
+  assert.equal(message.acks, 0);
+  assert.equal(message.retries, 1);
+  assert.equal(failureQueue.messages.length, 0);
 });
 
 function authorizedSourceCaptureRequest(body: Record<string, string> = {}): Request {
@@ -138,6 +265,32 @@ function recordingCtx(): ExecutionContext & { waitUntilCount: number } {
     waitUntilCount: 0,
     waitUntil(_promise: Promise<unknown>) {
       this.waitUntilCount += 1;
+    }
+  };
+}
+
+function sourceMessage(index: number): SourceQueueMessage {
+  return { kind: "source", databaseId: "db_1", sourcePath: `/Sources/a/${index}.md`, sourceEtag: `etag-${index}` };
+}
+
+function recordingMessage(
+  body: QueueMessage,
+  id: string,
+  attempts = 1
+): Message<QueueMessage> & { acks: number; retries: number; retryOptions: ({ delaySeconds?: number } | undefined)[] } {
+  return {
+    id,
+    attempts,
+    body,
+    acks: 0,
+    retries: 0,
+    retryOptions: [],
+    ack() {
+      this.acks += 1;
+    },
+    retry(options) {
+      this.retries += 1;
+      this.retryOptions.push(options);
     }
   };
 }

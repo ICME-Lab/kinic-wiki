@@ -16,6 +16,7 @@ pub mod github_source;
 pub mod hermes;
 pub mod identity;
 pub mod identity_mode;
+mod local_fs;
 pub mod maintenance;
 mod plugin_payload;
 mod purge_source_capture;

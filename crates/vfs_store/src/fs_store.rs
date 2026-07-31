@@ -1335,6 +1335,7 @@ fn build_child_nodes(parent_path: &str, rows: Vec<ChildRow>) -> Result<Vec<Child
                 etag: Some(row.etag),
                 size_bytes: Some(row.size_bytes),
                 is_virtual: false,
+                is_published: false,
             },
         );
     }

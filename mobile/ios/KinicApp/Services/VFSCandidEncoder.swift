@@ -47,6 +47,19 @@ enum VFSCandidEncoder {
         textArgs([databaseId, path])
     }
 
+    static func queryDatabaseSQLJSON(databaseId: String, sql: String, limit: UInt32) -> Data {
+        var data = magic
+        appendUnsigned(0, to: &data)
+        appendUnsigned(3, to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(primitive(typeText), to: &data)
+        encode(primitive(typeNat32), to: &data)
+        encode(.text(databaseId), to: &data)
+        encode(.text(sql), to: &data)
+        encode(.nat32(limit), to: &data)
+        return data
+    }
+
     static func listChildren(databaseId: String, path: String) -> Data {
         oneRecord(
             tableEntries: [
@@ -207,6 +220,33 @@ enum VFSCandidEncoder {
     }
 
     static func writeNode(_ request: SourceCaptureRequest) -> Data {
+        writeNode(
+            databaseId: request.databaseId,
+            path: request.requestPath,
+            kind: .file,
+            content: request.content,
+            metadataJson: request.metadataJson,
+            expectedEtag: nil
+        )
+    }
+
+    static func writeNode(
+        databaseId: String,
+        path: String,
+        kind: VFSNodeKind,
+        content: String,
+        metadataJson: String,
+        expectedEtag: String?
+    ) -> Data {
+        let kindName: String
+        switch kind {
+        case .file:
+            kindName = "File"
+        case .source:
+            kindName = "Source"
+        case .folder:
+            kindName = "Folder"
+        }
         let nodeKind = variant([
             field("File", primitive(typeNull)),
             field("Source", primitive(typeNull)),
@@ -225,12 +265,12 @@ enum VFSCandidEncoder {
             tableEntries: [nodeKind, optionalText, writeRequest],
             argType: table(2),
             values: [
-                .text(request.content),
-                .variant("File", ["File", "Source", "Folder"], .null),
-                .text(request.requestPath),
-                .none,
-                .text(request.metadataJson),
-                .text(request.databaseId)
+                .text(content),
+                .variant(kindName, ["File", "Source", "Folder"], .null),
+                .text(path),
+                expectedEtag.map { .some(.text($0)) } ?? .none,
+                .text(metadataJson),
+                .text(databaseId)
             ]
         )
     }

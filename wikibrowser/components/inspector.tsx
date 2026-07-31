@@ -2,7 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { WikiNavigationLink } from "@/components/wiki-navigation";
 import { AlertTriangle, GitBranch, Info, Sparkles } from "lucide-react";
 import { collectLintHints, provenancePathFor, rawSourceLinksFor } from "@/lib/lint-hints";
 import { hrefForPath } from "@/lib/paths";
@@ -110,9 +110,9 @@ export function Inspector({
           <ul className="space-y-1">
             {outgoingLinks.map((edge) => (
               <li key={`${edge.targetPath}-${edge.rawHref}`} className="truncate font-mono text-xs">
-                <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, edge.targetPath)}>
+                <WikiNavigationLink className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, edge.targetPath)}>
                   {edge.targetPath}
-                </Link>
+                </WikiNavigationLink>
                 <p className="truncate text-[11px] text-muted">{edge.linkText || edge.rawHref}</p>
               </li>
             ))}
@@ -132,9 +132,9 @@ export function Inspector({
           <ul className="space-y-1">
             {incomingLinks.map((edge) => (
               <li key={`${edge.sourcePath}-${edge.rawHref}`} className="truncate font-mono text-xs">
-                <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, edge.sourcePath)}>
+                <WikiNavigationLink className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, edge.sourcePath)}>
                   {edge.sourcePath}
-                </Link>
+                </WikiNavigationLink>
                 <p className="truncate text-[11px] text-muted">{edge.linkText || edge.rawHref}</p>
               </li>
             ))}
@@ -148,9 +148,9 @@ export function Inspector({
           <ul className="space-y-1">
             {rawSourceLinks.map((link) => (
               <li key={link} className="truncate font-mono text-xs">
-                <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, link)}>
+                <WikiNavigationLink className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, link)}>
                   {link}
-                </Link>
+                </WikiNavigationLink>
               </li>
             ))}
           </ul>

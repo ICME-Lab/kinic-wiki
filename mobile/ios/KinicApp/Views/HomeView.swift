@@ -25,6 +25,14 @@ struct HomeView: View {
             .tag(AppTab.browse)
 
             NavigationStack {
+                AskAIView(appModel: model)
+            }
+            .tabItem {
+                Label("Ask AI", systemImage: "sparkles")
+            }
+            .tag(AppTab.askAI)
+
+            NavigationStack {
                 ManageView(model: model)
             }
             .tabItem {
@@ -56,6 +64,7 @@ private struct CaptureView: View {
                 VStack(spacing: 16) {
                     SessionPanel(model: model)
                     DatabasePanel(model: model)
+                    SourceCaptureHistoryPanel(model: model)
 
                     if let message = model.statusMessage {
                         StatusPanel(message: message)
@@ -72,8 +81,15 @@ private struct CaptureView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                KinicHeaderTitle()
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarLeading) {
+                    KinicHeaderTitle()
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    KinicHeaderTitle()
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Ingest", systemImage: "link.badge.plus") {
@@ -101,6 +117,7 @@ private struct CaptureView: View {
         .task {
             model.refreshInbox()
             model.startRefreshDatabases()
+            model.startRefreshSourceCaptureHistory()
             model.autoSubmitPendingURL()
         }
     }

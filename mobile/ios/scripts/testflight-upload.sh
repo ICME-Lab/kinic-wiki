@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Where: mobile/ios/scripts/testflight-upload.sh
-# What: Archive KinicWikiApp and upload it to TestFlight from CLI.
+# What: Archive KinicWiki and upload it to TestFlight from CLI.
 # Why: TestFlight submissions need a repeatable production build path without editing Xcode project files.
 
 set -euo pipefail
@@ -26,13 +26,13 @@ team_id="AKN976G7AK"
 bundle_id="xyz.kinic.ios.KinicWiki"
 build_number="${KINIC_IOS_BUILD_NUMBER:-}"
 marketing_version="${KINIC_IOS_MARKETING_VERSION:-0.1.0}"
-archive_path="${KINIC_IOS_ARCHIVE_PATH:-$repo_root/mobile/ios/build/TestFlight/KinicWikiApp-$marketing_version-$build_number.xcarchive}"
+archive_path="${KINIC_IOS_ARCHIVE_PATH:-$repo_root/mobile/ios/build/TestFlight/KinicWiki-$marketing_version-$build_number.xcarchive}"
 export_path="${KINIC_IOS_EXPORT_PATH:-$repo_root/mobile/ios/build/TestFlight/export-$marketing_version-$build_number}"
 asc_key_path="${ASC_KEY_PATH:-}"
 asc_key_id="${ASC_KEY_ID:-}"
 asc_issuer_id="${ASC_ISSUER_ID:-}"
 mode="upload"
-distribution="internal-only"
+distribution="external"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -43,8 +43,8 @@ usage() {
   cat <<'EOF'
 Usage:
   KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh
-  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --external
-  mobile/ios/scripts/testflight-upload.sh --external
+  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --internal-only
+  mobile/ios/scripts/testflight-upload.sh --internal-only
   mobile/ios/scripts/testflight-upload.sh --validate-only
 
 Environment:
@@ -63,8 +63,8 @@ Environment:
     KINIC_IOS_ENV_FILE          Overrides the default env file loading.
 
 Options:
-    --external                  Upload a build that can be assigned to external TestFlight groups.
-    --internal-only             Upload an internal-only TestFlight build. This is the default.
+    --external                  Upload a build that can be assigned to external TestFlight groups. This is the default.
+    --internal-only             Upload an internal-only TestFlight build.
 EOF
 }
 
@@ -146,6 +146,7 @@ EOF
 
 printf 'Archiving %s %s (%s) for App Store Connect (%s)...\n' "$bundle_id" "$marketing_version" "$build_number" "$distribution"
 xcodebuild archive \
+  -quiet \
   -project "$project" \
   -scheme "$scheme" \
   -configuration "$configuration" \
@@ -165,13 +166,14 @@ xcodebuild archive \
   KINIC_CALLBACK_DOMAIN="wiki.kinic.xyz" \
   KINIC_ASSOCIATED_DOMAIN="wiki.kinic.xyz"
 
-app_privacy="$archive_path/Products/Applications/KinicWikiApp.app/PrivacyInfo.xcprivacy"
-extension_privacy="$archive_path/Products/Applications/KinicWikiApp.app/PlugIns/KinicShareExtension.appex/PrivacyInfo.xcprivacy"
+app_privacy="$archive_path/Products/Applications/KinicWiki.app/PrivacyInfo.xcprivacy"
+extension_privacy="$archive_path/Products/Applications/KinicWiki.app/PlugIns/KinicShareExtension.appex/PrivacyInfo.xcprivacy"
 [[ -f "$app_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from app archive"
 [[ -f "$extension_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from Share Extension archive"
 
 printf 'Uploading archive to TestFlight...\n'
 xcodebuild -exportArchive \
+  -quiet \
   -archivePath "$archive_path" \
   -exportPath "$export_path" \
   -exportOptionsPlist "$export_options" \
@@ -180,4 +182,4 @@ xcodebuild -exportArchive \
   -authenticationKeyID "$asc_key_id" \
   -authenticationKeyIssuerID "$asc_issuer_id"
 
-printf 'Uploaded KinicWikiApp %s (%s) to TestFlight (%s).\n' "$marketing_version" "$build_number" "$distribution"
+printf 'Uploaded KinicWiki %s (%s) to TestFlight (%s).\n' "$marketing_version" "$build_number" "$distribution"

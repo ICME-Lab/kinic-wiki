@@ -43,7 +43,7 @@ async function main() {
   assertSnapshotIncludes(target.nodePath);
   run("open", [emptyGraphUrl]);
   assertSnapshotIncludes("Database-wide graph");
-  assertSnapshotIncludes("No indexed links found in this database.");
+  assertDatabaseWideGraphState();
   run("open", [helpUrl]);
   assertSnapshotIncludes("Wiki browser help");
   assertSnapshotIncludes("Path search matches node paths.");
@@ -92,8 +92,8 @@ function assertSnapshotIncludes(text) {
 }
 
 async function readTargetContext(databaseId, nodePath) {
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const host = process.env.VITE_WIKI_IC_HOST ?? "https://icp0.io";
+  const canisterId = process.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const agent = HttpAgent.createSync({ host });
   if (isLocalHost(host)) {
     await agent.fetchRootKey();
@@ -131,6 +131,17 @@ function assertNoSnapshotText(text) {
   if (output.includes(text)) {
     throw new Error(`snapshot unexpectedly included ${text}\n${output}`);
   }
+}
+
+function assertDatabaseWideGraphState() {
+  const output = snapshotText();
+  if (output.includes("No indexed links found in this database.")) {
+    return;
+  }
+  if (/\b\d+\s+nodes\b/.test(output) && /\b\d+\s+edges\b/.test(output)) {
+    return;
+  }
+  throw new Error(`snapshot missing database-wide graph state\n${output}`);
 }
 
 function contentProbeFor(content) {

@@ -8,10 +8,10 @@ import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const DEFAULT_CANISTER_ID = "6emaw-iyaaa-aaaay-aacka-cai";
-const DEFAULT_DB_TITLE = "KINIC-WIKI";
-const DEFAULT_QUERY = "vfs cli";
-const DEFAULT_PATH_QUERY = "repo-docs-cli";
-const DEFAULT_PREFIX = "/Sources";
+const DEFAULT_DB_TITLE = "hono-docs";
+const DEFAULT_QUERY = "testing app.request testClient";
+const DEFAULT_PATH_QUERY = "testclient";
+const DEFAULT_PREFIX = "/Wiki";
 const DEFAULT_ITERATIONS = 5;
 const DEFAULT_WARMUP = 1;
 

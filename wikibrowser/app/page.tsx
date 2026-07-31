@@ -1,18 +1,16 @@
 // Where: wikibrowser/app/page.tsx
 // What: Lightweight public landing page for the production Worker root route.
 // Why: Cloudflare cold renders of the full marketing page can exceed Worker CPU on browser document requests.
-import type { Metadata } from "next";
-import Image from "next/image";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 
 const linkPreviewImage = {
-  url: "/opengraph-image",
+  url: "/opengraph-image.png",
   width: 1200,
   height: 630,
   alt: "Kinic Wiki Database Dashboard"
 };
 
-export const metadata: Metadata = {
+export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki AI Memory",
   description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
   openGraph: {
@@ -26,7 +24,7 @@ export const metadata: Metadata = {
     description: "Use Kinic Wiki as canister-backed AI memory: raw evidence under /Sources, maintained knowledge under /Knowledge, and CLI-first agent workflows.",
     images: [
       {
-        url: "/twitter-image",
+        url: "/twitter-image.png",
         alt: linkPreviewImage.alt
       }
     ]
@@ -75,7 +73,7 @@ export default function HomePage() {
       <section className="border-b border-line bg-paper px-4 py-5 sm:px-6">
         <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3">
           <Link className="flex items-center gap-3 text-sm font-semibold text-ink no-underline" href="/">
-            <Image className="h-10 w-10 rounded-lg" src="/kinic-mark.png" alt="" width={40} height={40} unoptimized />
+            <img className="h-10 w-10 rounded-lg" src="/kinic-mark.png" alt="" width={40} height={40} />
             <span>Kinic Wiki</span>
           </Link>
           <div className="flex flex-wrap gap-2">
@@ -91,7 +89,7 @@ export default function HomePage() {
 
       <section className="relative isolate overflow-hidden px-4 py-16 sm:px-6 sm:py-20">
         <div className="absolute inset-y-0 right-0 -z-20 hidden w-[58%] lg:block">
-          <Image className="object-cover object-[68%_50%] opacity-95" src="/home-hero.webp" alt="" fill priority sizes="58vw" unoptimized />
+          <img className="h-full w-full object-cover object-[68%_50%] opacity-95" src="/home-hero.webp" alt="" />
         </div>
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,#fff_0%,#fff_48%,rgba(255,255,255,0.82)_70%,rgba(255,255,255,0.28)_100%)]" />
         <div className="mx-auto grid max-w-[1080px] gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] lg:items-center">
@@ -148,6 +146,20 @@ export default function HomePage() {
           ))}
         </div>
       </section>
+
+      <footer className="border-t border-line bg-white px-4 py-6 text-sm text-muted sm:px-6">
+        <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3" aria-label="Legal">
+          <span>Kinic Wiki</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/support">
+              Support
+            </Link>
+            <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/privacy-policy">
+              Privacy Policy
+            </Link>
+          </div>
+        </nav>
+      </footer>
     </main>
   );
 }

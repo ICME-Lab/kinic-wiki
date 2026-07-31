@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -29,7 +29,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
   const load = useCallback(
     async (nextCursor: string | null, append: boolean) => {
       if (!canisterId) {
-        setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
+        setError("VITE_KINIC_WIKI_CANISTER_ID is not configured");
         setState("error");
         return;
       }

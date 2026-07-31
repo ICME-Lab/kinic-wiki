@@ -1,14 +1,22 @@
 // Where: workers/wiki-generator/src/processing.ts
 // What: Manual and queued generation workflows.
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 import { loadConfig } from "./config.js";
-import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
-import { generateDraft, validateDraftSources } from "./openai.js";
+import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
+import {
+  databaseLinkPreviewImageKey,
+  generateDatabaseLinkPreviewImage,
+  LINK_PREVIEW_CACHE_CONTROL,
+  LINK_PREVIEW_CONTENT_TYPE
+} from "./link-preview.js";
+import { DeepSeekRequestError, DeepSeekResponseError, DraftValidationError, generateDraft, validateDraftSources } from "./openai.js";
+import { DEFAULT_OUTPUT_LANGUAGE, parseOutputLanguage } from "./output-language.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
-import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
+import { createAnonymousVfsClient, createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
+import type { LinkPreviewQueueMessage, ManualRunInput, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export type ManualRunContext = {
@@ -19,9 +27,22 @@ export type QueueMessageEnvelope =
   | { kind: "valid"; message: QueueMessage }
   | { kind: "invalid"; reason: string };
 
+export type QueueDisposition =
+  | { kind: "ack" }
+  | { kind: "retry"; delaySeconds: number; code: string; message: string }
+  | { kind: "reschedule"; delaySeconds: number; code: string; message: string }
+  | { kind: "dead_letter"; code: string; message: string };
+
+export type QueueExecution = {
+  leaseOwner: string;
+  attempts: number;
+};
+
 type QueueProcessContext = {
   config?: WorkerConfig;
   vfs?: VfsClient;
+  publicVfs?: Pick<VfsClient, "listPublicDatabases">;
+  renderLinkPreviewImage?: (database: PublicDatabaseSummary) => Promise<Response>;
 };
 
 type ExternalCostGateInput = {
@@ -73,98 +94,219 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
   );
 }
 
-export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage, context?: QueueProcessContext): Promise<void> {
+export async function processQueueMessage(
+  env: RuntimeEnv,
+  message: QueueMessage,
+  context?: QueueProcessContext,
+  execution: QueueExecution = { leaseOwner: "direct", attempts: 1 }
+): Promise<QueueDisposition> {
+  if (message.kind === "link_preview") {
+    await processLinkPreviewQueueMessage(env, message, context);
+    return { kind: "ack" };
+  }
   if (message.kind === "source_capture") {
     await triggerSourceCaptureRequest(env, message, completeTriggerContext(context));
-    return;
+    return { kind: "ack" };
   }
-  await processSourceQueueMessage(env, message, context);
+  return processSourceQueueMessage(env, message, execution, context);
 }
 
 export async function processQueueMessageEnvelope(
   env: RuntimeEnv,
   envelope: QueueMessageEnvelope,
-  context?: QueueProcessContext
-): Promise<void> {
+  context?: QueueProcessContext,
+  execution?: QueueExecution
+): Promise<QueueDisposition> {
   if (envelope.kind === "valid") {
-    await processQueueMessage(env, envelope.message, context);
-    return;
+    return processQueueMessage(env, envelope.message, context, execution);
   }
-  console.warn("invalid wiki-generator queue message acked", envelope.reason);
+  console.warn(JSON.stringify({ event: "wiki_generation_invalid_message", reason: envelope.reason }));
+  return { kind: "ack" };
 }
 
 export async function processSourceQueueMessageForTest(
   env: RuntimeEnv,
   message: SourceQueueMessage,
-  context: { config: WorkerConfig; vfs: VfsClient }
-): Promise<void> {
-  await processSourceQueueMessage(env, message, context);
+  context: { config: WorkerConfig; vfs: VfsClient },
+  execution: QueueExecution = { leaseOwner: "test-owner", attempts: 1 }
+): Promise<QueueDisposition> {
+  return processSourceQueueMessage(env, message, execution, context);
 }
 
-async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: QueueProcessContext): Promise<void> {
+async function processSourceQueueMessage(
+  env: RuntimeEnv,
+  message: SourceQueueMessage,
+  execution: QueueExecution,
+  context?: QueueProcessContext
+): Promise<QueueDisposition> {
   const config = context?.config ?? loadConfig(env);
   validateSourceRootPath(message.sourcePath, config.sourcePrefix);
-  const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
-  if (shouldSkipJob(job, message.sourceEtag)) {
-    return;
-  }
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
-  if (await handleSupersededSourceMessage(vfs, message, job)) {
-    return;
-  }
-  await markProcessing(env.DB, message);
-  let source: WikiNode;
-  try {
-    source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
-    if (source.etag !== message.sourceEtag) {
-      const latestJob = await loadJob(env.DB, message.databaseId, message.sourcePath);
-      if (await handleSupersededSourceMessage(vfs, message, latestJob)) {
-        return;
-      }
-      throw new Error(`source etag mismatch: ${message.sourcePath}`);
+  const claim = await claimSourceJob(env.DB, message, execution.leaseOwner);
+  if (claim.kind === "superseded") {
+    if (!claim.job) {
+      return retryDisposition("source_job_missing", "source generation job is missing", execution.attempts);
     }
-  } catch (error) {
-    await markQueueFailed(env, vfs, message, errorMessage(error));
-    return;
+    await handleSupersededSourceMessage(vfs, message, claim.job);
+    return { kind: "ack" };
   }
-  let deepSeekAttempted = false;
-  try {
-    const generated = await generateFromSource(
-      env,
-      vfs,
-      config,
-      message.databaseId,
-      source,
-      () =>
-        ensureExternalCostAllowed(vfs, {
-          databaseId: message.databaseId,
-          sourcePath: message.sourcePath,
-          sourceEtag: message.sourceEtag,
-          requestPath: message.requestPath,
-          sessionNonce: message.sessionNonce
-        }),
-      () => {
-        deepSeekAttempted = true;
-      }
-    );
-    await writeGeneratedPage(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
-    await markCompleted(env.DB, message, generated.targetPath);
+  if (claim.kind === "busy") {
+    return {
+      kind: "reschedule",
+      delaySeconds: claim.retryAfterSeconds,
+      code: "source_job_busy",
+      message: "source generation is already leased"
+    };
+  }
+  if (claim.kind === "failed") {
     if (message.requestPath) {
-      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, source.path, generated.targetPath);
+      await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, claim.error);
     }
-    await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, generated.targetPath, source.path);
-  } catch (error) {
-    const messageText = errorMessage(error);
-    if (error instanceof ExternalCostGateError) {
-      await markQueueFailed(env, vfs, message, messageText);
-      return;
+    if (execution.attempts >= 5) {
+      return { kind: "dead_letter", code: "source_job_failed", message: claim.error };
     }
-    if (deepSeekAttempted) {
-      await bestEffortMarkQueueFailed(env, vfs, message, messageText);
-      return;
-    }
-    await markQueueFailed(env, vfs, message, messageText);
+    return { kind: "ack" };
   }
+  if (claim.kind === "completed") {
+    if (message.requestPath) {
+      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, claim.targetPath);
+    }
+    return { kind: "ack" };
+  }
+
+  let artifact: GeneratedArtifact;
+  if (claim.kind === "resume") {
+    artifact = claim.artifact;
+  } else {
+    let source: WikiNode;
+    try {
+      source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
+      if (source.etag !== message.sourceEtag) {
+        const latestJob = await loadJob(env.DB, message.databaseId, message.sourcePath);
+        if (await handleSupersededSourceMessage(vfs, message, latestJob)) return { kind: "ack" };
+        throw new SourceValidationError(`source etag mismatch: ${message.sourcePath}`);
+      }
+      const generated = await generateFromSource(
+        env,
+        vfs,
+        config,
+        message.databaseId,
+        source,
+        () =>
+          ensureExternalCostAllowed(vfs, {
+            databaseId: message.databaseId,
+            sourcePath: message.sourcePath,
+            sourceEtag: message.sourceEtag,
+            requestPath: message.requestPath,
+            sessionNonce: message.sessionNonce,
+          }),
+        message.outputLanguage ?? DEFAULT_OUTPUT_LANGUAGE
+      );
+      const content = generated.content;
+      if (new TextEncoder().encode(content).byteLength > 256 * 1024) {
+        throw new GeneratedArtifactError("generated Markdown exceeded 256 KiB");
+      }
+      artifact = {
+        targetPath: generated.targetPath,
+        expectedTargetEtag: undefined,
+        content,
+        contextPaths: generated.contextHits.map((hit) => hit.path),
+        llmDurationMs: generated.llmDurationMs
+      };
+      await checkpointGenerated(env.DB, message, execution.leaseOwner, artifact);
+    } catch (error) {
+      if (isPermanentGenerationError(error)) {
+        await markQueueFailed(env, vfs, message, execution.leaseOwner, errorMessage(error));
+        return { kind: "ack" };
+      }
+      if (execution.attempts >= 5) {
+        await markQueueFailed(env, vfs, message, execution.leaseOwner, errorMessage(error));
+        return { kind: "dead_letter", code: errorCode(error), message: errorMessage(error) };
+      }
+      await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+      const providerError = error instanceof DeepSeekRequestError ? error : null;
+      return retryDisposition(providerError?.code ?? "source_generation_transient", errorMessage(error), execution.attempts, providerError?.retryAfterSeconds);
+    }
+  }
+
+  if (artifact.expectedTargetEtag === undefined) {
+    try {
+      artifact =
+        claim.kind === "resume"
+          ? await recoverGeneratedTargetSnapshot(env.DB, vfs, message, execution.leaseOwner, artifact)
+          : await captureGeneratedTargetSnapshot(env.DB, vfs, message, execution.leaseOwner, artifact);
+    } catch (error) {
+      return handleSourceCommitError(env, vfs, message, execution, error);
+    }
+  }
+
+  try {
+    await writeGeneratedPage(vfs, message.databaseId, artifact, message.sourcePath);
+  } catch (error) {
+    return handleSourceCommitError(env, vfs, message, execution, error);
+  }
+
+  try {
+    await markCompleted(env.DB, message, execution.leaseOwner, artifact.targetPath);
+  } catch (error) {
+    let job;
+    try {
+      job = await loadJob(env.DB, message.databaseId, message.sourcePath);
+    } catch {
+      return {
+        kind: "reschedule",
+        delaySeconds: 30,
+        code: "source_completion_unknown",
+        message: errorMessage(error)
+      };
+    }
+    if (job?.source_etag !== message.sourceEtag || job.status !== "completed" || job.target_path !== artifact.targetPath) {
+      return handleSourceCommitError(env, vfs, message, execution, error);
+    }
+  }
+
+  if (message.requestPath) {
+    try {
+      await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, artifact.targetPath);
+    } catch (error) {
+      if (execution.attempts >= 5) {
+        return {
+          kind: "reschedule",
+          delaySeconds: 30,
+          code: "source_request_completion_transient",
+          message: errorMessage(error)
+        };
+      }
+      return retryDisposition("source_request_completion_transient", errorMessage(error), execution.attempts);
+    }
+  }
+  await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, artifact.targetPath, message.sourcePath);
+  return { kind: "ack" };
+}
+
+async function processLinkPreviewQueueMessage(env: RuntimeEnv, message: LinkPreviewQueueMessage, context?: QueueProcessContext): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
+  if (message.canisterId !== config.canisterId) {
+    console.warn("link_preview canisterId mismatch", message.canisterId);
+    return;
+  }
+  const publicVfs = context?.publicVfs ?? (await createAnonymousVfsClient(config));
+  const databases = await publicVfs.listPublicDatabases();
+  const database = databases.find((candidate) => candidate.databaseId === message.databaseId);
+  if (!database || database.status !== "active") return;
+  const render = context?.renderLinkPreviewImage ?? generateDatabaseLinkPreviewImage;
+  const response = await render(database);
+  await env.LINK_PREVIEW_IMAGES.put(databaseLinkPreviewImageKey(database.databaseId), await response.arrayBuffer(), {
+    httpMetadata: {
+      contentType: LINK_PREVIEW_CONTENT_TYPE,
+      cacheControl: LINK_PREVIEW_CACHE_CONTROL
+    },
+    customMetadata: {
+      databaseId: database.databaseId,
+      generatedAt: new Date().toISOString(),
+      trigger: "queue-miss"
+    }
+  });
 }
 
 function completeTriggerContext(context: QueueProcessContext | undefined): { config: WorkerConfig; vfs: VfsClient } | undefined {
@@ -174,7 +316,7 @@ function completeTriggerContext(context: QueueProcessContext | undefined): { con
 
 async function handleSupersededSourceMessage(vfs: VfsClient, message: SourceQueueMessage, job: Awaited<ReturnType<typeof loadJob>>): Promise<boolean> {
   if (!job || job.source_etag === message.sourceEtag) return false;
-  if (job.status === "queued" || job.status === "processing") return true;
+  if (job.status === "queued" || job.status === "processing" || job.status === "generated") return true;
   if (job.status !== "completed") return false;
   if (message.requestPath && job.target_path) {
     await markSourceCaptureRequestCompleted(vfs, message.databaseId, message.requestPath, message.sourcePath, job.target_path);
@@ -208,18 +350,10 @@ async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGate
   }
 }
 
-async function markQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
-  await markFailed(env.DB, message, messageText);
+async function markQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, owner: string, messageText: string): Promise<void> {
+  await markFailed(env.DB, message, owner, messageText);
   if (message.requestPath) {
     await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
-  }
-}
-
-async function bestEffortMarkQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
-  try {
-    await markQueueFailed(env, vfs, message, messageText);
-  } catch (error) {
-    console.warn("failed to record source generation non-retry failure", errorMessage(error));
   }
 }
 
@@ -266,13 +400,16 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if ("requestPath" in value && value.requestPath !== undefined && !nonEmptyString(value.requestPath)) return null;
     if (typeof value.requestPath === "string" && !isSourceCaptureRequestPath(value.requestPath)) return null;
     if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
+    const outputLanguage = parseOutputLanguage(value.outputLanguage);
+    if (!outputLanguage) return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
       sourcePath: value.sourcePath,
       sourceEtag: value.sourceEtag,
       requestPath: typeof value.requestPath === "string" ? value.requestPath : undefined,
-      sessionNonce: typeof value.sessionNonce === "string" ? value.sessionNonce : undefined
+      sessionNonce: typeof value.sessionNonce === "string" ? value.sessionNonce : undefined,
+      outputLanguage
     };
   }
   if (value.kind === "source_capture") {
@@ -289,6 +426,17 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
       sessionNonce: value.sessionNonce
     };
   }
+  if (value.kind === "link_preview") {
+    if (!nonEmptyString(value.canisterId)) return null;
+    if (!nonEmptyString(value.databaseId) || value.databaseId.length > 128) return null;
+    if (!nonEmptyString(value.requestedAt) || Number.isNaN(Date.parse(value.requestedAt))) return null;
+    return {
+      kind: "link_preview",
+      canisterId: value.canisterId,
+      databaseId: value.databaseId,
+      requestedAt: value.requestedAt
+    };
+  }
   return null;
 }
 
@@ -301,6 +449,13 @@ export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope 
     if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is missing" };
     if (!isSourceCaptureRequestPath(value.requestPath)) return { kind: "invalid", reason: "source_capture requestPath is invalid" };
     if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "source_capture sessionNonce is missing" };
+  }
+  if (isObject(value) && value.kind === "link_preview") {
+    if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "link_preview canisterId is missing" };
+    if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "link_preview databaseId is missing" };
+    if (typeof value.databaseId === "string" && value.databaseId.length > 128) return { kind: "invalid", reason: "link_preview databaseId is too long" };
+    if (!nonEmptyString(value.requestedAt)) return { kind: "invalid", reason: "link_preview requestedAt is missing" };
+    if (Number.isNaN(Date.parse(value.requestedAt))) return { kind: "invalid", reason: "link_preview requestedAt is invalid" };
   }
   if (isObject(value) && value.kind === "url_ingest") {
     return { kind: "invalid", reason: "legacy url_ingest queue message is unsupported" };
@@ -315,22 +470,20 @@ async function generateFromSource(
   databaseId: string,
   source: WikiNode,
   beforeDeepSeek?: () => Promise<void>,
-  afterDeepSeekAttempt?: () => void
+  outputLanguage = DEFAULT_OUTPUT_LANGUAGE
 ): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
   await beforeDeepSeek?.();
-  let draft: WikiDraft;
-  try {
-    draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
-  } finally {
-    afterDeepSeekAttempt?.();
-  }
+  const llmStartedAt = Date.now();
+  const draft: WikiDraft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY, outputLanguage);
+  const llmDurationMs = Date.now() - llmStartedAt;
   validateDraftSources(draft, source.path);
   const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft, sourceIdFromPath(source.path, config.sourcePrefix))}.md`;
   return {
     targetPath,
     content: renderGeneratedMarkdown(draft, source, contextHits),
-    contextHits
+    contextHits,
+    llmDurationMs
   };
 }
 
@@ -357,26 +510,97 @@ export function rankContextHits(hits: SearchNodeHit[], sourcePrefix = "/Sources"
 async function readRequiredSource(vfs: VfsClient, databaseId: string, sourcePath: string): Promise<WikiNode> {
   const source = await vfs.readNode(databaseId, sourcePath);
   if (!source) {
-    throw new Error(`source node not found: ${sourcePath}`);
+    throw new SourceValidationError(`source node not found: ${sourcePath}`);
   }
   if (source.kind !== "source") {
-    throw new Error(`node is not a source: ${sourcePath}`);
+    throw new SourceValidationError(`node is not a source: ${sourcePath}`);
   }
   return source;
 }
 
-async function writeGeneratedPage(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
-  const existing = await vfs.readNode(databaseId, targetPath);
-  ensureTargetCanBeWritten(existing?.content ?? null, targetPath, sourcePath);
-  await ensureParentFolders(vfs, databaseId, targetPath);
+async function writeGeneratedPage(
+  vfs: VfsClient,
+  databaseId: string,
+  artifact: GeneratedArtifact,
+  sourcePath: string
+): Promise<void> {
+  const existing = await vfs.readNode(databaseId, artifact.targetPath);
+  if (existing?.kind === "file" && existing.content === artifact.content) return;
+  if (artifact.expectedTargetEtag === undefined) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before snapshot: ${artifact.targetPath}`);
+  }
+  if ((existing?.etag ?? null) !== artifact.expectedTargetEtag) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before commit: ${artifact.targetPath}`);
+  }
+  ensureTargetCanBeWritten(existing?.content ?? null, artifact.targetPath, sourcePath);
+  await ensureParentFolders(vfs, databaseId, artifact.targetPath);
   await vfs.writeNode({
     databaseId,
-    path: targetPath,
+    path: artifact.targetPath,
     kind: "file",
-    content,
+    content: artifact.content,
     metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath }),
-    expectedEtag: existing?.etag ?? null
+    expectedEtag: artifact.expectedTargetEtag
   });
+}
+
+async function captureGeneratedTargetSnapshot(
+  db: D1Database,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  owner: string,
+  artifact: GeneratedArtifact
+): Promise<GeneratedArtifact> {
+  const existing = await vfs.readNode(message.databaseId, artifact.targetPath);
+  try {
+    ensureTargetCanBeWritten(existing?.content ?? null, artifact.targetPath, message.sourcePath);
+  } catch (error) {
+    throw new GeneratedCheckpointConflictError(errorMessage(error));
+  }
+  const expectedTargetEtag = existing?.etag ?? null;
+  await checkpointGeneratedTarget(db, message, owner, expectedTargetEtag);
+  return { ...artifact, expectedTargetEtag };
+}
+
+async function recoverGeneratedTargetSnapshot(
+  db: D1Database,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  owner: string,
+  artifact: GeneratedArtifact
+): Promise<GeneratedArtifact> {
+  const existing = await vfs.readNode(message.databaseId, artifact.targetPath);
+  if (existing?.kind === "file" && existing.content === artifact.content) return artifact;
+  if (existing) {
+    throw new GeneratedCheckpointConflictError(`checkpoint target changed before snapshot: ${artifact.targetPath}`);
+  }
+  await checkpointGeneratedTarget(db, message, owner, null);
+  return { ...artifact, expectedTargetEtag: null };
+}
+
+async function handleSourceCommitError(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  message: SourceQueueMessage,
+  execution: QueueExecution,
+  error: unknown
+): Promise<QueueDisposition> {
+  if (error instanceof GeneratedCheckpointConflictError) {
+    await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+    if (message.requestPath) {
+      await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, errorMessage(error));
+    }
+    return { kind: "dead_letter", code: "source_checkpoint_conflict", message: errorMessage(error) };
+  }
+  if (execution.attempts >= 5) {
+    await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+    if (message.requestPath) {
+      await markSourceCaptureRequestFailed(vfs, message.databaseId, message.requestPath, errorMessage(error));
+    }
+    return { kind: "dead_letter", code: "source_commit_transient", message: errorMessage(error) };
+  }
+  await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
+  return retryDisposition("source_commit_transient", errorMessage(error), execution.attempts);
 }
 
 async function appendWorkerLog(vfs: VfsClient, databaseId: string, targetRoot: string, targetPath: string, sourcePath: string): Promise<void> {
@@ -451,14 +675,44 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-function isSourceCaptureRequestPath(path: string): boolean {
-  if (!path.startsWith("/Sources/source-capture-requests/")) return false;
-  const name = path.slice("/Sources/source-capture-requests/".length);
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
-}
-
 type GeneratedPage = {
   targetPath: string;
   content: string;
   contextHits: SearchNodeHit[];
+  llmDurationMs: number;
 };
+
+class SourceValidationError extends Error {}
+class GeneratedArtifactError extends Error {}
+class GeneratedCheckpointConflictError extends Error {}
+
+function isPermanentGenerationError(error: unknown): boolean {
+  return (
+    error instanceof ExternalCostGateError ||
+    error instanceof SourceValidationError ||
+    error instanceof GeneratedArtifactError ||
+    error instanceof DraftValidationError ||
+    error instanceof DeepSeekResponseError ||
+    (error instanceof DeepSeekRequestError && !error.retryable)
+  );
+}
+
+function retryDisposition(code: string, message: string, attempts: number, retryAfterSeconds?: number): QueueDisposition {
+  return {
+    kind: "retry",
+    delaySeconds: retryAfterSeconds ?? exponentialBackoff(attempts),
+    code,
+    message
+  };
+}
+
+function errorCode(error: unknown): string {
+  return error instanceof DeepSeekRequestError ? error.code : "source_generation_transient";
+}
+
+function exponentialBackoff(attempts: number): number {
+  const ceiling = Math.min(300, 15 * 2 ** Math.max(0, attempts - 1));
+  const random = new Uint32Array(1);
+  crypto.getRandomValues(random);
+  return Math.max(1, Math.floor((random[0]! / 0xffffffff) * ceiling));
+}

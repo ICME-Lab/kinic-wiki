@@ -59,7 +59,6 @@ export function MarkdownEditDocument({
     onEditStateChange?.({ dirty, saveState: visibleSaveState });
   }, [dirty, onEditStateChange, visibleSaveState]);
 
-  useUnsavedNavigationGuard(dirty);
   useSaveShortcut(() => {
     if (dirty && editor.saveState !== "saving") {
       void save();
@@ -134,32 +133,6 @@ export function MarkdownEditDocument({
       />
     </article>
   );
-}
-
-function useUnsavedNavigationGuard(dirty: boolean) {
-  useEffect(() => {
-    if (!dirty) return;
-    const message = "You have unsaved Markdown changes. Leave this page?";
-    function beforeUnload(event: BeforeUnloadEvent) {
-      event.preventDefault();
-      event.returnValue = message;
-    }
-    function captureLinkClick(event: MouseEvent) {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-      const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
-      if (!(target instanceof HTMLAnchorElement)) return;
-      if (target.target || target.download || target.origin !== window.location.origin) return;
-      if (window.confirm(message)) return;
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    window.addEventListener("beforeunload", beforeUnload);
-    document.addEventListener("click", captureLinkClick, true);
-    return () => {
-      window.removeEventListener("beforeunload", beforeUnload);
-      document.removeEventListener("click", captureLinkClick, true);
-    };
-  }, [dirty]);
 }
 
 function useSaveShortcut(onSave: () => void) {

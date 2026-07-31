@@ -68,9 +68,9 @@ const FIXTURES = [
 ];
 
 const options = parseArgs(process.argv.slice(2));
-const canister = options.canisterId ?? process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
+const canister = options.canisterId ?? process.env.VITE_KINIC_WIKI_CANISTER_ID;
 if (!canister) {
-  throw new Error("missing --canister-id or NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
+  throw new Error("missing --canister-id or VITE_KINIC_WIKI_CANISTER_ID");
 }
 const ledgerCanister = options.ledgerCanisterId ?? process.env.KINIC_LEDGER_CANISTER_ID ?? readWikiLedgerCanisterId();
 const payoutPrincipal = options.payoutPrincipal ?? readCurrentPrincipal();

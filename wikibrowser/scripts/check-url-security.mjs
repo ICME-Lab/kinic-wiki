@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
-import ts from "typescript";
+import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 if (!crypto.subtle.timingSafeEqual) {
   Object.defineProperty(crypto.subtle, "timingSafeEqual", {
@@ -26,7 +27,6 @@ const sourceCapture = readFileSync(new URL("../lib/source-capture.ts", import.me
 const triggerRouteModule = await importTs("../app/api/source-capture/trigger/route.ts");
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
-const linkPreviewRegenerateRouteModule = await importTs("../app/api/link-preview/regenerate/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
 const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
@@ -35,21 +35,39 @@ const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const nativeAuthRoute = readFileSync(new URL("../app/native-auth/route.ts", import.meta.url), "utf8");
+const nativeAuthLogos = {
+  apple: readFileSync(new URL("../public/native-auth/apple.svg", import.meta.url), "utf8"),
+  google: readFileSync(new URL("../public/native-auth/google.svg", import.meta.url), "utf8"),
+  internetIdentity: readFileSync(new URL("../public/native-auth/internet-identity.svg", import.meta.url), "utf8")
+};
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
 assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\| currentChildren\.error\)/);
 assert.doesNotMatch(wikiBrowser, new RegExp('tab === "source ' + 'capture" \\|\\| tab === "sources"'));
 assert.match(documentPane, /authPrompt\?: "private" \| null/);
 assert.doesNotMatch(documentPane, /Write access/);
-assert.match(sourceCapture, /safeSourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
-assert.match(sourceCapture, /function isSafeRequestSegment/);
-assert.match(sourceCapture, /!value\.includes\("\.\."\)/);
+assert.match(sourceCapture, /sourceCaptureRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
+assert.match(sourceCapture, /sourceCaptureRequestPath\(requestId\)/);
 assert.match(homePage, /location\.hash\.startsWith\(marker\)/);
 assert.match(homePage, /sessionStorage\.setItem\("kinicNativeAuthQuery", query\)/);
 assert.match(homePage, /location\.replace\("\/native-auth\?" \+ query\)/);
 assert.match(nativeAuthRoute, /"content-type": "text\/html; charset=utf-8"/);
 assert.match(nativeAuthRoute, /id="native-auth-message"/);
-assert.match(nativeAuthRoute, /id="native-auth-continue"/);
+assert.match(nativeAuthRoute, /id="native-auth-apple"/);
+assert.match(nativeAuthRoute, /id="native-auth-google"/);
+assert.match(nativeAuthRoute, /id="native-auth-internet-identity"/);
+assert.match(nativeAuthRoute, /Continue with Internet Identity/);
+assert.match(nativeAuthRoute, /Continue with Apple/);
+assert.match(nativeAuthRoute, /Continue with Google/);
+assert.doesNotMatch(nativeAuthRoute, /class="divider"|<span>or<\/span>/);
+assert.match(nativeAuthRoute, /data-provider-logo="internet-identity" src="\/native-auth\/internet-identity\.svg"/);
+assert.match(nativeAuthRoute, /data-provider-logo="apple" src="\/native-auth\/apple\.svg"/);
+assert.match(nativeAuthRoute, /data-provider-logo="google" src="\/native-auth\/google\.svg"/);
+assert.match(nativeAuthRoute, /min-height: 56px/);
+assert.match(nativeAuthRoute, /border: 1px solid var\(--stroke\)/);
+assert.match(nativeAuthRoute, /border-radius: 14px/);
+assert.match(nativeAuthRoute, /role="status" aria-live="polite"/);
+assert.doesNotMatch(nativeAuthRoute, /Passkey or other Internet Identity/);
 assert.match(nativeAuthRoute, /window\.kinicNativeAuthStart/);
 assert.match(nativeAuthRoute, /function nativeAuthScript/);
 assert.match(nativeAuthRoute, /html, body \{ width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; \}/);
@@ -65,6 +83,13 @@ assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
 assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback"\]\.includes\(url\.pathname\)/);
+assert.match(nativeAuthRoute, /event\.source !== idpWindow/);
+assert.match(nativeAuthLogos.apple, /fill="#000"/);
+assert.match(nativeAuthLogos.google, /#4285F4/);
+assert.match(nativeAuthLogos.google, /#34A853/);
+assert.match(nativeAuthLogos.google, /#FBBC05/);
+assert.match(nativeAuthLogos.google, /#EA4335/);
+assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
 
 {
   const response = appleAppSiteAssociationRouteModule.GET();
@@ -77,7 +102,7 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
       details: [
         {
           appID: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-          paths: ["/*"]
+          paths: ["NOT /cycles", "NOT /cycles/*", "/*"]
         }
       ]
     },
@@ -105,6 +130,12 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
   const response = nativeAuthRouteModule.GET();
   assert.equal(response.status, 200);
   const body = await response.text();
+  const internetIdentityButton = body.indexOf('id="native-auth-internet-identity"');
+  const appleButton = body.indexOf('id="native-auth-apple"');
+  const googleButton = body.indexOf('id="native-auth-google"');
+  assert.ok(internetIdentityButton >= 0);
+  assert.ok(internetIdentityButton < appleButton);
+  assert.ok(appleButton < googleButton);
   assert.match(body, /https:\/\/id\.ai/);
   assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
   assert.doesNotMatch(body, /raw\.localhost|id\.ai\.localhost|127\.0\.0\.1:8011/);
@@ -119,6 +150,11 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
 
   const runNativeAuthScript = (overrides = {}) => {
     const postMessages = [];
+    const elements = Object.fromEntries(
+      ["native-auth-message", "native-auth-openid-actions", "native-auth-apple", "native-auth-google", "native-auth-internet-identity"].map(
+        (id) => [id, { disabled: false, hidden: id === "native-auth-openid-actions", textContent: "" }]
+      )
+    );
     const sandbox = {
       Uint8Array,
       TextEncoder,
@@ -126,7 +162,7 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
       URLSearchParams,
       atob,
       btoa,
-      document: { getElementById: () => null },
+      document: { getElementById: (id) => elements[id] ?? null },
       sessionStorage: {
         store: {},
         getItem(key) {
@@ -142,22 +178,44 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
       location: {
         search: overrides.search ?? "",
         hash: overrides.hash ?? "",
-        host: overrides.host ?? "wiki.kinic.xyz"
+        host: overrides.host ?? "wiki.kinic.xyz",
+        href: ""
       },
       __listeners: {},
+      __elements: elements,
+      __openedURL: null,
+      __openCount: 0,
       __postMessages: postMessages,
       __openedIdpWindow: null,
+      __intervals: [],
+      __timeouts: [],
       addEventListener(type, handler) {
         (this.__listeners[type] ??= []).push(handler);
       },
       removeEventListener(type, handler) {
         this.__listeners[type] = (this.__listeners[type] || []).filter((registered) => registered !== handler);
       },
-      setInterval: () => 0,
-      clearInterval: () => {}
+      setInterval(handler, delay) {
+        const timer = { active: true, delay, handler };
+        this.__intervals.push(timer);
+        return timer;
+      },
+      clearInterval(timer) {
+        timer.active = false;
+      },
+      setTimeout(handler, delay) {
+        const timer = { active: true, delay, handler };
+        this.__timeouts.push(timer);
+        return timer;
+      },
+      clearTimeout(timer) {
+        timer.active = false;
+      }
     };
     sandbox.window = sandbox;
-    sandbox.open = () => {
+    sandbox.open = (url) => {
+      sandbox.__openedURL = url;
+      sandbox.__openCount += 1;
       const idpWindow = {
         closed: false,
         location: { href: "" },
@@ -187,10 +245,27 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
     const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
     return Buffer.from(padded, "base64").toString("utf8");
   };
+  const nativeAuthSuccess = () => ({
+    kind: "authorize-client-success",
+    userPublicKey: new Uint8Array([1, 2, 255]),
+    delegations: [
+      {
+        delegation: {
+          pubkey: [3, 4, 5],
+          expiration: 12345n,
+          targets: [new Uint8Array([6, 7])]
+        },
+        signature: "0A0b"
+      }
+    ]
+  });
 
   {
     const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
-    sandbox.window.kinicNativeAuthStart();
+    assert.equal(sandbox.__elements["native-auth-openid-actions"].hidden, false);
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openedURL, "https://id.ai/#authorize");
+    assert.equal(sandbox.__elements["native-auth-message"].textContent, "Opening Internet Identity…");
     assert.equal(sandbox.__postMessages.length, 1);
     const request = sandbox.__postMessages[0].message;
     assert.equal(request.kind, "authorize-client");
@@ -200,23 +275,15 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
 
     const handlers = sandbox.__listeners.message ?? [];
     assert.equal(handlers.length, 1);
+    const success = nativeAuthSuccess();
     for (const handler of handlers) {
+      handler({ origin: "https://evil.example", source: sandbox.__openedIdpWindow, data: success });
+      handler({ origin: "https://id.ai", source: {}, data: success });
+      assert.equal(sandbox.__openedIdpWindow.location.href, "");
       handler({
         origin: "https://id.ai",
-        data: {
-          kind: "authorize-client-success",
-          userPublicKey: new Uint8Array([1, 2, 255]),
-          delegations: [
-            {
-              delegation: {
-                pubkey: [3, 4, 5],
-                expiration: 12345n,
-                targets: [new Uint8Array([6, 7])]
-              },
-              signature: "0A0b"
-            }
-          ]
-        }
+        source: sandbox.__openedIdpWindow,
+        data: success
       });
     }
 
@@ -233,13 +300,73 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
         }
       ]
     });
+    const completedRedirect = sandbox.__openedIdpWindow.location.href;
+    for (const handler of handlers) {
+      handler({ origin: "https://id.ai", source: sandbox.__openedIdpWindow, data: success });
+    }
+    assert.equal(sandbox.__openedIdpWindow.location.href, completedRedirect);
+    const callbackFallback = sandbox.__timeouts.find((timer) => timer.delay === 750);
+    assert.ok(callbackFallback?.active);
+    callbackFallback.handler();
+    assert.equal(sandbox.location.href, completedRedirect);
+  }
+
+  for (const [flow, expectedURL, expectedStatus] of [
+    ["apple", "https://id.ai/authorize?openid=https%3A%2F%2Fappleid.apple.com", "Opening Apple…"],
+    ["google", "https://id.ai/authorize?openid=https%3A%2F%2Faccounts.google.com", "Opening Google…"]
+  ]) {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart(flow);
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openedURL, expectedURL);
+    assert.equal(sandbox.__elements["native-auth-message"].textContent, expectedStatus);
+    assert.equal(sandbox.__openCount, 1);
+    assert.equal(sandbox.__postMessages.length, 1);
+    for (const id of ["native-auth-apple", "native-auth-google", "native-auth-internet-identity"]) {
+      assert.equal(sandbox.__elements[id].disabled, true);
+    }
+    for (const handler of sandbox.__listeners.message ?? []) {
+      handler({
+        origin: "https://id.ai",
+        source: sandbox.__openedIdpWindow,
+        data: nativeAuthSuccess()
+      });
+    }
+    const redirectUrl = new URL(sandbox.__openedIdpWindow.location.href);
+    assert.equal(redirectUrl.searchParams.get("state"), "state-1");
+    assert.equal(JSON.parse(decodeBase64Url(redirectUrl.searchParams.get("result"))).userPublicKey, "0102ff");
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("apple");
+    sandbox.__openedIdpWindow.closed = true;
+    const popupMonitor = sandbox.__intervals[1];
+    assert.ok(popupMonitor?.active);
+    popupMonitor.handler();
+    const callback = new URL(sandbox.location.href);
+    assert.equal(callback.searchParams.get("state"), "state-1");
+    assert.match(decodeBase64Url(callback.searchParams.get("error")), /closed before authorization completed/);
+    assert.equal(sandbox.__listeners.message.length, 0);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("apple");
+    const authorizationTimeout = sandbox.__timeouts.find((timer) => timer.delay === 5 * 60 * 1000);
+    assert.ok(authorizationTimeout?.active);
+    authorizationTimeout.handler();
+    const callback = new URL(sandbox.__openedIdpWindow.location.href);
+    assert.equal(callback.searchParams.get("state"), "state-1");
+    assert.match(decodeBase64Url(callback.searchParams.get("error")), /authorization timed out/);
+    assert.equal(sandbox.__listeners.message.length, 0);
   }
 
   {
     const sandbox = runNativeAuthScript({
       search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/android-auth-callback" })
     });
-    sandbox.window.kinicNativeAuthStart();
+    sandbox.window.kinicNativeAuthStart("internet-identity");
     assert.equal(sandbox.__postMessages.length, 1);
   }
 
@@ -247,27 +374,48 @@ assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback
     const sandbox = runNativeAuthScript({
       search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/native-auth-callback" })
     });
-    sandbox.window.kinicNativeAuthStart();
+    sandbox.window.kinicNativeAuthStart("internet-identity");
     assert.equal(sandbox.__postMessages.length, 0);
   }
 
   for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {
     const sandbox = runNativeAuthScript({ search: nativeAuthSearch({ maxTimeToLive }) });
-    sandbox.window.kinicNativeAuthStart();
+    sandbox.window.kinicNativeAuthStart("internet-identity");
     assert.equal(sandbox.__postMessages.length, 0);
+  }
+
+  for (const fields of [
+    { callback: "https://evil.example/ios-auth-callback" },
+    { callback: "https://wiki.kinic.xyz/not-ios-auth-callback" },
+    { identityProvider: "https://evil.example/" },
+    { identityProvider: "https://id.ai/authorize" }
+  ]) {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch(fields) });
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__openCount, 0);
+    assert.equal(sandbox.__postMessages.length, 0);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({ search: nativeAuthSearch() });
+    sandbox.window.kinicNativeAuthStart("https://appleid.apple.com");
+    assert.equal(sandbox.__openCount, 0);
+    assert.match(sandbox.__elements["native-auth-message"].textContent, /invalid/);
   }
 }
 
 await withEnv(
   {
-    NEXT_PUBLIC_ENABLE_LOCAL_II_E2E: "1",
-    NEXT_PUBLIC_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
-    NEXT_PUBLIC_WIKI_IC_HOST: "http://127.0.0.1:8011"
+    VITE_ENABLE_LOCAL_II_E2E: "1",
+    VITE_II_PROVIDER_URL: "http://id.ai.localhost:8011/#authorize",
+    VITE_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    VITE_WIKI_IC_HOST: "http://127.0.0.1:8011"
   },
   async () => {
     const response = nativeAuthRouteModule.GET();
     const body = await response.text();
+    assert.match(body, /http:\/\/id\.ai\.localhost:8011\/#authorize/);
+    assert.match(body, /id="native-auth-openid-actions" hidden/);
     assert.match(body, /https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/);
     assert.doesNotMatch(body, /http:\/\/aaaaa-aa\.localhost:8011/);
   }
@@ -293,7 +441,7 @@ await withEnv({}, async () => {
 
 await withEnv(
   {
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+    KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
     KINIC_WIKI_GENERATOR_URL: "https://worker.example",
     KINIC_WIKI_WORKER_TOKEN: "secret-token"
   },
@@ -511,13 +659,19 @@ await withEnv(
   });
 }
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
+await withEnv({}, async () => {
+  const missingCanister = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
+  assert.equal(missingCanister.status, 503);
+  assert.match(await missingCanister.text(), /KINIC_WIKI_CANISTER_ID is not configured/);
+});
+
+await withEnv({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
   const missingKey = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
   assert.equal(missingKey.status, 503);
   assert.match(await missingKey.text(), /DEEPSEEK_API_KEY is not configured/);
 });
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY: "deepseek-key" }, async () => {
+await withEnv({ KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY: "deepseek-key" }, async () => {
   const forbidden = await queryAnswerRouteModule.POST(queryAnswerRequest("https://evil.example"));
   assert.equal(forbidden.status, 403);
   const localForbidden = await queryAnswerRouteModule.POST(queryAnswerRequest("http://localhost:3000"));
@@ -633,86 +787,16 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
   queryAnswerRouteModule.setQueryAnswerDepsForTest();
 });
 
-await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa" }, async () => {
-  const missingToken = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-  assert.equal(missingToken.status, 503);
-  assert.match(await missingToken.text(), /KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN is not configured/);
-});
-
-await withEnv(
-  {
-    NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
-    KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN: "regen-token"
-  },
-  async () => {
-    const forbidden = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest({}, "bad-token"));
-    assert.equal(forbidden.status, 403);
-
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest({
-      bucket: linkPreviewBucket(),
-      listDatabasesPublic: async () => [],
-      renderImage: async () => {
-        throw new Error("image should not render");
-      }
-    });
-    const missingDatabase = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-    assert.equal(missingDatabase.status, 404);
-    assert.match(await missingDatabase.text(), /database not found in public list/);
-
-    const writes = [];
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest({
-      bucket: linkPreviewBucket(writes),
-      listDatabasesPublic: async (canisterId) => {
-        assert.equal(canisterId, "aaaaa-aa");
-        return [{ databaseId: "db_1", metadata: { name: "Demo DB", description: "" } }];
-      },
-      renderImage: async (input) => {
-        assert.deepEqual(input, {
-          eyebrow: "Kinic Wiki database",
-          accent: "Public wiki database",
-          title: "Demo DB",
-          description: "Browse, search, and query the Demo DB wiki database.",
-          tags: ["db_1", "/Knowledge", "Search", "Query"]
-        });
-        return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
-      }
-    });
-    const generated = await linkPreviewRegenerateRouteModule.POST(linkPreviewRegenerateRequest());
-    assert.equal(generated.status, 200);
-    const generatedBody = await generated.json();
-    assert.equal(generatedBody.ok, true);
-    assert.equal(generatedBody.key, "db-link-preview/v1/db_1.png");
-    assert.equal(generatedBody.databaseId, "db_1");
-    assert.equal(generatedBody.databaseTitle, "Demo DB");
-    assert.equal(generatedBody.bytes, 3);
-    assert.equal(typeof generatedBody.renderDurationMs, "number");
-    assert.equal(writes.length, 1);
-    assert.equal(writes[0].key, "db-link-preview/v1/db_1.png");
-    assert.equal(writes[0].value.byteLength, 3);
-    assert.deepEqual(writes[0].options.httpMetadata, {
-      contentType: "image/png",
-      cacheControl: "public, max-age=300, s-maxage=86400"
-    });
-    assert.equal(writes[0].options.customMetadata.databaseId, "db_1");
-    assert.equal(writes[0].options.customMetadata.databaseTitle, "Demo DB");
-    assert.match(writes[0].options.customMetadata.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
-    linkPreviewRegenerateRouteModule.setLinkPreviewRegenerateDepsForTest();
-  }
-);
-
 console.log("URL security checks OK");
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
-  const source = readFileSync(sourcePath, "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  const source = readFileSync(sourcePath, "utf8").replace(
+    'import { isSourceCaptureRequestPath } from "@kinic/source-contracts";',
+    "const { isSourceCaptureRequestPath } = globalThis.__kinicSourceContracts;"
+  );
+  globalThis.__kinicSourceContracts = { isSourceCaptureRequestPath };
+  return importStrippedTsForTest(source);
 }
 
 async function importNativeAuthRoute() {
@@ -724,14 +808,7 @@ async function importNativeAuthRoute() {
   );
   globalThis.__kinicNativeAuthRouteDeps = authModule;
   try {
-    const compiled = ts.transpileModule(source, {
-      compilerOptions: {
-        module: ts.ModuleKind.ES2022,
-        target: ts.ScriptTarget.ES2022
-      }
-    }).outputText;
-    const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-    return await import(moduleUrl);
+    return await importStrippedTsForTest(source);
   } finally {
     delete globalThis.__kinicNativeAuthRouteDeps;
   }
@@ -749,14 +826,13 @@ async function withMockFetch(handler, run) {
 
 async function withEnv(values, run) {
   const keys = [
-    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID",
+    "VITE_KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
-    "KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN",
-    "NEXT_PUBLIC_ENABLE_LOCAL_II_E2E",
-    "NEXT_PUBLIC_II_PROVIDER_URL",
-    "NEXT_PUBLIC_WIKI_IC_HOST",
+    "VITE_ENABLE_LOCAL_II_E2E",
+    "VITE_II_PROVIDER_URL",
+    "VITE_WIKI_IC_HOST",
     "DEEPSEEK_API_KEY",
     "KINIC_WIKI_WORKER_MODEL"
   ];
@@ -829,31 +905,6 @@ function queryAnswerRequest(origin, overrides = {}) {
       ...overrides
     })
   });
-}
-
-function linkPreviewRegenerateRequest(overrides = {}, token = "regen-token") {
-  return new Request("https://local.test/api/link-preview/regenerate", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      databaseId: "db_1",
-      ...overrides
-    })
-  });
-}
-
-function linkPreviewBucket(writes = []) {
-  return {
-    async get() {
-      return null;
-    },
-    async put(key, value, options) {
-      writes.push({ key, value, options });
-    }
-  };
 }
 
 function rateLimitStore(initial = 0) {

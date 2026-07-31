@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { existsSync, readFileSync } from "node:fs";
+import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
 const { collectLintHints, provenancePathFor, rawSourceLinksFor } = await importTs("../lib/lint-hints.ts");
 const { normalizeSearchHit } = await importTs("../lib/search-normalizer.ts");
@@ -19,27 +19,34 @@ const { canExpandChildNode, inferNoteRole, isDatabaseNotFoundErrorCode, isEmptyS
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
 const { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } = await importTs("../lib/database-preview.ts");
 const {
+  activePublicDatabases,
+  databaseLinkPreviewImageKey: generatedDatabaseLinkPreviewImageKey,
+  wranglerObjectPutArgs
+} = await import("./generate-link-preview-images.mjs");
+const {
   LINK_PREVIEW_IMAGE_CACHE_CONTROL,
   LINK_PREVIEW_IMAGE_CONTENT_TYPE,
   databaseLinkPreviewImageKey,
+  pendingDatabaseLinkPreviewImageKey,
   readCachedDatabaseLinkPreviewImage
 } = await importTs("../lib/link-preview-images.ts");
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
-const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/routes/__root.tsx", import.meta.url), "utf8");
 const homePageSource = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const adminRouteShellSource = readFileSync(new URL("../app/admin-route-shell.tsx", import.meta.url), "utf8");
 const marketplaceLayoutSource = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const marketplaceListingDetailSource = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
 const dashboardClientSource = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
-const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
-const linkPreviewRegenerateRouteSource = readFileSync(new URL("../app/api/link-preview/regenerate/route.ts", import.meta.url), "utf8");
-const linkPreviewImageSource = readFileSync(new URL("../app/link-preview-image.tsx", import.meta.url), "utf8");
-const openGraphImageSource = readFileSync(new URL("../app/opengraph-image.tsx", import.meta.url), "utf8");
-const twitterImageSource = readFileSync(new URL("../app/twitter-image.tsx", import.meta.url), "utf8");
-const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image/route.ts", import.meta.url), "utf8");
-const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image/route.ts", import.meta.url), "utf8");
+const databaseLayoutSource = ["../src/routes/db.$databaseId.tsx", "../app/db/[databaseId]/[[...segments]]/page.tsx"].map((path) => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
+const linkPreviewRegenerateRoutePath = new URL("../app/api/link-preview/regenerate/route.ts", import.meta.url);
+const linkPreviewImagePath = new URL("../app/link-preview-image.tsx", import.meta.url);
+const openGraphImagePath = new URL("../app/opengraph-image.tsx", import.meta.url);
+const twitterImagePath = new URL("../app/twitter-image.tsx", import.meta.url);
+const databaseOpenGraphImageSource = readFileSync(new URL("../src/routes/db.$databaseId.opengraph-image.ts", import.meta.url), "utf8");
+const databaseTwitterImageSource = readFileSync(new URL("../src/routes/db.$databaseId.twitter-image.ts", import.meta.url), "utf8");
+const linkPreviewGeneratorSource = readFileSync(new URL("./generate-link-preview-images.mjs", import.meta.url), "utf8");
 const sourceCapturePanelSource = readFileSync(new URL("../components/source-capture-panel.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
 const markdownEditorSource = readFileSync(new URL("../components/markdown-editor.tsx", import.meta.url), "utf8");
@@ -47,6 +54,7 @@ const markdownPreviewSource = readFileSync(new URL("../components/markdown-previ
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
 const wikiBrowserFiles = [
+  "../components/wiki-navigation.tsx",
   "../components/wiki-browser.tsx",
   "../components/wiki-browser/explorer-pane.tsx",
   "../components/wiki-browser/top-bar.tsx"
@@ -94,7 +102,7 @@ assert.match(wikiBrowserSource, /lg:col-start-3 lg:row-start-1 lg:justify-end/);
 assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline"/);
 assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
 assert.match(wikiBrowserSource, /hrefForCanonicalDatabaseRoute\(pathname, searchParams\.toString\(\)\)/);
-assert.match(wikiBrowserSource, /router\.replace\(canonicalRouteHref\)/);
+assert.match(wikiBrowserSource, /navigate\(canonicalRouteHref, \{ guard: false, replace: true \}\)/);
 assert.doesNotMatch(wikiBrowserSource, /publicDatabasesLoaded && Boolean\(readIdentity\) && memberDatabasesLoaded/);
 assert.doesNotMatch(wikiBrowserSource, /router\.replace\("\/dashboard"\)/);
 assert.match(wikiBrowserSource, /<Network size=\{18\} aria-hidden \/>/);
@@ -138,16 +146,14 @@ assert.match(inspectorSource, /label="database_id"/);
 assert.match(inspectorSource, /label="created_at"/);
 assert.match(inspectorSource, /label="metadata_json"/);
 assert.match(layoutSource, /title: "Kinic Wiki AI Memory"/);
-assert.match(layoutSource, /description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management\."/);
-assert.match(layoutSource, /metadataBase: new URL\("https:\/\/wiki\.kinic\.xyz"\)/);
-assert.match(layoutSource, /openGraph:/);
-assert.match(layoutSource, /twitter:/);
-assert.match(layoutSource, /card: "summary_large_image"/);
-assert.match(homePageSource, /url: "\/opengraph-image"/);
+assert.match(layoutSource, /content: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management\."/);
+assert.match(layoutSource, /property: "og:title"/);
+assert.match(layoutSource, /name: "twitter:card", content: "summary_large_image"/);
+assert.match(homePageSource, /url: "\/opengraph-image\.png"/);
 assert.match(homePageSource, /width: 1200/);
 assert.match(homePageSource, /height: 630/);
 assert.match(homePageSource, /card: "summary_large_image"/);
-assert.match(homePageSource, /url: "\/twitter-image"/);
+assert.match(homePageSource, /url: "\/twitter-image\.png"/);
 assert.doesNotMatch(layoutSource, /Read-only browser|Wiki Canister Browser/);
 assert.doesNotMatch(layoutSource, /AppSessionProvider|AppHeader|AdminShell/);
 assert.match(adminRouteShellSource, /AppSessionProvider/);
@@ -158,36 +164,54 @@ assert.match(marketplaceLayoutSource, /<AdminContent>\{children\}<\/AdminContent
 assert.match(wranglerConfigSource, /"r2_buckets"/);
 assert.match(wranglerConfigSource, /"binding": "LINK_PREVIEW_IMAGES"/);
 assert.match(wranglerConfigSource, /"bucket_name": "kinic-wiki-link-preview-images"/);
-assert.match(linkPreviewImageSource, /ImageResponse/);
-assert.doesNotMatch(linkPreviewImageSource, /readFile|node:fs/);
-assert.match(linkPreviewImageSource, /KinicPreviewMark/);
-assert.doesNotMatch(linkPreviewImageSource, />\s*K\s*<\/div>/);
-assert.match(linkPreviewImageSource, /width: 1200/);
-assert.match(linkPreviewImageSource, /height: 630/);
-assert.match(linkPreviewImageSource, /Kinic Wiki/);
-assert.match(openGraphImageSource, /renderLinkPreviewImage/);
-assert.match(twitterImageSource, /renderLinkPreviewImage/);
-assert.match(databaseLayoutSource, /generateMetadata/);
-assert.match(databaseLayoutSource, /loadDatabasePreview/);
-assert.match(databaseLayoutSource, /databasePreviewTitle/);
+assert.match(wranglerConfigSource, /"queues"/);
+assert.match(wranglerConfigSource, /"binding": "LINK_PREVIEW_QUEUE"/);
+assert.match(wranglerConfigSource, /"queue": "kinic-wiki-generation"/);
+assert.equal(existsSync(linkPreviewRegenerateRoutePath), false);
+assert.equal(existsSync(linkPreviewImagePath), false);
+assert.equal(existsSync(openGraphImagePath), false);
+assert.equal(existsSync(twitterImagePath), false);
+assert.match(linkPreviewGeneratorSource, /@vercel\/og/);
+assert.match(linkPreviewGeneratorSource, /ImageResponse/);
+assert.match(linkPreviewGeneratorSource, /wranglerObjectPutArgs/);
+assert.doesNotMatch(`${homePageSource}\n${databaseOpenGraphImageSource}\n${databaseTwitterImageSource}`, /next\/og|ImageResponse/);
+assert.match(databaseLayoutSource, /wikiDatabaseHead/);
 assert.match(databaseLayoutSource, /<div className="wiki-seo-region">/);
 assert.doesNotMatch(databaseLayoutSource, /aria-hidden="true" className="wiki-seo-region"|inert/);
 assert.match(globalsCss, /\.wiki-seo-region\s*\{\s*display: block;/);
 assert.match(globalsCss, /@media \(scripting: enabled\)/);
 assert.doesNotMatch(globalsCss, /\.wiki-seo-region\s*\{[^}]*left: -10000px|\.wiki-seo-region\s*\{[^}]*width: 1px|\.wiki-seo-region\s*\{[^}]*height: 1px/);
-assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/opengraph-image`/);
-assert.match(databaseLayoutSource, /url: `\$\{routeBase\}\/twitter-image`/);
-assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/opengraph-image"\)/);
+assert.match(databaseLayoutSource, /`\$\{databaseRouteBase\(databaseId\)\}\/opengraph-image`/);
+assert.match(databaseLayoutSource, /`\$\{databaseRouteBase\(databaseId\)\}\/twitter-image`/);
+assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(params\.databaseId\), "\/opengraph-image\.png"/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
-assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(databaseId\), "\/twitter-image"\)/);
+assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage\(request, canonicalDatabaseId\(params\.databaseId\), "\/twitter-image\.png"/);
 assert.doesNotMatch(databaseTwitterImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.doesNotMatch(databaseTwitterImageSource, /renderLinkPreviewImage|loadDatabasePreview|ImageResponse/);
-assert.match(linkPreviewRegenerateRouteSource, /KINIC_WIKI_LINK_PREVIEW_REGEN_TOKEN/);
-assert.match(linkPreviewRegenerateRouteSource, /timingSafeEqual/);
-assert.match(linkPreviewRegenerateRouteSource, /LINK_PREVIEW_IMAGES is not configured/);
-assert.match(linkPreviewRegenerateRouteSource, /bucket\.put\(key, imageBytes/);
-assert.match(linkPreviewRegenerateRouteSource, /renderDurationMs/);
+assert.deepEqual(
+  activePublicDatabases([
+    { database_id: "db_active", name: "fallback", metadata: { name: "Active DB", description: "Public database" }, status: "active" },
+    { database_id: "db_pending", name: "Pending DB", metadata: { name: "Pending DB", description: "" }, status: "pending" }
+  ]),
+  [{ databaseId: "db_active", title: "Active DB", description: "Public database" }]
+);
+assert.equal(generatedDatabaseLinkPreviewImageKey(" db alpha "), "db-link-preview/v1/db%20alpha.png");
+assert.deepEqual(wranglerObjectPutArgs("bucket", "db-link-preview/v1/db_alpha.png", "/tmp/db_alpha.png"), [
+  "exec",
+  "wrangler",
+  "r2",
+  "object",
+  "put",
+  "bucket/db-link-preview/v1/db_alpha.png",
+  "--remote",
+  "--file",
+  "/tmp/db_alpha.png",
+  "--content-type",
+  "image/png",
+  "--cache-control",
+  "public, max-age=300, s-maxage=86400"
+]);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);
 assert.match(databasePreviewSource, /listDatabasesPublic/);
@@ -204,27 +228,64 @@ assert.equal(aliasDatabasePreview.databaseId, "db_nnoe2kborlsq");
 assert.equal(databasePreviewTitle(databasePreview.databaseTitle), "Kinic Wiki: db_alpha");
 assert.equal(databasePreviewDescription(databasePreview), "Browse, search, and query the db_alpha wiki database.");
 assert.equal(databaseLinkPreviewImageKey(" db alpha "), "db-link-preview/v1/db%20alpha.png");
+class LinkPreviewTestBucket {
+  constructor(objects = {}) {
+    this.objects = objects;
+    this.puts = [];
+    this.deletes = [];
+  }
+
+  async get(key) {
+    return this.objects[key] ?? null;
+  }
+
+  async put(key, value, options) {
+    this.puts.push({ key, value, options });
+  }
+
+  async delete(key) {
+    this.deletes.push(key);
+  }
+}
+const queuedMessages = [];
+const imageMissBucket = new LinkPreviewTestBucket();
 const imageMiss = await readCachedDatabaseLinkPreviewImage(
   new Request("https://local.test/db/db_alpha/opengraph-image"),
   "db_alpha",
-  "/opengraph-image",
-  null
+  "/opengraph-image.png",
+  imageMissBucket,
+  {
+    queue: { send: async (message) => queuedMessages.push(message) },
+    canisterId: "canister-1",
+    nowMs: Date.parse("2026-05-12T00:00:00.000Z")
+  }
 );
-assert.equal(imageMiss.status, 308);
-assert.equal(imageMiss.headers.get("location"), "https://local.test/opengraph-image");
+assert.equal(imageMiss.status, 307);
+assert.equal(imageMiss.headers.get("location"), "https://local.test/opengraph-image.png");
+assert.equal(imageMiss.headers.get("cache-control"), "no-store");
+assert.deepEqual(queuedMessages, [
+  {
+    kind: "link_preview",
+    canisterId: "canister-1",
+    databaseId: "db_alpha",
+    requestedAt: "2026-05-12T00:00:00.000Z"
+  }
+]);
+assert.equal(imageMissBucket.puts[0]?.key, "db-link-preview/pending/v1/db_alpha.json");
+assert.equal(pendingDatabaseLinkPreviewImageKey(" db alpha "), "db-link-preview/pending/v1/db%20alpha.json");
 const imageHit = await readCachedDatabaseLinkPreviewImage(
   new Request("https://local.test/db/db_alpha/twitter-image"),
   "db_alpha",
-  "/twitter-image",
-  {
-    async get(key) {
-      assert.equal(key, "db-link-preview/v1/db_alpha.png");
-      return {
+  "/twitter-image.png",
+  new LinkPreviewTestBucket({
+    "db-link-preview/v1/db_alpha.png": {
         body: new Response(new Uint8Array([1, 2, 3])).body,
         httpEtag: '"etag-db-alpha"'
-      };
-    },
-    async put() {}
+    }
+  }),
+  {
+    queue: { send: async () => queuedMessages.push({ unexpected: true }) },
+    canisterId: "canister-1"
   }
 );
 assert.equal(imageHit.status, 200);
@@ -232,6 +293,56 @@ assert.equal(imageHit.headers.get("content-type"), LINK_PREVIEW_IMAGE_CONTENT_TY
 assert.equal(imageHit.headers.get("cache-control"), LINK_PREVIEW_IMAGE_CACHE_CONTROL);
 assert.equal(imageHit.headers.get("etag"), '"etag-db-alpha"');
 assert.equal((await imageHit.arrayBuffer()).byteLength, 3);
+const pendingBucket = new LinkPreviewTestBucket({
+  "db-link-preview/pending/v1/db_alpha.json": {
+    body: new Response("{}").body,
+    customMetadata: { requestedAtMs: String(Date.parse("2026-05-12T00:00:00.000Z")) }
+  }
+});
+const pendingMessages = [];
+const pendingResponse = await readCachedDatabaseLinkPreviewImage(
+  new Request("https://local.test/db/db_alpha/twitter-image"),
+  "db_alpha",
+  "/twitter-image.png",
+  pendingBucket,
+  {
+    queue: { send: async (message) => pendingMessages.push(message) },
+    canisterId: "canister-1",
+    nowMs: Date.parse("2026-05-12T00:05:00.000Z")
+  }
+);
+assert.equal(pendingResponse.status, 307);
+assert.equal(pendingResponse.headers.get("cache-control"), "no-store");
+assert.equal(pendingMessages.length, 0);
+assert.equal(pendingBucket.puts.length, 0);
+const failingBucket = new LinkPreviewTestBucket();
+const failingResponse = await readCachedDatabaseLinkPreviewImage(
+  new Request("https://local.test/db/db_alpha/twitter-image"),
+  "db_alpha",
+  "/twitter-image.png",
+  failingBucket,
+  {
+    queue: {
+      send: async () => {
+        throw new Error("queue down");
+      }
+    },
+    canisterId: "canister-1",
+    nowMs: Date.parse("2026-05-12T00:00:00.000Z")
+  }
+);
+assert.equal(failingResponse.status, 307);
+assert.equal(failingResponse.headers.get("cache-control"), "no-store");
+assert.deepEqual(failingBucket.deletes, ["db-link-preview/pending/v1/db_alpha.json"]);
+const missingBucketResponse = await readCachedDatabaseLinkPreviewImage(
+  new Request("https://local.test/db/db_alpha/opengraph-image"),
+  "db_alpha",
+  "/opengraph-image.png",
+  null
+);
+assert.equal(missingBucketResponse.status, 307);
+assert.equal(missingBucketResponse.headers.get("location"), "https://local.test/opengraph-image.png");
+assert.equal(missingBucketResponse.headers.get("cache-control"), "no-store");
 assert.match(queryPanelSource, /authorizeQueryAnswerSession/);
 assert.match(queryPanelSource, /Login with Internet Identity to ask wiki questions/);
 assert.match(queryPanelSource, /sessionNonce/);
@@ -604,7 +715,7 @@ assert.notEqual(
 );
 assert.notEqual(searchRequestKey("aaaaa-aa", "alpha", "path", "budget"), searchRequestKey("aaaaa-aa", "alpha", "path", "budget", "aaaaa-aa"));
 assert.equal(publicDatabasePath("alpha/db"), "/db/alpha%2Fdb/Knowledge");
-assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db/db_kva4v2twg6jv/Knowledge");
+assert.equal(publicDatabasePath("db_example"), "/db/db_example/Knowledge");
 assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/db/alpha%20db/Knowledge");
 assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/db/alpha%20db/Knowledge");
 assert.equal(isRoutableDatabaseId("db_xuwmtks27uik"), true);
@@ -734,12 +845,5 @@ async function importTs(relativePath) {
     : relativePath === "../lib/database-preview.ts"
       ? `${shareLinksSource}\n${pathsSource}\n${rawSource.replace('import { canonicalDatabaseId } from "@/lib/paths";', "")}`
       : rawSource;
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
+  return importStrippedTsForTest(source);
 }

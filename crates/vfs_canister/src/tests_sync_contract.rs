@@ -12,7 +12,7 @@ use super::{
     HttpRequest, ICP_CLI_LOGIN_DISCOVERY_PATH, ICP_CLI_LOGIN_PATH, II_ALTERNATIVE_ORIGINS_PATH,
     II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY, SERVICE,
     delete_node, export_snapshot, fetch_updates, http_request, mkdir_node, search_node_paths,
-    search_nodes, write_node,
+    search_nodes, staging_ii_alternative_origins_body, write_node,
 };
 use ic_http_certification::CERTIFICATE_EXPRESSION_HEADER_NAME;
 
@@ -107,6 +107,20 @@ fn production_ii_alternative_origins_do_not_include_localhost() {
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains(&removed_ios_local_origin()));
+}
+
+#[test]
+fn staging_ii_alternative_origins_adds_only_the_staging_worker() {
+    let body = staging_ii_alternative_origins_body(
+        "https://kinic-wiki-browser-staging.example.workers.dev",
+    );
+    assert!(body.contains("https://wiki.kinic.xyz"));
+    assert!(body.contains("https://kinic-wiki-browser-staging.example.workers.dev"));
+    assert_eq!(
+        body.matches("://").count(),
+        6,
+        "Internet Identity rejects ii-alternative-origins with more than 10 entries"
+    );
 }
 
 #[test]
@@ -466,6 +480,27 @@ fn exported_candid_matches_checked_in_vfs_did() {
         super::candid_interface().trim_end(),
         include_str!("../vfs.did").trim_end()
     );
+}
+
+#[test]
+fn abandoned_source_capture_queries_are_not_public() {
+    let generated = super::candid_interface();
+    let checked_in = include_str!("../vfs.did");
+
+    for method in [
+        "list_my_source_capture_requests",
+        "get_my_source_capture_url_state",
+        "list_recoverable_source_capture_requests",
+    ] {
+        assert!(
+            !generated.contains(method),
+            "generated Candid exposes {method}"
+        );
+        assert!(
+            !checked_in.contains(method),
+            "checked-in Candid exposes {method}"
+        );
+    }
 }
 
 #[test]

@@ -14,7 +14,13 @@
 ## Operations
 
 - [RELEASE.md](RELEASE.md) — Release procedure
+- [STAGING.md](STAGING.md) — Staging environment and deployment procedure
 - [PUBLIC_SMOKE.md](PUBLIC_SMOKE.md) — Public environment smoke test procedure
+
+## Legal
+
+- [Privacy Policy](legal/privacy-policy.md) — Source for the published Kinic privacy policy
+- [Support](legal/support.md) — Source for the published Kinic support page
 
 ## Internal Design (internal/)
 

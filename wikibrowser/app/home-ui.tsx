@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, PlugZap, PowerOff, Settings, Share2, TerminalSquare, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { AdminNotice } from "@/components/admin-ui";
@@ -9,7 +9,6 @@ import { databaseCyclesView, databaseCyclesHref, type DatabaseCycleView } from "
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
-const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
 const OFFICIAL_KINIC_WIKI_DATABASE_TITLE = "Official Kinic Wiki";
 
 export type DatabaseRow = DatabaseSummary & {
@@ -206,7 +205,7 @@ export function OfficialKinicWikiPanel() {
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href={publicDatabasePath(OFFICIAL_KINIC_WIKI_DATABASE_ID)}>
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="#public-databases">
             <BookOpen aria-hidden size={15} />
             <span>Open</span>
           </Link>
@@ -243,7 +242,7 @@ function DatabaseSection({
 }) {
   if (rows.length === 0) {
     return (
-      <section className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : "p-4"}>
+      <section id={mode === "public" ? "public-databases" : undefined} className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : "p-4"}>
         {showTitle ? <DatabaseSectionHeader action={action} description={description} title={title} /> : null}
         {publicError && mode === "public" ? <p className={showTitle ? "px-4 pt-3 text-sm text-muted" : "mt-2 text-sm text-muted"}>{publicError}</p> : null}
         <p className={showTitle ? "px-4 pb-4 pt-3 text-sm text-muted" : "mt-2 text-sm text-muted"}>{emptyMessage}</p>
@@ -251,7 +250,7 @@ function DatabaseSection({
     );
   }
   return (
-    <section className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : undefined}>
+    <section id={mode === "public" ? "public-databases" : undefined} className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : undefined}>
       {showTitle ? <DatabaseSectionHeader action={action} description={description} publicError={mode === "public" ? publicError : null} title={title} /> : null}
       {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">

@@ -1,0 +1,150 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --navy: #16243a;
+  --pink: #ff2686;
+  --pale-pink: #ffcde5;
+  --soft-gray: #f7f8fa;
+  --white: #ffffff;
+  --ink: #000000;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--soft-gray);
+}
+
+.store-card {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--soft-gray);
+  color: var(--navy);
+}
+
+.store-card::after {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgb(22 36 58 / 8%);
+  content: "";
+  pointer-events: none;
+}
+
+.store-card__header {
+  position: absolute;
+  z-index: 2;
+  top: 5.5%;
+  right: 7.5%;
+  left: 7.5%;
+}
+
+.store-card__eyebrow {
+  margin: 22px 0 18px;
+  color: var(--pink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.store-card h1 {
+  max-width: 92%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  font-size: 84px;
+  font-weight: 760;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.kinic-mark {
+  display: flex;
+  width: 140px;
+  height: 18px;
+  gap: 8px;
+  transform: skewX(-28deg);
+}
+
+.kinic-mark span {
+  display: block;
+  width: 20px;
+  height: 100%;
+  background: var(--pink);
+}
+
+.kinic-mark span:nth-child(2) {
+  background: #ffb52a;
+}
+
+.kinic-mark span:nth-child(3) {
+  background: #29a7df;
+}
+
+.kinic-mark span:nth-child(4) {
+  background: #ffb52a;
+}
+
+.kinic-mark span:nth-child(5) {
+  background: #ff5a1f;
+}
+
+.store-card__capture {
+  position: absolute;
+  top: 23%;
+  right: 5.5%;
+  bottom: -1.5%;
+  left: 5.5%;
+  overflow: hidden;
+  border-radius: 48px 48px 0 0;
+  background: var(--white);
+  box-shadow: 0 36px 100px rgb(22 36 58 / 16%);
+}
+
+.store-card__capture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.store-card.ipad .store-card__header {
+  top: 6.5%;
+  right: 6.5%;
+  left: 6.5%;
+}
+
+.store-card.ipad .store-card__eyebrow {
+  margin-top: 26px;
+  font-size: 36px;
+}
+
+.store-card.ipad h1 {
+  font-size: 108px;
+}
+
+.store-card.ipad .kinic-mark {
+  width: 180px;
+  height: 22px;
+  gap: 10px;
+}
+
+.store-card.ipad .kinic-mark span {
+  width: 26px;
+}
+
+.store-card.ipad .store-card__capture {
+  top: 25%;
+  right: 4.5%;
+  left: 4.5%;
+  border-radius: 56px 56px 0 0;
+}

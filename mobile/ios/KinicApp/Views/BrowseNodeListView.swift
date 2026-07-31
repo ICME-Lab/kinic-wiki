@@ -7,6 +7,7 @@ import SwiftUI
 struct BrowseNodeListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isSearchPresented = false
+    @AppStorage("browseNodeSortOrder") private var sortOrder = BrowseNodeSortOrder.name
     @Bindable var model: AppModel
     let folderPath: String
     @Binding var selectedDocumentPath: String?
@@ -24,7 +25,7 @@ struct BrowseNodeListView: View {
             } else if model.loadedBrowsePath != normalizedFolderPath {
                 ProgressView()
                     .tint(KinicDesign.hotPink)
-            } else if model.childNodes.isEmpty {
+            } else if visibleChildNodes.isEmpty {
                 ContentUnavailableView("Empty folder", systemImage: "folder")
             } else {
                 childRows
@@ -38,6 +39,15 @@ struct BrowseNodeListView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu("Sort", systemImage: "arrow.up.arrow.down") {
+                    Picker("Sort by", selection: $sortOrder) {
+                        ForEach(BrowseNodeSortOrder.allCases) { order in
+                            Label(order.title, systemImage: order.systemImage)
+                                .tag(order)
+                        }
+                    }
+                }
+
                 Button("Search", systemImage: "magnifyingglass", action: showSearch)
                     .disabled(!model.canBrowse)
 
@@ -51,7 +61,7 @@ struct BrowseNodeListView: View {
     }
 
     private var childRows: some View {
-        ForEach(model.childNodes) { child in
+        ForEach(visibleChildNodes) { child in
             if child.kind == .folder {
                 NavigationLink(value: BrowseFolderRoute(path: child.path)) {
                     BrowseChildNodeRow(child: child)
@@ -69,6 +79,13 @@ struct BrowseNodeListView: View {
                 }
             }
         }
+    }
+
+    private var visibleChildNodes: [ChildNode] {
+        let visibleNodes = model.childNodes.filter { child in
+            child.kind != .folder || child.hasChildren
+        }
+        return sortOrder.sorted(visibleNodes)
     }
 
     private var isSearching: Bool {

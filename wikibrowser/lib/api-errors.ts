@@ -26,7 +26,7 @@ export function invalidCanisterIdError(reason: string): PublicApiError {
 
 export function classifyApiError(error: unknown, host: string): PublicApiError {
   const raw = errorMessage(error);
-  const local = isLocalHost(host);
+  const local = isLocalReplicaHost(host);
   if (/Canister\s+[\w-]+\s+not found/i.test(raw) || /IC0301/i.test(raw)) {
     return {
       error: "Canister not found on this IC host",
@@ -40,8 +40,8 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
     return {
       error: "Cannot reach IC host",
       hint: local
-        ? "Check that the local replica or icp local network is running and that NEXT_PUBLIC_WIKI_IC_HOST points to it."
-        : "Check NEXT_PUBLIC_WIKI_IC_HOST and network connectivity to the IC gateway.",
+        ? "Check that the local replica or icp local network is running and that VITE_WIKI_IC_HOST points to it."
+        : "Check VITE_WIKI_IC_HOST and network connectivity to the IC gateway.",
       code: "ic_host_unreachable"
     };
   }
@@ -101,10 +101,7 @@ export function classifyCanisterError(message: string): PublicApiError {
   };
 }
 
-function isLocalHost(host: string): boolean {
-  return /^(https?:\/\/)?(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:\d+)?/i.test(host);
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
 }
+import { isLocalReplicaHost } from "@kinic/vfs-client-core";

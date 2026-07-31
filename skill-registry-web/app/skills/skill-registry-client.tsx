@@ -36,7 +36,7 @@ const DEFAULT_ACTION: ActionDraft = {
   runNotes: ""
 };
 export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
-  const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const refreshSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [activeIdentity, setActiveIdentity] = useState<Identity | null>(null);
@@ -57,7 +57,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
       const refreshSeq = (refreshSeqRef.current += 1);
       const isCurrentRefresh = () => refreshSeq === refreshSeqRef.current;
       if (!canisterId) {
-        setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured.");
+        setError("VITE_KINIC_WIKI_CANISTER_ID is not configured.");
         setLoadState("error");
         return;
       }

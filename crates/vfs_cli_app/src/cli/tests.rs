@@ -731,6 +731,42 @@ fn command_identity_requirement_keeps_reads_anonymous() {
     assert!(batch_write.command.requires_identity());
     assert!(!batch_write.command.probes_anonymous_database_read());
 
+    for command in [
+        Cli::parse_from([
+            "kinic-vfs-cli",
+            "publish-node",
+            "--path",
+            "/Knowledge/index.md",
+        ])
+        .command,
+        Cli::parse_from([
+            "kinic-vfs-cli",
+            "get-node-publication",
+            "--path",
+            "/Knowledge/index.md",
+        ])
+        .command,
+        Cli::parse_from([
+            "kinic-vfs-cli",
+            "unpublish-node",
+            "--path",
+            "/Knowledge/index.md",
+        ])
+        .command,
+    ] {
+        assert!(command.requires_identity());
+        assert!(!command.probes_anonymous_database_read());
+    }
+
+    let public_read = Cli::parse_from([
+        "kinic-vfs-cli",
+        "read-public-node",
+        "--public-id",
+        "0123456789abcdef0123456789abcdef",
+    ]);
+    assert!(!public_read.command.requires_identity());
+    assert!(!public_read.command.probes_anonymous_database_read());
+
     let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
     assert!(!list.command.requires_identity());
     assert!(list.command.prefers_identity_in_auto());
@@ -758,6 +794,61 @@ fn command_identity_requirement_keeps_reads_anonymous() {
     let market_entitlements = Cli::parse_from(["kinic-vfs-cli", "market", "entitlements"]);
     assert!(market_entitlements.command.requires_identity());
     assert!(!market_entitlements.command.probes_anonymous_database_read());
+}
+
+#[test]
+fn main_cli_parses_node_publication_commands() {
+    let publish = Cli::parse_from([
+        "kinic-vfs-cli",
+        "publish-node",
+        "--path",
+        "/Knowledge/a.md",
+        "--json",
+    ]);
+    let Some(VfsCommand::PublishNode { path, json }) = publish.command.as_vfs_command() else {
+        panic!("expected publish-node command");
+    };
+    assert_eq!(path, "/Knowledge/a.md");
+    assert!(json);
+
+    let get = Cli::parse_from([
+        "kinic-vfs-cli",
+        "get-node-publication",
+        "--path",
+        "/Knowledge/a.md",
+        "--json",
+    ]);
+    let Some(VfsCommand::GetNodePublication { path, json }) = get.command.as_vfs_command() else {
+        panic!("expected get-node-publication command");
+    };
+    assert_eq!(path, "/Knowledge/a.md");
+    assert!(json);
+
+    let unpublish = Cli::parse_from([
+        "kinic-vfs-cli",
+        "unpublish-node",
+        "--path",
+        "/Knowledge/a.md",
+        "--json",
+    ]);
+    let Some(VfsCommand::UnpublishNode { path, json }) = unpublish.command.as_vfs_command() else {
+        panic!("expected unpublish-node command");
+    };
+    assert_eq!(path, "/Knowledge/a.md");
+    assert!(json);
+
+    let read = Cli::parse_from([
+        "kinic-vfs-cli",
+        "read-public-node",
+        "--public-id",
+        "0123456789abcdef0123456789abcdef",
+        "--json",
+    ]);
+    let Some(VfsCommand::ReadPublicNode { public_id, json }) = read.command.as_vfs_command() else {
+        panic!("expected read-public-node command");
+    };
+    assert_eq!(public_id, "0123456789abcdef0123456789abcdef");
+    assert!(json);
 }
 
 #[test]

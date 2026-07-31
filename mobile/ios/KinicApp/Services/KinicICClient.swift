@@ -40,6 +40,30 @@ actor KinicICClient {
         try await vfsClient.readNode(databaseId: databaseId, path: path, session: session)
     }
 
+    func sourceURLExists(databaseId: String, url: URL, session: ICAuthSession) async throws -> Bool {
+        try await vfsClient.sourceURLExists(databaseId: databaseId, url: url, session: session)
+    }
+
+    func writeNode(
+        databaseId: String,
+        path: String,
+        kind: VFSNodeKind,
+        content: String,
+        metadataJson: String,
+        expectedEtag: String?,
+        session: ICAuthSession
+    ) async throws {
+        try await vfsClient.writeNode(
+            databaseId: databaseId,
+            path: path,
+            kind: kind,
+            content: content,
+            metadataJson: metadataJson,
+            expectedEtag: expectedEtag,
+            session: session
+        )
+    }
+
     func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
         try await vfsClient.readBrowseNode(databaseId: databaseId, path: path, session: session)
     }

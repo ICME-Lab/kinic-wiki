@@ -16,6 +16,8 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
+- Adds a database-scoped Ask AI tab that retrieves relevant wiki documents, shows its search and evidence-checking activity, and refuses to answer when no supporting document is available.
+- Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Each question uses `https://api.kinic.io/chat` once to generate bounded search queries and, when verified notes are found, once more to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
 - Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
@@ -53,7 +55,7 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 
 ## Runtime target
 
-iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
+iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
 
 ## Verification
 
@@ -69,13 +71,28 @@ iOS local tunnel execution is not supported. Real-device and TestFlight checks u
 
 `xcodebuild test` requires a working CoreSimulatorService. If simulator services are down, use `build-for-testing` plus a real-device smoke test.
 
-`mobile/ios/scripts/install-device.sh` builds `KinicWikiApp` for the first connected iPhone reported by Xcode, then installs it with `devicectl`. If device discovery or install stalls, unlock the iPhone, keep the screen awake, trust this Mac, reconnect USB, then retry. Set `KINIC_IOS_DEVICE_ID=<udid>` to pin a specific device.
+## App Store screenshots
+
+Store copy is maintained in `Config/AppStoreMetadata.md`. Screenshot order, captions, device sizes, and raw capture names are maintained in `store-listing/screenshots.json`.
+
+Prepare the public-safe `Personal Memory` data described in `store-listing/demo-content.md`, place the ten real captures under `build/AppStoreScreenshots/raw/`, then run:
+
+```bash
+pnpm ios:store-screenshots
+```
+
+The renderer accepts PNG captures only and writes five iPhone 6.9-inch PNGs and five iPad 13-inch PNGs to `build/AppStoreScreenshots/output/`. Before launching Chromium, it rejects missing inputs, unexpected raw dimensions, and PNGs with an alpha channel. Both raw captures and outputs are ignored by Git.
+
+`mobile/ios/scripts/install-device.sh` builds `KinicWiki` for the first connected iPhone reported by Xcode, then installs it with `devicectl`. If device discovery or install stalls, unlock the iPhone, keep the screen awake, trust this Mac, reconnect USB, then retry. Set `KINIC_IOS_DEVICE_ID=<udid>` to pin a specific device.
+
+For a clean browser-session authentication check in a Debug build, launch the app with `KINIC_EPHEMERAL_AUTH=1`. Release builds always keep the normal shared web authentication session.
 
 ## TestFlight
 
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
 The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
 The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
+The default upload mode is external-TestFlight-capable. Use `--internal-only` only when the build must not be assigned to external tester groups.
 
 Validate inputs without archiving:
 
@@ -83,19 +100,19 @@ Validate inputs without archiving:
 mobile/ios/scripts/testflight-upload.sh --validate-only
 ```
 
-Upload an internal TestFlight build:
+Upload an external-TestFlight-capable build:
 
 ```bash
 mobile/ios/scripts/testflight-upload.sh
 ```
 
-Upload an external-TestFlight-capable build:
+Upload an internal-only TestFlight build:
 
 ```bash
-mobile/ios/scripts/testflight-upload.sh --external
+mobile/ios/scripts/testflight-upload.sh --internal-only
 ```
 
 External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
 
-Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200, returns `content-type: application/json`, includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`, and uses `paths: ["/*"]`. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
+Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200, returns `content-type: application/json`, includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`, and excludes `/cycles` before the `/*` catch-all so funding remains on the web. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
 The script fails before upload if either the app archive or Share Extension archive lacks `PrivacyInfo.xcprivacy`.

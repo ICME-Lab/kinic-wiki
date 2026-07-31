@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-skill-registry-web",
+  "main": "@tanstack/react-start/server-entry",
+  "compatibility_date": "2026-07-15",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  "vars": {
+    "VITE_WIKI_IC_HOST": "https://icp0.io",
+    "VITE_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai"
+  }
+}

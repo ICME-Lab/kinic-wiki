@@ -7,12 +7,12 @@ import { buildWikiDraftSystemPrompt } from "../src/wiki-skill.js";
 
 test("core wiki prompt keeps source and wiki roles separate", () => {
   const prompt = buildWikiDraftSystemPrompt();
-  assert.match(prompt, /Kinic Wiki Core Skill v1/);
+  assert.match(prompt, /Kinic Wiki Core Skill v2/);
   assert.match(prompt, /\/Sources/);
   assert.match(prompt, /\/Knowledge/);
   assert.match(prompt, /Every generated item must cite/);
-  assert.match(prompt, /source material's primary language/);
+  assert.match(prompt, /all generated prose in English/);
   assert.match(prompt, /section labels/);
   assert.match(prompt, /Section labels must be non-empty single-line strings/);
-  assert.doesNotMatch(prompt, /Japanese/);
+  assert.match(buildWikiDraftSystemPrompt("ja"), /all generated prose in Japanese/);
 });

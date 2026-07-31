@@ -35,6 +35,8 @@ struct KinicPanel<Content: View, Trailing: View>: View {
                 Label(title, systemImage: systemImage)
                     .font(.headline)
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
                 Spacer(minLength: 0)
 
