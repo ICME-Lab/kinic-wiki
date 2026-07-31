@@ -94,7 +94,7 @@ class KinicAppViewModel(
     private val vfsClient: KinicVfsClient,
     private val historyStore: SourceCaptureHistoryStore,
     private val icClient: KinicIcClient,
-) : ViewModel() {
+) : ViewModel(), AskAiKnowledgeProvider {
     private val _uiState = MutableStateFlow(
         KinicAppUiState(
             session = authService.restore(),
@@ -108,6 +108,7 @@ class KinicAppViewModel(
         ),
     )
     val uiState: StateFlow<KinicAppUiState> = _uiState.asStateFlow()
+    override val appState: StateFlow<KinicAppUiState> = uiState
 
     private val _events = MutableSharedFlow<KinicAppEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<KinicAppEvent> = _events.asSharedFlow()
@@ -507,6 +508,50 @@ class KinicAppViewModel(
             it.summary.databaseId == record.databaseId
         } ?: return
         selectBrowseDatabase(entry.summary.databaseId)
+        openBrowseNode(path)
+        _events.tryEmit(KinicAppEvent.Navigate(KinicTopLevelDestination.BROWSE))
+    }
+
+    override suspend fun retrieve(databaseId: String, plan: AskAiQueryPlan): AskAiRetrievalResult {
+        val database = _uiState.value.browseDatabases.firstOrNull {
+            it.summary.databaseId == databaseId
+        } ?: throw IllegalStateException("The selected database is no longer readable.")
+        val session = browseSession(database)
+        val hitsByQuery = plan.queries.associate { query ->
+            query.text to vfsClient.searchBrowseNodes(
+                databaseId = databaseId,
+                query = query.text,
+                prefix = null,
+                limit = AskAiRetrievalPlanner.SEARCH_LIMIT_PER_QUERY,
+                session = session,
+            )
+        }
+        val sources = mutableListOf<AskAiContextSource>()
+        for (candidate in AskAiRetrievalPlanner.rankedCandidates(plan, hitsByQuery)) {
+            if (sources.size >= AskAiRetrievalPlanner.MAXIMUM_SOURCES) break
+            val node = vfsClient.readBrowseNode(databaseId, candidate.hit.path, session) ?: continue
+            if (!AskAiRetrievalPlanner.hasRequiredExactMatches(plan, node.content)) continue
+            val prepared = AskAiRetrievalPlanner.prepareEvidence(plan, candidate.hit, node.content)
+            val source = AskAiSource(
+                id = "S${sources.size + 1}",
+                path = node.path,
+                excerpt = prepared.excerpt,
+                score = candidate.bestScore,
+                matchReasons = candidate.hit.matchReasons,
+            )
+            sources += AskAiContextSource(source, prepared.content)
+        }
+        return AskAiRetrievalResult(plan.queries.map { it.text }, sources)
+    }
+
+    override fun openSource(databaseId: String, path: String) {
+        val database = _uiState.value.browseDatabases.firstOrNull {
+            it.summary.databaseId == databaseId
+        } ?: run {
+            _uiState.update { it.copy(message = "The source database is no longer available.") }
+            return
+        }
+        selectBrowseDatabase(database.summary.databaseId)
         openBrowseNode(path)
         _events.tryEmit(KinicAppEvent.Navigate(KinicTopLevelDestination.BROWSE))
     }

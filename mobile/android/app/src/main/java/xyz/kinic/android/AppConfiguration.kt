@@ -15,6 +15,7 @@ data class AppConfiguration(
     val derivationOrigin: String,
     val authOrigin: URI,
     val callbackDomain: String,
+    val askAiUrl: URI = URI("https://api.kinic.io/chat"),
 ) {
     val sourceCaptureTriggerUrl: URI =
         authOrigin.resolve("/api/source-capture/trigger")
@@ -36,6 +37,7 @@ data class AppConfiguration(
                 derivationOrigin = context.getString(R.string.kinic_derivation_origin),
                 authOrigin = URI(context.getString(R.string.kinic_auth_origin)),
                 callbackDomain = context.getString(R.string.kinic_callback_domain),
+                askAiUrl = URI(context.getString(R.string.kinic_ask_ai_url)),
             )
     }
 }

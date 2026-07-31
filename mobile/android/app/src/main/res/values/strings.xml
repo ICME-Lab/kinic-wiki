@@ -6,4 +6,5 @@
     <string name="kinic_derivation_origin">https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io</string>
     <string name="kinic_auth_origin">https://wiki.kinic.xyz</string>
     <string name="kinic_callback_domain">wiki.kinic.xyz</string>
+    <string name="kinic_ask_ai_url">https://api.kinic.io/chat</string>
 </resources>

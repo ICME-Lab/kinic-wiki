@@ -16,6 +16,7 @@ import java.net.URI
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: KinicAppViewModel
+    private lateinit var askAiViewModel: AskAiViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,10 +48,19 @@ class MainActivity : ComponentActivity() {
                 icClient,
             ),
         )[KinicAppViewModel::class.java]
+        askAiViewModel = ViewModelProvider(
+            this,
+            AskAiViewModelFactory(
+                client = AskAiClient(configuration.askAiUrl),
+                knowledgeProvider = viewModel,
+                storeFactory = AskAiConversationStoreFactory(filesDir),
+            ),
+        )[AskAiViewModel::class.java]
         handleIntent(intent)
         setContent {
             KinicAppShell(
                 viewModel = viewModel,
+                askAiViewModel = askAiViewModel,
                 onOpenUri = { uri ->
                     startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(uri.toString())))
                 },

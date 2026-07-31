@@ -89,6 +89,7 @@ private val kinicPink = Color(0xFFE9368F)
 @Composable
 fun KinicAppShell(
     viewModel: KinicAppViewModel,
+    askAiViewModel: AskAiViewModel,
     onOpenUri: (URI) -> Unit,
     onCopyText: (String, String) -> Unit,
 ) {
@@ -113,13 +114,17 @@ fun KinicAppShell(
         }
     }
     MaterialTheme(colorScheme = scheme) {
-        KinicNavigation(state, viewModel)
+        KinicNavigation(state, viewModel, askAiViewModel)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun KinicNavigation(state: KinicAppUiState, viewModel: KinicAppViewModel) {
+private fun KinicNavigation(
+    state: KinicAppUiState,
+    viewModel: KinicAppViewModel,
+    askAiViewModel: AskAiViewModel,
+) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: KinicTopLevelDestination.HOME.route
@@ -181,7 +186,7 @@ private fun KinicNavigation(state: KinicAppUiState, viewModel: KinicAppViewModel
         ) {
             composable(KinicTopLevelDestination.HOME.route) { HomeScreen(state, viewModel) }
             composable(KinicTopLevelDestination.BROWSE.route) { BrowseScreen(state, viewModel) }
-            composable(KinicTopLevelDestination.ASK_AI.route) { AskAiScreen(state) }
+            composable(KinicTopLevelDestination.ASK_AI.route) { AskAiScreen(state, askAiViewModel) }
             composable(KinicTopLevelDestination.MANAGE.route) { ManageScreen(state, viewModel) }
         }
     }
@@ -520,27 +525,122 @@ private fun parseSafeMarkdown(markdown: String): SafeMarkdownContent {
 }
 
 @Composable
-private fun AskAiScreen(state: KinicAppUiState) {
-    var question by remember { mutableStateOf("") }
+private fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
+    val askState by viewModel.uiState.collectAsStateWithLifecycle()
+    var historyExpanded by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            state.browseDatabases.firstOrNull { it.summary.databaseId == state.selectedBrowseDatabaseId }
-                ?.summary?.displayTitle ?: "Select a database in Browse",
-            style = MaterialTheme.typography.titleMedium,
+        DatabaseDropdown(
+            entries = state.browseDatabases,
+            selectedId = askState.currentConversation?.databaseId.orEmpty(),
+            onSelect = viewModel::requestDatabaseChange,
+            label = "Knowledge database",
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { historyExpanded = !historyExpanded }) {
+                Text("History (${askState.conversations.size})")
+            }
+            IconButton(onClick = { viewModel.startNewConversation() }) {
+                Icon(Icons.Outlined.Add, contentDescription = "New conversation")
+            }
+        }
+        if (historyExpanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                askState.conversations.take(8).forEach { conversation ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            viewModel.selectConversation(conversation.id)
+                            historyExpanded = false
+                        },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(conversation.title, maxLines = 1)
+                            Text(conversation.databaseTitle, style = MaterialTheme.typography.bodySmall)
+                        }
+                        IconButton(onClick = { viewModel.deleteConversation(conversation.id) }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Delete conversation")
+                        }
+                    }
+                }
+            }
+        }
+        askState.historyLoadError?.let { error ->
+            Column {
+                Text(error, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = viewModel::resetHistory) { Text("Reset history") }
+            }
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(askState.messages, key = AskAiMessage::id) { message ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        if (message.role == AskAiMessageRole.USER) "You" else "Ask AI",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    SelectionContainer {
+                        Text(message.text.ifBlank { "Working..." })
+                    }
+                    message.trace.forEach { trace ->
+                        Text(
+                            "${if (trace.isActive) "• " else ""}${trace.title}" +
+                                trace.detail?.let { ": $it" }.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    message.sources.forEach { source ->
+                        TextButton(onClick = { viewModel.openSource(source) }) {
+                            Text("${source.id}  ${source.path}")
+                        }
+                        if (source.excerpt.isNotBlank()) {
+                            Text(source.excerpt, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+        askState.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         OutlinedTextField(
-            value = question,
-            onValueChange = { question = it },
+            value = askState.draft,
+            onValueChange = viewModel::setDraft,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Ask a question") },
+            enabled = !askState.isGenerating,
+            maxLines = 4,
         )
-        Button(onClick = {}, enabled = false) {
-            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null)
-            Text("Ask")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = viewModel::send,
+                enabled = askState.draft.isNotBlank() && !askState.isGenerating &&
+                    askState.currentConversation != null,
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null)
+                Text("Ask")
+            }
+            if (askState.isGenerating) {
+                OutlinedButton(onClick = viewModel::cancel) { Text("Cancel") }
+            }
         }
+    }
+    if (askState.pendingDatabaseId != null) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissDatabaseChange,
+            title = { Text("Change database?") },
+            text = { Text("A new conversation will use ${askState.pendingDatabaseTitle}.") },
+            confirmButton = {
+                Button(onClick = viewModel::confirmDatabaseChange) { Text("New conversation") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissDatabaseChange) { Text("Cancel") }
+            },
+        )
     }
 }
 
