@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.URI
 
 class KinicAppViewModelTest {
     @Test
@@ -54,14 +55,46 @@ class KinicAppViewModelTest {
         assertNull(KinicAppViewModel.databaseNameError("Team knowledge"))
     }
 
-    private fun database(id: String, role: DatabaseRole): DatabaseSummary =
+    @Test
+    fun manageIncludesWritablePendingButBrowseDoesNot() {
+        val activeWriter = database("active", DatabaseRole.WRITER)
+        val pendingOwner = database("pending", DatabaseRole.OWNER, DatabaseStatus.PENDING)
+        val pendingReader = database("pending-reader", DatabaseRole.READER, DatabaseStatus.PENDING)
+        val deletedOwner = database("deleted", DatabaseRole.OWNER, DatabaseStatus.DELETED)
+        val state = KinicAppUiState(
+            memberDatabases = listOf(activeWriter, pendingOwner, pendingReader, deletedOwner),
+        )
+
+        assertEquals(
+            setOf("active", "pending"),
+            KinicAppViewModel.manageableDatabases(state).mapTo(mutableSetOf(), DatabaseSummary::databaseId),
+        )
+        assertFalse(pendingOwner.canRead)
+        assertFalse(pendingOwner.canWrite)
+        assertTrue(activeWriter.canRead)
+        assertTrue(activeWriter.canWrite)
+    }
+
+    @Test
+    fun pendingFundingUrlCarriesStatusAndEncodesDatabaseId() {
+        assertEquals(
+            "https://wiki.kinic.xyz/cycles?database_id=db%20pending&status=pending",
+            KinicAppViewModel.fundingUri(URI("https://wiki.kinic.xyz"), "db pending", pending = true).toString(),
+        )
+    }
+
+    private fun database(
+        id: String,
+        role: DatabaseRole,
+        status: DatabaseStatus = DatabaseStatus.ACTIVE,
+    ): DatabaseSummary =
         DatabaseSummary(
             databaseId = id,
             title = id,
             description = "",
             metadata = null,
             role = role,
-            status = DatabaseStatus.ACTIVE,
+            status = status,
             logicalSizeBytes = 0uL,
             cyclesBalance = null,
             cyclesSuspendedAtMs = null,

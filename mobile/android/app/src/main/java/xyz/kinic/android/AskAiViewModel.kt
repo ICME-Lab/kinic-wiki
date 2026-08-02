@@ -7,8 +7,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -26,14 +24,23 @@ class AskAiViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AskAiUiState())
     val uiState: StateFlow<AskAiUiState> = _uiState.asStateFlow()
-    private var store = storeFactory.create(knowledgeProvider.appState.value.session?.principal)
+    private var activePrincipal = knowledgeProvider.appState.value.session?.principal
+    private var store = storeFactory.create(activePrincipal)
     private var generationJob: Job? = null
+    private var activeGeneration: GenerationContext? = null
+    private var scopeGeneration = 0L
+    private var nextGeneration = 0L
+    private var awaitingInitialDatabase = false
 
     init {
+        loadHistory()
         viewModelScope.launch {
-            knowledgeProvider.appState.map { it.session?.principal }.distinctUntilChanged().collect {
-                store = storeFactory.create(it)
-                loadHistory()
+            knowledgeProvider.appState.collect { state ->
+                val principal = state.session?.principal
+                if (principal != activePrincipal) {
+                    switchScope(principal)
+                }
+                maybeCreateInitialConversation(state)
             }
         }
     }
@@ -55,6 +62,7 @@ class AskAiViewModel(
             databaseTitle = database.summary.displayTitle,
         )
         val updated = listOf(conversation) + _uiState.value.conversations
+        awaitingInitialDatabase = false
         _uiState.update {
             it.copy(conversations = updated, currentConversation = conversation, draft = "", errorMessage = null)
         }
@@ -94,6 +102,9 @@ class AskAiViewModel(
     }
 
     fun deleteConversation(id: String) {
+        if (activeGeneration?.conversationId == id) {
+            cancel()
+        }
         val updated = _uiState.value.conversations.filterNot { it.id == id }
         _uiState.update {
             it.copy(
@@ -106,16 +117,22 @@ class AskAiViewModel(
 
     fun resetHistory() {
         runCatching {
+            discardActiveGeneration()
             store.deleteAllStoredData()
             _uiState.value = AskAiUiState(isLoadingHistory = false)
-            startNewConversation()
+            awaitingInitialDatabase = true
+            maybeCreateInitialConversation(knowledgeProvider.appState.value)
         }.onFailure(::showError)
     }
 
     fun cancel() {
+        val context = activeGeneration
         generationJob?.cancel()
         generationJob = null
-        finalizeFailure("Generation cancelled.")
+        if (context != null) {
+            finalizeFailure(context, "Generation cancelled.")
+        }
+        invalidateGeneration()
     }
 
     fun send() {
@@ -145,20 +162,29 @@ class AskAiViewModel(
         )
         _uiState.update { it.copy(draft = "", isGenerating = true, errorMessage = null) }
 
+        val context = GenerationContext(
+            scopeGeneration = scopeGeneration,
+            generation = ++nextGeneration,
+            conversationId = initial.id,
+            assistantMessageId = assistant.id,
+        )
+        activeGeneration = context
         generationJob = viewModelScope.launch {
             runCatching {
                 val queryPrompt = AskAiQueryPlanner.buildPrompt(initial.databaseTitle, question, history)
                 val queryResponse = client.completeContent(queryPrompt, QUERY_TIMEOUT_MS)
                 val plan = AskAiQueryPlanner.parse(queryResponse)
                 updateGeneratingTrace(
+                    context,
                     listOf(
                         completedTrace(AskAiTraceStage.SEARCHING, "Search plan", plan.queries.joinToString { it.text }),
                         activeTrace(AskAiTraceStage.READING, "Reading matching documents"),
                     ),
                 )
                 val retrieval = knowledgeProvider.retrieve(initial.databaseId, plan)
-                updateGeneratingSources(retrieval.sources.map(AskAiContextSource::source))
+                updateGeneratingSources(context, retrieval.sources.map(AskAiContextSource::source))
                 updateGeneratingTrace(
+                    context,
                     listOf(
                         completedTrace(
                             AskAiTraceStage.FOUND,
@@ -176,10 +202,10 @@ class AskAiViewModel(
                     response,
                     prompt.includedContexts.mapTo(mutableSetOf()) { it.source.id },
                 )
-            }.onSuccess(::finalizeSuccess)
+            }.onSuccess { outcome -> finalizeSuccess(context, outcome) }
                 .onFailure { error ->
                     if (error !is kotlinx.coroutines.CancellationException) {
-                        finalizeFailure(error.message ?: "Ask AI failed.")
+                        finalizeFailure(context, error.message ?: "Ask AI failed.")
                     }
                 }
         }
@@ -190,9 +216,9 @@ class AskAiViewModel(
         knowledgeProvider.openSource(conversation.databaseId, source.path)
     }
 
-    private fun finalizeSuccess(outcome: AskAiResponseOutcome) {
-        val current = _uiState.value.currentConversation ?: return
-        val generating = current.messages.lastOrNull() ?: return
+    private fun finalizeSuccess(context: GenerationContext, outcome: AskAiResponseOutcome) {
+        val current = generationConversation(context) ?: return
+        val generating = current.messages.last()
         val available = generating.sources
         val final = when (outcome) {
             AskAiResponseOutcome.Insufficient -> generating.copy(
@@ -207,29 +233,44 @@ class AskAiViewModel(
                 trace = generating.trace.map { it.copy(isActive = false) },
             )
         }
-        replaceCurrent(current.copy(messages = current.messages.dropLast(1) + final, updatedAt = Instant.now()))
-        _uiState.update { it.copy(isGenerating = false) }
-        persist()
+        val updated = current.copy(
+            messages = current.messages.dropLast(1) + final,
+            updatedAt = Instant.now(),
+        )
+        if (replaceGenerationConversation(context, updated)) {
+            finishGeneration(context)
+            persist()
+        }
     }
 
-    private fun finalizeFailure(message: String) {
-        val current = _uiState.value.currentConversation
-        if (current != null && current.messages.lastOrNull()?.state == AskAiMessageState.GENERATING) {
+    private fun finalizeFailure(context: GenerationContext, message: String) {
+        val current = generationConversation(context)
+        if (current != null) {
             val failed = current.messages.last().copy(
                 text = message,
                 state = AskAiMessageState.FAILED,
                 trace = current.messages.last().trace.map { it.copy(isActive = false) },
             )
-            replaceCurrent(current.copy(messages = current.messages.dropLast(1) + failed, updatedAt = Instant.now()))
+            val updated = current.copy(
+                messages = current.messages.dropLast(1) + failed,
+                updatedAt = Instant.now(),
+            )
+            if (!replaceGenerationConversation(context, updated)) {
+                return
+            }
         }
+        if (!isCurrentGeneration(context)) return
         _uiState.update { it.copy(isGenerating = false, errorMessage = message) }
+        activeGeneration = null
+        generationJob = null
         persist()
     }
 
-    private fun updateGeneratingTrace(trace: List<AskAiTraceEvent>) {
-        val current = _uiState.value.currentConversation ?: return
-        val assistant = current.messages.lastOrNull() ?: return
-        replaceCurrent(
+    private fun updateGeneratingTrace(context: GenerationContext, trace: List<AskAiTraceEvent>) {
+        val current = generationConversation(context) ?: return
+        val assistant = current.messages.last()
+        replaceGenerationConversation(
+            context,
             current.copy(
                 messages = current.messages.dropLast(1) + assistant.copy(
                     trace = trace,
@@ -238,10 +279,11 @@ class AskAiViewModel(
         )
     }
 
-    private fun updateGeneratingSources(sources: List<AskAiSource>) {
-        val current = _uiState.value.currentConversation ?: return
-        val assistant = current.messages.lastOrNull() ?: return
-        replaceCurrent(
+    private fun updateGeneratingSources(context: GenerationContext, sources: List<AskAiSource>) {
+        val current = generationConversation(context) ?: return
+        val assistant = current.messages.last()
+        replaceGenerationConversation(
+            context,
             current.copy(
                 messages = current.messages.dropLast(1) + assistant.copy(sources = sources),
             ),
@@ -283,9 +325,11 @@ class AskAiViewModel(
                         conversations = conversations,
                         currentConversation = conversations.firstOrNull(),
                         isLoadingHistory = false,
+                        historyLoadError = null,
                     )
                 }
-                if (conversations.isEmpty()) startNewConversation()
+                awaitingInitialDatabase = conversations.isEmpty()
+                maybeCreateInitialConversation(knowledgeProvider.appState.value)
             }
             .onFailure { error ->
                 runCatching { store.resetAfterLoadFailure() }
@@ -297,7 +341,78 @@ class AskAiViewModel(
                         historyLoadError = error.message ?: "Conversation history is corrupt.",
                     )
                 }
+                awaitingInitialDatabase = false
             }
+    }
+
+    private fun switchScope(principal: String?) {
+        discardActiveGeneration()
+        scopeGeneration += 1
+        activePrincipal = principal
+        store = storeFactory.create(principal)
+        _uiState.value = AskAiUiState()
+        loadHistory()
+    }
+
+    private fun maybeCreateInitialConversation(appState: KinicAppUiState) {
+        if (
+            !awaitingInitialDatabase ||
+            appState.isLoadingDatabases ||
+            appState.browseDatabases.isEmpty() ||
+            _uiState.value.currentConversation != null
+        ) {
+            return
+        }
+        startNewConversation()
+    }
+
+    private fun generationConversation(context: GenerationContext): AskAiConversation? {
+        if (!isCurrentGeneration(context)) return null
+        return _uiState.value.conversations.firstOrNull { conversation ->
+            conversation.id == context.conversationId &&
+                conversation.messages.lastOrNull()?.id == context.assistantMessageId &&
+                conversation.messages.last().state == AskAiMessageState.GENERATING
+        }
+    }
+
+    private fun replaceGenerationConversation(context: GenerationContext, conversation: AskAiConversation): Boolean {
+        if (!isCurrentGeneration(context)) return false
+        val state = _uiState.value
+        if (state.conversations.none { it.id == context.conversationId }) return false
+        val conversations = state.conversations
+            .map { if (it.id == context.conversationId) conversation else it }
+            .sortedByDescending(AskAiConversation::updatedAt)
+        _uiState.value = state.copy(
+            conversations = conversations,
+            currentConversation = if (state.currentConversation?.id == context.conversationId) {
+                conversation
+            } else {
+                state.currentConversation
+            },
+        )
+        return true
+    }
+
+    private fun finishGeneration(context: GenerationContext) {
+        if (!isCurrentGeneration(context)) return
+        _uiState.update { it.copy(isGenerating = false) }
+        activeGeneration = null
+        generationJob = null
+    }
+
+    private fun isCurrentGeneration(context: GenerationContext): Boolean =
+        context.scopeGeneration == scopeGeneration &&
+            activeGeneration == context
+
+    private fun invalidateGeneration() {
+        nextGeneration += 1
+        activeGeneration = null
+        generationJob = null
+    }
+
+    private fun discardActiveGeneration() {
+        generationJob?.cancel()
+        invalidateGeneration()
     }
 
     private fun persist() {
@@ -326,6 +441,13 @@ class AskAiViewModel(
         private const val QUERY_TIMEOUT_MS = 30_000L
         private const val ANSWER_TIMEOUT_MS = 90_000L
     }
+
+    private data class GenerationContext(
+        val scopeGeneration: Long,
+        val generation: Long,
+        val conversationId: String,
+        val assistantMessageId: String,
+    )
 }
 
 class AskAiViewModelFactory(

@@ -20,7 +20,7 @@
     "audit:moderate": "pnpm audit --audit-level moderate",
     "build:worker": "npm run build && wrangler deploy --dry-run",
     "preview": "npm run build && vite preview --host 127.0.0.1 --port 3010",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "node scripts/android-app-links-config.mjs && npm run build && wrangler deploy --var \"KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT:$KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT\"",
     "deploy:production": "VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai VITE_II_DERIVATION_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io VITE_ENABLE_LOCAL_II_E2E= VITE_II_PROVIDER_URL= npm run deploy",
     "deploy:staging": "node ../scripts/staging/check_worker_deploy_source.mjs && VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai VITE_II_DERIVATION_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io VITE_ENABLE_LOCAL_II_E2E= VITE_II_PROVIDER_URL= CLOUDFLARE_ENV=staging npm run build && CLOUDFLARE_ENV=staging wrangler deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",

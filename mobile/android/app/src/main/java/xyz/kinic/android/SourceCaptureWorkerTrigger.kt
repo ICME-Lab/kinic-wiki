@@ -7,6 +7,7 @@ package xyz.kinic.android
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 
 data class TriggerSourceCaptureRequest(
     val canisterId: String,
@@ -26,6 +27,7 @@ interface SourceCaptureWorkerTrigger {
 
 class HttpSourceCaptureWorkerTrigger(
     private val configuration: AppConfiguration,
+    private val timeoutMilliseconds: Int = DEFAULT_TIMEOUT_MILLISECONDS,
 ) : SourceCaptureWorkerTrigger {
     override suspend fun trigger(request: TriggerSourceCaptureRequest): TriggerSourceCaptureResult =
         withContext(Dispatchers.IO) {
@@ -38,31 +40,48 @@ class HttpSourceCaptureWorkerTrigger(
                     )
                 }
                 val connection = openedConnection
-                val payload = jsonObjectSorted(
-                    mapOf(
-                        "canisterId" to request.canisterId,
-                        "databaseId" to request.databaseId,
-                        "requestPath" to request.requestPath,
-                        "sessionNonce" to request.sessionNonce,
-                    ),
-                )
-                connection.requestMethod = "POST"
-                connection.doOutput = true
-                connection.setRequestProperty("content-type", "application/json")
-                connection.setRequestProperty("Origin", configuration.authOrigin.toString().trimEnd('/'))
-                connection.outputStream.use { it.write(payload.encodeToByteArray()) }
-                val status = connection.responseCode
-                if (status in 200..299) {
-                    TriggerSourceCaptureResult(accepted = true, error = null)
-                } else {
-                    val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                    TriggerSourceCaptureResult(
-                        accepted = false,
-                        error = "worker trigger failed: ${errorText ?: "HTTP $status"}",
+                try {
+                    val payload = jsonObjectSorted(
+                        mapOf(
+                            "canisterId" to request.canisterId,
+                            "databaseId" to request.databaseId,
+                            "requestPath" to request.requestPath,
+                            "sessionNonce" to request.sessionNonce,
+                        ),
                     )
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = timeoutMilliseconds
+                    connection.readTimeout = timeoutMilliseconds
+                    connection.doOutput = true
+                    connection.setRequestProperty("content-type", "application/json")
+                    connection.setRequestProperty("Origin", configuration.authOrigin.toString().trimEnd('/'))
+                    connection.outputStream.use { it.write(payload.encodeToByteArray()) }
+                    val status = connection.responseCode
+                    if (status in 200..299) {
+                        TriggerSourceCaptureResult(accepted = true, error = null)
+                    } else {
+                        val errorText = connection.errorStream?.use { stream ->
+                            val buffer = ByteArray(MAXIMUM_ERROR_BYTES)
+                            val count = stream.read(buffer)
+                            if (count > 0) buffer.copyOf(count).toString(Charsets.UTF_8) else null
+                        }?.takeIf(String::isNotBlank)
+                        TriggerSourceCaptureResult(
+                            accepted = false,
+                            error = "worker trigger failed: ${errorText ?: "HTTP $status"}",
+                        )
+                    }
+                } catch (_: SocketTimeoutException) {
+                    TriggerSourceCaptureResult(accepted = false, error = "worker trigger timed out")
+                } finally {
+                    connection.disconnect()
                 }
             }.getOrElse {
                 TriggerSourceCaptureResult(accepted = false, error = it.message)
             }
         }
+
+    private companion object {
+        const val DEFAULT_TIMEOUT_MILLISECONDS = 12_000
+        const val MAXIMUM_ERROR_BYTES = 4 * 1024
+    }
 }

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import xyz.kinic.android.ic.IcAuthSession
 import java.net.URI
+import java.net.URLEncoder
 
 enum class KinicTopLevelDestination(val route: String, val label: String) {
     HOME("home", "Home"),
@@ -100,6 +101,7 @@ class KinicAppViewModel(
         KinicAppUiState(
             session = authService.restore(),
             pendingUrls = inbox.loadPendingUrls(),
+            isLoadingDatabases = true,
             selectedCaptureDatabaseId = settingsStore.selectedDatabaseId,
             selectedBrowseDatabaseId = settingsStore.selectedBrowseDatabaseId,
             showPublicDatabases = settingsStore.showPublicDatabases,
@@ -113,6 +115,9 @@ class KinicAppViewModel(
 
     private val _events = MutableSharedFlow<KinicAppEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<KinicAppEvent> = _events.asSharedFlow()
+    private var databaseRefreshGeneration = 0L
+    private var browseNavigationGeneration = 0L
+    private var browseSearchGeneration = 0L
 
     init {
         refreshDatabases()
@@ -130,7 +135,7 @@ class KinicAppViewModel(
     fun completeSignIn(callbackUri: URI) {
         runCatching { authService.completeSignIn(callbackUri) }
             .onSuccess { session ->
-                _uiState.update { it.copy(session = session, message = "Signed in.") }
+                _uiState.update { it.copy(session = session, isLoadingDatabases = true, message = "Signed in.") }
                 refreshDatabases()
             }
             .onFailure(::showError)
@@ -139,9 +144,16 @@ class KinicAppViewModel(
     fun signOut() {
         authService.signOut()
         _uiState.update {
+            val anonymousBrowseDatabases = it.browseDatabases.mapNotNull { database ->
+                val anonymousOrigins = database.origins -
+                    setOf(BrowseDatabaseOrigin.MEMBER, BrowseDatabaseOrigin.PURCHASED)
+                database.takeIf { anonymousOrigins.isNotEmpty() }?.copy(origins = anonymousOrigins)
+            }
             it.copy(
                 session = null,
                 memberDatabases = emptyList(),
+                browseDatabases = anonymousBrowseDatabases,
+                isLoadingDatabases = true,
                 message = "Signed out.",
                 manage = ManageUiState(),
             )
@@ -190,14 +202,16 @@ class KinicAppViewModel(
     }
 
     fun refreshDatabases() {
+        val generation = ++databaseRefreshGeneration
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingDatabases = true) }
             val state = _uiState.value
             val session = state.session
+            val principal = session?.principal
             val memberResult = if (session == null) {
                 Result.success(emptyList())
             } else {
-                runCatching { vfsClient.listReadableDatabases(session) }
+                runCatching { vfsClient.listMemberDatabases(session) }
             }
             val publicResult = if (state.showPublicDatabases) {
                 runCatching { vfsClient.listPublicDatabases() }
@@ -209,49 +223,54 @@ class KinicAppViewModel(
             } else {
                 runCatching { loadPurchasedDatabaseIds(session) }
             }
-            val members = memberResult.getOrElse {
-                showError(it)
-                emptyList()
+            if (generation != databaseRefreshGeneration || _uiState.value.session?.principal != principal) {
+                return@launch
             }
-            val publicDatabases = publicResult.getOrElse {
-                _uiState.update { current ->
-                    current.copy(message = "Public database list unavailable: ${errorMessage(it)}")
-                }
-                emptyList()
-            }
-            val purchasedIds = purchasedResult.getOrElse {
-                _uiState.update { current ->
-                    current.copy(message = "Purchased database list unavailable: ${errorMessage(it)}")
-                }
-                emptySet()
-            }
+            val members = memberResult.getOrElse { emptyList() }
+            val publicDatabases = publicResult.getOrElse { emptyList() }
+            val purchasedIds = purchasedResult.getOrElse { emptySet() }
+            val current = _uiState.value
             val merged = mergeBrowseDatabases(
                 memberDatabases = members,
                 publicDatabases = publicDatabases,
                 purchasedDatabaseIds = purchasedIds,
                 purchasedLookupSucceeded = purchasedResult.isSuccess,
-                showPublic = state.showPublicDatabases,
-                showPurchased = state.showPurchasedDatabases,
-                directDatabaseIds = state.directDatabaseIds,
+                showPublic = current.showPublicDatabases,
+                showPurchased = current.showPurchasedDatabases,
+                directDatabaseIds = current.directDatabaseIds,
             )
-            val writable = members.filter { it.canWrite || (it.status == DatabaseStatus.PENDING && it.role.canWrite) }
-            val captureId = state.selectedCaptureDatabaseId
+            val writable = members.filter(DatabaseSummary::canWrite)
+            val captureId = current.selectedCaptureDatabaseId
                 .takeIf { id -> writable.any { it.databaseId == id } }
                 ?: writable.firstOrNull()?.databaseId.orEmpty()
-            val browseId = state.selectedBrowseDatabaseId
+            val browseId = current.selectedBrowseDatabaseId
                 .takeIf { id -> merged.any { it.summary.databaseId == id } }
                 ?: merged.firstOrNull()?.summary?.databaseId.orEmpty()
-            settingsStore.selectedDatabaseId = captureId
-            settingsStore.selectedBrowseDatabaseId = browseId
+            val pendingFundingId = current.manage.pendingFundingDatabaseId?.takeIf { pendingId ->
+                members.none { it.databaseId == pendingId && it.status != DatabaseStatus.PENDING }
+            }
+            val errors = buildList {
+                memberResult.exceptionOrNull()?.let { add(errorMessage(it)) }
+                publicResult.exceptionOrNull()?.let { add("Public database list unavailable: ${errorMessage(it)}") }
+                purchasedResult.exceptionOrNull()?.let { add("Purchased database list unavailable: ${errorMessage(it)}") }
+            }
             _uiState.update {
+                if (generation != databaseRefreshGeneration || it.session?.principal != principal) return@update it
                 it.copy(
                     isLoadingDatabases = false,
                     browseDatabases = merged,
                     memberDatabases = members,
                     selectedCaptureDatabaseId = captureId,
                     selectedBrowseDatabaseId = browseId,
+                    message = errors.lastOrNull() ?: it.message,
+                    manage = it.manage.copy(pendingFundingDatabaseId = pendingFundingId),
                 )
             }
+            if (generation != databaseRefreshGeneration || _uiState.value.session?.principal != principal) {
+                return@launch
+            }
+            settingsStore.selectedDatabaseId = captureId
+            settingsStore.selectedBrowseDatabaseId = browseId
             if (browseId.isNotBlank()) {
                 loadBrowsePath("/")
             }
@@ -288,11 +307,14 @@ class KinicAppViewModel(
     }
 
     fun selectBrowseDatabase(databaseId: String) {
+        browseNavigationGeneration += 1
+        browseSearchGeneration += 1
         settingsStore.selectedBrowseDatabaseId = databaseId
         _uiState.update {
             it.copy(
                 selectedBrowseDatabaseId = databaseId,
                 browsePath = "/",
+                browseChildren = emptyList(),
                 browseDocument = null,
                 browseSearchResults = emptyList(),
             )
@@ -306,7 +328,13 @@ class KinicAppViewModel(
             _uiState.update { it.copy(message = "Database ID is required.") }
             return
         }
-        _uiState.update { it.copy(directDatabaseIds = it.directDatabaseIds + trimmed) }
+        databaseRefreshGeneration += 1
+        _uiState.update {
+            it.copy(
+                directDatabaseIds = it.directDatabaseIds + trimmed,
+                isLoadingDatabases = false,
+            )
+        }
         val merged = mergeBrowseDatabases(
             memberDatabases = _uiState.value.memberDatabases,
             publicDatabases = _uiState.value.browseDatabases
@@ -326,47 +354,60 @@ class KinicAppViewModel(
 
     fun loadBrowsePath(path: String) {
         val database = selectedBrowseEntry() ?: return
+        val normalized = normalizedPath(path)
+        val generation = ++browseNavigationGeneration
+        browseSearchGeneration += 1
         viewModelScope.launch {
             runCatching {
                 vfsClient.listBrowseChildren(
                     databaseId = database.summary.databaseId,
-                    path = normalizedPath(path),
+                    path = normalized,
                     session = browseSession(database),
                 )
             }.onSuccess { children ->
+                if (!isCurrentBrowseNavigation(generation, database.summary.databaseId)) return@onSuccess
                 _uiState.update {
                     it.copy(
-                        browsePath = normalizedPath(path),
+                        browsePath = normalized,
                         browseChildren = sortChildren(children, it.browseSort),
                         browseDocument = null,
+                        browseSearchResults = emptyList(),
                         message = "",
                     )
                 }
-            }.onFailure(::showError)
+            }.onFailure { error ->
+                if (isCurrentBrowseNavigation(generation, database.summary.databaseId)) showError(error)
+            }
         }
     }
 
     fun openBrowseNode(path: String) {
         val database = selectedBrowseEntry() ?: return
+        val normalized = normalizedPath(path)
+        val generation = ++browseNavigationGeneration
         viewModelScope.launch {
             runCatching {
-                vfsClient.readBrowseNode(database.summary.databaseId, normalizedPath(path), browseSession(database))
+                vfsClient.readBrowseNode(database.summary.databaseId, normalized, browseSession(database))
             }.onSuccess { node ->
+                if (!isCurrentBrowseNavigation(generation, database.summary.databaseId)) return@onSuccess
                 if (node == null) {
                     _uiState.update { it.copy(message = "Document not found. Opened its parent folder.") }
-                    loadBrowsePath(parentPath(path))
+                    loadBrowsePath(parentPath(normalized))
                 } else if (node.kind == VfsNodeKind.FOLDER) {
                     loadBrowsePath(node.path)
                 } else {
                     _uiState.update { it.copy(browseDocument = node, browsePath = parentPath(node.path), message = "") }
                 }
-            }.onFailure(::showError)
+            }.onFailure { error ->
+                if (isCurrentBrowseNavigation(generation, database.summary.databaseId)) showError(error)
+            }
         }
     }
 
     fun navigateBrowseBack() {
         val document = _uiState.value.browseDocument
         if (document != null) {
+            browseNavigationGeneration += 1
             _uiState.update { it.copy(browseDocument = null) }
         } else {
             loadBrowsePath(parentPath(_uiState.value.browsePath))
@@ -387,6 +428,7 @@ class KinicAppViewModel(
     }
 
     fun setBrowseSearchQuery(query: String) {
+        browseSearchGeneration += 1
         _uiState.update { it.copy(browseSearchQuery = query) }
     }
 
@@ -395,21 +437,28 @@ class KinicAppViewModel(
         val database = selectedBrowseEntry() ?: return
         val query = state.browseSearchQuery.trim()
         if (query.isBlank()) {
+            browseSearchGeneration += 1
             _uiState.update { it.copy(browseSearchResults = emptyList()) }
             return
         }
+        val generation = ++browseSearchGeneration
+        val databaseId = database.summary.databaseId
+        val prefix = state.browsePath.takeUnless { it == "/" }
         viewModelScope.launch {
             runCatching {
                 vfsClient.searchBrowseNodes(
-                    databaseId = database.summary.databaseId,
+                    databaseId = databaseId,
                     query = query,
-                    prefix = state.browsePath.takeUnless { it == "/" },
+                    prefix = prefix,
                     limit = 50u,
                     session = browseSession(database),
                 )
             }.onSuccess { results ->
+                if (!isCurrentBrowseSearch(generation, databaseId, query, prefix)) return@onSuccess
                 _uiState.update { it.copy(browseSearchResults = results, message = "${results.size} results") }
-            }.onFailure(::showError)
+            }.onFailure { error ->
+                if (isCurrentBrowseSearch(generation, databaseId, query, prefix)) showError(error)
+            }
         }
     }
 
@@ -723,11 +772,14 @@ class KinicAppViewModel(
         }
     }
 
-    fun openFunding() {
-        val databaseId = _uiState.value.manage.selectedDatabaseId
+    fun openFunding(requestedDatabaseId: String? = null) {
+        val state = _uiState.value
+        val databaseId = requestedDatabaseId ?: state.manage.selectedDatabaseId
         if (databaseId.isNotBlank()) {
+            val pending = state.manage.pendingFundingDatabaseId == databaseId ||
+                state.memberDatabases.any { it.databaseId == databaseId && it.status == DatabaseStatus.PENDING }
             _events.tryEmit(
-                KinicAppEvent.OpenUri(configuration.authOrigin.resolve("/cycles?database_id=$databaseId")),
+                KinicAppEvent.OpenUri(fundingUri(configuration.authOrigin, databaseId, pending)),
             )
         }
     }
@@ -796,6 +848,23 @@ class KinicAppViewModel(
                 BrowseDatabaseOrigin.PURCHASED in database.origins
         }
 
+    private fun isCurrentBrowseNavigation(generation: Long, databaseId: String): Boolean =
+        generation == browseNavigationGeneration &&
+            _uiState.value.selectedBrowseDatabaseId == databaseId
+
+    private fun isCurrentBrowseSearch(
+        generation: Long,
+        databaseId: String,
+        query: String,
+        prefix: String?,
+    ): Boolean {
+        val state = _uiState.value
+        return generation == browseSearchGeneration &&
+            state.selectedBrowseDatabaseId == databaseId &&
+            state.browseSearchQuery.trim() == query &&
+            state.browsePath.takeUnless { it == "/" } == prefix
+    }
+
     private fun ownerManagedDatabase(state: KinicAppUiState): DatabaseSummary? {
         val database = manageableDatabases(state).firstOrNull {
             it.databaseId == state.manage.selectedDatabaseId
@@ -823,7 +892,7 @@ class KinicAppViewModel(
     companion object {
         fun manageableDatabases(state: KinicAppUiState): List<DatabaseSummary> =
             state.memberDatabases.filter {
-                it.role.canWrite && it.status != DatabaseStatus.DELETED
+                it.role.canWrite && it.status in setOf(DatabaseStatus.ACTIVE, DatabaseStatus.PENDING)
             }
 
         fun mergeBrowseDatabases(
@@ -875,6 +944,12 @@ class KinicAppViewModel(
                 return "Database name may not contain control characters."
             }
             return null
+        }
+
+        internal fun fundingUri(authOrigin: URI, databaseId: String, pending: Boolean): URI {
+            val encodedDatabaseId = URLEncoder.encode(databaseId, Charsets.UTF_8.name()).replace("+", "%20")
+            val statusQuery = if (pending) "&status=pending" else ""
+            return authOrigin.resolve("/cycles?database_id=$encodedDatabaseId$statusQuery")
         }
 
         private fun directDatabaseSummary(databaseId: String): DatabaseSummary =

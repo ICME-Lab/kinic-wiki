@@ -678,12 +678,19 @@ private fun ManageScreen(
             onSelect = viewModel::selectManageDatabase,
             label = "Managed database",
         )
+        state.manage.pendingFundingDatabaseId?.let { pendingDatabaseId ->
+            Text("Database $pendingDatabaseId is pending funding.")
+            Button(onClick = { viewModel.openFunding(pendingDatabaseId) }, enabled = !isBusy) {
+                Icon(Icons.Outlined.OpenInBrowser, contentDescription = null)
+                Text("Fund database")
+            }
+        }
         if (database != null) {
             Text(database.status.candidName, style = MaterialTheme.typography.titleMedium)
             Text("${database.logicalSizeBytes} bytes")
             Text(database.cyclesBalance?.let { "$it cycles" } ?: "Cycles unavailable")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = viewModel::openFunding) {
+                OutlinedButton(onClick = { viewModel.openFunding(database.databaseId) }) {
                     Icon(Icons.Outlined.OpenInBrowser, contentDescription = null)
                     Text("Funding")
                 }

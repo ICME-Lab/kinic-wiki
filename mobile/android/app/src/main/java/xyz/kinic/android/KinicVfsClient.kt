@@ -11,7 +11,7 @@ class KinicVfsClient(
     private val configuration: AppConfiguration,
     private val client: IcClient = IcClient(configuration.icClientConfiguration()),
 ) {
-    suspend fun listReadableDatabases(session: IcAuthSession): List<DatabaseSummary> {
+    suspend fun listMemberDatabases(session: IcAuthSession): List<DatabaseSummary> {
         client.validateIdentity(session, configuration.canisterId)
         val data = client.queryRaw(
             method = "list_databases",
@@ -19,9 +19,11 @@ class KinicVfsClient(
             identity = session,
         )
         return VfsCandidDecoder.decodeDatabaseSummaries(data)
-            .filter(DatabaseSummary::canRead)
             .sortedBy { it.displayTitle.lowercase() }
     }
+
+    suspend fun listReadableDatabases(session: IcAuthSession): List<DatabaseSummary> =
+        listMemberDatabases(session).filter(DatabaseSummary::canRead)
 
     suspend fun listPublicDatabases(): List<DatabaseSummary> {
         val data = client.queryRaw(

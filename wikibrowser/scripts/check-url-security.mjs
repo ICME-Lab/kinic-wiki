@@ -32,6 +32,7 @@ const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callb
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
+const { normalizedAndroidAppLinkFingerprint } = await import("./android-app-links-config.mjs");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -123,6 +124,7 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/json");
   assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(normalizedAndroidAppLinkFingerprint(fingerprint.toLowerCase()), fingerprint);
   assert.deepEqual(JSON.parse(await response.text()), [
     {
       relation: ["delegate_permission/common.handle_all_urls"],
@@ -133,6 +135,23 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
       }
     }
   ]);
+}
+
+assert.throws(
+  () => normalizedAndroidAppLinkFingerprint("not-a-fingerprint"),
+  /must be the Play App Signing SHA-256 fingerprint/
+);
+
+{
+  const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const deploy = packageJson.scripts.deploy;
+  const deployProduction = packageJson.scripts["deploy:production"];
+  assert.match(deploy, /node scripts\/android-app-links-config\.mjs/);
+  assert.match(
+    deploy,
+    /wrangler deploy --var "KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT:\$KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT"/
+  );
+  assert.match(deployProduction, /npm run deploy/);
 }
 
 {
