@@ -13,8 +13,6 @@ const PURCHASE_INTENT_ENDPOINT = "iap:purchase-intents";
 const ACTIVATE_DATABASE_ENDPOINT = "iap:activate-database";
 
 type ActivateDatabaseInput = {
-  databaseId: string;
-  purchaserPrincipal: string;
   transactionJWS: string;
 };
 
@@ -86,7 +84,8 @@ export function createPaymentWorker(dependencies: Partial<PaymentWorkerDependenc
         }
         try {
           const input = parseActivateDatabaseInput(body);
-          const principalLimitError = await rateLimitErrorResponse(env, ACTIVATE_DATABASE_ENDPOINT, input.purchaserPrincipal);
+          const principalLimitKey = await activationRateLimitKey(env, input.transactionJWS);
+          const principalLimitError = await rateLimitErrorResponse(env, ACTIVATE_DATABASE_ENDPOINT, principalLimitKey);
           if (principalLimitError) return principalLimitError;
           return jsonResponse(await activateDatabase(env, input, grant, fetcher));
         } catch (error) {
@@ -144,28 +143,26 @@ export async function activateDatabase(
   const deviceAppAccountToken = optionalUuidText(devicePayload.appAccountToken, "appAccountToken");
   const existingFulfillment = await fulfillmentByTransaction(env, transactionId);
   if (existingFulfillment?.status === "fulfilled") {
-    return fulfilledActivationResponse(existingFulfillment, input, deviceAppAccountToken);
+    return fulfilledActivationResponse(existingFulfillment, deviceAppAccountToken);
   }
   const verified = await verifyStoreKitTransaction(env, input.transactionJWS, catalog, fetcher);
-  await validatePurchaseIntent(env, {
+  const intent = await validatePurchaseIntent(env, {
     appAccountToken: verified.appAccountToken,
-    databaseId: input.databaseId,
-    purchaserPrincipal: input.purchaserPrincipal,
     productId: verified.productId,
     transactionId
   });
   const fulfillment = await ensureFulfillmentReceived(env, {
     transactionId,
-    databaseId: input.databaseId,
-    purchaserPrincipal: input.purchaserPrincipal
+    databaseId: intent.database_id,
+    purchaserPrincipal: intent.purchaser_principal
   });
   if (fulfillment.status === "fulfilled") {
-    return fulfilledActivationResponse(fulfillment, input, verified.appAccountToken);
+    return fulfilledActivationResponse(fulfillment, verified.appAccountToken);
   }
   const alreadyFulfilled = await markFulfillmentGranting(env, {
     transactionId,
-    databaseId: input.databaseId,
-    purchaserPrincipal: input.purchaserPrincipal,
+    databaseId: intent.database_id,
+    purchaserPrincipal: intent.purchaser_principal,
     appAccountToken: verified.appAccountToken,
     productId: verified.productId,
     environment: verified.environment,
@@ -173,17 +170,17 @@ export async function activateDatabase(
     cycles: verified.cycles.toString(),
   });
   if (alreadyFulfilled) {
-    return fulfilledActivationResponse(alreadyFulfilled, input, verified.appAccountToken);
+    return fulfilledActivationResponse(alreadyFulfilled, verified.appAccountToken);
   }
   let result: CyclesPurchaseResult;
   try {
     result = await grant(env, {
-      databaseId: input.databaseId,
+      databaseId: intent.database_id,
       amountCycles: verified.cycles,
       externalPaymentId: transactionId,
       provider: "apple_iap",
       productId: verified.productId,
-      purchaserPrincipal: input.purchaserPrincipal
+      purchaserPrincipal: intent.purchaser_principal
     });
   } catch (error) {
     await markFulfillmentFailed(env, transactionId, errorMessage(error));
@@ -191,15 +188,16 @@ export async function activateDatabase(
   }
   await finalizeFulfillment(env, {
     transactionId,
-    databaseId: input.databaseId,
-    purchaserPrincipal: input.purchaserPrincipal,
+    databaseId: intent.database_id,
+    purchaserPrincipal: intent.purchaser_principal,
     appAccountToken: verified.appAccountToken,
     productId: verified.productId
   });
   return {
     fulfilled: true,
     transactionId,
-    databaseId: input.databaseId,
+    databaseId: intent.database_id,
+    purchaserPrincipal: intent.purchaser_principal,
     productId: verified.productId,
     cycles: verified.cycles.toString(),
     balanceCycles: result.balanceCycles
@@ -212,8 +210,6 @@ function parseActivateDatabaseInput(body: unknown): ActivateDatabaseInput {
   }
   const record = body as Record<string, unknown>;
   return {
-    databaseId: requiredText(record.databaseId, "databaseId"),
-    purchaserPrincipal: requiredPrincipalText(record.purchaserPrincipal, "purchaserPrincipal"),
     transactionJWS: requiredText(record.transactionJWS, "transactionJWS")
   };
 }
@@ -263,26 +259,24 @@ async function purchaseIntentByToken(env: RuntimeEnv, appAccountToken: string): 
     .first<PurchaseIntentRow>();
 }
 
-async function validatePurchaseIntent(env: RuntimeEnv, input: { appAccountToken: string; databaseId: string; purchaserPrincipal: string; productId: string; transactionId: string }): Promise<void> {
+async function validatePurchaseIntent(
+  env: RuntimeEnv,
+  input: { appAccountToken: string; productId: string; transactionId: string }
+): Promise<PurchaseIntentRow> {
   const intent = await purchaseIntentByToken(env, input.appAccountToken);
   if (!intent) {
     throw new Error("purchase intent not found");
-  }
-  if (intent.database_id !== input.databaseId) {
-    throw new Error("purchase intent database mismatch");
-  }
-  if (intent.purchaser_principal !== input.purchaserPrincipal) {
-    throw new Error("purchase intent purchaser mismatch");
   }
   if (intent.product_id !== input.productId) {
     throw new Error("purchase intent product mismatch");
   }
   if (intent.status === "fulfilled" && intent.transaction_id === input.transactionId) {
-    return;
+    return intent;
   }
   if (intent.status !== "created") {
     throw new Error("purchase intent is not active");
   }
+  return intent;
 }
 
 async function ensureFulfillmentReceived(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string }): Promise<FulfillmentRow> {
@@ -339,8 +333,7 @@ async function markFulfillmentFailed(env: RuntimeEnv, transactionId: string, mes
     .run();
 }
 
-function fulfilledActivationResponse(fulfillment: FulfillmentRow, input: ActivateDatabaseInput, deviceAppAccountToken: string | null): Record<string, string | boolean> {
-  assertFulfillmentOwner(fulfillment, input.databaseId, input.purchaserPrincipal, "fulfilled");
+function fulfilledActivationResponse(fulfillment: FulfillmentRow, deviceAppAccountToken: string | null): Record<string, string | boolean> {
   if (!deviceAppAccountToken || !fulfillment.app_account_token || deviceAppAccountToken !== fulfillment.app_account_token) {
     throw new Error("transaction already fulfilled for another purchase intent");
   }
@@ -348,9 +341,20 @@ function fulfilledActivationResponse(fulfillment: FulfillmentRow, input: Activat
     fulfilled: true,
     transactionId: fulfillment.transaction_id,
     databaseId: fulfillment.database_id,
+    purchaserPrincipal: fulfillment.purchaser_principal,
     productId: fulfillment.product_id,
     cycles: fulfillment.cycles
   };
+}
+
+async function activationRateLimitKey(env: RuntimeEnv, transactionJWS: string): Promise<string> {
+  const payload = transactionPayload(transactionJWS);
+  const appAccountToken = optionalUuidText(payload.appAccountToken, "appAccountToken");
+  if (!appAccountToken) {
+    throw new Error("transaction appAccountToken is required");
+  }
+  const intent = await purchaseIntentByToken(env, appAccountToken);
+  return intent?.purchaser_principal ?? appAccountToken;
 }
 
 function assertFulfillmentOwner(fulfillment: FulfillmentRow, databaseId: string, purchaserPrincipal: string, stateLabel: string): void {

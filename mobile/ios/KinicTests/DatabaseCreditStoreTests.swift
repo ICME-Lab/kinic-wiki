@@ -23,15 +23,15 @@ struct DatabaseCreditStoreTests {
             configuration: .preview,
             settingsStore: harness.settingsStore,
             transactionSource: source,
-            activationHandler: { _, databaseId, _ in
-                if databaseId == "db_fail" {
+            activationHandler: { transactionJWS in
+                if transactionJWS == "jws_tx_fail" {
                     throw DatabaseCreditRecoveryTestError.activationFailed
                 }
-                return activation(transactionId: "tx_success", databaseId: databaseId)
+                return activation(transactionId: "tx_success", databaseId: "db_success")
             }
         )
 
-        let result = await store.recoverPendingDatabaseCreditPurchases(purchaserPrincipal: harness.principal)
+        let result = await store.recoverPendingDatabaseCreditPurchases()
 
         #expect(result.activations == [activation(transactionId: "tx_success", databaseId: "db_success")])
         #expect(result.failures.map(\.transactionId) == ["tx_fail"])
@@ -55,12 +55,12 @@ struct DatabaseCreditStoreTests {
             configuration: .preview,
             settingsStore: harness.settingsStore,
             transactionSource: source,
-            activationHandler: { _, databaseId, _ in
-                activation(transactionId: "tx_success", databaseId: databaseId)
+            activationHandler: { _ in
+                activation(transactionId: "tx_success", databaseId: "db_success")
             }
         )
 
-        let result = await store.recoverPendingDatabaseCreditPurchases(purchaserPrincipal: harness.principal)
+        let result = await store.recoverPendingDatabaseCreditPurchases()
 
         #expect(result.activations.count == 1)
         #expect(result.failures == [DatabaseCreditRecoveryFailure(
@@ -69,6 +69,32 @@ struct DatabaseCreditStoreTests {
         )])
         #expect(await finishRecorder.finishedTransactionIds() == ["tx_success"])
         #expect(harness.settingsStore.pendingDatabaseCreditPurchases.isEmpty)
+    }
+
+    @Test
+    func recoveryDoesNotRequireLocalPendingPurchase() async throws {
+        let harness = try DatabaseCreditRecoveryHarness()
+        let token = UUID().uuidString.lowercased()
+        let finishRecorder = DatabaseCreditFinishRecorder()
+        let source = FakeDatabaseCreditTransactionSource(events: [
+            .verified(transaction(id: "tx_reinstalled", token: token, recorder: finishRecorder))
+        ])
+        let store = DatabaseCreditStore(
+            configuration: .preview,
+            settingsStore: harness.settingsStore,
+            transactionSource: source,
+            activationHandler: { _ in
+                activation(transactionId: "tx_reinstalled", databaseId: "db_recovered")
+            }
+        )
+
+        let result = await store.recoverPendingDatabaseCreditPurchases()
+
+        #expect(result.activations == [
+            activation(transactionId: "tx_reinstalled", databaseId: "db_recovered")
+        ])
+        #expect(result.failures.isEmpty)
+        #expect(await finishRecorder.finishedTransactionIds() == ["tx_reinstalled"])
     }
 
     @MainActor
@@ -82,6 +108,26 @@ struct DatabaseCreditStoreTests {
 
         #expect(AppModel.databaseCreditRecoveryError(failures) == "first failure (2 more transactions failed.)")
         #expect(AppModel.databaseCreditRecoveryError([]) == nil)
+    }
+
+    @MainActor
+    @Test
+    func appModelAppliesOnlyCurrentPrincipalRecoveries() {
+        let current = activation(transactionId: "tx_current", databaseId: "db_current")
+        let other = DatabaseCreditActivation(
+            transactionId: "tx_other",
+            databaseId: "db_other",
+            purchaserPrincipal: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            productId: "xyz.kinic.dbcredits.small",
+            cycles: "12345",
+            balanceCycles: "67890"
+        )
+
+        #expect(AppModel.databaseCreditActivations(
+            [current, other],
+            for: current.purchaserPrincipal
+        ) == [current])
+        #expect(AppModel.databaseCreditActivations([current], for: nil).isEmpty)
     }
 }
 
@@ -157,6 +203,7 @@ private func activation(transactionId: String, databaseId: String) -> DatabaseCr
     DatabaseCreditActivation(
         transactionId: transactionId,
         databaseId: databaseId,
+        purchaserPrincipal: "r7inp-6aaaa-aaaaa-aaabq-cai",
         productId: "xyz.kinic.dbcredits.small",
         cycles: "12345",
         balanceCycles: "67890"

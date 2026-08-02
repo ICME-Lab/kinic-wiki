@@ -24,11 +24,7 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
   const transactionJWS = jws({ transactionId: "tx-1", appAccountToken });
   const response = await activateDatabase(
     env,
-    {
-      databaseId: DATABASE_ID,
-      purchaserPrincipal: PRINCIPAL,
-      transactionJWS
-    },
+    { transactionJWS },
     async (_env, request) => {
       assert.equal(request.amountCycles, 12345n);
       assert.equal(request.externalPaymentId, "tx-1");
@@ -42,6 +38,7 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
     fulfilled: true,
     transactionId: "tx-1",
     databaseId: DATABASE_ID,
+    purchaserPrincipal: PRINCIPAL,
     productId: PRODUCT_ID,
     cycles: "12345",
     balanceCycles: "12345"
@@ -103,14 +100,13 @@ test("global rate limit returns 429 before D1 writes", async () => {
 test("principal rate limit returns 429 before D1 writes", async () => {
   const env = await testEnv();
   env.IAP_PRINCIPAL_RATE_LIMITER.outcome = "deny";
+  const appAccountToken = await purchaseIntent(env);
 
   const response = await worker.fetch(
     new Request("https://payment.test/iap/activate-database", {
       method: "POST",
       body: JSON.stringify({
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
-        transactionJWS: jws({ transactionId: "tx-rate-limited", appAccountToken: crypto.randomUUID() })
+        transactionJWS: jws({ transactionId: "tx-rate-limited", appAccountToken })
       })
     }),
     env
@@ -119,7 +115,7 @@ test("principal rate limit returns 429 before D1 writes", async () => {
   assert.equal(response.status, 429);
   assert.deepEqual(env.IAP_GLOBAL_RATE_LIMITER.keys, ["iap:activate-database"]);
   assert.deepEqual(env.IAP_PRINCIPAL_RATE_LIMITER.keys, [`iap:activate-database:${PRINCIPAL}`]);
-  assert.equal(env.DB.intents.size, 0);
+  assert.equal(env.DB.intents.size, 1);
   assert.equal(env.DB.rows.size, 0);
 });
 
@@ -174,7 +170,7 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
   appAccountToken = intentBody.appAccountToken;
   const transactionJWS = jws({ transactionId, appAccountToken });
 
-  const activateRequestBody = JSON.stringify({ databaseId: DATABASE_ID, purchaserPrincipal: PRINCIPAL, transactionJWS });
+  const activateRequestBody = JSON.stringify({ transactionJWS });
   const activateResponse = await e2eWorker.fetch(
     new Request("https://payment.test/iap/activate-database", {
       method: "POST",
@@ -201,6 +197,7 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
     fulfilled: true,
     transactionId,
     databaseId: DATABASE_ID,
+    purchaserPrincipal: PRINCIPAL,
     productId: PRODUCT_ID,
     cycles: "12345",
     balanceCycles: "12345"
@@ -209,6 +206,7 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
     fulfilled: true,
     transactionId,
     databaseId: DATABASE_ID,
+    purchaserPrincipal: PRINCIPAL,
     productId: PRODUCT_ID,
     cycles: "12345"
   });
@@ -235,8 +233,6 @@ test("duplicate fulfilled transaction returns without another grant", async () =
   const response = await activateDatabase(
     env,
     {
-      databaseId: DATABASE_ID,
-      purchaserPrincipal: PRINCIPAL,
       transactionJWS: jws({ transactionId: "tx-2", appAccountToken })
     },
     async () => {
@@ -267,8 +263,6 @@ test("fulfilled duplicate rejects another purchase intent token", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-fulfilled-token", appAccountToken: crypto.randomUUID() })
       },
       async () => {
@@ -299,8 +293,6 @@ test("duplicate transaction for another database does not overwrite fulfillment 
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-conflict", appAccountToken })
       },
       async () => {
@@ -320,8 +312,6 @@ test("unknown product rejects before grant", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-3", appAccountToken })
       },
       async () => {
@@ -346,7 +336,7 @@ test("failed App Store verification does not reserve the transaction id", async 
   await assert.rejects(
     activateDatabase(
       env,
-      { databaseId: DATABASE_ID, purchaserPrincipal: PRINCIPAL, transactionJWS },
+      { transactionJWS },
       grant,
       fakeAppStoreFetch(jws(serverPayload("different-transaction", { appAccountToken })))
     ),
@@ -356,7 +346,7 @@ test("failed App Store verification does not reserve the transaction id", async 
 
   const activation = await activateDatabase(
     env,
-    { databaseId: DATABASE_ID, purchaserPrincipal: PRINCIPAL, transactionJWS },
+    { transactionJWS },
     grant,
     fakeAppStoreFetch(jws(serverPayload("tx-verify-retry", { appAccountToken })))
   );
@@ -372,8 +362,6 @@ test("revoked transaction rejects before grant", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-revoked", appAccountToken })
       },
       async () => {
@@ -392,8 +380,6 @@ test("bundle and environment mismatch reject before grant", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-bundle", appAccountToken: bundleToken })
       },
       async () => {
@@ -408,8 +394,6 @@ test("bundle and environment mismatch reject before grant", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-env", appAccountToken: envToken })
       },
       async () => {
@@ -428,8 +412,6 @@ test("VFS failure leaves failed fulfillment for retry", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-4", appAccountToken })
       },
       async () => {
@@ -456,11 +438,7 @@ test("D1 finalization failure remains retryable after canister grant", async () 
   await assert.rejects(
     activateDatabase(
       env,
-      {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
-        transactionJWS
-      },
+      { transactionJWS },
       grant,
       fakeAppStoreFetch(jws(serverPayload("tx-finalize", { appAccountToken })))
     ),
@@ -471,11 +449,7 @@ test("D1 finalization failure remains retryable after canister grant", async () 
 
   const response = await activateDatabase(
     env,
-    {
-      databaseId: DATABASE_ID,
-      purchaserPrincipal: PRINCIPAL,
-      transactionJWS
-    },
+    { transactionJWS },
     grant,
     fakeAppStoreFetch(jws(serverPayload("tx-finalize", { appAccountToken })))
   );
@@ -508,8 +482,6 @@ test("fulfilled purchase intent for same transaction can be finalized on retry",
   const response = await activateDatabase(
     env,
     {
-      databaseId: DATABASE_ID,
-      purchaserPrincipal: PRINCIPAL,
       transactionJWS: jws({ transactionId: "tx-intent-fulfilled", appAccountToken })
     },
     async () => ({ blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" }),
@@ -520,14 +492,12 @@ test("fulfilled purchase intent for same transaction can be finalized on retry",
   assert.equal(env.DB.rows.get("tx-intent-fulfilled")?.status, "fulfilled");
 });
 
-test("activation rejects missing or mismatched purchase intent token", async () => {
+test("activation rejects a missing token and resolves the database from its purchase intent", async () => {
   const env = await testEnv();
   await assert.rejects(
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-missing-token" })
       },
       async () => {
@@ -539,21 +509,18 @@ test("activation rejects missing or mismatched purchase intent token", async () 
   );
 
   const appAccountToken = await purchaseIntent(env, { databaseId: "db_other" });
-  await assert.rejects(
-    activateDatabase(
-      env,
-      {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
-        transactionJWS: jws({ transactionId: "tx-wrong-db", appAccountToken })
-      },
-      async () => {
-        throw new Error("grant should not run");
-      },
-      fakeAppStoreFetch(jws(serverPayload("tx-wrong-db", { appAccountToken })))
-    ),
-    /purchase intent database mismatch/
+  const resolved = await activateDatabase(
+    env,
+    {
+      transactionJWS: jws({ transactionId: "tx-intent-database", appAccountToken })
+    },
+    async (_env, request) => {
+      assert.equal(request.databaseId, "db_other");
+      return { blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" };
+    },
+    fakeAppStoreFetch(jws(serverPayload("tx-intent-database", { appAccountToken })))
   );
+  assert.equal(resolved.databaseId, "db_other");
 });
 
 test("activation accepts expired intent when verified transaction matches it", async () => {
@@ -565,8 +532,6 @@ test("activation accepts expired intent when verified transaction matches it", a
   const response = await activateDatabase(
     env,
     {
-      databaseId: DATABASE_ID,
-      purchaserPrincipal: PRINCIPAL,
       transactionJWS: jws({ transactionId: "tx-expired", appAccountToken: expiredToken })
     },
     async () => ({ blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" }),
@@ -588,8 +553,6 @@ test("activation rejects product-mismatched purchase intents", async () => {
     activateDatabase(
       env,
       {
-        databaseId: DATABASE_ID,
-        purchaserPrincipal: PRINCIPAL,
         transactionJWS: jws({ transactionId: "tx-product-mismatch", appAccountToken: productToken })
       },
       async () => {

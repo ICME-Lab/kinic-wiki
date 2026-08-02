@@ -398,21 +398,6 @@ final class AppModel {
         return session != nil || publicBrowseDatabaseIds.contains(databaseId) || directBrowseDatabaseIds.contains(databaseId)
     }
 
-    var databaseCreditTargetId: String? {
-        if let pendingCreatedDatabase {
-            return pendingCreatedDatabase.databaseId
-        }
-        if let selectedBrowseDatabase,
-           selectedBrowseDatabase.role.canManageDatabase {
-            return selectedBrowseDatabase.databaseId
-        }
-        if let selectedDatabase,
-           selectedDatabase.role.canManageDatabase {
-            return selectedDatabase.databaseId
-        }
-        return nil
-    }
-
     init(
         configuration: AppConfiguration,
         authService: KinicAuthService,
@@ -911,9 +896,9 @@ final class AppModel {
         }
     }
 
-    func startPurchaseDatabaseCredits(productId: String) {
+    func startPurchaseDatabaseCredits(productId: String, databaseId: String) {
         Task {
-            await purchaseDatabaseCredits(productId: productId)
+            await purchaseDatabaseCredits(productId: productId, databaseId: databaseId)
         }
     }
 
@@ -1488,12 +1473,8 @@ final class AppModel {
         }
     }
 
-    private func purchaseDatabaseCredits(productId: String) async {
+    private func purchaseDatabaseCredits(productId: String, databaseId: String) async {
         guard !isPurchasingDatabaseCredits else {
-            return
-        }
-        guard let databaseId = databaseCreditTargetId else {
-            databaseCreditError = "Select a database to fund."
             return
         }
         guard let session else {
@@ -1521,18 +1502,28 @@ final class AppModel {
         guard !isRecoveringDatabaseCredits, !isPurchasingDatabaseCredits else {
             return
         }
-        guard let session else {
-            return
-        }
         isRecoveringDatabaseCredits = true
         defer {
             isRecoveringDatabaseCredits = false
         }
-        let result = await creditStore.recoverPendingDatabaseCreditPurchases(purchaserPrincipal: session.principal)
-        for activation in result.activations {
+        let result = await creditStore.recoverPendingDatabaseCreditPurchases()
+        for activation in Self.databaseCreditActivations(
+            result.activations,
+            for: session?.principal
+        ) {
             await applyDatabaseCreditActivation(activation)
         }
         databaseCreditError = Self.databaseCreditRecoveryError(result.failures)
+    }
+
+    static func databaseCreditActivations(
+        _ activations: [DatabaseCreditActivation],
+        for purchaserPrincipal: String?
+    ) -> [DatabaseCreditActivation] {
+        guard let purchaserPrincipal else {
+            return []
+        }
+        return activations.filter { $0.purchaserPrincipal == purchaserPrincipal }
     }
 
     static func databaseCreditRecoveryError(_ failures: [DatabaseCreditRecoveryFailure]) -> String? {

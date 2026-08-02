@@ -7,7 +7,7 @@ import SwiftUI
 struct DatabasePanel: View {
     @Bindable var model: AppModel
     @State private var isCreateSheetPresented = false
-    @State private var isCreditSheetPresented = false
+    @State private var creditTarget: DatabaseCreditTarget?
     @State private var newDatabaseName = ""
 
     var body: some View {
@@ -25,7 +25,7 @@ struct DatabasePanel: View {
                     .accessibilityLabel("Refresh databases")
                     .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
 
-                Button("Add database credits", systemImage: "creditcard", action: presentCreditSheet)
+                Button("Add database credits", systemImage: "creditcard", action: presentSelectedCreditSheet)
                     .labelStyle(.iconOnly)
                     .buttonStyle(KinicIconButtonStyle())
                     .accessibilityLabel("Add database credits")
@@ -34,7 +34,12 @@ struct DatabasePanel: View {
         } content: {
             VStack(alignment: .leading, spacing: 14) {
                 if let pending = model.pendingCreatedDatabase {
-                    PendingDatabaseCreditPrompt(database: pending, onAddCredits: presentCreditSheet)
+                    PendingDatabaseCreditPrompt(
+                        database: pending,
+                        onAddCredits: {
+                            presentCreditSheet(databaseId: pending.databaseId, title: pending.name)
+                        }
+                    )
                 }
                 if let error = model.databaseCreditError {
                     Text(error)
@@ -66,8 +71,8 @@ struct DatabasePanel: View {
             )
             .presentationDetents([.medium])
         }
-        .sheet(isPresented: $isCreditSheetPresented) {
-            DatabaseCreditSheet(model: model)
+        .sheet(item: $creditTarget) { target in
+            DatabaseCreditSheet(model: model, target: target)
                 .presentationDetents([.medium, .large])
         }
         .task {
@@ -77,9 +82,20 @@ struct DatabasePanel: View {
 
     private var canAddCredits: Bool {
         model.isSignedIn &&
-        model.databaseCreditTargetId != nil &&
+        defaultCreditTarget != nil &&
         !model.isLoadingDatabaseCreditProducts &&
         !model.isPurchasingDatabaseCredits
+    }
+
+    private var defaultCreditTarget: DatabaseCreditTarget? {
+        if let selected = model.selectedDatabase,
+           selected.role.canManageDatabase {
+            return DatabaseCreditTarget(id: selected.databaseId, title: selected.displayTitle)
+        }
+        if let pending = model.pendingCreatedDatabase {
+            return DatabaseCreditTarget(id: pending.databaseId, title: pending.name)
+        }
+        return nil
     }
 
     private func presentCreateSheet() {
@@ -87,9 +103,16 @@ struct DatabasePanel: View {
         isCreateSheetPresented = true
     }
 
-    private func presentCreditSheet() {
+    private func presentSelectedCreditSheet() {
+        guard let target = defaultCreditTarget else {
+            return
+        }
+        presentCreditSheet(databaseId: target.id, title: target.title)
+    }
+
+    private func presentCreditSheet(databaseId: String, title: String) {
         model.startLoadDatabaseCreditProductsIfNeeded()
-        isCreditSheetPresented = true
+        creditTarget = DatabaseCreditTarget(id: databaseId, title: title)
     }
 
     private func dismissCreateSheet() {
@@ -115,7 +138,7 @@ struct DatabasePanel: View {
         return Button {
             if isPending {
                 model.selectDatabase(database.databaseId)
-                presentCreditSheet()
+                presentCreditSheet(databaseId: database.databaseId, title: database.displayTitle)
             } else {
                 model.selectDatabase(database.databaseId)
             }
@@ -204,10 +227,17 @@ private struct PendingDatabaseCreditPrompt: View {
 
 private struct DatabaseCreditSheet: View {
     @Bindable var model: AppModel
+    let target: DatabaseCreditTarget
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Credit destination") {
+                    Text(target.title)
+                    Text(target.id)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if model.isLoadingDatabaseCreditProducts {
                     ProgressView()
                         .tint(KinicDesign.hotPink)
@@ -217,7 +247,10 @@ private struct DatabaseCreditSheet: View {
                 } else {
                     ForEach(model.databaseCreditProducts) { product in
                         Button {
-                            model.startPurchaseDatabaseCredits(productId: product.id)
+                            model.startPurchaseDatabaseCredits(
+                                productId: product.id,
+                                databaseId: target.id
+                            )
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {

@@ -13,6 +13,7 @@ struct DatabaseCreditProduct: Identifiable, Equatable, Sendable {
 struct DatabaseCreditActivation: Equatable, Sendable {
     let transactionId: String
     let databaseId: String
+    let purchaserPrincipal: String
     let productId: String
     let cycles: String
     let balanceCycles: String?

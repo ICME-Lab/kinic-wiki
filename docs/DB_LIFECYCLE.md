@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the current schema. Fresh index DBs are created directly at the current schema, and already-current DBs are validated only. The current schema marker is `database_index:002_iap_cycle_grants` and includes `database_free_cycle_grants` and `database_iap_cycle_grants`. Older index schemas, partial billing schemas, and index DBs without `schema_migrations` are rejected instead of repaired.
+The index DB startup path ensures the current schema. Fresh index DBs are created directly at the current schema, and already-current DBs are validated only. The current schema marker is `database_index:003_iap_cycle_grants` and includes `database_free_cycle_grants` and `database_iap_cycle_grants`. Older index schemas, partial billing schemas, and index DBs without `schema_migrations` are rejected instead of repaired.
 
 Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active DBs consume one active user DB slot. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
@@ -110,7 +110,7 @@ Mainnet SEV is reserved as a detached canister before install. The SEV canister 
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
-- Existing canisters must already have the current index schema marker `database_index:002_iap_cycle_grants`.
+- Existing canisters must already have the current index schema marker `database_index:003_iap_cycle_grants`.
 - Older schemas are unsupported after the reset. Recreate or reinstall instead of auto-converting them.
 
 Normal operator flow:

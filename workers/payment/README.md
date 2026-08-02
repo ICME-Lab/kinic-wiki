@@ -7,8 +7,8 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
 ## Endpoints
 
 - `POST /iap/activate-database`
-  - request: `{ "databaseId": "...", "purchaserPrincipal": "...", "transactionJWS": "..." }`
-  - verifies the App Store transaction and its `appAccountToken`, resolves `productId` from `IAP_PRODUCT_CATALOG_JSON`, grants DB cycles through `grant_database_cycles_from_iap`, then returns `fulfilled`.
+  - request: `{ "transactionJWS": "..." }`
+  - verifies the App Store transaction, resolves its `appAccountToken` to the server-owned purchase intent, resolves `productId` from `IAP_PRODUCT_CATALOG_JSON`, grants DB cycles through `grant_database_cycles_from_iap`, then returns `fulfilled`.
 - `POST /iap/purchase-intents`
   - request: `{ "databaseId": "...", "purchaserPrincipal": "...", "productId": "..." }`
   - returns a 30-minute `appAccountToken` UUID that iOS must pass to StoreKit with `.appAccountToken(...)`.

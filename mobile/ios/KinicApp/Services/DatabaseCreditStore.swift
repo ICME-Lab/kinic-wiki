@@ -8,11 +8,11 @@ import StoreKit
 protocol DatabaseCreditStoreProtocol: Sendable {
     func loadProducts() async throws -> [DatabaseCreditProduct]
     func purchaseAndActivate(productId: String, databaseId: String, purchaserPrincipal: String) async throws -> DatabaseCreditActivation
-    func recoverPendingDatabaseCreditPurchases(purchaserPrincipal: String) async -> DatabaseCreditRecoveryResult
+    func recoverPendingDatabaseCreditPurchases() async -> DatabaseCreditRecoveryResult
 }
 
 actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
-    typealias ActivationHandler = @Sendable (_ transactionJWS: String, _ databaseId: String, _ purchaserPrincipal: String) async throws -> DatabaseCreditActivation
+    typealias ActivationHandler = @Sendable (_ transactionJWS: String) async throws -> DatabaseCreditActivation
 
     private let configuration: AppConfiguration
     private let urlSession: URLSession
@@ -80,7 +80,13 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
             let saved = updatedPendingPurchase(pending, transactionId: String(transaction.id), transactionJWS: transactionJWS)
             settingsStore.upsertPendingDatabaseCreditPurchase(saved)
             do {
-                let activation = try await activate(transactionJWS: transactionJWS, databaseId: databaseId, purchaserPrincipal: purchaserPrincipal)
+                let activation = try await activate(transactionJWS: transactionJWS)
+                try validateActivation(
+                    activation,
+                    databaseId: databaseId,
+                    purchaserPrincipal: purchaserPrincipal,
+                    productId: productId
+                )
                 await transaction.finish()
                 settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: pending.appAccountToken)
                 return activation
@@ -97,36 +103,29 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
         }
     }
 
-    func recoverPendingDatabaseCreditPurchases(purchaserPrincipal: String) async -> DatabaseCreditRecoveryResult {
-        let pending = settingsStore.pendingDatabaseCreditPurchases.filter {
-            $0.purchaserPrincipal == purchaserPrincipal
-        }
-        guard !pending.isEmpty else {
-            return DatabaseCreditRecoveryResult(activations: [], failures: [])
-        }
+    func recoverPendingDatabaseCreditPurchases() async -> DatabaseCreditRecoveryResult {
+        let pending = settingsStore.pendingDatabaseCreditPurchases
         var activations: [DatabaseCreditActivation] = []
         var failures: [DatabaseCreditRecoveryFailure] = []
         for event in await transactionSource.unfinishedTransactions() {
             switch event {
             case let .verified(transaction):
-                guard let appAccountToken = transaction.appAccountToken,
-                      let saved = pending.first(where: { $0.appAccountToken == appAccountToken }) else {
-                    continue
-                }
-                let updated = updatedPendingPurchase(
-                    saved,
-                    transactionId: transaction.transactionId,
-                    transactionJWS: transaction.transactionJWS
-                )
-                settingsStore.upsertPendingDatabaseCreditPurchase(updated)
-                do {
-                    let activation = try await activate(
-                        transactionJWS: transaction.transactionJWS,
-                        databaseId: saved.databaseId,
-                        purchaserPrincipal: saved.purchaserPrincipal
+                let appAccountToken = transaction.appAccountToken
+                if let appAccountToken,
+                   let saved = pending.first(where: { $0.appAccountToken == appAccountToken }) {
+                    let updated = updatedPendingPurchase(
+                        saved,
+                        transactionId: transaction.transactionId,
+                        transactionJWS: transaction.transactionJWS
                     )
+                    settingsStore.upsertPendingDatabaseCreditPurchase(updated)
+                }
+                do {
+                    let activation = try await activate(transactionJWS: transaction.transactionJWS)
                     await transaction.finish()
-                    settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: appAccountToken)
+                    if let appAccountToken {
+                        settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: appAccountToken)
+                    }
                     activations.append(activation)
                 } catch {
                     failures.append(DatabaseCreditRecoveryFailure(
@@ -181,16 +180,14 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
         }
     }
 
-    private func activate(transactionJWS: String, databaseId: String, purchaserPrincipal: String) async throws -> DatabaseCreditActivation {
+    private func activate(transactionJWS: String) async throws -> DatabaseCreditActivation {
         if let activationHandler {
-            return try await activationHandler(transactionJWS, databaseId, purchaserPrincipal)
+            return try await activationHandler(transactionJWS)
         }
         var request = URLRequest(url: configuration.iapActivateDatabaseURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONEncoder().encode(DatabaseCreditActivationRequest(
-            databaseId: databaseId,
-            purchaserPrincipal: purchaserPrincipal,
             transactionJWS: transactionJWS
         ))
         let (data, response) = try await urlSession.data(for: request)
@@ -202,6 +199,19 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
             throw DatabaseCreditStoreError.activationRejected(error)
         }
         return try JSONDecoder().decode(DatabaseCreditActivationResponse.self, from: data).activation
+    }
+
+    private func validateActivation(
+        _ activation: DatabaseCreditActivation,
+        databaseId: String,
+        purchaserPrincipal: String,
+        productId: String
+    ) throws {
+        guard activation.databaseId == databaseId,
+              activation.purchaserPrincipal == purchaserPrincipal,
+              activation.productId == productId else {
+            throw DatabaseCreditStoreError.activationResponseMismatch
+        }
     }
 
     private func updatedPendingPurchase(
@@ -228,6 +238,7 @@ enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
     case unverifiedTransaction
     case unknownPurchaseResult
     case invalidActivationResponse
+    case activationResponseMismatch
     case activationRejected(String)
     case activationFailed(String)
 
@@ -245,6 +256,8 @@ enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
             "App Store purchase returned an unsupported result."
         case .invalidActivationResponse:
             "Payment server returned an invalid response."
+        case .activationResponseMismatch:
+            "Payment server activated a different database credit purchase."
         case let .activationRejected(message):
             message
         case let .activationFailed(message):
@@ -254,8 +267,6 @@ enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
 }
 
 private struct DatabaseCreditActivationRequest: Encodable {
-    let databaseId: String
-    let purchaserPrincipal: String
     let transactionJWS: String
 }
 
@@ -274,6 +285,7 @@ private struct DatabaseCreditActivationResponse: Decodable {
     let fulfilled: Bool
     let transactionId: String
     let databaseId: String
+    let purchaserPrincipal: String
     let productId: String
     let cycles: String
     let balanceCycles: String?
@@ -282,6 +294,7 @@ private struct DatabaseCreditActivationResponse: Decodable {
         DatabaseCreditActivation(
             transactionId: transactionId,
             databaseId: databaseId,
+            purchaserPrincipal: purchaserPrincipal,
             productId: productId,
             cycles: cycles,
             balanceCycles: balanceCycles
