@@ -33,6 +33,7 @@ const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
 const { normalizedAndroidAppLinkFingerprint } = await import("./android-app-links-config.mjs");
+const { verifyPublishedAndroidAppLinks } = await import("./smoke-android-app-links.mjs");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -141,6 +142,72 @@ assert.throws(
   () => normalizedAndroidAppLinkFingerprint("not-a-fingerprint"),
   /must be the Play App Signing SHA-256 fingerprint/
 );
+
+{
+  const fingerprint = Array.from({ length: 32 }, (_, index) =>
+    index.toString(16).padStart(2, "0").toUpperCase()
+  ).join(":");
+  const verifiedUrl = await verifyPublishedAndroidAppLinks({
+    baseUrl: "https://wiki.kinic.xyz",
+    fingerprint,
+    fetchImpl: async (url, options) => {
+      assert.equal(url.toString(), "https://wiki.kinic.xyz/.well-known/assetlinks.json");
+      assert.equal(options.redirect, "manual");
+      return Response.json(
+        [
+          {
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {
+              namespace: "android_app",
+              package_name: "xyz.kinic.android.kinicwiki",
+              sha256_cert_fingerprints: [fingerprint]
+            }
+          }
+        ],
+        { headers: { "content-type": "application/json" } }
+      );
+    }
+  });
+  assert.equal(verifiedUrl, "https://wiki.kinic.xyz/.well-known/assetlinks.json");
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => new Response(null, { status: 302, headers: { location: "/elsewhere" } })
+    }),
+    /must not redirect/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => new Response(null, { status: 503 })
+    }),
+    /returned HTTP 503/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => Response.json([])
+    }),
+    /does not authorize/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () =>
+        Response.json([
+          {
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {
+              namespace: "android_app",
+              package_name: "xyz.kinic.android.kinicwiki",
+              sha256_cert_fingerprints: ["FF:".repeat(31) + "FF"]
+            }
+          }
+        ])
+    }),
+    /does not contain the Play App Signing fingerprint/
+  );
+}
 
 {
   const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));

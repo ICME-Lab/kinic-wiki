@@ -30,11 +30,50 @@ class MainActivityTest {
 
     @Test
     fun routesIncomingDatabaseDeepLinkToBrowse() {
-        composeRule.activityRule.scenario.onActivity {
-            it.handleDeepLink(URI("https://wiki.kinic.xyz/db/direct-database/folder/Page.md"))
-        }
+        openDeepLink("https://wiki.kinic.xyz/db/direct-database/folder/Page.md")
 
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Database ID").assertIsDisplayed()
+    }
+
+    @Test
+    fun routesDashboardAndCyclesToManage() {
+        openDeepLink("https://wiki.kinic.xyz/dashboard")
+        composeRule.onNodeWithText("Create").assertIsDisplayed()
+
+        openDeepLink("https://wiki.kinic.xyz/cycles?database_id=direct-database&status=pending")
+        composeRule.onNodeWithText("Create").assertIsDisplayed()
+    }
+
+    @Test
+    fun routesProfileAndRootToHome() {
+        openDeepLink("https://wiki.kinic.xyz/profile")
+        composeRule.onNodeWithText("Account").assertIsDisplayed()
+
+        openDeepLink("https://wiki.kinic.xyz/")
+        composeRule.onNodeWithText("Account").assertIsDisplayed()
+    }
+
+    @Test
+    fun authCallbackWithoutPendingRequestFailsWithoutLeavingHome() {
+        openDeepLink("https://wiki.kinic.xyz/android-auth-callback?state=unexpected&result=invalid")
+
+        composeRule.onNodeWithText("Account").assertIsDisplayed()
+    }
+
+    @Test
+    fun ignoresForeignAndInsecureDeepLinks() {
+        openDeepLink("https://evil.example/dashboard")
+        composeRule.onNodeWithText("Account").assertIsDisplayed()
+
+        openDeepLink("http://wiki.kinic.xyz/dashboard")
+        composeRule.onNodeWithText("Account").assertIsDisplayed()
+    }
+
+    private fun openDeepLink(value: String) {
+        composeRule.activityRule.scenario.onActivity {
+            it.handleDeepLink(URI(value))
+        }
+        composeRule.waitForIdle()
     }
 }

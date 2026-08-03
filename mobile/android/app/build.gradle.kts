@@ -3,6 +3,40 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseVersionCodeVariable = "KINIC_ANDROID_VERSION_CODE"
+val releaseSigningVariables = listOf(
+    "KINIC_ANDROID_UPLOAD_STORE_FILE",
+    "KINIC_ANDROID_UPLOAD_STORE_PASSWORD",
+    "KINIC_ANDROID_UPLOAD_KEY_ALIAS",
+    "KINIC_ANDROID_UPLOAD_KEY_PASSWORD",
+)
+val releaseRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.contains("release", ignoreCase = true)
+}
+val releaseVersionCodeText = providers.environmentVariable(releaseVersionCodeVariable).orNull
+val releaseVersionCode = releaseVersionCodeText?.toIntOrNull()
+val releaseSigningValues = releaseSigningVariables.associateWith { variable ->
+    providers.environmentVariable(variable).orNull?.takeIf(String::isNotBlank)
+}
+
+if (releaseRequested) {
+    val invalidVersionCode = releaseVersionCode == null || releaseVersionCode <= 0
+    val missingVariables = releaseSigningValues.filterValues { it == null }.keys
+    if (invalidVersionCode || missingVariables.isNotEmpty()) {
+        val missing = buildList {
+            if (invalidVersionCode) add(releaseVersionCodeVariable)
+            addAll(missingVariables)
+        }
+        throw GradleException(
+            "Release build configuration is incomplete. Set: ${missing.joinToString()}.",
+        )
+    }
+    val storePath = requireNotNull(releaseSigningValues["KINIC_ANDROID_UPLOAD_STORE_FILE"])
+    if (!file(storePath).isFile) {
+        throw GradleException("Release upload keystore file does not exist.")
+    }
+}
+
 android {
     namespace = "xyz.kinic.android"
     compileSdk = 37
@@ -12,7 +46,7 @@ android {
         applicationId = "xyz.kinic.android.kinicwiki"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
+        versionCode = releaseVersionCode ?: 1
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -25,6 +59,24 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+    }
+
+    val releaseSigningConfigured = releaseSigningValues.values.all { it != null }
+    val releaseSigningConfig = if (releaseSigningConfigured) {
+        signingConfigs.create("release") {
+            storeFile = file(requireNotNull(releaseSigningValues["KINIC_ANDROID_UPLOAD_STORE_FILE"]))
+            storePassword = requireNotNull(releaseSigningValues["KINIC_ANDROID_UPLOAD_STORE_PASSWORD"])
+            keyAlias = requireNotNull(releaseSigningValues["KINIC_ANDROID_UPLOAD_KEY_ALIAS"])
+            keyPassword = requireNotNull(releaseSigningValues["KINIC_ANDROID_UPLOAD_KEY_PASSWORD"])
+        }
+    } else {
+        null
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = releaseSigningConfig
+        }
     }
 }
 

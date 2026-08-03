@@ -11,6 +11,7 @@
     "smoke:mobile": "node scripts/smoke-mobile-layout.mjs",
     "smoke:errors": "node scripts/smoke-errors.mjs",
     "smoke:public": "node scripts/smoke-public.mjs",
+    "smoke:android-app-links": "node scripts/smoke-android-app-links.mjs",
     "mock:source-capture-worker": "node scripts/mock-source-capture-worker.mjs",
     "link-preview:generate": "node scripts/generate-link-preview-images.mjs",
     "link-preview:upload:production": "node scripts/generate-link-preview-images.mjs --upload --canister-id 6emaw-iyaaa-aaaay-aacka-cai",

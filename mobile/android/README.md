@@ -1,21 +1,16 @@
 # Kinic Android
 
-Kotlin / Jetpack Compose app scaffold for Kinic Wiki mobile capture.
+`mobile/android` is the Kotlin / Jetpack Compose KinicWiki app. It follows the iOS
+Home / Browse / Ask AI / Manage structure and supports:
 
-`mobile/android` is an independent Android Gradle project. It mirrors the iOS app shape where Android platform support is already clear:
+- Internet Identity login through `/android-auth-callback`, encrypted session restore, and signed IC query/call/read_state requests.
+- Member, public, purchased, and direct-ID Browse with folder navigation, search, Markdown/raw display, and app links.
+- Source Capture from Android shares or manually entered URLs, retryable queue/history, and generated-document navigation.
+- Grounded Ask AI conversations with evidence and source-document navigation.
+- Database creation, metadata, members, cycles billing/history, funding, and guarded deletion.
 
-- Receives browser shares through `ShareActivity`.
-- Stores pending shared URLs in a file-backed inbox.
-- Builds the same `kinic.source_capture_request` markdown node shape used by iOS and `wikibrowser/lib/source-capture.ts`.
-- Includes a VFS-specific Candid encoder for source capture writes and trigger-session authorization.
-- Includes a Kotlin IC client for signed query/call/read_state envelopes and Internet Identity delegation sessions.
-- Provides a Compose app shell for sign-in, pending captures, manual URL queueing, and signed-in Browse basics.
-
-## Current gaps
-
-- Browser launch UI, `/android-auth-callback` parsing, session restore, and pending URL submission are wired into the Compose screen.
-- Signed IC `queryRaw` / `callRaw` transport, native auth storage, and signed-in Browse basics exist, but mainnet verification still needs an Android device/browser auth smoke test.
-- Public Browse, purchased Browse, search, deep links, and Manage screens are not ported yet.
+IC read-state certificates and query signatures are decoded but not cryptographically
+verified. This matches the current iOS implementation and remains a separate hardening task.
 
 ## Runtime defaults
 
@@ -25,12 +20,77 @@ Kotlin / Jetpack Compose app scaffold for Kinic Wiki mobile capture.
 - Auth origin: `https://wiki.kinic.xyz`
 - Derivation origin: `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`
 
-## Verification
+## Development verification
 
 The project uses the checked-in Gradle 9.4.1 wrapper. Install JDK 17 and Android
 SDK Platform 37 with Build Tools 36.0.0, then run:
 
 ```bash
 cd mobile/android
-./gradlew testDebugUnitTest assembleDebug lintDebug
+./gradlew testDebugUnitTest assembleDebug lintDebug connectedDebugAndroidTest
 ```
+
+`connectedDebugAndroidTest` requires a running Android device or emulator. CI uses an
+API 35 emulator.
+
+## Play release bundle
+
+Play App Signing uses separate upload and app-signing certificates. The environment
+variables below configure the upload key used to sign the AAB. Keep the keystore
+outside this repository.
+
+Set `KINIC_ANDROID_VERSION_CODE` to the latest Play Console version code plus one:
+
+```bash
+export KINIC_ANDROID_VERSION_CODE=<next-version-code>
+export KINIC_ANDROID_UPLOAD_STORE_FILE=/absolute/path/to/upload-key.jks
+export KINIC_ANDROID_UPLOAD_STORE_PASSWORD=<store-password>
+export KINIC_ANDROID_UPLOAD_KEY_ALIAS=<key-alias>
+export KINIC_ANDROID_UPLOAD_KEY_PASSWORD=<key-password>
+
+./gradlew bundleRelease
+```
+
+The bundle is written to `app/build/outputs/bundle/release/app-release.aab`.
+`bundleRelease` stops before compilation when a required value is absent or the
+keystore path does not exist. Upload this AAB manually to the Play internal testing
+track, then install it from the internal-testing opt-in page. Do not use the upload
+certificate fingerprint in `assetlinks.json`.
+
+## Production App Links
+
+Copy the SHA-256 fingerprint of the **App signing key certificate** from Play Console.
+Configure it as the Cloudflare build variable and use the same value for deployment:
+
+```bash
+cd ../../wikibrowser
+export KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT=<Play-App-Signing-SHA-256-fingerprint>
+pnpm deploy:production
+pnpm smoke:android-app-links
+```
+
+After installing the Play internal-testing build, force Android to recheck the domain:
+
+```bash
+adb shell pm verify-app-links --re-verify xyz.kinic.android.kinicwiki
+adb shell pm get-app-links xyz.kinic.android.kinicwiki
+```
+
+The result must show `wiki.kinic.xyz: verified`.
+
+## Mainnet smoke checklist
+
+Use a Play-signed internal-testing build and complete these checks on a physical
+Android device:
+
+1. Sign in with Internet Identity, receive the Android callback, force-stop the app,
+   reopen it, and confirm the same principal and signed database list are restored.
+2. Browse member, public, purchased, and direct-ID databases; test folder navigation,
+   search, Markdown/raw display, and a missing document's parent fallback.
+3. Share a URL from Chrome and enqueue a manually entered URL. Confirm direct/queued
+   submission, worker trigger, history refresh/retry, and generated document opening.
+4. Ask a grounded question, inspect evidence, open a source, restart the app, and
+   verify conversation history. Test conversation deletion and database switching.
+5. Exercise non-destructive Manage actions on the development database. For create
+   and delete, use only `android-smoke-<timestamp>` and verify the returned database ID
+   before deletion.
