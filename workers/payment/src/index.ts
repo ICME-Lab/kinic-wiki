@@ -6,9 +6,9 @@ import type { RuntimeEnv } from "./env.js";
 import { verifyStoreKitTransaction, transactionPayload } from "./app-store.js";
 import { verifyAppStoreNotification } from "./app-store-notification.js";
 import { parseProductCatalog } from "./product-catalog.js";
-import { grantDatabaseCyclesFromIap, type CyclesPurchaseResult } from "./vfs.js";
+import { grantDatabaseCyclesFromIap } from "./vfs.js";
 
-const PURCHASE_INTENT_TTL_MS = 30 * 60 * 1000;
+const FULFILLMENT_GRANT_LEASE_MS = 5 * 60 * 1000;
 const PURCHASE_INTENT_ENDPOINT = "iap:purchase-intents";
 const ACTIVATE_DATABASE_ENDPOINT = "iap:activate-database";
 
@@ -40,9 +40,19 @@ type PurchaseIntentRow = {
   purchaser_principal: string;
   product_id: string;
   status: string;
-  expires_at_ms: number;
   transaction_id: string | null;
 };
+
+class ActivationError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = "ActivationError";
+  }
+}
 
 type PaymentWorkerDependencies = {
   grant: typeof grantDatabaseCyclesFromIap;
@@ -90,8 +100,10 @@ export function createPaymentWorker(dependencies: Partial<PaymentWorkerDependenc
           return jsonResponse(await activateDatabase(env, input, grant, fetcher));
         } catch (error) {
           const message = errorMessage(error);
-          const retryable = isRetryableActivationError(message);
-          return jsonResponse({ error: message, retryable }, retryable ? 502 : 400);
+          if (error instanceof ActivationError) {
+            return jsonResponse({ error: message, retryable: error.retryable }, error.status);
+          }
+          return jsonResponse({ error: message, retryable: false }, 400);
         }
       }
       if (request.method === "POST" && url.pathname === "/iap/app-store-notifications") {
@@ -115,20 +127,19 @@ export function createPaymentWorker(dependencies: Partial<PaymentWorkerDependenc
 
 export default createPaymentWorker();
 
-export async function createPurchaseIntent(env: RuntimeEnv, input: PurchaseIntentInput): Promise<{ appAccountToken: string; expiresAtMs: number }> {
+export async function createPurchaseIntent(env: RuntimeEnv, input: PurchaseIntentInput): Promise<{ appAccountToken: string }> {
   const catalog = parseProductCatalog(env.IAP_PRODUCT_CATALOG_JSON);
   if (!catalog.has(input.productId)) {
     throw new Error(`unknown IAP product: ${input.productId}`);
   }
   const now = Date.now();
   const appAccountToken = crypto.randomUUID().toLowerCase();
-  const expiresAtMs = now + PURCHASE_INTENT_TTL_MS;
   await env.DB.prepare(
-    "INSERT INTO iap_purchase_intents (app_account_token, database_id, purchaser_principal, product_id, status, expires_at_ms, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?4, 'created', ?5, ?6, ?6)"
+    "INSERT INTO iap_purchase_intents (app_account_token, database_id, purchaser_principal, product_id, status, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?4, 'created', ?5, ?5)"
   )
-    .bind(appAccountToken, input.databaseId, input.purchaserPrincipal, input.productId, expiresAtMs, now)
+    .bind(appAccountToken, input.databaseId, input.purchaserPrincipal, input.productId, now)
     .run();
-  return { appAccountToken, expiresAtMs };
+  return { appAccountToken };
 }
 
 export async function activateDatabase(
@@ -159,7 +170,7 @@ export async function activateDatabase(
   if (fulfillment.status === "fulfilled") {
     return fulfilledActivationResponse(fulfillment, verified.appAccountToken);
   }
-  const alreadyFulfilled = await markFulfillmentGranting(env, {
+  const claim = await markFulfillmentGranting(env, {
     transactionId,
     databaseId: intent.database_id,
     purchaserPrincipal: intent.purchaser_principal,
@@ -169,12 +180,11 @@ export async function activateDatabase(
     bundleId: verified.bundleId,
     cycles: verified.cycles.toString(),
   });
-  if (alreadyFulfilled) {
-    return fulfilledActivationResponse(alreadyFulfilled, verified.appAccountToken);
+  if (claim.fulfillment) {
+    return fulfilledActivationResponse(claim.fulfillment, verified.appAccountToken);
   }
-  let result: CyclesPurchaseResult;
   try {
-    result = await grant(env, {
+    await grant(env, {
       databaseId: intent.database_id,
       amountCycles: verified.cycles,
       externalPaymentId: transactionId,
@@ -183,24 +193,37 @@ export async function activateDatabase(
       purchaserPrincipal: intent.purchaser_principal
     });
   } catch (error) {
-    await markFulfillmentFailed(env, transactionId, errorMessage(error));
-    throw new Error(`VFS grant failed: ${errorMessage(error)}`);
+    try {
+      await markFulfillmentFailed(env, transactionId, claim.attemptId, errorMessage(error));
+    } catch {
+      // The lease permits recovery even if D1 is temporarily unavailable here.
+    }
+    throw new ActivationError(`VFS grant failed: ${errorMessage(error)}`, 502, true);
   }
-  await finalizeFulfillment(env, {
-    transactionId,
-    databaseId: intent.database_id,
-    purchaserPrincipal: intent.purchaser_principal,
-    appAccountToken: verified.appAccountToken,
-    productId: verified.productId
-  });
+  try {
+    await finalizeFulfillment(env, {
+      transactionId,
+      databaseId: intent.database_id,
+      purchaserPrincipal: intent.purchaser_principal,
+      appAccountToken: verified.appAccountToken,
+      productId: verified.productId,
+      attemptId: claim.attemptId
+    });
+  } catch (error) {
+    try {
+      await markFulfillmentFailed(env, transactionId, claim.attemptId, errorMessage(error));
+    } catch {
+      // A failed lease remains reclaimable after its deadline.
+    }
+    throw error;
+  }
   return {
     fulfilled: true,
     transactionId,
     databaseId: intent.database_id,
     purchaserPrincipal: intent.purchaser_principal,
     productId: verified.productId,
-    cycles: verified.cycles.toString(),
-    balanceCycles: result.balanceCycles
+    cycles: verified.cycles.toString()
   };
 }
 
@@ -253,7 +276,7 @@ async function fulfillmentByTransaction(env: RuntimeEnv, transactionId: string):
 
 async function purchaseIntentByToken(env: RuntimeEnv, appAccountToken: string): Promise<PurchaseIntentRow | null> {
   return env.DB.prepare(
-    "SELECT app_account_token, database_id, purchaser_principal, product_id, status, expires_at_ms, transaction_id FROM iap_purchase_intents WHERE app_account_token = ?1"
+    "SELECT app_account_token, database_id, purchaser_principal, product_id, status, transaction_id FROM iap_purchase_intents WHERE app_account_token = ?1"
   )
     .bind(appAccountToken)
     .first<PurchaseIntentRow>();
@@ -294,27 +317,32 @@ async function ensureFulfillmentReceived(env: RuntimeEnv, input: { transactionId
   return fulfillment;
 }
 
-async function markFulfillmentGranting(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string; appAccountToken: string; productId: string; environment: string; bundleId: string; cycles: string }): Promise<FulfillmentRow | null> {
+async function markFulfillmentGranting(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string; appAccountToken: string; productId: string; environment: string; bundleId: string; cycles: string }): Promise<{ attemptId: string; fulfillment: null } | { attemptId: null; fulfillment: FulfillmentRow }> {
+  const now = Date.now();
+  const attemptId = crypto.randomUUID();
   const result = await env.DB.prepare(
-    "UPDATE iap_fulfillments SET app_account_token = ?1, product_id = ?2, environment = ?3, bundle_id = ?4, cycles = ?5, status = 'granting', error_message = NULL, updated_at_ms = ?6 WHERE transaction_id = ?7 AND database_id = ?8 AND purchaser_principal = ?9 AND status IN ('received', 'failed', 'granting')"
+    "UPDATE iap_fulfillments SET app_account_token = ?1, product_id = ?2, environment = ?3, bundle_id = ?4, cycles = ?5, status = 'granting', grant_attempt_id = ?6, error_message = NULL, updated_at_ms = ?7 WHERE transaction_id = ?8 AND database_id = ?9 AND purchaser_principal = ?10 AND (status IN ('received', 'failed') OR (status = 'granting' AND updated_at_ms <= ?11))"
   )
-    .bind(input.appAccountToken, input.productId, input.environment, input.bundleId, input.cycles, Date.now(), input.transactionId, input.databaseId, input.purchaserPrincipal)
+    .bind(input.appAccountToken, input.productId, input.environment, input.bundleId, input.cycles, attemptId, now, input.transactionId, input.databaseId, input.purchaserPrincipal, now - FULFILLMENT_GRANT_LEASE_MS)
     .run();
   if ((result.meta.changes ?? 0) !== 1) {
     const fulfillment = await fulfillmentByTransaction(env, input.transactionId);
-    if (fulfillment?.status === "fulfilled") return fulfillment;
-    throw new Error("fulfillment state changed before granting");
+    if (fulfillment?.status === "fulfilled") return { attemptId: null, fulfillment };
+    if (fulfillment?.status === "granting") {
+      throw new ActivationError("fulfillment grant is already in progress", 409, true);
+    }
+    throw new ActivationError("fulfillment state changed before granting", 409, true);
   }
-  return null;
+  return { attemptId, fulfillment: null };
 }
 
-async function finalizeFulfillment(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string; appAccountToken: string; productId: string }): Promise<void> {
+async function finalizeFulfillment(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string; appAccountToken: string; productId: string; attemptId: string }): Promise<void> {
   const now = Date.now();
   try {
     const results = await env.DB.batch([
       env.DB.prepare(
-        "UPDATE iap_fulfillments SET status = 'fulfilled', error_message = NULL, updated_at_ms = ?1 WHERE transaction_id = ?2 AND database_id = ?3 AND purchaser_principal = ?4 AND app_account_token = ?5 AND status = 'granting'"
-      ).bind(now, input.transactionId, input.databaseId, input.purchaserPrincipal, input.appAccountToken),
+        "UPDATE iap_fulfillments SET status = 'fulfilled', grant_attempt_id = NULL, error_message = NULL, updated_at_ms = ?1 WHERE transaction_id = ?2 AND database_id = ?3 AND purchaser_principal = ?4 AND app_account_token = ?5 AND status = 'granting' AND grant_attempt_id = ?6"
+      ).bind(now, input.transactionId, input.databaseId, input.purchaserPrincipal, input.appAccountToken, input.attemptId),
       env.DB.prepare(
         "UPDATE iap_purchase_intents SET status = 'fulfilled', transaction_id = ?1, updated_at_ms = ?2 WHERE app_account_token = ?3 AND database_id = ?4 AND purchaser_principal = ?5 AND product_id = ?6 AND (status = 'created' OR (status = 'fulfilled' AND transaction_id = ?1))"
       ).bind(input.transactionId, now, input.appAccountToken, input.databaseId, input.purchaserPrincipal, input.productId)
@@ -323,13 +351,13 @@ async function finalizeFulfillment(env: RuntimeEnv, input: { transactionId: stri
       throw new Error("state mismatch");
     }
   } catch (error) {
-    throw new Error(`D1 finalization failed: ${errorMessage(error)}`);
+    throw new ActivationError(`D1 finalization failed: ${errorMessage(error)}`, 502, true);
   }
 }
 
-async function markFulfillmentFailed(env: RuntimeEnv, transactionId: string, message: string): Promise<void> {
-  await env.DB.prepare("UPDATE iap_fulfillments SET status = 'failed', error_message = ?1, updated_at_ms = ?2 WHERE transaction_id = ?3 AND status = 'granting'")
-    .bind(message, Date.now(), transactionId)
+async function markFulfillmentFailed(env: RuntimeEnv, transactionId: string, attemptId: string, message: string): Promise<void> {
+  await env.DB.prepare("UPDATE iap_fulfillments SET status = 'failed', grant_attempt_id = NULL, error_message = ?1, updated_at_ms = ?2 WHERE transaction_id = ?3 AND status = 'granting' AND grant_attempt_id = ?4")
+    .bind(message, Date.now(), transactionId, attemptId)
     .run();
 }
 
@@ -409,8 +437,4 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isRetryableActivationError(message: string): boolean {
-  return message.startsWith("VFS grant failed:") || message.startsWith("D1 finalization failed:");
 }

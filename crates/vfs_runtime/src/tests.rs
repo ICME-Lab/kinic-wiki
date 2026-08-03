@@ -263,7 +263,7 @@ fn index_migration_003_adds_iap_authority_from_upgrade_config() {
 }
 
 #[test]
-fn index_migration_003_adds_default_iap_authority_without_upgrade_config() {
+fn index_migration_003_requires_upgrade_config() {
     let dir = tempdir().expect("tempdir should create");
     let index_path = dir.path().join("index.sqlite3");
     let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
@@ -279,17 +279,27 @@ fn index_migration_003_adds_default_iap_authority_without_upgrade_config() {
     .expect("schema should downgrade to 002 shape");
     drop(conn);
 
-    service
+    let error = service
         .run_index_migrations_for_upgrade(None)
-        .expect("003 migration should apply with default config");
+        .expect_err("003 migration should require explicit config");
 
+    assert!(error.contains(INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS));
     assert_eq!(
-        service
-            .cycles_billing_config()
-            .expect("config should load")
-            .iap_authority_id,
-        default_cycles_billing_config().iap_authority_id
+        index_versions(&index_path),
+        vec![
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS
+        ]
     );
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    let authority_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM cycles_billing_config WHERE key = 'iap_authority_id'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("authority count should load");
+    assert_eq!(authority_count, 0);
 }
 
 #[test]

@@ -197,11 +197,6 @@ pub struct VfsService {
     database_handle: fn(u16) -> Result<DbHandle, String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IndexPostMigrationAction {
-    None,
-}
-
 impl VfsService {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(index_path: PathBuf, databases_dir: PathBuf) -> Self {

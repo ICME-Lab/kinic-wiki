@@ -10,6 +10,5 @@ struct DatabaseCreditRecoveryResult: Equatable, Sendable {
 }
 
 struct DatabaseCreditRecoveryFailure: Equatable, Sendable {
-    let transactionId: String?
     let message: String
 }

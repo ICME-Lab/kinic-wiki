@@ -14,12 +14,6 @@ export type IapGrantRequest = {
   purchaserPrincipal: string;
 };
 
-export type CyclesPurchaseResult = {
-  blockIndex: string;
-  amountCycles: string;
-  balanceCycles: string;
-};
-
 type RawIapGrantRequest = {
   database_id: string;
   amount_cycles: bigint;
@@ -39,7 +33,7 @@ type VfsActor = {
   grant_database_cycles_from_iap: (request: RawIapGrantRequest) => Promise<{ Ok: RawCyclesPurchaseResult } | { Err: string }>;
 };
 
-export async function grantDatabaseCyclesFromIap(env: RuntimeEnv, request: IapGrantRequest): Promise<CyclesPurchaseResult> {
+export async function grantDatabaseCyclesFromIap(env: RuntimeEnv, request: IapGrantRequest): Promise<void> {
   const [{ Actor, HttpAgent }, { Principal }, identity] = await Promise.all([
     import("@icp-sdk/core/agent"),
     import("@icp-sdk/core/principal"),
@@ -83,9 +77,4 @@ export async function grantDatabaseCyclesFromIap(env: RuntimeEnv, request: IapGr
   if ("Err" in result) {
     throw new Error(result.Err);
   }
-  return {
-    blockIndex: result.Ok.block_index.toString(),
-    amountCycles: result.Ok.amount_cycles.toString(),
-    balanceCycles: result.Ok.balance_cycles.toString()
-  };
 }

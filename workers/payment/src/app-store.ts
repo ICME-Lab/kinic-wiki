@@ -8,7 +8,6 @@ import type { ProductCatalog } from "./product-catalog.js";
 
 export type VerifiedTransaction = {
   transactionId: string;
-  originalTransactionId: string;
   productId: string;
   bundleId: string;
   environment: AppStoreEnvironment;
@@ -18,7 +17,6 @@ export type VerifiedTransaction = {
 
 type TransactionPayload = {
   transactionId?: unknown;
-  originalTransactionId?: unknown;
   productId?: unknown;
   bundleId?: unknown;
   environment?: unknown;
@@ -73,7 +71,6 @@ export async function verifyStoreKitTransaction(
   }
   return {
     transactionId,
-    originalTransactionId: requireText(payload.originalTransactionId, "originalTransactionId"),
     productId,
     bundleId,
     environment,

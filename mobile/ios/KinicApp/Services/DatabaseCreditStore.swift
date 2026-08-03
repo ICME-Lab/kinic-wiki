@@ -16,19 +16,16 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
 
     private let configuration: AppConfiguration
     private let urlSession: URLSession
-    private let settingsStore: SharedDefaultsStore
     private let transactionSource: any DatabaseCreditTransactionSourceProtocol
     private let activationHandler: ActivationHandler?
 
     init(
         configuration: AppConfiguration,
-        settingsStore: SharedDefaultsStore,
         urlSession: URLSession = .shared,
         transactionSource: any DatabaseCreditTransactionSourceProtocol = StoreKitDatabaseCreditTransactionSource(),
         activationHandler: ActivationHandler? = nil
     ) {
         self.configuration = configuration
-        self.settingsStore = settingsStore
         self.urlSession = urlSession
         self.transactionSource = transactionSource
         self.activationHandler = activationHandler
@@ -56,29 +53,11 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
     func purchaseAndActivate(productId: String, databaseId: String, purchaserPrincipal: String) async throws -> DatabaseCreditActivation {
         let product = try await product(for: productId)
         let intent = try await createPurchaseIntent(productId: productId, databaseId: databaseId, purchaserPrincipal: purchaserPrincipal)
-        let pending = PendingDatabaseCreditPurchase(
-            appAccountToken: intent.appAccountToken.uuidString.lowercased(),
-            databaseId: databaseId,
-            purchaserPrincipal: purchaserPrincipal,
-            productId: productId,
-            expiresAtMs: intent.expiresAtMs,
-            transactionId: nil,
-            transactionJWS: nil
-        )
-        settingsStore.upsertPendingDatabaseCreditPurchase(pending)
         let result = try await product.purchase(options: [.appAccountToken(intent.appAccountToken)])
         switch result {
         case .success(let verification):
             let transactionJWS = verification.jwsRepresentation
-            let transaction: Transaction
-            do {
-                transaction = try verifiedTransaction(verification)
-            } catch {
-                settingsStore.upsertPendingDatabaseCreditPurchase(updatedPendingPurchase(pending, transactionId: nil, transactionJWS: transactionJWS))
-                throw error
-            }
-            let saved = updatedPendingPurchase(pending, transactionId: String(transaction.id), transactionJWS: transactionJWS)
-            settingsStore.upsertPendingDatabaseCreditPurchase(saved)
+            let transaction = try verifiedTransaction(verification)
             do {
                 let activation = try await activate(transactionJWS: transactionJWS)
                 try validateActivation(
@@ -88,13 +67,11 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
                     productId: productId
                 )
                 await transaction.finish()
-                settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: pending.appAccountToken)
                 return activation
             } catch {
                 throw DatabaseCreditStoreError.activationFailed(error.localizedDescription)
             }
         case .userCancelled:
-            settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: pending.appAccountToken)
             throw DatabaseCreditStoreError.userCancelled
         case .pending:
             throw DatabaseCreditStoreError.pending
@@ -104,38 +81,22 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
     }
 
     func recoverPendingDatabaseCreditPurchases() async -> DatabaseCreditRecoveryResult {
-        let pending = settingsStore.pendingDatabaseCreditPurchases
         var activations: [DatabaseCreditActivation] = []
         var failures: [DatabaseCreditRecoveryFailure] = []
         for event in await transactionSource.unfinishedTransactions() {
             switch event {
             case let .verified(transaction):
-                let appAccountToken = transaction.appAccountToken
-                if let appAccountToken,
-                   let saved = pending.first(where: { $0.appAccountToken == appAccountToken }) {
-                    let updated = updatedPendingPurchase(
-                        saved,
-                        transactionId: transaction.transactionId,
-                        transactionJWS: transaction.transactionJWS
-                    )
-                    settingsStore.upsertPendingDatabaseCreditPurchase(updated)
-                }
                 do {
                     let activation = try await activate(transactionJWS: transaction.transactionJWS)
                     await transaction.finish()
-                    if let appAccountToken {
-                        settingsStore.removePendingDatabaseCreditPurchase(appAccountToken: appAccountToken)
-                    }
                     activations.append(activation)
                 } catch {
                     failures.append(DatabaseCreditRecoveryFailure(
-                        transactionId: transaction.transactionId,
                         message: error.localizedDescription
                     ))
                 }
-            case let .unverified(transactionId, message):
+            case let .unverified(message):
                 failures.append(DatabaseCreditRecoveryFailure(
-                    transactionId: transactionId,
                     message: message
                 ))
             }
@@ -214,21 +175,6 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
         }
     }
 
-    private func updatedPendingPurchase(
-        _ purchase: PendingDatabaseCreditPurchase,
-        transactionId: String?,
-        transactionJWS: String?
-    ) -> PendingDatabaseCreditPurchase {
-        PendingDatabaseCreditPurchase(
-            appAccountToken: purchase.appAccountToken,
-            databaseId: purchase.databaseId,
-            purchaserPrincipal: purchase.purchaserPrincipal,
-            productId: purchase.productId,
-            expiresAtMs: purchase.expiresAtMs,
-            transactionId: transactionId,
-            transactionJWS: transactionJWS
-        )
-    }
 }
 
 enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
@@ -278,26 +224,18 @@ private struct DatabaseCreditPurchaseIntentRequest: Encodable {
 
 private struct DatabaseCreditPurchaseIntent: Decodable {
     let appAccountToken: UUID
-    let expiresAtMs: Int64
 }
 
 private struct DatabaseCreditActivationResponse: Decodable {
-    let fulfilled: Bool
-    let transactionId: String
     let databaseId: String
     let purchaserPrincipal: String
     let productId: String
-    let cycles: String
-    let balanceCycles: String?
 
     var activation: DatabaseCreditActivation {
         DatabaseCreditActivation(
-            transactionId: transactionId,
             databaseId: databaseId,
             purchaserPrincipal: purchaserPrincipal,
-            productId: productId,
-            cycles: cycles,
-            balanceCycles: balanceCycles
+            productId: productId
         )
     }
 }

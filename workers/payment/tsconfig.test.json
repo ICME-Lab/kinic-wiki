@@ -5,7 +5,6 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"],
-    "typeRoots": ["../wiki-generator/node_modules/@types"],
     "noEmit": false,
     "outDir": ".tmp-test",
     "rootDir": "."

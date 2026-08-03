@@ -11,12 +11,10 @@ protocol DatabaseCreditTransactionSourceProtocol: Sendable {
 
 enum DatabaseCreditTransactionEvent: Sendable {
     case verified(DatabaseCreditPendingTransaction)
-    case unverified(transactionId: String?, message: String)
+    case unverified(message: String)
 }
 
 struct DatabaseCreditPendingTransaction: Sendable {
-    let transactionId: String
-    let appAccountToken: String?
     let transactionJWS: String
     let finish: @Sendable () async -> Void
 }
@@ -28,16 +26,13 @@ struct StoreKitDatabaseCreditTransactionSource: DatabaseCreditTransactionSourceP
             switch verification {
             case let .verified(transaction):
                 events.append(.verified(DatabaseCreditPendingTransaction(
-                    transactionId: String(transaction.id),
-                    appAccountToken: transaction.appAccountToken?.uuidString.lowercased(),
                     transactionJWS: verification.jwsRepresentation,
                     finish: {
                         await transaction.finish()
                     }
                 )))
-            case let .unverified(transaction, error):
+            case let .unverified(_, error):
                 events.append(.unverified(
-                    transactionId: String(transaction.id),
                     message: error.localizedDescription
                 ))
             }

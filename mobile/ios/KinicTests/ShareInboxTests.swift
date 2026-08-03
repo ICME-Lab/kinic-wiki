@@ -460,43 +460,6 @@ struct ShareInboxTests {
     }
 
     @Test
-    func sharedDefaultsStorePersistsPendingDatabaseCreditPurchases() throws {
-        let suiteName = "kinic.shared-defaults.tests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        let store = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
-        let first = PendingDatabaseCreditPurchase(
-            appAccountToken: "11111111-1111-4111-8111-111111111111",
-            databaseId: "db_pending",
-            purchaserPrincipal: "r7inp-6aaaa-aaaaa-aaabq-cai",
-            productId: "xyz.kinic.dbcredits.small",
-            expiresAtMs: 1_700_000_000_000,
-            transactionId: nil,
-            transactionJWS: nil
-        )
-        let updated = PendingDatabaseCreditPurchase(
-            appAccountToken: first.appAccountToken,
-            databaseId: first.databaseId,
-            purchaserPrincipal: first.purchaserPrincipal,
-            productId: first.productId,
-            expiresAtMs: first.expiresAtMs,
-            transactionId: "12345",
-            transactionJWS: "header.payload.signature"
-        )
-
-        store.upsertPendingDatabaseCreditPurchase(first)
-        #expect(store.pendingDatabaseCreditPurchases == [first])
-        store.upsertPendingDatabaseCreditPurchase(updated)
-        #expect(try SharedDefaultsStore(appGroupId: suiteName, strict: true).pendingDatabaseCreditPurchases == [updated])
-        store.removePendingDatabaseCreditPurchase(appAccountToken: first.appAccountToken)
-        #expect(store.pendingDatabaseCreditPurchases.isEmpty)
-    }
-
-    @Test
     func sharedDefaultsStoreMigratesExistingPublicDatabaseVisibilityOnce() throws {
         let suiteName = "kinic.shared-defaults-migration.tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

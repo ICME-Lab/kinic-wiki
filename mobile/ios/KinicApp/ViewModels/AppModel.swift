@@ -410,7 +410,7 @@ final class AppModel {
         self.configuration = configuration
         self.authService = authService
         self.client = client
-        self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration, settingsStore: settingsStore)
+        self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration)
         self.shareInbox = shareInbox
         self.sourceCaptureHistoryStore = sourceCaptureHistoryStore
         self.settingsStore = settingsStore

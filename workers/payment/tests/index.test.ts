@@ -29,7 +29,7 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
       assert.equal(request.amountCycles, 12345n);
       assert.equal(request.externalPaymentId, "tx-1");
       assert.equal(request.productId, "xyz.kinic.dbcredits.small");
-      return { blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" };
+      return;
     },
     fakeAppStoreFetch(jws(serverPayload("tx-1", { appAccountToken })))
   );
@@ -40,8 +40,7 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
     databaseId: DATABASE_ID,
     purchaserPrincipal: PRINCIPAL,
     productId: PRODUCT_ID,
-    cycles: "12345",
-    balanceCycles: "12345"
+    cycles: "12345"
   });
   assert.equal(env.DB.rows.get("tx-1")?.status, "fulfilled");
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
@@ -57,11 +56,12 @@ test("purchase intent endpoint creates UUID token for known product", async () =
     }),
     env
   );
-  const body = (await response.json()) as { appAccountToken: string; expiresAtMs: number };
+  const body = (await response.json()) as Record<string, unknown>;
 
   assert.equal(response.status, 200);
-  assert.match(body.appAccountToken, /^[0-9a-f-]{36}$/u);
-  assert.equal(env.DB.intents.get(body.appAccountToken)?.database_id, DATABASE_ID);
+  assert.deepEqual(Object.keys(body), ["appAccountToken"]);
+  assert.match(String(body.appAccountToken), /^[0-9a-f-]{36}$/u);
+  assert.equal(env.DB.intents.get(String(body.appAccountToken))?.database_id, DATABASE_ID);
 });
 
 test("purchase intent endpoint rejects unknown product", async () => {
@@ -154,7 +154,7 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
       assert.equal(request.externalPaymentId, transactionId);
       assert.equal(request.productId, PRODUCT_ID);
       assert.equal(request.amountCycles, 12345n);
-      return { blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" };
+      return;
     }
   });
 
@@ -199,8 +199,7 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
     databaseId: DATABASE_ID,
     purchaserPrincipal: PRINCIPAL,
     productId: PRODUCT_ID,
-    cycles: "12345",
-    balanceCycles: "12345"
+    cycles: "12345"
   });
   assert.deepEqual(retryActivation, {
     fulfilled: true,
@@ -213,6 +212,79 @@ test("local HTTP E2E fulfills a database credit purchase and retries idempotentl
   assert.equal(grantCount, 1);
   assert.equal(env.DB.rows.get(transactionId)?.status, "fulfilled");
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
+});
+
+test("concurrent activation grants once and reports the active lease", async () => {
+  const env = await testEnv();
+  const transactionId = "tx-concurrent";
+  const appAccountToken = await purchaseIntent(env);
+  let releaseGrant: (() => void) | undefined;
+  let notifyGrantStarted: (() => void) | undefined;
+  const grantStarted = new Promise<void>((resolve) => {
+    notifyGrantStarted = resolve;
+  });
+  const grantReleased = new Promise<void>((resolve) => {
+    releaseGrant = resolve;
+  });
+  let grantCount = 0;
+  const concurrentWorker = createPaymentWorker({
+    fetcher: fakeAppStoreFetch(jws(serverPayload(transactionId, { appAccountToken }))),
+    grant: async () => {
+      grantCount += 1;
+      notifyGrantStarted?.();
+      await grantReleased;
+    }
+  });
+  const request = () => new Request("https://payment.test/iap/activate-database", {
+    method: "POST",
+    body: JSON.stringify({ transactionJWS: jws({ transactionId, appAccountToken }) })
+  });
+
+  const firstResponsePromise = concurrentWorker.fetch(request(), env);
+  await grantStarted;
+  const concurrentResponse = await concurrentWorker.fetch(request(), env);
+  const concurrentBody = (await concurrentResponse.json()) as Record<string, unknown>;
+  releaseGrant?.();
+  const firstResponse = await firstResponsePromise;
+
+  assert.equal(concurrentResponse.status, 409);
+  assert.equal(concurrentBody.retryable, true);
+  assert.match(String(concurrentBody.error), /already in progress/u);
+  assert.equal(firstResponse.status, 200);
+  assert.equal(grantCount, 1);
+});
+
+test("expired grant lease can be acquired again", async () => {
+  const env = await testEnv();
+  const transactionId = "tx-stale-lease";
+  const appAccountToken = await purchaseIntent(env);
+  env.DB.rows.set(transactionId, {
+    transaction_id: transactionId,
+    database_id: DATABASE_ID,
+    purchaser_principal: PRINCIPAL,
+    app_account_token: appAccountToken,
+    product_id: PRODUCT_ID,
+    environment: "Sandbox",
+    bundle_id: "xyz.kinic.ios.KinicWiki",
+    cycles: "12345",
+    status: "granting",
+    grant_attempt_id: "stale-attempt",
+    updated_at_ms: Date.now() - 5 * 60 * 1000 - 1
+  });
+  let grantCount = 0;
+
+  const response = await activateDatabase(
+    env,
+    { transactionJWS: jws({ transactionId, appAccountToken }) },
+    async () => {
+      grantCount += 1;
+    },
+    fakeAppStoreFetch(jws(serverPayload(transactionId, { appAccountToken })))
+  );
+
+  assert.equal(response.fulfilled, true);
+  assert.equal(grantCount, 1);
+  assert.equal(env.DB.rows.get(transactionId)?.status, "fulfilled");
 });
 
 test("duplicate fulfilled transaction returns without another grant", async () => {
@@ -327,11 +399,7 @@ test("failed App Store verification does not reserve the transaction id", async 
   const env = await testEnv();
   const appAccountToken = await purchaseIntent(env);
   const transactionJWS = jws({ transactionId: "tx-verify-retry", appAccountToken });
-  const grant = async (): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> => ({
-    blockIndex: "0",
-    amountCycles: "12345",
-    balanceCycles: "12345"
-  });
+  const grant = async (): Promise<void> => {};
 
   await assert.rejects(
     activateDatabase(
@@ -424,14 +492,35 @@ test("VFS failure leaves failed fulfillment for retry", async () => {
   assert.equal(env.DB.rows.get("tx-4")?.status, "failed");
 });
 
+test("activation route classifies VFS grant failures as retryable", async () => {
+  const env = await testEnv();
+  const transactionId = "tx-vfs-route-failure";
+  const appAccountToken = await purchaseIntent(env);
+  const failureWorker = createPaymentWorker({
+    fetcher: fakeAppStoreFetch(jws(serverPayload(transactionId, { appAccountToken }))),
+    grant: async () => {
+      throw new Error("canister unavailable");
+    }
+  });
+
+  const response = await failureWorker.fetch(new Request("https://payment.test/iap/activate-database", {
+    method: "POST",
+    body: JSON.stringify({ transactionJWS: jws({ transactionId, appAccountToken }) })
+  }), env);
+  const body = (await response.json()) as Record<string, unknown>;
+
+  assert.equal(response.status, 502);
+  assert.equal(body.retryable, true);
+  assert.match(String(body.error), /VFS grant failed/u);
+});
+
 test("D1 finalization failure remains retryable after canister grant", async () => {
   const env = await testEnv();
   const appAccountToken = await purchaseIntent(env);
   const transactionJWS = jws({ transactionId: "tx-finalize", appAccountToken });
   let grantCount = 0;
-  const grant = async (): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> => {
+  const grant = async (): Promise<void> => {
     grantCount += 1;
-    return { blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" };
   };
   env.DB.failNextBatch = true;
 
@@ -444,7 +533,7 @@ test("D1 finalization failure remains retryable after canister grant", async () 
     ),
     /D1 finalization failed/
   );
-  assert.equal(env.DB.rows.get("tx-finalize")?.status, "granting");
+  assert.equal(env.DB.rows.get("tx-finalize")?.status, "failed");
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "created");
 
   const response = await activateDatabase(
@@ -458,6 +547,28 @@ test("D1 finalization failure remains retryable after canister grant", async () 
   assert.equal(grantCount, 2);
   assert.equal(env.DB.rows.get("tx-finalize")?.status, "fulfilled");
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
+});
+
+test("activation route classifies D1 finalization failures as retryable", async () => {
+  const env = await testEnv();
+  const transactionId = "tx-d1-route-failure";
+  const appAccountToken = await purchaseIntent(env);
+  env.DB.failNextBatch = true;
+  const failureWorker = createPaymentWorker({
+    fetcher: fakeAppStoreFetch(jws(serverPayload(transactionId, { appAccountToken }))),
+    grant: async () => {}
+  });
+
+  const response = await failureWorker.fetch(new Request("https://payment.test/iap/activate-database", {
+    method: "POST",
+    body: JSON.stringify({ transactionJWS: jws({ transactionId, appAccountToken }) })
+  }), env);
+  const body = (await response.json()) as Record<string, unknown>;
+
+  assert.equal(response.status, 502);
+  assert.equal(body.retryable, true);
+  assert.match(String(body.error), /D1 finalization failed/u);
+  assert.equal(env.DB.rows.get(transactionId)?.status, "failed");
 });
 
 test("fulfilled purchase intent for same transaction can be finalized on retry", async () => {
@@ -476,7 +587,7 @@ test("fulfilled purchase intent for same transaction can be finalized on retry",
     environment: "Sandbox",
     bundle_id: "xyz.kinic.ios.KinicWiki",
     cycles: "12345",
-    status: "granting"
+    status: "failed"
   });
 
   const response = await activateDatabase(
@@ -484,7 +595,7 @@ test("fulfilled purchase intent for same transaction can be finalized on retry",
     {
       transactionJWS: jws({ transactionId: "tx-intent-fulfilled", appAccountToken })
     },
-    async () => ({ blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" }),
+    async () => {},
     fakeAppStoreFetch(jws(serverPayload("tx-intent-fulfilled", { appAccountToken })))
   );
 
@@ -516,25 +627,22 @@ test("activation rejects a missing token and resolves the database from its purc
     },
     async (_env, request) => {
       assert.equal(request.databaseId, "db_other");
-      return { blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" };
+      return;
     },
     fakeAppStoreFetch(jws(serverPayload("tx-intent-database", { appAccountToken })))
   );
   assert.equal(resolved.databaseId, "db_other");
 });
 
-test("activation accepts expired intent when verified transaction matches it", async () => {
+test("activation has no purchase intent TTL", async () => {
   const env = await testEnv();
   const expiredToken = await purchaseIntent(env);
-  const expired = env.DB.intents.get(expiredToken);
-  if (!expired) throw new Error("expired intent missing");
-  expired.expires_at_ms = Date.now() - 1;
   const response = await activateDatabase(
     env,
     {
       transactionJWS: jws({ transactionId: "tx-expired", appAccountToken: expiredToken })
     },
-    async () => ({ blockIndex: "0", amountCycles: "12345", balanceCycles: "12345" }),
+    async () => {},
     fakeAppStoreFetch(jws(serverPayload("tx-expired", { appAccountToken: expiredToken })))
   );
 
@@ -704,7 +812,6 @@ function fakeAppStoreFetch(signedTransactionInfo: string): typeof fetch {
 function serverPayload(transactionId: string, overrides: Record<string, string> = {}): Record<string, string> {
   return {
     transactionId,
-    originalTransactionId: `original-${transactionId}`,
     productId: "xyz.kinic.dbcredits.small",
     bundleId: "xyz.kinic.ios.KinicWiki",
     environment: "Sandbox",
@@ -784,7 +891,9 @@ type FulfillmentRow = {
   bundle_id: string;
   cycles: string;
   status: string;
+  grant_attempt_id?: string | null;
   error_message?: string | null;
+  updated_at_ms?: number;
 };
 
 type PurchaseIntentRow = {
@@ -793,7 +902,6 @@ type PurchaseIntentRow = {
   purchaser_principal: string;
   product_id: string;
   status: string;
-  expires_at_ms: number;
   transaction_id: string | null;
 };
 
@@ -880,7 +988,9 @@ class MemoryStatement {
         bundle_id: String(this.values[4]),
         cycles: "0",
         status: "received",
-        error_message: null
+        grant_attempt_id: null,
+        error_message: null,
+        updated_at_ms: Number(this.values[5])
       });
       return { success: true, meta: { changes: 1 } };
     }
@@ -891,7 +1001,6 @@ class MemoryStatement {
         purchaser_principal: String(this.values[2]),
         product_id: String(this.values[3]),
         status: "created",
-        expires_at_ms: Number(this.values[4]),
         transaction_id: null
       });
       return { success: true, meta: { changes: 1 } };
@@ -912,12 +1021,13 @@ class MemoryStatement {
       return { success: true, meta: { changes: 0 } };
     }
     if (this.query.startsWith("UPDATE iap_fulfillments SET app_account_token")) {
-      const row = this.db.rows.get(String(this.values[6]));
+      const row = this.db.rows.get(String(this.values[7]));
       if (
         row &&
-        row.database_id === String(this.values[7]) &&
-        row.purchaser_principal === String(this.values[8]) &&
-        ["received", "failed", "granting"].includes(row.status)
+        row.database_id === String(this.values[8]) &&
+        row.purchaser_principal === String(this.values[9]) &&
+        (["received", "failed"].includes(row.status) ||
+          (row.status === "granting" && (row.updated_at_ms ?? 0) <= Number(this.values[10])))
       ) {
         row.app_account_token = String(this.values[0]);
         row.product_id = String(this.values[1]);
@@ -925,7 +1035,9 @@ class MemoryStatement {
         row.bundle_id = String(this.values[3]);
         row.cycles = String(this.values[4]);
         row.status = "granting";
+        row.grant_attempt_id = String(this.values[5]);
         row.error_message = null;
+        row.updated_at_ms = Number(this.values[6]);
         return { success: true, meta: { changes: 1 } };
       }
       return { success: true, meta: { changes: 0 } };
@@ -937,9 +1049,11 @@ class MemoryStatement {
         row.database_id === String(this.values[2]) &&
         row.purchaser_principal === String(this.values[3]) &&
         row.app_account_token === String(this.values[4]) &&
-        row.status === "granting"
+        row.status === "granting" &&
+        row.grant_attempt_id === String(this.values[5])
       ) {
         row.status = "fulfilled";
+        row.grant_attempt_id = null;
         row.error_message = null;
         return { success: true, meta: { changes: 1 } };
       }
@@ -947,8 +1061,9 @@ class MemoryStatement {
     }
     if (this.query.startsWith("UPDATE iap_fulfillments SET status = 'failed'")) {
       const row = this.db.rows.get(String(this.values[2]));
-      if (row && row.status === "granting") {
+      if (row && row.status === "granting" && row.grant_attempt_id === String(this.values[3])) {
         row.status = "failed";
+        row.grant_attempt_id = null;
         row.error_message = String(this.values[0]);
         return { success: true, meta: { changes: 1 } };
       }

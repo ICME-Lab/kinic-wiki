@@ -11,7 +11,7 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
   - verifies the App Store transaction, resolves its `appAccountToken` to the server-owned purchase intent, resolves `productId` from `IAP_PRODUCT_CATALOG_JSON`, grants DB cycles through `grant_database_cycles_from_iap`, then returns `fulfilled`.
 - `POST /iap/purchase-intents`
   - request: `{ "databaseId": "...", "purchaserPrincipal": "...", "productId": "..." }`
-  - returns a 30-minute `appAccountToken` UUID that iOS must pass to StoreKit with `.appAccountToken(...)`.
+  - response: `{ "appAccountToken": "..." }`; iOS passes this UUID to StoreKit with `.appAccountToken(...)`.
 - `POST /iap/app-store-notifications`
   - verifies App Store Server Notification V2 `signedPayload` with the pinned Apple root fingerprint, then stores refund/revoke audit payloads.
 
@@ -56,9 +56,7 @@ pnpm --filter kinic-payment-worker deploy
 ## Verification
 
 ```bash
+pnpm --filter kinic-payment-worker typecheck
 pnpm --filter kinic-payment-worker cf-typecheck
-workers/wiki-generator/node_modules/.bin/tsc -p workers/payment/tsconfig.test.json
-node --test workers/payment/.tmp-test/tests/index.test.js
+pnpm --filter kinic-payment-worker test
 ```
-
-`pnpm --filter kinic-payment-worker test` is the intended package command once workspace dependencies install cleanly.
