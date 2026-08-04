@@ -19,6 +19,11 @@ export type SkillDoc = DocsLink & {
 
 export const primaryDocs: DocsLink[] = [
   {
+    href: "/docs/clipper",
+    title: "Wiki Clipper",
+    description: "Save ChatGPT and Claude conversations or active web pages under /Sources, then open the same database from the Dashboard."
+  },
+  {
     href: "/docs/cli",
     title: "CLI Guide",
     description: "Install kinic-vfs-cli, connect databases, run search, reads, writes, Store API calls, and Skill Registry commands."

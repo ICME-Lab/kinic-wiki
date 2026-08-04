@@ -80,6 +80,9 @@ export default function HomePage() {
             <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/ios">
               iOS App
             </Link>
+            <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/clipper">
+              Wiki Clipper
+            </Link>
             <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/cli">
               CLI
             </Link>
@@ -95,8 +98,8 @@ export default function HomePage() {
           <img className="h-full w-full object-cover object-[68%_50%] opacity-95" src="/home-hero.webp" alt="" />
         </div>
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,#fff_0%,#fff_48%,rgba(255,255,255,0.82)_70%,rgba(255,255,255,0.28)_100%)]" />
-        <div className="mx-auto grid max-w-[1080px] gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] lg:items-center">
-          <div className="min-h-[360px]">
+        <div className="mx-auto grid min-w-0 max-w-[1080px] gap-10 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] lg:items-center">
+          <div className="min-h-[360px] min-w-0">
             <p className="text-sm font-bold uppercase text-accent">CLI-first AI memory</p>
             <h1 className="mt-3 max-w-[650px] text-4xl font-semibold leading-[1.08] text-ink sm:text-5xl">Kinic Wiki is AI memory for agents</h1>
             <p className="mt-5 max-w-[620px] text-lg leading-7 text-muted">
@@ -107,15 +110,53 @@ export default function HomePage() {
               <Link className="rounded-lg border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="/docs/cli">
                 Install CLI
               </Link>
+              <Link className="rounded-lg border border-line bg-white px-5 py-3 text-sm font-bold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/clipper">
+                Use Wiki Clipper
+              </Link>
             </div>
           </div>
 
-          <aside className="rounded-lg border border-line bg-paper p-5">
+          <aside className="min-w-0 rounded-lg border border-line bg-paper p-5">
             <p className="text-sm font-semibold text-ink">Agent workflow</p>
             <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-white p-4 text-xs leading-6 text-ink">
               <code>{"npm install -g kinic-vfs-cli\nkinic-vfs-cli database link <database-id>\nkinic-vfs-cli search-remote \"query\" --prefix /Knowledge --json"}</code>
             </pre>
           </aside>
+        </div>
+      </section>
+
+      <section className="border-y border-line bg-paper px-4 py-12 sm:px-6">
+        <div className="mx-auto max-w-[1080px]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)] lg:items-stretch">
+            <article className="rounded-lg border border-action bg-action p-5 text-white">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-white/75">Capture surface</p>
+              <h2 className="mt-3 text-2xl font-semibold leading-tight">Save browser context with Wiki Clipper.</h2>
+              <p className="mt-4 text-sm leading-6 text-white/85">
+                The Chrome extension saves selected ChatGPT and Claude conversations or the active web page into your chosen Kinic Wiki database under <code className="rounded bg-white/15 px-1.5 py-0.5 font-semibold text-white">/Sources</code>.
+              </p>
+              <Link className="mt-5 inline-flex rounded-lg border border-white/35 bg-white px-4 py-2.5 text-sm font-bold text-action no-underline hover:bg-accentSoft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-action" href="/docs/clipper">
+                Learn how Clipper sign-in works
+              </Link>
+            </article>
+
+            <div className="grid gap-3 sm:grid-cols-3" aria-label="Kinic Wiki product surfaces">
+              <article className="rounded-lg border border-line bg-white p-4">
+                <p className="font-mono text-xs font-semibold text-accent">01 · CAPTURE</p>
+                <h3 className="mt-3 text-base font-semibold text-ink">Wiki Clipper</h3>
+                <p className="mt-2 text-sm leading-6 text-muted">Moves conversations and web pages from the browser into raw evidence under /Sources.</p>
+              </article>
+              <article className="rounded-lg border border-line bg-white p-4">
+                <p className="font-mono text-xs font-semibold text-accent">02 · MANAGE</p>
+                <h3 className="mt-3 text-base font-semibold text-ink">Dashboard</h3>
+                <p className="mt-2 text-sm leading-6 text-muted">Shows databases linked to your Internet Identity principal and manages their access.</p>
+              </article>
+              <article className="rounded-lg border border-line bg-white p-4">
+                <p className="font-mono text-xs font-semibold text-accent">03 · AUTOMATE</p>
+                <h3 className="mt-3 text-base font-semibold text-ink">CLI</h3>
+                <p className="mt-2 text-sm leading-6 text-muted">Lets agents and scripts search, cite, edit, and maintain stored knowledge.</p>
+              </article>
+            </div>
+          </div>
         </div>
       </section>
 
