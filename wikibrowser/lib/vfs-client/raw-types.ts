@@ -35,6 +35,7 @@ export type RawCanisterHealth = {
 export type RawCyclesBillingConfig = {
   kinic_ledger_canister_id: string;
   billing_authority_id: string;
+  iap_authority_id: string;
   cycles_per_kinic: bigint;
   min_update_cycles: bigint;
   top_up: {
@@ -48,6 +49,21 @@ export type DatabaseCyclesPurchaseRequest = {
   database_id: string;
   payment_amount_e8s: bigint;
   min_expected_cycles: bigint;
+};
+
+export type DatabaseCyclesIapGrantRequest = {
+  database_id: string;
+  amount_cycles: bigint;
+  external_payment_id: string;
+  provider: string;
+  product_id: string;
+  purchaser_principal: string;
+};
+
+export type RawCyclesPurchaseResult = {
+  block_index: bigint;
+  amount_cycles: bigint;
+  balance_cycles: bigint;
 };
 
 export type RawInitialFreeDatabaseGrantStatus = {
@@ -449,6 +465,7 @@ export type VfsActor = {
   authorize_ops_answer_session: (request: RawQueryAnswerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   authorize_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
+  grant_database_cycles_from_iap: (request: DatabaseCyclesIapGrantRequest) => Promise<{ Ok: RawCyclesPurchaseResult } | { Err: string }>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_source_capture_trigger_session: (request: RawSourceCaptureTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;

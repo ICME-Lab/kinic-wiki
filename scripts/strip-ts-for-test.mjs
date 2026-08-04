@@ -14,4 +14,3 @@ export async function importStrippedTsForTest(source) {
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(stripTsForTest(source)).toString("base64")}`;
   return import(moduleUrl);
 }
-

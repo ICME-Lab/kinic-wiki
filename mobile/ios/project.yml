@@ -121,6 +121,8 @@ targets:
       Release: Config/Kinic.xcconfig
     sources:
       - KinicTests
+      - path: ../../contracts/source-capture-contract.json
+        buildPhase: resources
     dependencies:
       - target: Kinic
     settings:

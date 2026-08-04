@@ -155,6 +155,94 @@ impl VfsService {
         })
     }
 
+    pub fn grant_database_cycles_from_iap(
+        &self,
+        request: DatabaseCyclesIapGrantRequest,
+        caller: &str,
+        now: i64,
+    ) -> Result<CyclesPurchaseResult, String> {
+        if request.provider != "apple_iap" {
+            return Err("IAP provider must be apple_iap".to_string());
+        }
+        validate_iap_grant_text("external_payment_id", &request.external_payment_id)?;
+        validate_iap_grant_text("product_id", &request.product_id)?;
+        validate_principal_text(&request.purchaser_principal)?;
+        let amount_cycles = cycles_to_i64(request.amount_cycles)?;
+        let config = self.cycles_billing_config()?;
+        if caller != config.iap_authority_id {
+            return Err("caller is not IAP authority".to_string());
+        }
+        if let Some(existing) = self.read_index(|conn| {
+            load_iap_cycle_grant(conn, &request.provider, &request.external_payment_id)
+        })? {
+            return Ok(CyclesPurchaseResult {
+                block_index: 0,
+                amount_cycles: request.amount_cycles,
+                balance_cycles: iap_duplicate_balance(&existing, &request, amount_cycles)?,
+            });
+        }
+        if self.read_index(|conn| load_database_status(conn, &request.database_id))?
+            == DatabaseStatus::Pending
+        {
+            self.prepare_pending_database_activation(&request.database_id, now)?;
+        }
+        let balance_cycles = self.write_index(|tx| {
+            if let Some(existing) =
+                load_iap_cycle_grant(tx, &request.provider, &request.external_payment_id)?
+            {
+                return iap_duplicate_balance(&existing, &request, amount_cycles);
+            }
+            match load_database_status(tx, &request.database_id)? {
+                DatabaseStatus::Pending => {
+                    complete_pending_database_activation(tx, &request.database_id, now)?
+                }
+                DatabaseStatus::Active => {}
+                DatabaseStatus::Deleted => {
+                    return Err(format!("database is deleted: {}", request.database_id));
+                }
+            }
+            let db_balance = database_balance_for_update(tx, &request.database_id)?;
+            let next_database = checked_balance_add(db_balance, amount_cycles)?;
+            update_database_cycles_balance(tx, &request.database_id, next_database, &config, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id: &request.database_id,
+                    kind: "apple_iap",
+                    amount_cycles,
+                    balance_after_cycles: next_database,
+                    payment_amount_e8s: None,
+                    caller,
+                    method: Some("grant_database_cycles_from_iap"),
+                    cycles_delta: None,
+                    config: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            insert_iap_cycle_grant(
+                tx,
+                IapCycleGrantInsert {
+                    provider: &request.provider,
+                    external_payment_id: &request.external_payment_id,
+                    database_id: &request.database_id,
+                    product_id: &request.product_id,
+                    purchaser_principal: &request.purchaser_principal,
+                    amount_cycles,
+                    balance_after_cycles: next_database,
+                    caller,
+                    now,
+                },
+            )?;
+            Ok(next_database as u64)
+        })?;
+        Ok(CyclesPurchaseResult {
+            block_index: 0,
+            amount_cycles: request.amount_cycles,
+            balance_cycles,
+        })
+    }
+
     pub fn complete_database_cycles_purchase_ledger_transfer(
         &self,
         operation_id: u64,
@@ -384,6 +472,26 @@ struct PendingCyclesOperation {
     ledger_block_index: Option<i64>,
 }
 
+struct IapCycleGrant {
+    database_id: String,
+    product_id: String,
+    purchaser_principal: String,
+    amount_cycles: i64,
+    balance_after_cycles: i64,
+}
+
+struct IapCycleGrantInsert<'a> {
+    provider: &'a str,
+    external_payment_id: &'a str,
+    database_id: &'a str,
+    product_id: &'a str,
+    purchaser_principal: &'a str,
+    amount_cycles: i64,
+    balance_after_cycles: i64,
+    caller: &'a str,
+    now: i64,
+}
+
 struct DatabaseCyclesPendingPurchaseRaw {
     operation_id: i64,
     database_id: String,
@@ -478,6 +586,91 @@ fn insert_pending_cycles_operation(
     .map_err(|error| error.to_string())?;
     let operation_id = crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())?;
     u64::try_from(operation_id).map_err(|error| error.to_string())
+}
+
+fn insert_iap_cycle_grant(
+    conn: &Transaction<'_>,
+    grant: IapCycleGrantInsert<'_>,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO database_iap_cycle_grants
+         (provider, external_payment_id, database_id, product_id, purchaser_principal,
+          amount_cycles, balance_after_cycles, caller, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            grant.provider,
+            grant.external_payment_id,
+            grant.database_id,
+            grant.product_id,
+            grant.purchaser_principal,
+            grant.amount_cycles,
+            grant.balance_after_cycles,
+            grant.caller,
+            grant.now
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn iap_duplicate_balance(
+    existing: &IapCycleGrant,
+    request: &DatabaseCyclesIapGrantRequest,
+    amount_cycles: i64,
+) -> Result<u64, String> {
+    if existing.database_id != request.database_id {
+        return Err("IAP transaction already applied to a different database".to_string());
+    }
+    if existing.product_id != request.product_id {
+        return Err("IAP transaction product mismatch".to_string());
+    }
+    if existing.purchaser_principal != request.purchaser_principal {
+        return Err("IAP transaction purchaser mismatch".to_string());
+    }
+    if existing.amount_cycles != amount_cycles {
+        return Err("IAP transaction amount mismatch".to_string());
+    }
+    u64::try_from(existing.balance_after_cycles).map_err(|error| error.to_string())
+}
+
+fn load_iap_cycle_grant(
+    conn: &Connection,
+    provider: &str,
+    external_payment_id: &str,
+) -> Result<Option<IapCycleGrant>, String> {
+    conn.query_row(
+        "SELECT database_id, product_id, purchaser_principal, amount_cycles, balance_after_cycles
+         FROM database_iap_cycle_grants
+         WHERE provider = ?1 AND external_payment_id = ?2",
+        params![provider, external_payment_id],
+        |row| {
+            Ok(IapCycleGrant {
+                database_id: crate::sqlite::row_get(row, 0)?,
+                product_id: crate::sqlite::row_get(row, 1)?,
+                purchaser_principal: crate::sqlite::row_get(row, 2)?,
+                amount_cycles: crate::sqlite::row_get(row, 3)?,
+                balance_after_cycles: crate::sqlite::row_get(row, 4)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn validate_iap_grant_text(field: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{field} is required"));
+    }
+    if trimmed.len() > 256 {
+        return Err(format!("{field} exceeds 256 bytes"));
+    }
+    if trimmed != value {
+        return Err(format!(
+            "{field} must not have leading or trailing whitespace"
+        ));
+    }
+    Ok(())
 }
 
 fn load_pending_cycles_operation(

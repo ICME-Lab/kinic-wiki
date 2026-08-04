@@ -1064,6 +1064,7 @@ struct ShareInboxTests {
         let config = CyclesBillingConfig(
             kinicLedgerCanisterId: "ledger",
             billingAuthorityId: "authority",
+            iapAuthorityId: "iap",
             cyclesPerKinic: 1,
             minUpdateCycles: 100,
             topUp: CyclesTopUpConfig(enabled: true, launcherPrincipal: "launcher", thresholdCycles: 1_000)

@@ -280,6 +280,7 @@ struct VFSCandidCodecTests {
         let config = try VFSCandidDecoder.decodeCyclesBillingConfigResult(candidCyclesBillingConfigOk())
         #expect(config.kinicLedgerCanisterId == "ryjl3-tyaaa-aaaaa-aaaba-cai")
         #expect(config.billingAuthorityId == "aaaaa-aa")
+        #expect(config.iapAuthorityId == "rrkah-fqaaa-aaaaa-aaaaq-cai")
         #expect(config.cyclesPerKinic == 234_500_000_000)
         #expect(config.minUpdateCycles == 1_000_000)
         #expect(config.topUp.enabled == true)
@@ -1205,6 +1206,7 @@ private func candidCyclesBillingConfigOk(thresholdCyclesPayload: Data? = nil) ->
     func appendConfig() {
         for field in fields([
             ("billing_authority_id", .primitive(typeText)),
+            ("iap_authority_id", .primitive(typeText)),
             ("kinic_ledger_canister_id", .primitive(typeText)),
             ("top_up", .table(2)),
             ("cycles_per_kinic", .primitive(typeNat64)),
@@ -1213,6 +1215,8 @@ private func candidCyclesBillingConfigOk(thresholdCyclesPayload: Data? = nil) ->
             switch field.0 {
             case "billing_authority_id":
                 appendText("aaaaa-aa")
+            case "iap_authority_id":
+                appendText("rrkah-fqaaa-aaaaa-aaaaq-cai")
             case "kinic_ledger_canister_id":
                 appendText("ryjl3-tyaaa-aaaaa-aaaba-cai")
             case "top_up":
@@ -1257,6 +1261,7 @@ private func candidCyclesBillingConfigOk(thresholdCyclesPayload: Data? = nil) ->
     ])
     appendRecord([
         ("billing_authority_id", .primitive(typeText)),
+        ("iap_authority_id", .primitive(typeText)),
         ("kinic_ledger_canister_id", .primitive(typeText)),
         ("top_up", .table(2)),
         ("cycles_per_kinic", .primitive(typeNat64)),

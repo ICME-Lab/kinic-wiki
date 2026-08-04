@@ -30,4 +30,14 @@ extension Bundle {
         }
         return url
     }
+
+    func optionalURL(_ key: String) -> URL? {
+        guard let value = optionalString(key) else {
+            return nil
+        }
+        guard let url = URL(string: value) else {
+            fatalError("Invalid Info.plist URL: \(key)")
+        }
+        return url
+    }
 }

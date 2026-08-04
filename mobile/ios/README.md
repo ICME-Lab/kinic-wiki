@@ -16,9 +16,9 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
+- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. iOS App Store IAP can activate a pending DB or top up an owner-managed active DB. KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Adds a database-scoped Ask AI tab that retrieves relevant wiki documents, shows its search and evidence-checking activity, and refuses to answer when no supporting document is available.
 - Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Each question uses `https://api.kinic.io/chat` once to generate bounded search queries and, when verified notes are found, once more to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
-- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
 
@@ -56,6 +56,13 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 ## Runtime target
 
 iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
+
+The app reads Payment Worker and StoreKit settings from the same xcconfig:
+
+- `KINIC_PAYMENT_BASE_URL`: Payment Worker origin, default `https://payment.kinic.xyz`
+- `KINIC_IAP_PRODUCT_IDS`: comma-separated consumable credit pack product IDs
+
+Purchase flow: create DB first, keep it `pending` when no free grant applies, create a Payment Worker purchase intent, pass its `appAccountToken` to StoreKit 2, post `{ transactionJWS }` to `/iap/activate-database`, and let the worker resolve the destination from the purchase intent. Finish the StoreKit transaction only after successful activation. Recovery replays StoreKit unfinished transactions and does not keep a second local pending-purchase record.
 
 ## Verification
 

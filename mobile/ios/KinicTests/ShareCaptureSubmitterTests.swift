@@ -352,9 +352,11 @@ private struct ShareCaptureHarness {
             identityProvider: URL(string: "https://id.ai/#authorize")!,
             derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
+            paymentBaseURL: URL(string: "https://payment.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
             keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
+            iapProductIds: [],
             askAIURL: URL(string: "https://api.kinic.io/chat")!
         )
         try FileManager.default.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
