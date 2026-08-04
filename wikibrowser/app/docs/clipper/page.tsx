@@ -1,7 +1,9 @@
 import { AppLink as Link } from "@/components/app-link";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
-import { ArrowDown, ArrowRight, Database, Globe2, KeyRound, LayoutDashboard, MessageSquareText, Puzzle, ShieldCheck } from "lucide-react";
+import { Database, ExternalLink, Globe2, KeyRound, LayoutDashboard, MessageSquareText, Puzzle, ShieldCheck } from "lucide-react";
+
+const CLIPPER_STORE_URL = "https://chromewebstore.google.com/detail/kinic-wiki-clipper/moebdnadaffhlddnhifmmdoecifhcbdi";
 
 export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Clipper",
@@ -20,17 +22,20 @@ const captureSources = [
   {
     icon: MessageSquareText,
     title: "ChatGPT conversations",
-    text: "Export the recent conversations you choose as evidence under /Sources/chatgpt."
+    path: "/Sources/chatgpt",
+    text: "Export the recent conversations you choose as inspectable evidence."
   },
   {
     icon: MessageSquareText,
     title: "Claude conversations",
-    text: "Export the recent conversations you choose as evidence under /Sources/claude."
+    path: "/Sources/claude",
+    text: "Export the recent conversations you choose as inspectable evidence."
   },
   {
     icon: Globe2,
     title: "Active web pages",
-    text: "Capture the current page as a web evidence source under /Sources/web."
+    path: "/Sources/web",
+    text: "Capture the current page as an inspectable web evidence source."
   }
 ];
 
@@ -74,39 +79,66 @@ export default function ClipperPage() {
               <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
                 Kinic Wiki Clipper is a Chrome extension that saves selected ChatGPT and Claude conversations or the active web page into a writable Kinic Wiki database. Raw captures stay under <code>/Sources</code> so you can inspect their origin before turning them into maintained knowledge.
               </p>
+              <a
+                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                href={CLIPPER_STORE_URL}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Add to Chrome
+                <ExternalLink aria-hidden size={16} />
+              </a>
             </div>
-            <div className="grid items-center gap-2 rounded-lg border border-line bg-white p-4 text-center sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
-              <FlowNode label="Browser" detail="ChatGPT · Claude · Web" />
-              <FlowArrow />
-              <FlowNode label="Wiki Clipper" detail="Authenticated capture" />
-              <FlowArrow />
-              <FlowNode label="Kinic Wiki" detail="/Sources" mono />
+            <div className="min-w-0 rounded-lg border border-line bg-white p-5">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className="font-mono text-xs font-semibold text-accent">CAPTURE DESTINATION</p>
+                  <h2 className="mt-2 text-base font-semibold text-ink">One extension, visible source routes</h2>
+                </div>
+                <code className="rounded-lg border border-accent bg-accentSoft px-2.5 py-1 text-xs font-semibold text-ink">/Sources</code>
+              </div>
+              <div className="mt-4 overflow-hidden rounded-lg border border-line">
+                {captureSources.map((source, index) => (
+                  <div className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-line" : ""}`} key={source.path}>
+                    <span className="text-sm font-semibold text-ink">{source.title.replace(" conversations", "")}</span>
+                    <code className="min-w-0 break-all text-right text-xs text-accentText">{source.path}</code>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </AdminPanel>
 
-        <section className="grid gap-4 md:grid-cols-3" aria-label="Clipper capture sources">
-          {captureSources.map((source) => {
-            const Icon = source.icon;
-            return (
-              <AdminPanel className="min-w-0" key={source.title} padding="lg">
-                <Icon aria-hidden className="text-accent" size={20} />
-                <h2 className="mt-3 text-lg font-semibold text-ink">{source.title}</h2>
-                <p className="mt-2 text-sm leading-6 text-muted">{source.text}</p>
-              </AdminPanel>
-            );
-          })}
-        </section>
+        <AdminPanel ariaLabel="Clipper capture sources" className="min-w-0 overflow-hidden" padding="none">
+          <div className="grid md:grid-cols-3">
+            {captureSources.map((source, index) => {
+              const Icon = source.icon;
+              return (
+                <article className={`${index > 0 ? "border-t border-line md:border-l md:border-t-0" : ""} p-5`} key={source.title}>
+                  <div className="flex items-center justify-between gap-3">
+                    <Icon aria-hidden className="text-accent" size={20} />
+                    <code className="min-w-0 break-all rounded bg-accentSoft px-2 py-1 text-right text-xs text-ink">{source.path}</code>
+                  </div>
+                  <h2 className="mt-4 text-lg font-semibold text-ink">{source.title}</h2>
+                  <p className="mt-2 text-sm leading-6 text-muted">{source.text}</p>
+                </article>
+              );
+            })}
+          </div>
+        </AdminPanel>
 
         <AdminPanel className="min-w-0" padding="lg">
           <div className="flex items-center gap-2">
             <Database aria-hidden className="text-accent" size={19} />
             <h2 className="text-xl font-semibold text-ink">From capture to Dashboard</h2>
           </div>
-          <ol className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <ol className="mt-5 grid overflow-hidden rounded-lg border border-line bg-white md:grid-cols-2 xl:grid-cols-4">
             {workflow.map((step, index) => (
-              <li className="rounded-lg border border-line bg-white p-4" key={step.title}>
-                <span className="font-mono text-xs font-semibold text-accent">0{index + 1}</span>
+              <li
+                className={`${index === 1 ? "border-t border-line md:border-l md:border-t-0" : index === 2 ? "border-t border-line xl:border-l xl:border-t-0" : index === 3 ? "border-t border-line md:border-l xl:border-t-0" : ""} p-4`}
+                key={step.title}
+              >
+                <span className="inline-flex size-7 items-center justify-center rounded-full bg-accentSoft font-mono text-xs font-semibold text-accentText">{index + 1}</span>
                 <h3 className="mt-2 text-base font-semibold text-ink">{step.title}</h3>
                 <p className="mt-2 text-sm leading-6 text-muted">{step.text}</p>
               </li>
@@ -150,7 +182,7 @@ export default function ClipperPage() {
                 <h2 className="text-xl font-semibold text-ink">Before you capture</h2>
               </div>
               <div className="mt-4">
-                <AdminNotice tone="info" message="Clipper cannot save when its Internet Identity session is signed out, no destination database is selected, or your principal does not have writer access to that database." />
+                <AdminNotice tone="info" message="Clipper cannot save when its Internet Identity session is signed out, no destination database is selected, your principal does not have writer access, or the database does not have enough write cycles." />
               </div>
             </div>
             <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/dashboard">
@@ -161,23 +193,5 @@ export default function ClipperPage() {
         </AdminPanel>
       </div>
     </AdminContent>
-  );
-}
-
-function FlowArrow() {
-  return (
-    <>
-      <ArrowDown aria-hidden className="mx-auto text-accent sm:hidden" size={18} />
-      <ArrowRight aria-hidden className="hidden text-accent sm:block" size={18} />
-    </>
-  );
-}
-
-function FlowNode({ detail, label, mono = false }: { detail: string; label: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-sm font-semibold text-ink">{label}</p>
-      <p className={`${mono ? "font-mono" : ""} mt-1 break-words text-xs leading-5 text-muted`}>{detail}</p>
-    </div>
   );
 }

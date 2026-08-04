@@ -3,6 +3,8 @@
 // Why: Cloudflare cold renders of the full marketing page can exceed Worker CPU on browser document requests.
 import { AppLink as Link } from "@/components/app-link";
 
+const CLIPPER_STORE_URL = "https://chromewebstore.google.com/detail/kinic-wiki-clipper/moebdnadaffhlddnhifmmdoecifhcbdi";
+
 const linkPreviewImage = {
   url: "/opengraph-image.png",
   width: 1200,
@@ -110,9 +112,14 @@ export default function HomePage() {
               <Link className="rounded-lg border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="/docs/cli">
                 Install CLI
               </Link>
-              <Link className="rounded-lg border border-line bg-white px-5 py-3 text-sm font-bold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/clipper">
-                Use Wiki Clipper
-              </Link>
+              <a
+                className="rounded-lg border border-accent bg-accentSoft px-5 py-3 text-sm font-bold text-ink no-underline hover:bg-white hover:text-accentText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                href={CLIPPER_STORE_URL}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Install Wiki Clipper
+              </a>
             </div>
           </div>
 
@@ -127,32 +134,70 @@ export default function HomePage() {
 
       <section className="border-y border-line bg-paper px-4 py-12 sm:px-6">
         <div className="mx-auto max-w-[1080px]">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1.22fr)] lg:items-stretch">
-            <article className="rounded-lg border border-action bg-action p-5 text-white">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-white/75">Capture surface</p>
-              <h2 className="mt-3 text-2xl font-semibold leading-tight">Save browser context with Wiki Clipper.</h2>
-              <p className="mt-4 text-sm leading-6 text-white/85">
-                The Chrome extension saves selected ChatGPT and Claude conversations or the active web page into your chosen Kinic Wiki database under <code className="rounded bg-white/15 px-1.5 py-0.5 font-semibold text-white">/Sources</code>.
-              </p>
-              <Link className="mt-5 inline-flex rounded-lg border border-white/35 bg-white px-4 py-2.5 text-sm font-bold text-action no-underline hover:bg-accentSoft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-action" href="/docs/clipper">
-                Learn how Clipper sign-in works
-              </Link>
-            </article>
+          <div className="overflow-hidden rounded-lg border border-line bg-white shadow-[0_12px_30px_#14142b0a]">
+            <div className="grid lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+              <article className="p-6 sm:p-7">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden className="size-2 rounded-full bg-accent" />
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-accentText">Capture surface</p>
+                </div>
+                <h2 className="mt-3 max-w-lg text-2xl font-semibold leading-tight text-ink">Save browser context with Wiki Clipper.</h2>
+                <p className="mt-4 max-w-xl text-sm leading-6 text-muted">
+                  The Chrome extension saves selected ChatGPT and Claude conversations or the active web page into your chosen Kinic Wiki database under <code className="rounded bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">/Sources</code>.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <a
+                    className="inline-flex min-h-11 items-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                    href={CLIPPER_STORE_URL}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Install from Chrome Web Store
+                  </a>
+                  <Link className="inline-flex min-h-11 items-center rounded-lg border border-line bg-white px-4 text-sm font-bold text-ink no-underline hover:border-accent hover:bg-accentSoft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/docs/clipper">
+                    Learn how sign-in works
+                  </Link>
+                </div>
+              </article>
 
-            <div className="grid gap-3 sm:grid-cols-3" aria-label="Kinic Wiki product surfaces">
-              <article className="rounded-lg border border-line bg-white p-4">
+              <div className="border-t border-line bg-paper p-5 sm:p-6 lg:border-l lg:border-t-0">
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="font-mono text-xs font-semibold text-accent">SOURCE ROUTES</p>
+                    <h3 className="mt-2 text-base font-semibold text-ink">Saved as inspectable evidence</h3>
+                  </div>
+                  <code className="rounded-lg border border-accent bg-accentSoft px-2.5 py-1 text-xs font-semibold text-ink">/Sources</code>
+                </div>
+                <div className="mt-5 overflow-hidden rounded-lg border border-line bg-white">
+                  {[
+                    ["ChatGPT", "/Sources/chatgpt"],
+                    ["Claude", "/Sources/claude"],
+                    ["Web page", "/Sources/web"]
+                  ].map(([label, path], index) => (
+                    <div className={`grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-line" : ""}`} key={path}>
+                      <span className="text-sm font-semibold text-ink">{label}</span>
+                      <code className="min-w-0 break-all text-right text-xs text-accentText">{path}</code>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs leading-5 text-muted">Each capture keeps its source type visible before it becomes maintained knowledge.</p>
+              </div>
+            </div>
+
+            <div className="grid border-t border-line bg-white sm:grid-cols-3" aria-label="Kinic Wiki product surfaces">
+              <article className="p-5 sm:border-r sm:border-line">
                 <p className="font-mono text-xs font-semibold text-accent">01 · CAPTURE</p>
-                <h3 className="mt-3 text-base font-semibold text-ink">Wiki Clipper</h3>
+                <h3 className="mt-2 text-base font-semibold text-ink">Wiki Clipper</h3>
                 <p className="mt-2 text-sm leading-6 text-muted">Moves conversations and web pages from the browser into raw evidence under /Sources.</p>
               </article>
-              <article className="rounded-lg border border-line bg-white p-4">
+              <article className="border-t border-line p-5 sm:border-r sm:border-t-0">
                 <p className="font-mono text-xs font-semibold text-accent">02 · MANAGE</p>
-                <h3 className="mt-3 text-base font-semibold text-ink">Dashboard</h3>
+                <h3 className="mt-2 text-base font-semibold text-ink">Dashboard</h3>
                 <p className="mt-2 text-sm leading-6 text-muted">Shows databases linked to your Internet Identity principal and manages their access.</p>
               </article>
-              <article className="rounded-lg border border-line bg-white p-4">
+              <article className="border-t border-line p-5 sm:border-t-0">
                 <p className="font-mono text-xs font-semibold text-accent">03 · AUTOMATE</p>
-                <h3 className="mt-3 text-base font-semibold text-ink">CLI</h3>
+                <h3 className="mt-2 text-base font-semibold text-ink">CLI</h3>
                 <p className="mt-2 text-sm leading-6 text-muted">Lets agents and scripts search, cite, edit, and maintain stored knowledge.</p>
               </article>
             </div>

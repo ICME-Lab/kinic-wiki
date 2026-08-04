@@ -7,8 +7,11 @@ const docsData = readFileSync(new URL("../app/docs/docs-data.ts", import.meta.ur
 const adminShell = readFileSync(new URL("../components/admin-shell.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../src/routes/docs.clipper.tsx", import.meta.url), "utf8");
 const sitemap = readFileSync(new URL("../app/sitemap.ts", import.meta.url), "utf8");
+const storeUrl = "https://chromewebstore.google.com/detail/kinic-wiki-clipper/moebdnadaffhlddnhifmmdoecifhcbdi";
 
 assert.match(home, /href="\/docs\/clipper"/, "home page must link to the Clipper guide");
+assert.ok(home.includes(storeUrl), "home page must link to the Chrome Web Store listing");
+assert.match(home, /href=\{CLIPPER_STORE_URL\}[\s\S]*Install Wiki Clipper/, "home page must render the Chrome Web Store install call to action");
 assert.match(home, /ChatGPT and Claude conversations or the active web page/, "home page must explain what Clipper captures");
 assert.match(home, /Wiki Clipper[\s\S]*Dashboard[\s\S]*CLI/, "home page must distinguish the three product surfaces");
 
@@ -18,6 +21,9 @@ assert.match(guide, /Dashboard Internet Identity session/, "guide must explain t
 assert.match(guide, /same Internet Identity/, "guide must tell users how to reach the same principal");
 assert.match(guide, /does not have writer access/, "guide must state writer-access failure behavior");
 assert.match(guide, /no destination database is selected/, "guide must state database-selection failure behavior");
+assert.match(guide, /does not have enough write cycles/, "guide must state write-cycles failure behavior");
+assert.ok(guide.includes(storeUrl), "guide must link to the Chrome Web Store listing");
+assert.match(guide, /href=\{CLIPPER_STORE_URL\}[\s\S]*Add to Chrome/, "guide must render the Chrome Web Store install call to action");
 
 assert.match(docsData, /href: "\/docs\/clipper"/, "docs index must list the Clipper guide");
 assert.match(adminShell, /href: "\/docs\/clipper"/, "docs navigation must list the Clipper guide");
