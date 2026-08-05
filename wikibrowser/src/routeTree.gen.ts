@@ -32,6 +32,7 @@ import { Route as SkillsDatabaseIdRouteImport } from './routes/skills.$databaseI
 import { Route as PPublicIdRouteImport } from './routes/p.$publicId'
 import { Route as MarketplaceListingIdRouteImport } from './routes/marketplace.$listingId'
 import { Route as DocsSkillsRouteImport } from './routes/docs.skills'
+import { Route as DocsIosRouteImport } from './routes/docs.ios'
 import { Route as DocsClipperRouteImport } from './routes/docs.clipper'
 import { Route as DocsCliRouteImport } from './routes/docs.cli'
 import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
@@ -163,6 +164,11 @@ const DocsSkillsRoute = DocsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsIosRoute = DocsIosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsClipperRoute = DocsClipperRouteImport.update({
   id: '/clipper',
   path: '/clipper',
@@ -266,6 +272,7 @@ export interface FileRoutesByFullPath {
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
@@ -302,6 +309,7 @@ export interface FileRoutesByTo {
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
@@ -343,6 +351,7 @@ export interface FileRoutesById {
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
@@ -385,6 +394,7 @@ export interface FileRouteTypes {
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
+    | '/docs/ios'
     | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
@@ -421,6 +431,7 @@ export interface FileRouteTypes {
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
+    | '/docs/ios'
     | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
@@ -461,6 +472,7 @@ export interface FileRouteTypes {
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
+    | '/docs/ios'
     | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
@@ -669,6 +681,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsSkillsRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/ios': {
+      id: '/docs/ios'
+      path: '/ios'
+      fullPath: '/docs/ios'
+      preLoaderRoute: typeof DocsIosRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/clipper': {
       id: '/docs/clipper'
       path: '/clipper'
@@ -807,6 +826,7 @@ interface DocsRouteChildren {
   DocsCanisterApiRoute: typeof DocsCanisterApiRoute
   DocsCliRoute: typeof DocsCliRoute
   DocsClipperRoute: typeof DocsClipperRoute
+  DocsIosRoute: typeof DocsIosRoute
   DocsSkillsRoute: typeof DocsSkillsRouteWithChildren
   DocsIndexRoute: typeof DocsIndexRoute
 }
@@ -815,6 +835,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsCanisterApiRoute: DocsCanisterApiRoute,
   DocsCliRoute: DocsCliRoute,
   DocsClipperRoute: DocsClipperRoute,
+  DocsIosRoute: DocsIosRoute,
   DocsSkillsRoute: DocsSkillsRouteWithChildren,
   DocsIndexRoute: DocsIndexRoute,
 }

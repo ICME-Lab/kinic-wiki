@@ -19,6 +19,11 @@ export type SkillDoc = DocsLink & {
 
 export const primaryDocs: DocsLink[] = [
   {
+    href: "/docs/ios",
+    title: "iOS App",
+    description: "Install KinicWiki, sign in, save Safari pages, browse your database, and ask questions with cited source notes."
+  },
+  {
     href: "/docs/clipper",
     title: "Wiki Clipper",
     description: "Save ChatGPT and Claude conversations or active web pages under /Sources, then open the same database from the Dashboard."

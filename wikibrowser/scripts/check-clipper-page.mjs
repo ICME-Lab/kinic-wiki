@@ -11,9 +11,11 @@ const storeUrl = "https://chromewebstore.google.com/detail/kinic-wiki-clipper/mo
 
 assert.match(home, /href="\/docs\/clipper"/, "home page must link to the Clipper guide");
 assert.ok(home.includes(storeUrl), "home page must link to the Chrome Web Store listing");
-assert.match(home, /href=\{CLIPPER_STORE_URL\}[\s\S]*Install Wiki Clipper/, "home page must render the Chrome Web Store install call to action");
-assert.match(home, /ChatGPT and Claude conversations or the active web page/, "home page must explain what Clipper captures");
-assert.match(home, /Wiki Clipper[\s\S]*Dashboard[\s\S]*CLI/, "home page must distinguish the three product surfaces");
+assert.match(home, /href=\{CLIPPER_STORE_URL\}[\s\S]*Install Clipper/, "home page must render the Chrome Web Store install call to action");
+assert.match(home, /selected ChatGPT and Claude conversations or the active page/, "home page must explain what Clipper captures");
+for (const surface of ["Wiki Clipper", "Dashboard", "Kinic VFS CLI"]) {
+  assert.ok(home.includes(surface), `home page must distinguish the ${surface} surface`);
+}
 
 assert.match(guide, /ChatGPT or Claude session/, "guide must explain the provider session");
 assert.match(guide, /Clipper Internet Identity session/, "guide must explain the Clipper write session");
