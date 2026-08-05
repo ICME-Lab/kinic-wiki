@@ -32,9 +32,6 @@ enum AskAIResponseDecoder {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         if answer.isEmpty {
-            guard rawSources.isEmpty else {
-                throw AskAIResponseError.emptyAnswer
-            }
             return .insufficient
         }
         guard !rawSources.isEmpty,
@@ -50,7 +47,6 @@ enum AskAIResponseDecoder {
 enum AskAIResponseError: Error, LocalizedError, Equatable {
     case invalidFormat
     case invalidSources
-    case emptyAnswer
 
     var errorDescription: String? {
         switch self {
@@ -58,8 +54,6 @@ enum AskAIResponseError: Error, LocalizedError, Equatable {
             "Kinic AI returned an invalid answer format."
         case .invalidSources:
             "Kinic AI referenced evidence that was not provided."
-        case .emptyAnswer:
-            "Kinic AI returned sources without an answer."
         }
     }
 }

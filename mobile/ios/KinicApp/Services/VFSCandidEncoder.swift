@@ -47,6 +47,42 @@ enum VFSCandidEncoder {
         textArgs([databaseId, path])
     }
 
+    static func publishNode(databaseId: String, path: String) -> Data {
+        oneRecord(
+            tableEntries: [
+                record([
+                    field("path", primitive(typeText)),
+                    field("database_id", primitive(typeText))
+                ])
+            ],
+            argType: table(0),
+            namedValues: [
+                ("path", .text(path)),
+                ("database_id", .text(databaseId))
+            ]
+        )
+    }
+
+    static func deleteNode(databaseId: String, path: String, expectedEtag: String?) -> Data {
+        let optionalText = opt(primitive(typeText))
+        let request = record([
+            field("path", primitive(typeText)),
+            field("expected_etag", table(0)),
+            field("database_id", primitive(typeText)),
+            field("expected_folder_index_etag", table(0))
+        ])
+        return oneRecord(
+            tableEntries: [optionalText, request],
+            argType: table(1),
+            namedValues: [
+                ("path", .text(path)),
+                ("expected_etag", expectedEtag.map { .some(.text($0)) } ?? .none),
+                ("database_id", .text(databaseId)),
+                ("expected_folder_index_etag", .none)
+            ]
+        )
+    }
+
     static func queryDatabaseSQLJSON(databaseId: String, sql: String, limit: UInt32) -> Data {
         var data = magic
         appendUnsigned(0, to: &data)

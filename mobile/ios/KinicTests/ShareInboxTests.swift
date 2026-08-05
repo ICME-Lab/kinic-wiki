@@ -3,6 +3,7 @@
 // Why: Manual URL entry and Share Extension captures must feed the same app inbox.
 
 import Foundation
+import ICNativeClient
 import Testing
 @testable import Kinic
 
@@ -813,6 +814,133 @@ struct ShareInboxTests {
         #expect(model.loadedBrowsePath == nil)
     }
 
+    @MainActor
+    @Test
+    func deleteAccountClearsLocalAccountDataOnlyAfterRemoteSuccess() async throws {
+        let suiteName = "kinic.account-deletion.success.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        let historyDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+            removeQueueDirectory(historyDirectory)
+        }
+        let inbox = try ShareInbox(testQueueDirectory: inboxDirectory)
+        try inbox.enqueue(URL(string: "https://example.com/private")!)
+        let historyStore = try SourceCaptureHistoryStore(testHistoryDirectory: historyDirectory)
+        let historyMarker = historyDirectory.appending(path: "account-history.json")
+        try Data("private".utf8).write(to: historyMarker)
+        let settings = SharedDefaultsStore(defaults: defaults)
+        settings.databaseId = "db_private"
+        settings.isDarkAppearanceEnabled = true
+        settings.wikiOutputLanguage = .japanese
+        settings.showPublicBrowseDatabases = false
+        let probe = AccountDeletionProbe()
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: inbox,
+            settingsStore: settings,
+            sourceCaptureHistoryStore: historyStore,
+            deleteAccountRemotely: { session in
+                await probe.recordRemote(principal: session.principal)
+            },
+            deleteAskAIHistory: { scope in
+                await probe.recordHistory(scope: scope)
+            },
+            initialSession: accountDeletionSession()
+        )
+
+        let deleted = await model.deleteAccount()
+
+        #expect(deleted)
+        #expect(!model.isSignedIn)
+        #expect(model.accountDeletionError == nil)
+        #expect(inbox.loadPendingURLs().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: historyMarker.path()))
+        #expect(settings.databaseId.isEmpty)
+        #expect(settings.isDarkAppearanceEnabled)
+        #expect(settings.wikiOutputLanguage == .japanese)
+        #expect(await probe.remotePrincipals() == ["aaaaa-aa"])
+        #expect(await probe.historyScopes() == [AskAIHistoryScope(principal: "aaaaa-aa")])
+    }
+
+    @MainActor
+    @Test
+    func deleteAccountKeepsSessionAndLocalDataWhenRemoteDeletionFails() async throws {
+        let suiteName = "kinic.account-deletion.failure.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let inbox = try ShareInbox(testQueueDirectory: inboxDirectory)
+        try inbox.enqueue(URL(string: "https://example.com/private")!)
+        let settings = SharedDefaultsStore(defaults: defaults)
+        settings.showPublicBrowseDatabases = false
+        let probe = AccountDeletionProbe()
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: inbox,
+            settingsStore: settings,
+            deleteAccountRemotely: { _ in
+                throw AccountDeletionTestError.remoteFailed
+            },
+            deleteAskAIHistory: { scope in
+                await probe.recordHistory(scope: scope)
+            },
+            initialSession: accountDeletionSession()
+        )
+
+        let deleted = await model.deleteAccount()
+
+        #expect(!deleted)
+        #expect(model.isSignedIn)
+        #expect(model.accountDeletionError != nil)
+        #expect(inbox.loadPendingURLs().count == 1)
+        #expect(await probe.historyScopes().isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func deleteAccountRejectsASecondExecutionWhileDeletionIsRunning() async throws {
+        let suiteName = "kinic.account-deletion.duplicate.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let probe = AccountDeletionProbe()
+        let model = AppModel(
+            configuration: .preview,
+            authService: KinicAuthService(configuration: .preview),
+            client: KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: SharedDefaultsStore(defaults: defaults),
+            deleteAccountRemotely: { session in
+                await probe.recordRemote(principal: session.principal)
+            },
+            deleteAskAIHistory: { _ in },
+            initialSession: accountDeletionSession()
+        )
+        model.isDeletingAccount = true
+
+        let deleted = await model.deleteAccount()
+
+        #expect(!deleted)
+        #expect(model.isSignedIn)
+        #expect(await probe.remotePrincipals().isEmpty)
+    }
+
     @Test
     func validatesDatabaseNames() {
         #expect(AppModel.databaseNameError("Team skills") == nil)
@@ -1141,6 +1269,44 @@ private func removeQueueDirectory(_ url: URL) {
 private func writeJSON<T: Encodable>(_ value: T, to fileURL: URL) throws {
     let data = try JSONEncoder().encode(value)
     try data.write(to: fileURL)
+}
+
+private func accountDeletionSession() -> ICAuthSession {
+    ICAuthSession(
+        principal: "aaaaa-aa",
+        canisterId: AppConfiguration.preview.canisterId,
+        identityProvider: AppConfiguration.preview.identityProvider.absoluteString,
+        derivationOrigin: AppConfiguration.preview.derivationOrigin,
+        sessionPublicKey: Data(),
+        sessionPrivateKey: Data(),
+        delegation: ICDelegationChain(publicKey: Data(), delegations: []),
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+}
+
+private actor AccountDeletionProbe {
+    private var principals: [String] = []
+    private var scopes: [AskAIHistoryScope] = []
+
+    func recordRemote(principal: String) {
+        principals.append(principal)
+    }
+
+    func recordHistory(scope: AskAIHistoryScope) {
+        scopes.append(scope)
+    }
+
+    func remotePrincipals() -> [String] {
+        principals
+    }
+
+    func historyScopes() -> [AskAIHistoryScope] {
+        scopes
+    }
+}
+
+private enum AccountDeletionTestError: Error {
+    case remoteFailed
 }
 
 private enum ShareInboxTestError: Error {

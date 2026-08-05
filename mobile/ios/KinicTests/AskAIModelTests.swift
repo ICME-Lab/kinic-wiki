@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicTests/AskAIModelTests.swift
-// What: End-to-end two-stage Ask AI state, call-order, fallback, and persistence tests.
-// Why: Query generation is mandatory and no model text may be shown before final validation.
+// What: End-to-end conversational routing, grounded search, call-order, and persistence tests.
+// Why: Direct answers must bypass retrieval while database answers remain source-validated.
 
 import Foundation
 import Testing
@@ -66,7 +66,7 @@ struct AskAIModelTests {
         let source = contextSource()
         let knowledge = AskAIKnowledgeProviderStub(sources: [source])
         let client = AskAICompletionStub(responses: [
-            .value("<answer>\nx402 paid api route\nx402 有料 api ルート\n</answer>"),
+            .value("<mode>search</mode><answer>\nx402 paid api route\nx402 有料 api ルート\n</answer>"),
             .value("<sources>S1</sources><answer>Grounded answer.</answer>")
         ])
         let store = AskAIStoreStub()
@@ -79,18 +79,102 @@ struct AskAIModelTests {
 
         #expect(await client.callCount == 2)
         let messages = await client.messages
-        #expect(messages[0].contains("SEARCH QUERY REWRITER"))
+        #expect(messages[0].contains("REQUEST ROUTER AND CONVERSATIONAL RESPONDER"))
         #expect(messages[1].contains("DATABASE SOURCES"))
         #expect(knowledge.receivedDatabaseIds == ["db_test"])
         #expect(knowledge.receivedPlans.first?.queries.map(\.text) == [
-            "x402 paid api route", "x402 有料 api ルート"
+            "x402 paid api route", "x402 有料 api ルート", "x402", "x402 api"
         ])
         #expect(model.messages.last?.state == .complete)
         #expect(model.messages.last?.text == "Grounded answer.")
         #expect(model.messages.last?.sources == [source.source])
-        #expect(model.messages.last?.trace.first?.title == "Generated search queries")
-        #expect(model.messages.last?.trace.first?.detail == "x402 paid api route\nx402 有料 api ルート")
+        #expect(model.messages.last?.trace.first?.title == "Searched with 4 queries")
+        #expect(model.messages.last?.trace.first?.detail == "x402 paid api route\nx402 有料 api ルート\nx402\nx402 api")
+        #expect(model.messages.last?.trace[1].title == "Found 1 candidate note")
+        #expect(model.messages.last?.trace[2].title == "Verified 1 matching note")
+        #expect(model.messages.last?.trace[3].title == "Used 1 note for answer")
         try await waitForSavedMessage(store, state: .complete)
+    }
+
+    @Test
+    func translationUsesRecentConversationWithoutRetrieval() async throws {
+        let prior = AskAIConversation(
+            databaseId: "db_test",
+            databaseTitle: "Test DB",
+            messages: [
+                AskAIMessage(role: .user, text: "Write a greeting"),
+                AskAIMessage(role: .assistant, text: "Hello, welcome back.")
+            ]
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>conversation</mode><answer>こんにちは、おかえりなさい。</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: client,
+            store: AskAIStoreStub(savedConversations: [prior])
+        )
+        await model.load()
+
+        model.draft = "日本語にして"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.state == .complete)
+        #expect(model.messages.last?.text == "こんにちは、おかえりなさい。")
+        #expect(model.messages.last?.sources.isEmpty == true)
+        #expect(model.messages.last?.trace.isEmpty == true)
+        let prompt = await client.messages.first
+        #expect(prompt?.contains("ASSISTANT: Hello, welcome back.") == true)
+        #expect(prompt?.contains("If the requested content is missing for a transformation, ask the user for it") == true)
+    }
+
+    @Test
+    func translationSearchRouteRetriesAsConversation() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>design foundation</answer>"),
+            .value("<mode>conversation</mode><answer>design foundation</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "次を英語にして: デザインの土台"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.text == "design foundation")
+        let prompts = await client.messages
+        #expect(prompts[1].contains("MUST use <mode>conversation</mode>"))
+    }
+
+    @Test
+    func missingDatabaseSelectionDoesNotCreateConversationOrAllowSending() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        knowledge.selectedAskAIDatabaseId = ""
+        knowledge.selectedAskAIDatabaseTitle = ""
+        knowledge.canAskAI = false
+        let client = AskAICompletionStub(responses: [])
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: client,
+            store: AskAIStoreStub()
+        )
+        await model.load()
+
+        #expect(model.currentConversation == nil)
+        model.draft = "What decision did I record?"
+        #expect(!model.canSend)
+        model.send()
+
+        #expect(await client.callCount == 0)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.isEmpty)
     }
 
     @Test
@@ -100,7 +184,7 @@ struct AskAIModelTests {
             count: AskAIModel.maximumQuestionCharacters
         )
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .value("<sources>S1</sources><answer>Grounded answer.</answer>")
         ])
         let model = AskAIModel(
@@ -126,9 +210,12 @@ struct AskAIModelTests {
     }
 
     @Test
-    func zeroSearchResultsCallOnlyQueryPlannerAndBecomeInsufficient() async throws {
+    func zeroSearchResultsRetryOnceAndBecomeInsufficient() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [])
-        let client = AskAICompletionStub(responses: [.value("<answer>unknown topic</answer>")])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>unknown topic</answer>"),
+            .value("<answer>different unknown\nunknown subject\nmissing subject</answer>")
+        ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
 
@@ -136,16 +223,173 @@ struct AskAIModelTests {
         model.send()
         try await waitUntilFinished(model)
 
-        #expect(await client.callCount == 1)
-        #expect(knowledge.retrievalCallCount == 1)
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 2)
         #expect(model.messages.last?.state == .insufficient)
-        #expect(model.messages.last?.trace.contains { $0.title == "Found 0 matching notes" } == true)
+        #expect(model.messages.last?.trace.contains { $0.title == "Retried search with 6 queries" } == true)
+        #expect(model.messages.last?.trace.contains { $0.title == "Found 0 candidate matches across 2 searches" } == true)
+        #expect(model.messages.last?.trace.contains { $0.title == "Verified 0 matching notes" } == true)
     }
 
     @Test
-    func invalidQueryPlanFailsWithoutSearchOrAnswerFallback() async throws {
+    func zeroVerifiedSourcesRetryWithNewPlanAndThenAnswer() async throws {
+        let source = contextSource()
+        let knowledge = AskAIKnowledgeProviderStub(retrievalResults: [
+            AskAIRetrievalResult(searchQueries: ["デザインツール 日本語"], candidateCount: 1, sources: []),
+            AskAIRetrievalResult(searchQueries: ["pre-design-md 日本語"], candidateCount: 1, sources: [source])
+        ])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>デザインツール 日本語</answer>"),
+            .value("<answer>pre-design-md 日本語\npre-design-md 対応\npre-design-md</answer>"),
+            .value("<sources>S1</sources><answer>日本語に対応しています。</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "例のデザインツールは日本語対応？"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 3)
+        #expect(knowledge.retrievalCallCount == 2)
+        #expect(knowledge.receivedPlans.last?.queries.map(\.text) == [
+            "pre-design-md 日本語", "pre-design-md 対応", "pre-design-md"
+        ])
+        #expect(model.messages.last?.state == .complete)
+        #expect(model.messages.last?.text == "日本語に対応しています。")
+        #expect(model.messages.last?.trace.first?.title == "Retried search with 2 queries")
+        #expect(model.messages.last?.trace.first?.detail == "デザインツール 日本語\npre-design-md 日本語")
+    }
+
+    @Test
+    func broadCandidateWithoutSupportingEvidenceRemainsInsufficient() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(
+            sources: [contextSource()],
+            candidateCount: 4
+        )
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>貴金属 鞘\n貴金属 エッジ\n貴金属</answer>"),
+            .value("<sources></sources><answer></answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "貴金属の鞘について教えて"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(model.messages.last?.state == .insufficient)
+        #expect(model.messages.last?.sources == [contextSource().source])
+        #expect(model.messages.last?.trace.contains { $0.title == "Found 4 candidate notes" } == true)
+        #expect(model.messages.last?.trace.contains { $0.title == "Verified 1 matching note" } == true)
+        #expect(model.messages.last?.trace.contains { $0.title == "Used 1 note for answer" } == true)
+    }
+
+    @Test
+    func unsupportedPersonalIdentityStopsBeforeAnswerGeneration() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
-        let client = AskAICompletionStub(responses: [.value("Here is a query")])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>pre-design-md 本名 勤務先</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "この記事から分かる俺の本名と勤務先を教えて。"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .insufficient)
+        #expect(model.messages.last?.sources == [contextSource().source])
+    }
+
+    @Test
+    func databaseBackedSummaryUsesSearchWithoutRouteRepair() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>DB ノート 要約\n保存 ノート 内容\nノート</answer>"),
+            .value("<sources>S1</sources><answer>ノートの要約です。</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "このDBのノートを要約して"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .complete)
+        #expect(model.messages.last?.text == "ノートの要約です。")
+    }
+
+    @Test
+    func identityEvidenceSplitAcrossSentencesStopsBeforeAnswerGeneration() async throws {
+        let splitSource = AskAIContextSource(
+            source: AskAISource(
+                id: "S1",
+                path: "/Knowledge/profile.md",
+                excerpt: "Owner and developer",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "The database owner is Alice. Bob is the developer."
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [splitSource])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>database owner developer\nowner developer\ndeveloper</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Am I the developer?"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .insufficient)
+        #expect(model.messages.last?.sources == [splitSource.source])
+    }
+
+    @Test
+    func explicitPersonalIdentityEvidenceMayReachAnswerGeneration() async throws {
+        let explicitSource = AskAIContextSource(
+            source: AskAISource(
+                id: "S1",
+                path: "/Knowledge/profile.md",
+                excerpt: "DB owner profile",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "DB所有者の本名はKinic Taroで、勤務先はExample社。"
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [explicitSource])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>db所有者 本名 勤務先</answer>"),
+            .value("<sources>S1</sources><answer>本名はKinic Taro、勤務先はExample社です。</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "俺の本名と勤務先を教えて。"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(model.messages.last?.state == .complete)
+        #expect(model.messages.last?.text.contains("Kinic Taro") == true)
+    }
+
+    @Test
+    func invalidRouterResponseRetriesOnceAndThenFails() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("Here is a query"),
+            .value("Still not a valid route")
+        ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
 
@@ -153,17 +397,99 @@ struct AskAIModelTests {
         model.send()
         try await waitUntilFinished(model)
 
-        #expect(await client.callCount == 1)
+        #expect(await client.callCount == 2)
         #expect(knowledge.retrievalCallCount == 0)
         #expect(model.messages.last?.state == .failed)
-        #expect(model.errorMessage == AskAIQueryPlanError.invalidFormat.localizedDescription)
+        #expect(model.errorMessage == AskAIRouteError.invalidFormat.localizedDescription)
+    }
+
+    @Test
+    func invalidRouterResponseRetriesOnceAndRecovers() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("Here is a query"),
+            .value("<mode>conversation</mode><answer>こんにちは。</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "こんにちは"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.state == .complete)
+        #expect(model.messages.last?.text == "こんにちは。")
+        let prompts = await client.messages
+        #expect(prompts[1].contains("CORRECTION: Your previous response was invalid or violated REQUIRED MODE"))
+    }
+
+    @Test
+    func factualFollowupConversationRouteRetriesAsSearch() async throws {
+        let prior = AskAIConversation(
+            databaseId: "db_test",
+            databaseTitle: "Test DB",
+            messages: [
+                AskAIMessage(role: .user, text: "pre-design-mdについて教えて"),
+                AskAIMessage(role: .assistant, text: "デザインの土台を決めるツールです。")
+            ]
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>conversation</mode><answer>日本語対応です。</answer>"),
+            .value("<mode>search</mode><answer>デザインツール 日本語\nデザインツール 対応\nデザインツール</answer>"),
+            .value("<sources>S1</sources><answer>日本語に対応しています。</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: client,
+            store: AskAIStoreStub(savedConversations: [prior])
+        )
+        await model.load()
+
+        model.draft = "例のツールって日本語でも使える？"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 3)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(knowledge.receivedPlans.first?.queries.last?.text == "pre-design-md")
+        #expect(model.messages.last?.text == "日本語に対応しています。")
+        let prompts = await client.messages
+        #expect(prompts[1].contains("MUST use <mode>search</mode>"))
+    }
+
+    @Test
+    func databaseChangeDuringRouterRepairStopsBeforeRetrieval() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
+        let client = AskAICompletionStub(responses: [
+            .value("Here is a query"),
+            .delayed(
+                "<mode>search</mode><answer>wrong database topic</answer>",
+                .milliseconds(80)
+            )
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Question"
+        model.send()
+        try await waitForCallCount(client, count: 2)
+        knowledge.selectedAskAIDatabaseId = "db_other"
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.state == .failed)
+        #expect(model.messages.last?.text == "Generation stopped.")
     }
 
     @Test
     func unknownAnswerSourceFailsAfterTwoCallsWithoutShowingText() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .value("<sources>S9</sources><answer>Unsupported</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
@@ -194,7 +520,7 @@ struct AskAIModelTests {
             )
         }
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .value("<sources>S2</sources><answer>Excluded source</answer>")
         ])
         let model = AskAIModel(
@@ -219,7 +545,7 @@ struct AskAIModelTests {
     @Test
     func answerContentIsNotDisplayedWhileSecondCompletionIsPending() async throws {
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .delayed("<sources>S1</sources><answer>Final only</answer>", .milliseconds(80))
         ])
         let model = AskAIModel(
@@ -244,10 +570,10 @@ struct AskAIModelTests {
     }
 
     @Test
-    func databaseChangeDuringQueryGenerationStopsBeforeRetrieval() async throws {
+    func databaseChangeDuringRoutingStopsBeforeRetrieval() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>question</answer>", .milliseconds(80)),
+            .delayed("<mode>search</mode><answer>question</answer>", .milliseconds(80)),
             .value("<sources>S1</sources><answer>Wrong database answer.</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
@@ -267,10 +593,36 @@ struct AskAIModelTests {
     }
 
     @Test
+    func databaseChangeDuringSearchRecoveryStopsBeforeSecondRetrieval() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>unknown topic</answer>"),
+            .delayed(
+                "<answer>different unknown\nunknown subject\nmissing subject</answer>",
+                .milliseconds(80)
+            )
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Unknown topic"
+        model.send()
+        try await waitForCallCount(client, count: 2)
+        knowledge.selectedAskAIDatabaseId = "db_other"
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 2)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .failed)
+        #expect(model.messages.last?.text == "Generation stopped.")
+        #expect(model.messages.last?.sources.isEmpty == true)
+    }
+
+    @Test
     func databaseChangeDuringAnswerGenerationDiscardsCompletedResponse() async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .delayed("<sources>S1</sources><answer>Wrong database answer.</answer>", .milliseconds(80))
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
@@ -314,7 +666,7 @@ struct AskAIModelTests {
     }
 
     @Test
-    func recentHistoryIsSentToQueryPlannerForReferenceResolution() async throws {
+    func recentHistoryIsSentToRouterForReferenceResolution() async throws {
         let prior = AskAIConversation(
             databaseId: "db_test",
             databaseTitle: "Test DB",
@@ -324,7 +676,10 @@ struct AskAIModelTests {
             ]
         )
         let store = AskAIStoreStub(savedConversations: [prior])
-        let client = AskAICompletionStub(responses: [.value("<answer>ic-hono compatibility</answer>")])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>ic-hono compatibility</answer>"),
+            .value("<answer>ic-hono support\nic-hono workers\nic-hono runtime</answer>")
+        ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
             client: client,
@@ -364,7 +719,7 @@ struct AskAIModelTests {
             ]
         )
         let client = AskAICompletionStub(responses: [
-            .value("<answer>question</answer>"),
+            .value("<mode>search</mode><answer>question</answer>"),
             .value("<sources>S1</sources><answer>Grounded answer.</answer>")
         ])
         let model = AskAIModel(
@@ -394,8 +749,8 @@ struct AskAIModelTests {
     }
 
     @Test
-    func overallTimeoutCancelsQueryGenerationAndPersistsFailure() async throws {
-        let client = AskAICompletionStub(responses: [.delayed("<answer>late</answer>", .seconds(60))])
+    func overallTimeoutCancelsRoutingAndPersistsFailure() async throws {
+        let client = AskAICompletionStub(responses: [.delayed("<mode>search</mode><answer>late</answer>", .seconds(60))])
         let store = AskAIStoreStub()
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -540,7 +895,7 @@ struct AskAIModelTests {
     @Test
     func deletingActiveConversationDuringGenerationDoesNotReinsertIt() async throws {
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let store = AskAIStoreStub()
         let model = AskAIModel(
@@ -567,7 +922,7 @@ struct AskAIModelTests {
     func deleteAllWaitsForAnEarlierSaveBeforeDeletingStoredData() async throws {
         let store = AskAIControllableStoreStub(suspendsSave: true)
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -597,7 +952,7 @@ struct AskAIModelTests {
         let storeA = AskAIStoreStub()
         let storeB = AskAIStoreStub()
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -722,7 +1077,7 @@ struct AskAIModelTests {
         let scopeB = AskAIHistoryScope(principal: "bbbbb-bb")
         let staleStoreA = AskAIControllableStoreStub(suspendsSave: true)
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -755,7 +1110,7 @@ struct AskAIModelTests {
         let currentConversation = AskAIConversation(databaseId: "db_test", databaseTitle: "Current A")
         let currentStoreA = AskAIStoreStub(savedConversations: [currentConversation])
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -791,7 +1146,7 @@ struct AskAIModelTests {
         let firstStoreA = AskAISharedStoreHandle(backing: backingA)
         let reenteredStoreA = AskAISharedStoreHandle(backing: backingA)
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -824,7 +1179,7 @@ struct AskAIModelTests {
         let backing = AskAISharedStoreBacking(suspendsNextSave: true)
         let store = AskAISharedStoreHandle(backing: backing)
         let client = AskAICompletionStub(responses: [
-            .delayed("<answer>late query</answer>", .seconds(60))
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
         ])
         let model = AskAIModel(
             knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
@@ -983,14 +1338,24 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var canAskAI = true
     var askAIDatabaseCandidates: [DatabaseSummary] = []
     let sources: [AskAIContextSource]
+    let candidateCount: Int
+    let retrievalResults: [AskAIRetrievalResult]?
     private(set) var retrievalCallCount = 0
     private(set) var receivedDatabaseIds: [String] = []
     private(set) var receivedPlans: [AskAIQueryPlan] = []
     private(set) var openedDatabaseIds: [String] = []
     private(set) var openedPaths: [String] = []
 
-    init(sources: [AskAIContextSource]) {
+    init(sources: [AskAIContextSource], candidateCount: Int? = nil) {
         self.sources = sources
+        self.candidateCount = candidateCount ?? sources.count
+        retrievalResults = nil
+    }
+
+    init(retrievalResults: [AskAIRetrievalResult]) {
+        sources = []
+        candidateCount = 0
+        self.retrievalResults = retrievalResults
     }
 
     func selectAskAIDatabase(_ databaseId: String) {
@@ -998,10 +1363,18 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     }
 
     func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
+        let resultIndex = retrievalCallCount
         retrievalCallCount += 1
         receivedDatabaseIds.append(databaseId)
         receivedPlans.append(queryPlan)
-        return AskAIRetrievalResult(searchQueries: queryPlan.queries.map(\.text), sources: sources)
+        if let retrievalResults, retrievalResults.indices.contains(resultIndex) {
+            return retrievalResults[resultIndex]
+        }
+        return AskAIRetrievalResult(
+            searchQueries: queryPlan.queries.map(\.text),
+            candidateCount: candidateCount,
+            sources: sources
+        )
     }
 
     func openAskAISource(databaseId: String, path: String) {

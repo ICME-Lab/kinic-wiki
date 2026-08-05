@@ -599,6 +599,24 @@ impl VfsService {
         caller: &str,
         _now: i64,
     ) -> Result<(), String> {
+        self.delete_database_with_retention(request, caller, false)
+    }
+
+    pub(crate) fn delete_database_preserving_transaction_records(
+        &self,
+        request: DeleteDatabaseRequest,
+        caller: &str,
+        _now: i64,
+    ) -> Result<(), String> {
+        self.delete_database_with_retention(request, caller, true)
+    }
+
+    fn delete_database_with_retention(
+        &self,
+        request: DeleteDatabaseRequest,
+        caller: &str,
+        preserve_transaction_records: bool,
+    ) -> Result<(), String> {
         let database_id = request.database_id.as_str();
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_no_pending_cycles_operations(database_id)?;
@@ -620,7 +638,11 @@ impl VfsService {
             return Err(error.to_string());
         }
         self.write_index(|conn| {
-            delete_database_index_rows(conn, database_id)?;
+            if preserve_transaction_records {
+                delete_database_index_rows_preserving_transaction_records(conn, database_id)?;
+            } else {
+                delete_database_index_rows(conn, database_id)?;
+            }
             Ok(())
         })
     }
@@ -802,6 +824,29 @@ pub(crate) fn delete_database_index_rows(
     for table in [
         "database_cycle_pending_operations",
         "database_cycle_ledger",
+        "database_cycle_accounts",
+        "market_entitlements",
+        "market_listings",
+        "node_publications",
+        "database_members",
+        "source_capture_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
+        "databases",
+    ] {
+        let sql = format!("DELETE FROM {table} WHERE database_id = ?1");
+        conn.execute(&sql, params![database_id])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn delete_database_index_rows_preserving_transaction_records(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<(), String> {
+    for table in [
+        "database_cycle_pending_operations",
         "database_cycle_accounts",
         "market_entitlements",
         "market_listings",

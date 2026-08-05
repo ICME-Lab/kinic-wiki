@@ -108,11 +108,38 @@ test("generateDraft calls DeepSeek chat completions", async () => {
     assert.ok(requestInit?.signal instanceof AbortSignal);
     assert.ok(isRecord(requestBody));
     assert.equal(requestBody.model, "deepseek-v4-flash");
+    assert.deepEqual(requestBody.thinking, { type: "disabled" });
     assert.deepEqual(requestBody.response_format, { type: "json_object" });
     assert.match(JSON.stringify(requestBody.messages), /pattern/);
     assert.match(JSON.stringify(requestBody.messages), /non-empty single-line strings/);
     assert.match(JSON.stringify(requestBody.messages), /all generated prose in Japanese/);
     assert.equal(draft.slug, "project-notes");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateDraft preserves long sources up to the configured raw character limit", async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies: Record<string, unknown>[] = [];
+  globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    requestBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    return Response.json({ choices: [{ message: { content: draftJson } }] });
+  };
+  try {
+    const longCode = `def main():\n${"    await work()\n".repeat(2_100)}`;
+    await generateDraft({ ...source(), content: longCode }, [], config(), "deepseek-key");
+    await generateDraft({ ...source(), content: "x".repeat(120_001) }, [], config(), "deepseek-key");
+
+    const firstMessages = requestBodies[0]?.messages;
+    const secondMessages = requestBodies[1]?.messages;
+    assert.ok(Array.isArray(firstMessages) && Array.isArray(secondMessages));
+    const firstUser = firstMessages.find((message) => isRecord(message) && message.role === "user");
+    const secondUser = secondMessages.find((message) => isRecord(message) && message.role === "user");
+    assert.ok(isRecord(firstUser) && typeof firstUser.content === "string");
+    assert.ok(isRecord(secondUser) && typeof secondUser.content === "string");
+    assert.equal((JSON.parse(firstUser.content) as { raw_content: string }).raw_content, longCode);
+    assert.equal((JSON.parse(secondUser.content) as { raw_content: string }).raw_content.length, 120_000);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -152,6 +179,30 @@ test("past and invalid Retry-After values fall back to jitter", async () => {
 
   assert.ok(past instanceof DeepSeekRequestError && past.retryAfterSeconds === undefined);
   assert.ok(invalid instanceof DeepSeekRequestError && invalid.retryAfterSeconds === undefined);
+});
+
+test("DeepSeek failure diagnostics include sizes without request content or secrets", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  globalThis.fetch = async (): Promise<Response> => new Response("overloaded", { status: 503, statusText: "Service Unavailable" });
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    await assert.rejects(generateDraft({ ...source(), content: "private-source-marker" }, [], config(), "private-api-key"), DeepSeekRequestError);
+
+    assert.equal(warnings.length, 1);
+    const diagnostic = JSON.parse(warnings[0] ?? "{}") as Record<string, unknown>;
+    assert.equal(diagnostic.event, "deepseek_request_failed");
+    assert.equal(diagnostic.status, 503);
+    assert.equal(diagnostic.model, "deepseek-v4-flash");
+    assert.equal(typeof diagnostic.inputCharacters, "number");
+    assert.equal(typeof diagnostic.requestBytes, "number");
+    assert.equal(diagnostic.retryable, true);
+    assert.doesNotMatch(warnings[0] ?? "", /private-source-marker|private-api-key|overloaded/);
+  } finally {
+    console.warn = originalWarn;
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("DeepSeek responses larger than 256 KiB are rejected before JSON parsing", async () => {

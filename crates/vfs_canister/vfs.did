@@ -684,6 +684,7 @@ service : (CyclesBillingConfig) -> {
     ) -> (Result_1) query;
   check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_1) query;
   create_database : (CreateDatabaseRequest) -> (Result_4);
+  delete_account : () -> (Result_1);
   delete_database : (DatabaseIdRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_5);
   edit_node : (EditNodeRequest) -> (Result_6);

@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: July 27, 2026
-Effective Date: July 27, 2026
+Last Updated: August 5, 2026
+Effective Date: August 5, 2026
 
 ## 1. Who we are
 
@@ -62,7 +62,8 @@ No system can be guaranteed completely secure. Users should not store secrets su
 
 - **Canister content:** Content remains in canister state until the user deletes the item or database through an available Service interface. Deletion removes the content from accessible application state. Because the Internet Computer uses replicated state and blockchain-based infrastructure, deletion may not immediately erase every underlying historical or physical copy.
 - **Authentication and access information:** Membership and role records remain while needed to provide database access and are removed when the applicable access or database is deleted, subject to replicated-state limitations.
-- **Cycles and transactions:** Service-side operational records are retained as needed to maintain balances, prevent duplicate settlement, resolve transactions, and satisfy legal obligations. Records written to a public ledger cannot be deleted by Kinic.
+- **Account deletion:** A signed-in user can initiate account deletion from Settings in the iOS app. Databases for which the user is the only owner are deleted. If another owner remains, the database remains and the deleting user's membership is removed. The user's other database memberships, purchased-database access, active marketplace listings, and temporary service sessions are also removed. Internet Identity is a separate service and is not deleted by this action.
+- **Cycles and transactions:** Service-side operational records are retained as needed to maintain balances, prevent duplicate settlement, resolve transactions, and satisfy legal obligations. This includes the record that an initial free database grant was used, so deleting and recreating Kinic access does not issue another grant. Records written to a public ledger cannot be deleted by Kinic.
 - **Ask AI request data:** Questions, recent-message context, and note excerpts exist only while the request is processed and are then discarded. They are not retained server-side.
 - **iOS conversation history:** Ask AI conversations remain on the device until the user deletes them in the app or removes the app and its local data.
 
@@ -85,7 +86,7 @@ Internet Computer nodes and necessary service infrastructure may operate in mult
 
 Depending on the user's location, the user may have rights to access, correct, export, delete, restrict, or object to processing of information associated with the user.
 
-Users can manage or delete knowledge-base content and database access through available Service interfaces. Ask AI conversation history can be deleted from the iOS app. Some public-ledger records and underlying replicated-state history cannot be altered or deleted by Kinic.
+Users can manage or delete knowledge-base content and database access through available Service interfaces. Signed-in iOS users can delete their Kinic account data from Settings > Delete Account. After the server accepts the deletion, the app also deletes that principal's Ask AI history, capture history, queued URLs, database selection data, and authentication session from the device. Some transaction records, the initial-free-grant usage record, public-ledger records, and underlying replicated-state history cannot be altered or deleted by Kinic.
 
 To ask a privacy question or exercise a right, contact us at [https://x.com/kinic_app](https://x.com/kinic_app). We may need information sufficient to verify the requester's authority over the relevant principal or database.
 

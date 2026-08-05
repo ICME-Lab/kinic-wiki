@@ -6,8 +6,6 @@
 import SwiftUI
 
 struct AskAIScreenshotPreview: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
     private let sources = [
         AskAISource(
             id: "S1",
@@ -66,16 +64,7 @@ struct AskAIScreenshotPreview: View {
             KinicDesign.appBackground
                 .ignoresSafeArea()
 
-            if horizontalSizeClass == .regular {
-                HStack(spacing: 0) {
-                    conversation
-                    Divider()
-                    evidence
-                        .frame(width: 340)
-                }
-            } else {
-                conversation
-            }
+            conversation
         }
         .safeAreaInset(edge: .bottom) {
             composer
@@ -97,21 +86,26 @@ struct AskAIScreenshotPreview: View {
                     message: AskAIMessage(
                         role: .assistant,
                         text: "Reliable agent memory stays **grounded in source notes**, keeps retrieval scoped to one database, and shows the evidence behind each answer.",
-                        sources: horizontalSizeClass == .regular ? [] : [sources[0]],
+                        sources: sources,
                         trace: [
                             AskAITraceEvent(
                                 stage: .searching,
-                                title: "Searched Personal Memory",
-                                detail: "3 focused queries"
+                                title: "Searched with 3 queries",
+                                detail: "agent memory reliable\nagent memory grounded\nagent memory"
                             ),
                             AskAITraceEvent(
                                 stage: .found,
-                                title: "Found 2 relevant notes",
-                                detail: "Knowledge and Sources"
+                                title: "Found 4 candidate notes"
                             ),
                             AskAITraceEvent(
                                 stage: .verifying,
-                                title: "Verified supporting evidence"
+                                title: "Verified 2 matching notes",
+                                detail: "/Knowledge/agent-memory.md\n/Sources/memory-grounding.md"
+                            ),
+                            AskAITraceEvent(
+                                stage: .reading,
+                                title: "Used 2 notes for answer",
+                                detail: "/Knowledge/agent-memory.md\n/Sources/memory-grounding.md"
                             )
                         ]
                     ),
@@ -121,27 +115,10 @@ struct AskAIScreenshotPreview: View {
         }
     }
 
-    private var evidence: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Evidence", systemImage: "checkmark.seal")
-                    .font(.headline)
-
-                AskAISourcesView(
-                    heading: "Sources cited by Kinic AI",
-                    sources: sources,
-                    openSource: { _ in }
-                )
-            }
-            .padding(KinicDesign.screenPadding)
-        }
-        .background(KinicDesign.panelBackground)
-    }
-
     private var composer: some View {
         VStack(spacing: 8) {
             HStack(alignment: .bottom, spacing: 10) {
-                Text("Ask about this database")
+                Text("Message Kinic AI")
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
@@ -156,7 +133,7 @@ struct AskAIScreenshotPreview: View {
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
 
             Label(
-                "Questions, recent conversation, and relevant notes are deleted after processing.",
+                "Messages and recent conversation are sent to Kinic AI. Relevant notes are included only when needed.",
                 systemImage: "lock.shield"
             )
             .font(.footnote)

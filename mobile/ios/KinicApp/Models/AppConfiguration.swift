@@ -46,6 +46,21 @@ struct AppConfiguration: Equatable, Sendable {
         return url
     }
 
+    func databaseNodeURL(databaseId: String, path: String) -> URL {
+        let pathSegments = path.split(separator: "/").map(String.init)
+        return (["db", databaseId] + pathSegments).reduce(authOrigin) { url, segment in
+            url.appending(path: segment)
+        }
+    }
+
+    func publicNodeURL(publicId: String) -> URL? {
+        guard publicId.count == 32,
+              publicId.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else {
+            return nil
+        }
+        return authOrigin.appending(path: "p").appending(path: publicId)
+    }
+
     static let preview = AppConfiguration(
         canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         apiBaseURL: URL(string: "https://icp0.io")!,

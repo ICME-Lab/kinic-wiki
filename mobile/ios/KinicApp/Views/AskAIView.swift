@@ -44,7 +44,7 @@ struct AskAIView: View {
                 Button("Start with \(model.pendingDatabaseTitle ?? "database")", action: model.confirmDatabaseChange)
                 Button("Cancel", role: .cancel, action: model.cancelDatabaseChange)
             } message: {
-                Text("A conversation uses evidence from one database only.")
+                Text("A conversation can use one database only.")
             }
             .confirmationDialog(
                 "Reset local history?",

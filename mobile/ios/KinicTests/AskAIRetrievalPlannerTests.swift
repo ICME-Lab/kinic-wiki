@@ -7,47 +7,74 @@ import Testing
 
 struct AskAIRetrievalPlannerTests {
     @Test
-    func queryPromptIncludesCurrentQuestionDatabaseAndBoundedHistory() {
-        let history = (1...8).map { index in
-            AskAIMessage(role: index.isMultiple(of: 2) ? .assistant : .user, text: "message \(index)")
-        }
-        let prompt = AskAIQueryPlanner.buildPrompt(
-            databaseTitle: "Test DB",
-            question: "それの互換性は？",
-            history: history
+    func recoveryPromptUsesHistoryReferentAndExcludesPreviousQueries() throws {
+        let previous = try AskAIQueryPlanner.parse(
+            "<answer>デザインツール 日本語\nデザインツール 対応\nデザインツール</answer>"
+        )
+        let history = [
+            AskAIMessage(role: .user, text: "pre-design-mdについて教えて"),
+            AskAIMessage(role: .assistant, text: "デザインの土台を決めるツールです。")
+        ]
+
+        let prompt = AskAIQueryPlanner.buildRecoveryPrompt(
+            databaseTitle: "memo",
+            question: "例のツールは日本語対応？",
+            history: history,
+            previousPlan: previous
+        )
+        let recovered = try AskAIQueryPlanner.parseRecovery(
+            "<answer>pre-design-md 日本語\npre-design-md japanese support\npre-design-md</answer>",
+            excluding: previous
         )
 
-        #expect(prompt.contains("Database: Test DB"))
-        #expect(prompt.contains("CURRENT QUESTION:\nそれの互換性は？"))
-        #expect(!prompt.contains("message 1"))
-        #expect(!prompt.contains("message 2"))
-        #expect(prompt.contains("message 3"))
-        #expect(prompt.contains("only to resolve a pronoun"))
-        #expect(prompt.contains("Never copy an unrelated earlier topic"))
-        #expect(prompt.contains("one leading blank line before the opening tag"))
-        #expect(prompt.contains("<answer> is not the first generated token"))
-        #expect(prompt.contains("Forbidden: answering the question, Markdown fences"))
-        #expect(prompt.contains("database name as a search term"))
+        #expect(prompt.contains("USER: pre-design-mdについて教えて"))
+        #expect(prompt.contains("デザインツール 日本語"))
+        #expect(recovered.queries.map(\.text) == [
+            "pre-design-md 日本語", "pre-design-md japanese support", "pre-design-md"
+        ])
     }
 
     @Test
-    func queryPromptKeepsLatestTurnsWhenAnOlderAssistantMessageExceedsHistoryBudget() {
-        let history = [
-            AskAIMessage(role: .user, text: "old topic"),
-            AskAIMessage(role: .assistant, text: "OLD-BEGIN " + String(repeating: "x", count: 7_000)),
-            AskAIMessage(role: .user, text: "LATEST-USER follow-up"),
-            AskAIMessage(role: .assistant, text: "LATEST-ASSISTANT context")
-        ]
-
-        let prompt = AskAIQueryPlanner.buildPrompt(
-            databaseTitle: "Test DB",
-            question: "What about that?",
-            history: history
+    func recoveryRejectsOnlyRepeatedQueries() throws {
+        let previous = try AskAIQueryPlanner.parse(
+            "<answer>pre-design-md 日本語\npre-design-md 対応\npre-design-md</answer>"
         )
 
-        #expect(prompt.contains("USER: LATEST-USER follow-up"))
-        #expect(prompt.contains("ASSISTANT: LATEST-ASSISTANT context"))
-        #expect(!prompt.contains("OLD-BEGIN"))
+        #expect(throws: AskAIQueryPlanError.invalidFormat) {
+            try AskAIQueryPlanner.parseRecovery(
+                "<answer>PRE-DESIGN-MD 日本語\npre-design-md 対応\npre-design-md</answer>",
+                excluding: previous
+            )
+        }
+    }
+
+    @Test
+    func enrichmentPreservesCurrentAndHistoryAnchors() throws {
+        let modelPlan = try AskAIQueryPlanner.parse(
+            "<answer>font selection tool\nvisual design tools\ntypography tools</answer>"
+        )
+        let indirect = AskAIQueryPlanner.enriched(
+            modelPlan,
+            question: "AIに画面を作らせる前、フォントや余白を目で選ぶツールを教えて。",
+            history: []
+        )
+        let followup = AskAIQueryPlanner.enriched(
+            modelPlan,
+            question: "例のツールは日本語対応？",
+            history: [
+                AskAIMessage(role: .user, text: "pre-design-mdについて教えて"),
+                AskAIMessage(role: .assistant, text: "デザインの土台を決めるツールです。")
+            ]
+        )
+        let typo = AskAIQueryPlanner.enriched(
+            modelPlan,
+            question: "predesign md のdesign harnessって何？",
+            history: []
+        )
+
+        #expect(indirect.queries.last?.text == "フォント")
+        #expect(followup.queries.last?.text == "pre-design-md")
+        #expect(typo.queries.last?.text == "predesign md")
     }
 
     @Test(arguments: [
@@ -61,7 +88,73 @@ struct AskAIRetrievalPlannerTests {
     ])
     func parsesRepresentativeQueryWording(_ query: String) throws {
         let plan = try AskAIQueryPlanner.parse("<answer>\n\(query)\n</answer>")
-        #expect(plan.queries.map(\.text) == [query.lowercased()])
+        let normalized = query.lowercased()
+        let firstTerm = String(normalized.split(whereSeparator: \.isWhitespace)[0])
+        let expected = ["llm", "web"].contains(firstTerm)
+            ? [normalized]
+            : [normalized, firstTerm]
+        #expect(plan.queries.map(\.text) == expected)
+    }
+
+    @Test
+    func addsLiteralFirstTermAsSafeAnchorWhenModelReturnsOneMultiTermQuery() throws {
+        let plan = try AskAIQueryPlanner.parse("<answer>貴金属 鞘</answer>")
+
+        #expect(plan.queries == [
+            .init(text: "貴金属 鞘", terms: ["貴金属", "鞘"]),
+            .init(text: "貴金属", terms: ["貴金属"])
+        ])
+    }
+
+    @Test
+    func keepsSingleTermQueryWithoutManufacturingAnotherConcept() throws {
+        let plan = try AskAIQueryPlanner.parse("<answer>x402</answer>")
+
+        #expect(plan.queries == [.init(text: "x402", terms: ["x402"])])
+    }
+
+    @Test
+    func appendsDistinctiveAnchorWithoutDiscardingThreeModelQueries() throws {
+        let plan = try AskAIQueryPlanner.parse("""
+        <answer>
+        キオクシア 11万円 ファンダ
+        キオクシア 11万円
+        キオクシア 価格
+        </answer>
+        """)
+
+        #expect(plan.queries.map(\.text) == [
+            "キオクシア 11万円 ファンダ",
+            "キオクシア 11万円",
+            "キオクシア 価格",
+            "キオクシア"
+        ])
+    }
+
+    @Test
+    func appendsSpacedVersionAnchorForJoinedModelName() throws {
+        let plan = try AskAIQueryPlanner.parse("""
+        <answer>
+        gemma4 long context attention
+        gemma4 attention ratio
+        attention long context
+        </answer>
+        """)
+
+        #expect(plan.queries.last == .init(text: "gemma 4", terms: ["gemma", "4"]))
+    }
+
+    @Test
+    func doesNotAppendGenericShortASCIIAnchor() throws {
+        let plan = try AskAIQueryPlanner.parse("""
+        <answer>
+        ui component examples
+        design systems examples
+        component design system
+        </answer>
+        """)
+
+        #expect(plan.queries.count == 3)
     }
 
     @Test
@@ -74,7 +167,7 @@ struct AskAIRetrievalPlannerTests {
         </answer>
         """)
 
-        #expect(plan.queries.map(\.text) == ["x402 paid api route", "x402 有料 api ルート"])
+        #expect(plan.queries.map(\.text) == ["x402 paid api route", "x402 有料 api ルート", "x402"])
         #expect(plan.queries[0].terms == ["x402", "paid", "api", "route"])
     }
 
@@ -84,16 +177,28 @@ struct AskAIRetrievalPlannerTests {
         "<answer>\n- x402 api\n</answer>",
         "<answer>\n1. x402 api\n</answer>",
         "<answer>\n10. x402 api\n</answer>",
-        "<answer>one two three four five</answer>",
+        "<answer>one two three four five six seven eight nine</answer>",
         "<answer>\none\n\ntwo\n</answer>",
         "<answer>\none\ntwo\nthree\nfour\n</answer>",
         "<answer></answer>",
+        "<answer>pre-design md</pre-design md</pre-design md</answer>",
         "<answer>one</answer><answer>two</answer>"
     ])
     func rejectsInvalidQueryPlanOutput(_ response: String) {
         #expect(throws: AskAIQueryPlanError.invalidFormat) {
             try AskAIQueryPlanner.parse(response)
         }
+    }
+
+    @Test
+    func acceptsLongerModelQueriesWithinTheBound() throws {
+        let plan = try AskAIQueryPlanner.parse(
+            "<answer>processed financial time series distribution method</answer>"
+        )
+
+        #expect(plan.queries.first?.terms == [
+            "processed", "financial", "time", "series", "distribution", "method"
+        ])
     }
 
     @Test
@@ -120,6 +225,32 @@ struct AskAIRetrievalPlannerTests {
         #expect(!AskAIRetrievalPlanner.hasRequiredExactMatches(
             queryPlan: plan,
             content: "ノイマン型のガイドブックには特殊な材料が必要"
+        ))
+    }
+
+    @Test
+    func diversifiedQueriesRecoverARelevantNoteWhenLiteralTermsUseDifferentWording() {
+        let diversified = AskAIQueryPlan(queries: [
+            .init(text: "貴金属 鞘", terms: ["貴金属", "鞘"]),
+            .init(text: "貴金属 エッジ", terms: ["貴金属", "エッジ"]),
+            .init(text: "貴金属", terms: ["貴金属"])
+        ])
+        let content = "週末の貴金属取引で月次A級になったエッジを整理する。"
+        let relevantHit = hit(path: "/Sources/週末貴金属エッジ.md", score: -10)
+        let candidates = AskAIRetrievalPlanner.rankedCandidates(
+            queryPlan: diversified,
+            hitsByQuery: [
+                "貴金属 鞘": [],
+                "貴金属 エッジ": [relevantHit],
+                "貴金属": [relevantHit]
+            ]
+        )
+
+        #expect(candidates.map(\.hit.path) == [relevantHit.path])
+        #expect(candidates.first?.matchedQueryCount == 2)
+        #expect(AskAIRetrievalPlanner.hasRequiredExactMatches(
+            queryPlan: diversified,
+            content: content
         ))
     }
 

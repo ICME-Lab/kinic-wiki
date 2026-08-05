@@ -75,6 +75,7 @@ targets:
       - KinicApp/Models/DatabaseRole.swift
       - KinicApp/Models/DatabaseStatus.swift
       - KinicApp/Models/DatabaseSummary.swift
+      - KinicApp/Models/NodePublication.swift
       - KinicApp/Models/PendingSharedURL.swift
       - KinicApp/Models/ShareCaptureMetadata.swift
       - KinicApp/Models/ShareCaptureResult.swift

@@ -40,7 +40,13 @@ struct AskAIPromptBuilderTests {
         #expect(prompt.contains("USER: What does the project use?"))
         #expect(prompt.contains("CURRENT QUESTION:\nHow are migrations managed?"))
         #expect(prompt.contains("Do not answer an earlier question"))
+        #expect(prompt.contains("Answer every separately requested part"))
         #expect(prompt.contains("If its topic differs, ignore it"))
+        #expect(prompt.contains("database owner, current user, person who saved or viewed a source"))
+        #expect(prompt.contains("Saving, importing, viewing, or storing an article does not mean"))
+        #expect(prompt.contains("Never rewrite the source author's first-person claims"))
+        #expect(prompt.contains("unsupported identity or relationship question"))
+        #expect(prompt.contains("If CURRENT QUESTION is Japanese, write the entire answer in Japanese"))
         #expect(builtPrompt.includedContexts == [source])
     }
 
@@ -123,5 +129,86 @@ struct AskAIPromptBuilderTests {
         #expect(!builtPrompt.message.contains("SOURCE S2"))
         #expect(builtPrompt.message.contains("END SOURCE S1"))
         #expect(builtPrompt.message.count <= AskAIPromptBuilder.maximumMessageCharacters)
+    }
+
+    @Test
+    func identityPolicyRequiresAUserRelationAndEveryRequestedAttribute() {
+        let unrelated = AskAIContextSource(
+            source: AskAISource(
+                id: "S1",
+                path: "/Knowledge/pre-design.md",
+                excerpt: "A design tool",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "記事の著者はpre-design-mdを開発した。"
+        )
+        let explicit = AskAIContextSource(
+            source: AskAISource(
+                id: "S2",
+                path: "/Knowledge/profile.md",
+                excerpt: "DB owner profile",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "DB所有者の本名はKinic Taroで、勤務先はExample社。"
+        )
+
+        let question = "俺の本名と勤務先を教えて。"
+        #expect(AskAIIdentityPolicy.requiresExplicitEvidence(question: question))
+        #expect(!AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [unrelated]))
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [explicit]))
+        #expect(!AskAIIdentityPolicy.requiresExplicitEvidence(question: "俺が保存した記事を要約して。"))
+    }
+
+    @Test
+    func identityPolicyDoesNotJoinSubjectsAndAttributesAcrossSentencesOrSources() {
+        let splitSentence = contextSource(
+            id: "S1",
+            content: "DB所有者はAliceです。Bobはdeveloperです。"
+        )
+        let subjectOnly = contextSource(id: "S2", content: "The database owner is Alice.")
+        let relationOnly = contextSource(id: "S3", content: "Bob is the developer.")
+        let explicit = contextSource(
+            id: "S4",
+            content: "The database owner is the developer."
+        )
+
+        let question = "Am I the developer?"
+        #expect(!AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [splitSentence]))
+        #expect(!AskAIIdentityPolicy.hasDirectEvidence(
+            question: question,
+            sources: [subjectOnly, relationOnly]
+        ))
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [explicit]))
+    }
+
+    @Test
+    func identityPolicyRequiresEachRequestedAttributeToLinkToTheOwner() {
+        let incomplete = contextSource(
+            id: "S1",
+            content: "DB所有者の本名はKinic Taroです。勤務先はExample社です。"
+        )
+        let explicit = contextSource(
+            id: "S2",
+            content: "DB所有者の本名はKinic Taroです。DB所有者の勤務先はExample社です。"
+        )
+
+        let question = "俺の本名と勤務先を教えて。"
+        #expect(!AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [incomplete]))
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [explicit]))
+    }
+
+    private func contextSource(id: String, content: String) -> AskAIContextSource {
+        AskAIContextSource(
+            source: AskAISource(
+                id: id,
+                path: "/Knowledge/\(id).md",
+                excerpt: content,
+                score: -1,
+                matchReasons: []
+            ),
+            content: content
+        )
     }
 }
