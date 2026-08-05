@@ -18,7 +18,7 @@
     "@icp-sdk/core": "^5.4.0",
     "@kinic/source-contracts": "workspace:*",
     "@kinic/vfs-client-core": "workspace:*",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },
