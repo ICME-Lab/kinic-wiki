@@ -13,6 +13,11 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func encodesEmptyArgsForDeleteAccount() {
+        #expect(VFSCandidEncoder.empty().map { String(format: "%02x", $0) }.joined() == "4449444c0000")
+    }
+
+    @Test
     func encodesMkdirNodeRequest() {
         let data = VFSCandidEncoder.mkdirNode(databaseId: "db_demo", path: "/Sources")
         #expect(data.map { String(format: "%02x", $0) }.joined() == "4449444c016c02a5cbc7d204719f9bbd940a710100082f536f75726365730764625f64656d6f")
@@ -78,6 +83,26 @@ struct VFSCandidCodecTests {
         #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
         #expect(String(data: data.dropLast(20).suffix(7), encoding: .utf8) == "db_demo")
         #expect(String(data: data.suffix(19), encoding: .utf8) == "/Sources/request.md")
+    }
+
+    @Test
+    func encodesPublishNodeRequest() {
+        let publication = VFSCandidEncoder.publishNode(databaseId: "db_demo", path: "/Knowledge/page.md")
+        let equivalentRecord = VFSCandidEncoder.mkdirNode(databaseId: "db_demo", path: "/Knowledge/page.md")
+        #expect(publication == equivalentRecord)
+    }
+
+    @Test
+    func encodesDeleteNodeRequestWithExpectedEtag() {
+        let data = VFSCandidEncoder.deleteNode(
+            databaseId: "db_demo",
+            path: "/Knowledge/page.md",
+            expectedEtag: "etag-current"
+        )
+        #expect(data.starts(with: Data([0x44, 0x49, 0x44, 0x4c])))
+        #expect(data.range(of: Data("db_demo".utf8)) != nil)
+        #expect(data.range(of: Data("/Knowledge/page.md".utf8)) != nil)
+        #expect(data.range(of: Data("etag-current".utf8)) != nil)
     }
 
     @Test
@@ -199,6 +224,11 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func decodesDeleteAccountUnitResultOk() throws {
+        try VFSCandidDecoder.decodeUnitResult(candidUnitResultOk())
+    }
+
+    @Test
     func decodesMissingReadNodeResult() throws {
         let node = try VFSCandidDecoder.decodeReadNodeResult(candidReadNodeOk(node: nil))
         #expect(node == nil)
@@ -218,6 +248,24 @@ struct VFSCandidCodecTests {
         #expect(node.content == "kind: kinic.source_capture_request")
         #expect(node.metadataJson == "{\"request_type\":\"source_capture\",\"url\":\"https://example.com/page\"}")
         #expect(node.etag == "etag_1")
+    }
+
+    @Test
+    func decodesNodePublicationResults() throws {
+        let expected = NodePublication(
+            publicId: "00112233445566778899aabbccddeeff",
+            databaseId: "db_demo",
+            path: "/Knowledge/page.md",
+            publishedAtMs: 42
+        )
+        #expect(try VFSCandidDecoder.decodeNodePublicationResult(candidNodePublicationOk(expected)) == expected)
+        #expect(try VFSCandidDecoder.decodeOptionalNodePublicationResult(candidOptionalNodePublicationOk(expected)) == expected)
+        #expect(try VFSCandidDecoder.decodeOptionalNodePublicationResult(candidOptionalNodePublicationOk(nil)) == nil)
+    }
+
+    @Test
+    func decodesDeleteNodeResult() throws {
+        #expect(try VFSCandidDecoder.decodeDeleteNodeResult(candidDeleteNodeOk("/Knowledge/page.md")) == "/Knowledge/page.md")
     }
 
     @Test
@@ -426,6 +474,185 @@ private func dataFromHex(_ hex: String) -> Data {
         data.append(UInt8(hex[index..<next], radix: 16)!)
         index = next
     }
+    return data
+}
+
+private func candidNodePublicationOk(_ publication: NodePublication) -> Data {
+    candidNodePublicationResult(publication, optional: false)
+}
+
+private func candidOptionalNodePublicationOk(_ publication: NodePublication?) -> Data {
+    candidNodePublicationResult(publication, optional: true)
+}
+
+private func candidNodePublicationResult(_ publication: NodePublication?, optional: Bool) -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeInt64: Int64 = -12
+    let typeText: Int64 = -15
+    let typeOpt: Int64 = -18
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func fields(_ raw: [(String, Ref)]) -> [(String, Ref)] {
+        raw.sorted { label($0.0) < label($1.0) }
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = fields(raw)
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendVariant(_ raw: [(String, Ref)]) {
+        appendSigned(typeVariant, to: &data)
+        appendFields(raw)
+    }
+
+    func appendRecord(_ raw: [(String, Ref)]) {
+        appendSigned(typeRecord, to: &data)
+        appendFields(raw)
+    }
+
+    func appendText(_ text: String) {
+        let bytes = Data(text.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    func appendInt64(_ value: Int64) {
+        let bits = UInt64(bitPattern: value)
+        for offset in 0..<8 {
+            data.append(UInt8(truncatingIfNeeded: bits >> UInt64(offset * 8)))
+        }
+    }
+
+    func appendVariantValue(_ selected: String, cases: [String]) {
+        let sorted = cases.sorted { label($0) < label($1) }
+        appendUnsigned(UInt64(sorted.firstIndex(of: selected)! ), to: &data)
+    }
+
+    func appendPublication(_ publication: NodePublication) {
+        for field in fields([
+            ("public_id", .primitive(typeText)),
+            ("database_id", .primitive(typeText)),
+            ("path", .primitive(typeText)),
+            ("published_at_ms", .primitive(typeInt64))
+        ]) {
+            switch field.0 {
+            case "public_id":
+                appendText(publication.publicId)
+            case "database_id":
+                appendText(publication.databaseId)
+            case "path":
+                appendText(publication.path)
+            case "published_at_ms":
+                appendInt64(publication.publishedAtMs)
+            default:
+                preconditionFailure("unknown publication field")
+            }
+        }
+    }
+
+    let publicationRecord: [(String, Ref)] = [
+        ("public_id", .primitive(typeText)),
+        ("database_id", .primitive(typeText)),
+        ("path", .primitive(typeText)),
+        ("published_at_ms", .primitive(typeInt64))
+    ]
+    if optional {
+        appendUnsigned(3, to: &data)
+        appendVariant([("Ok", .table(1)), ("Err", .primitive(typeText))])
+        appendSigned(typeOpt, to: &data)
+        appendSigned(2, to: &data)
+        appendRecord(publicationRecord)
+    } else {
+        appendUnsigned(2, to: &data)
+        appendVariant([("Ok", .table(1)), ("Err", .primitive(typeText))])
+        appendRecord(publicationRecord)
+    }
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendVariantValue("Ok", cases: ["Ok", "Err"])
+    if optional {
+        guard let publication else {
+            data.append(0)
+            return data
+        }
+        data.append(1)
+        appendPublication(publication)
+    } else if let publication {
+        appendPublication(publication)
+    }
+    return data
+}
+
+private func candidDeleteNodeOk(_ path: String) -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeText: Int64 = -15
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = raw.sorted { label($0.0) < label($1.0) }
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    appendUnsigned(2, to: &data)
+    appendSigned(typeVariant, to: &data)
+    appendFields([("Ok", .table(1)), ("Err", .primitive(typeText))])
+    appendSigned(typeRecord, to: &data)
+    appendFields([("path", .primitive(typeText))])
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    let cases = ["Ok", "Err"].sorted { label($0) < label($1) }
+    appendUnsigned(UInt64(cases.firstIndex(of: "Ok")!), to: &data)
+    let bytes = Data(path.utf8)
+    appendUnsigned(UInt64(bytes.count), to: &data)
+    data.append(bytes)
     return data
 }
 
@@ -2139,6 +2366,21 @@ private func candidResultErr(_ message: String) -> Data {
     let bytes = Data(message.utf8)
     appendUnsigned(UInt64(bytes.count), to: &data)
     data.append(bytes)
+    return data
+}
+
+private func candidUnitResultOk() -> Data {
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+    appendUnsigned(1, to: &data)
+    appendSigned(-21, to: &data)
+    appendUnsigned(2, to: &data)
+    appendUnsigned(UInt64(VFSCandidLabels.id("Ok")), to: &data)
+    appendSigned(-1, to: &data)
+    appendUnsigned(UInt64(VFSCandidLabels.id("Err")), to: &data)
+    appendSigned(-15, to: &data)
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    appendUnsigned(0, to: &data)
     return data
 }
 

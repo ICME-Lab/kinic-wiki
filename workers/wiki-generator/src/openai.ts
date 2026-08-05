@@ -62,6 +62,13 @@ export async function requestDeepSeekDraft(
   config: WorkerConfig,
   deepSeekApiKey: string
 ): Promise<unknown> {
+  const requestPayload = JSON.stringify({
+    model: config.model,
+    max_tokens: config.maxOutputTokens,
+    thinking: { type: "disabled" },
+    response_format: { type: "json_object" },
+    messages
+  });
   let response: Response;
   try {
     response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
@@ -70,12 +77,7 @@ export async function requestDeepSeekDraft(
         Authorization: `Bearer ${deepSeekApiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: config.maxOutputTokens,
-        response_format: { type: "json_object" },
-        messages
-      }),
+      body: requestPayload,
       redirect: "manual",
       signal: AbortSignal.timeout(DEEPSEEK_TIMEOUT_MS)
     });
@@ -86,6 +88,16 @@ export async function requestDeepSeekDraft(
   const text = await readBoundedResponseText(response);
   if (!response.ok) {
     const retryable = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500;
+    console.warn(
+      JSON.stringify({
+        event: "deepseek_request_failed",
+        status: response.status,
+        model: config.model,
+        inputCharacters: messages.reduce((total, message) => total + message.content.length, 0),
+        requestBytes: new TextEncoder().encode(requestPayload).byteLength,
+        retryable
+      })
+    );
     throw new DeepSeekRequestError(
       `deepseek_http_${response.status}`,
       deepSeekRequestFailureMessage(text, response),

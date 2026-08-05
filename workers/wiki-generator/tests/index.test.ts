@@ -16,6 +16,14 @@ Object.defineProperty(crypto.subtle, "timingSafeEqual", {
   }
 });
 
+test("health check starts without authentication or external bindings", async () => {
+  const response = await fetchWorker(new Request("https://wiki-generator.kinic.xyz/healthz"), testEnv(new TestQueue()));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
 test("source capture trigger requires worker token config", async () => {
   const response = await fetchWorker(sourceCaptureRequest(), { ...testEnv(new TestQueue()), KINIC_WIKI_WORKER_TOKEN: "" });
 

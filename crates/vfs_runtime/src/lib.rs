@@ -1,6 +1,7 @@
 // Where: crates/vfs_runtime/src/lib.rs
 // What: Service orchestration for multiple SQLite-backed VFS databases.
 // Why: One canister can host isolated databases while sharing one VFS store implementation.
+mod accounts;
 mod billing;
 mod cycles;
 mod databases;
@@ -151,6 +152,11 @@ pub struct DatabaseCreateOutcome {
     pub meta: DatabaseMeta,
     pub status: DatabaseStatus,
     pub initial_free_grant_applied: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountDeletionOutcome {
+    pub deleted_database_file_names: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

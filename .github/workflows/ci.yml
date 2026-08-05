@@ -190,10 +190,16 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run audit
         run: pnpm audit --audit-level moderate
-      - name: Run typecheck
-        run: pnpm typecheck
       - name: Run tests
         run: pnpm test
+      - name: Run typecheck
+        run: pnpm typecheck
+      - name: Check Cloudflare types
+        run: pnpm cf-typecheck
+      - name: Run Workers runtime tests
+        run: pnpm test:worker
+      - name: Build Cloudflare Worker
+        run: pnpm build
 
   wiki-mcp-check:
     needs: changes

@@ -19,6 +19,7 @@ import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as IosShareRouteImport } from './routes/ios-share'
 import { Route as IosAuthCallbackRouteImport } from './routes/ios-auth-callback'
+import { Route as IosRouteImport } from './routes/ios'
 import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
@@ -94,6 +95,11 @@ const IosShareRoute = IosShareRouteImport.update({
 const IosAuthCallbackRoute = IosAuthCallbackRouteImport.update({
   id: '/ios-auth-callback',
   path: '/ios-auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IosRoute = IosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FaviconDoticoRoute = FaviconDoticoRouteImport.update({
@@ -238,6 +244,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/marketplace': typeof MarketplaceRouteWithChildren
@@ -274,6 +281,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cycles': typeof CyclesRoute
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/metrics': typeof MetricsRoute
@@ -311,6 +319,7 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/marketplace': typeof MarketplaceRouteWithChildren
@@ -351,6 +360,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/docs'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/marketplace'
@@ -387,6 +397,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cycles'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/metrics'
@@ -423,6 +434,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/docs'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/marketplace'
@@ -462,6 +474,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
   FaviconDoticoRoute: typeof FaviconDoticoRoute
+  IosRoute: typeof IosRoute
   IosAuthCallbackRoute: typeof IosAuthCallbackRoute
   IosShareRoute: typeof IosShareRoute
   MarketplaceRoute: typeof MarketplaceRouteWithChildren
@@ -551,6 +564,13 @@ declare module '@tanstack/react-router' {
       path: '/ios-auth-callback'
       fullPath: '/ios-auth-callback'
       preLoaderRoute: typeof IosAuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ios': {
+      id: '/ios'
+      path: '/ios'
+      fullPath: '/ios'
+      preLoaderRoute: typeof IosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/favicon.ico': {
@@ -820,6 +840,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
   FaviconDoticoRoute: FaviconDoticoRoute,
+  IosRoute: IosRoute,
   IosAuthCallbackRoute: IosAuthCallbackRoute,
   IosShareRoute: IosShareRoute,
   MarketplaceRoute: MarketplaceRouteWithChildren,

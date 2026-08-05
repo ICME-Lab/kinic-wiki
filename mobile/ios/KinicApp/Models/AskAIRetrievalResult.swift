@@ -6,5 +6,6 @@ import Foundation
 
 struct AskAIRetrievalResult: Equatable, Sendable {
     let searchQueries: [String]
+    let candidateCount: Int
     let sources: [AskAIContextSource]
 }

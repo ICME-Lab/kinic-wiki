@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/AskAISourcesView.swift
-// What: Deterministic evidence cards attached to an Ask AI result.
-// Why: Users should be able to inspect the exact DB nodes considered or cited.
+// What: Compact, wrapping citation links attached to a database-backed answer.
+// Why: Sources should remain inspectable without competing with the answer.
 
 import SwiftUI
 
@@ -10,37 +10,108 @@ struct AskAISourcesView: View {
     let openSource: (AskAISource) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(heading)
-                .font(.headline)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
-            ForEach(sources) { source in
-                Button {
-                    openSource(source)
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Label(source.displayName, systemImage: "doc.text")
-                            .font(.subheadline)
-                            .bold()
-                        Text(source.path)
+            AskAISourceFlowLayout(spacing: 6) {
+                ForEach(Array(sources.enumerated()), id: \.element.id) { index, source in
+                    Button {
+                        openSource(source)
+                    } label: {
+                        Text("[\(index + 1)] \(source.displayName)")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        if !source.excerpt.isEmpty {
-                            Text(source.excerpt)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(3)
-                        }
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 44)
+                            .background(KinicDesign.palePink.opacity(0.28))
+                            .clipShape(Capsule())
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KinicDesign.panelBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(KinicDesign.electricIndigo)
+                    .accessibilityLabel("Source \(index + 1), \(source.displayName)")
+                    .accessibilityHint("Opens this note in Browse")
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens this note in Browse")
             }
         }
+    }
+}
+
+private struct AskAISourceFlowLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let result = layout(subviews: subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: proposal.width ?? result.width, height: result.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = measuredSize(for: subview, maximumWidth: bounds.width)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: x, y: y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(size)
+            )
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+
+    private func layout(subviews: Subviews, width: CGFloat) -> (width: CGFloat, height: CGFloat) {
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var contentWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = measuredSize(
+                for: subview,
+                maximumWidth: width.isFinite ? width : nil
+            )
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            contentWidth = max(contentWidth, x + size.width)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (contentWidth, y + rowHeight)
+    }
+
+    private func measuredSize(
+        for subview: LayoutSubview,
+        maximumWidth: CGFloat?
+    ) -> CGSize {
+        let idealSize = subview.sizeThatFits(.unspecified)
+        guard let maximumWidth,
+              idealSize.width > maximumWidth else {
+            return idealSize
+        }
+        return subview.sizeThatFits(
+            ProposedViewSize(width: maximumWidth, height: nil)
+        )
     }
 }

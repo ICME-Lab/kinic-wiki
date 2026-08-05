@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/AskAIMessageView.swift
-// What: Full-width user or grounded assistant turn.
-// Why: Search trace, long-form answers, and evidence should read as a document rather than narrow bubbles.
+// What: Full-width user or assistant turn with compact generation status and citations.
+// Why: Answers should read conversationally while database evidence stays easy to inspect.
 
 import SwiftUI
 import Textual
@@ -18,7 +18,7 @@ struct AskAIMessageView: View {
                     .font(.body)
                     .textSelection(.enabled)
             } else {
-                if !message.trace.isEmpty {
+                if shouldShowTrace {
                     AskAITraceView(events: message.trace)
                 }
 
@@ -53,6 +53,12 @@ struct AskAIMessageView: View {
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(message.role == .user ? KinicDesign.panelBackground : KinicDesign.appBackground)
+    }
+
+    private var shouldShowTrace: Bool {
+        guard !message.trace.isEmpty else { return false }
+        return message.state == .generating
+            || message.trace.contains(where: { $0.stage == .found })
     }
 
     private var speakerLabel: some View {

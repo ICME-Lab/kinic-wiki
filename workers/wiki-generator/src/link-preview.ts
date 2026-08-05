@@ -2,7 +2,7 @@
 // What: Renders database link preview PNGs from queued jobs.
 // Why: WikiBrowser must stay under the Free Worker bundle limit while new DB previews are generated asynchronously.
 import React from "react";
-import { ImageResponse } from "@vercel/og";
+import { ImageResponse } from "next/og.js";
 import type { PublicDatabaseSummary } from "./types.js";
 
 export const LINK_PREVIEW_SIZE = {

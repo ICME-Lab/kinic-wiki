@@ -77,6 +77,9 @@ export default function HomePage() {
             <span>Kinic Wiki</span>
           </Link>
           <div className="flex flex-wrap gap-2">
+            <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/ios">
+              iOS App
+            </Link>
             <Link className="rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent" href="/docs/cli">
               CLI
             </Link>
@@ -151,6 +154,9 @@ export default function HomePage() {
         <nav className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3" aria-label="Legal">
           <span>Kinic Wiki</span>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/ios">
+              iOS App
+            </Link>
             <Link className="text-muted underline-offset-4 hover:text-accent hover:underline" href="/support">
               Support
             </Link>

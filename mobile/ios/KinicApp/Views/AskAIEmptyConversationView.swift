@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/AskAIEmptyConversationView.swift
-// What: Branded empty state and useful grounded-question starters.
-// Why: The first screen should teach that Ask AI answers from the selected memory, not the open internet.
+// What: Branded database-selection state and useful Ask AI starters.
+// Why: The first screen should make the required database scope clear before chatting.
 
 import SwiftUI
 
@@ -12,18 +12,26 @@ struct AskAIEmptyConversationView: View {
             AskAIMemoryMark()
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Ask your memory")
+                Text(model.currentConversation == nil ? "Select a database" : "Ask your memory")
                     .font(.largeTitle)
                     .bold()
-                Text("Kinic AI searches **\(model.databaseTitle)** and answers only when it finds supporting notes.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
+                if model.currentConversation == nil {
+                    Text("Choose a database with Select DB above to start chatting.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Kinic AI can chat normally and searches **\(model.databaseTitle)** when your question needs supporting notes.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                AskAIPromptSuggestion(title: "Summarize the main ideas in this database", model: model)
-                AskAIPromptSuggestion(title: "What decisions have been recorded recently?", model: model)
-                AskAIPromptSuggestion(title: "Find notes that disagree with each other", model: model)
+            if model.currentConversation != nil {
+                VStack(alignment: .leading, spacing: 12) {
+                    AskAIPromptSuggestion(title: "Summarize the main ideas in this database", model: model)
+                    AskAIPromptSuggestion(title: "What decisions have been recorded recently?", model: model)
+                    AskAIPromptSuggestion(title: "Find notes that disagree with each other", model: model)
+                }
             }
         }
         .frame(maxWidth: 620, alignment: .leading)
