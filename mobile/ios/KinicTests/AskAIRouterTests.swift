@@ -7,6 +7,40 @@ import Testing
 
 struct AskAIRouterTests {
     @Test
+    func promptUsesTheConfiguredAnswerLanguageUnlessTheQuestionExplicitlyOverridesIt() {
+        let prompt = AskAIRouter.buildPrompt(
+            databaseTitle: "Test DB",
+            question: "Answer in French: What is this?",
+            history: [],
+            outputLanguage: .japanese
+        )
+
+        #expect(prompt.contains("DEFAULT ANSWER LANGUAGE: Japanese"))
+        #expect(prompt.contains("regardless of the language used to write CURRENT QUESTION"))
+        #expect(prompt.contains("only when CURRENT QUESTION explicitly names a different answer language or translation target language"))
+        #expect(prompt.contains("The language used to write CURRENT QUESTION is not by itself an explicit language request"))
+        #expect(prompt.contains("does not change the language or script of search queries"))
+        #expect(prompt.contains("CURRENT QUESTION:\nAnswer in French: What is this?"))
+    }
+
+    @Test(arguments: [
+        "Translate this: The database is offline.",
+        "Translate this to Korean: The database is offline.",
+        "日本語で答えて: What is this?"
+    ])
+    func languageContractAppliesToTransformationAndExplicitLanguageRequests(_ question: String) {
+        let prompt = AskAIRouter.buildPrompt(
+            databaseTitle: "Test DB",
+            question: question,
+            history: [],
+            outputLanguage: .portuguese
+        )
+
+        #expect(prompt.contains("DEFAULT ANSWER LANGUAGE: Portuguese"))
+        #expect(prompt.contains("CURRENT QUESTION:\n\(question)"))
+    }
+
+    @Test
     func promptIncludesConversationHistoryAndMissingReferentRule() {
         let history = [
             AskAIMessage(role: .user, text: "Write this in English"),
@@ -16,7 +50,8 @@ struct AskAIRouterTests {
         let prompt = AskAIRouter.buildPrompt(
             databaseTitle: "Test DB",
             question: "日本語にして",
-            history: history
+            history: history,
+            outputLanguage: .english
         )
 
         #expect(prompt.contains("REQUEST ROUTER AND CONVERSATIONAL RESPONDER"))
@@ -47,7 +82,8 @@ struct AskAIRouterTests {
         let prompt = AskAIRouter.buildPrompt(
             databaseTitle: "memo",
             question: "例のツールの5ステップ全部を教えて。",
-            history: history
+            history: history,
+            outputLanguage: .english
         )
 
         #expect(prompt.contains("A factual follow-up requires search"))
@@ -93,7 +129,8 @@ struct AskAIRouterTests {
             let prompt = AskAIRouter.buildPrompt(
                 databaseTitle: "memo",
                 question: question,
-                history: []
+                history: [],
+                outputLanguage: .english
             )
             #expect(prompt.contains("REQUIRED MODE: not predetermined"))
         }
@@ -106,7 +143,8 @@ struct AskAIRouterTests {
             let prompt = AskAIRouter.buildPrompt(
                 databaseTitle: "memo",
                 question: question,
-                history: []
+                history: [],
+                outputLanguage: .english
             )
             #expect(prompt.contains("REQUIRED MODE: not predetermined"))
         }
@@ -117,7 +155,8 @@ struct AskAIRouterTests {
         let prompt = AskAIRouter.buildRepairPrompt(
             databaseTitle: "memo",
             question: "pre-design-mdって何？",
-            history: []
+            history: [],
+            outputLanguage: .english
         )
 
         #expect(prompt.contains("CORRECTION: Your previous response was invalid or violated REQUIRED MODE"))
@@ -136,7 +175,8 @@ struct AskAIRouterTests {
         let prompt = AskAIRouter.buildPrompt(
             databaseTitle: "Test DB",
             question: "What about that?",
-            history: history
+            history: history,
+            outputLanguage: .english
         )
 
         #expect(prompt.contains("USER: LATEST-USER follow-up"))

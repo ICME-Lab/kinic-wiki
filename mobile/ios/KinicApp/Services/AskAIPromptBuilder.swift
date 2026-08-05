@@ -19,7 +19,8 @@ enum AskAIPromptBuilder {
         databaseTitle: String,
         question: String,
         history: [AskAIMessage],
-        sources: [AskAIContextSource]
+        sources: [AskAIContextSource],
+        outputLanguage: WikiOutputLanguage
     ) -> AskAIBuiltPrompt {
         let recentHistory = AskAIHistoryFormatter.format(
             history,
@@ -49,7 +50,8 @@ enum AskAIPromptBuilder {
           <sources>S1,S2</sources>
           <answer>Answer text.</answer>
         - Cite only the supplied source IDs.
-        - Determine the answer language from CURRENT QUESTION, not from the sources. If CURRENT QUESTION is Japanese, write the entire answer in Japanese even when the source is English.
+        - DEFAULT ANSWER LANGUAGE is \(outputLanguage.displayName). Write the entire answer in DEFAULT ANSWER LANGUAGE regardless of the languages used in CURRENT QUESTION or the sources.
+        - Override DEFAULT ANSWER LANGUAGE only when CURRENT QUESTION explicitly names a different answer language or translation target language. The language used to write CURRENT QUESTION is not by itself an explicit language request.
 
         RECENT CONVERSATION:
         \(recentHistory.isEmpty ? "(none)" : recentHistory)

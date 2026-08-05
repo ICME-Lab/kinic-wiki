@@ -8,6 +8,23 @@ import Testing
 
 struct AskAIPromptBuilderTests {
     @Test
+    func usesConfiguredLanguageWithOnlyAnExplicitQuestionOverride() {
+        let prompt = AskAIPromptBuilder.build(
+            databaseTitle: "Engineering",
+            question: "Answer in French: How are migrations managed?",
+            history: [],
+            sources: [],
+            outputLanguage: .japanese
+        ).message
+
+        #expect(prompt.contains("DEFAULT ANSWER LANGUAGE is Japanese"))
+        #expect(prompt.contains("regardless of the languages used in CURRENT QUESTION or the sources"))
+        #expect(prompt.contains("only when CURRENT QUESTION explicitly names a different answer language or translation target language"))
+        #expect(prompt.contains("The language used to write CURRENT QUESTION is not by itself an explicit language request"))
+        #expect(prompt.contains("CURRENT QUESTION:\nAnswer in French: How are migrations managed?"))
+    }
+
+    @Test
     func includesGroundingContractHistoryAndSources() {
         let source = AskAIContextSource(
             source: AskAISource(
@@ -28,7 +45,8 @@ struct AskAIPromptBuilderTests {
             databaseTitle: "Engineering",
             question: "How are migrations managed?",
             history: history,
-            sources: [source]
+            sources: [source],
+            outputLanguage: .english
         )
         let prompt = builtPrompt.message
 
@@ -46,7 +64,7 @@ struct AskAIPromptBuilderTests {
         #expect(prompt.contains("Saving, importing, viewing, or storing an article does not mean"))
         #expect(prompt.contains("Never rewrite the source author's first-person claims"))
         #expect(prompt.contains("unsupported identity or relationship question"))
-        #expect(prompt.contains("If CURRENT QUESTION is Japanese, write the entire answer in Japanese"))
+        #expect(prompt.contains("DEFAULT ANSWER LANGUAGE is English"))
         #expect(builtPrompt.includedContexts == [source])
     }
 
@@ -71,7 +89,8 @@ struct AskAIPromptBuilderTests {
             databaseTitle: "Large DB",
             question: longQuestion,
             history: [],
-            sources: sources
+            sources: sources,
+            outputLanguage: .english
         )
         let prompt = builtPrompt.message
 
@@ -94,7 +113,8 @@ struct AskAIPromptBuilderTests {
             databaseTitle: "Test DB",
             question: "Current question",
             history: history,
-            sources: []
+            sources: [],
+            outputLanguage: .english
         ).message
 
         #expect(prompt.contains("USER: LATEST-USER follow-up"))
@@ -121,7 +141,8 @@ struct AskAIPromptBuilderTests {
             databaseTitle: "Large DB",
             question: "Question",
             history: [],
-            sources: sources
+            sources: sources,
+            outputLanguage: .english
         )
 
         #expect(builtPrompt.includedContexts.map(\.source.id) == ["S1"])

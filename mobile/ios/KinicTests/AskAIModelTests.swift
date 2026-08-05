@@ -65,6 +65,7 @@ struct AskAIModelTests {
     func successfulQuestionCallsChatExactlyTwiceAndPublishesValidatedAnswer() async throws {
         let source = contextSource()
         let knowledge = AskAIKnowledgeProviderStub(sources: [source])
+        knowledge.askAIOutputLanguage = .portuguese
         let client = AskAICompletionStub(responses: [
             .value("<mode>search</mode><answer>\nx402 paid api route\nx402 有料 api ルート\n</answer>"),
             .value("<sources>S1</sources><answer>Grounded answer.</answer>")
@@ -80,7 +81,9 @@ struct AskAIModelTests {
         #expect(await client.callCount == 2)
         let messages = await client.messages
         #expect(messages[0].contains("REQUEST ROUTER AND CONVERSATIONAL RESPONDER"))
+        #expect(messages[0].contains("DEFAULT ANSWER LANGUAGE: Portuguese"))
         #expect(messages[1].contains("DATABASE SOURCES"))
+        #expect(messages[1].contains("DEFAULT ANSWER LANGUAGE is Portuguese"))
         #expect(knowledge.receivedDatabaseIds == ["db_test"])
         #expect(knowledge.receivedPlans.first?.queries.map(\.text) == [
             "x402 paid api route", "x402 有料 api ルート", "x402", "x402 api"
@@ -94,6 +97,40 @@ struct AskAIModelTests {
         #expect(model.messages.last?.trace[2].title == "Verified 1 matching note")
         #expect(model.messages.last?.trace[3].title == "Used 1 note for answer")
         try await waitForSavedMessage(store, state: .complete)
+    }
+
+    @Test
+    func snapshotsOutputLanguageForEachQuestion() async throws {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [])
+        knowledge.askAIOutputLanguage = .japanese
+        let client = AskAICompletionStub(responses: [
+            .delayed(
+                "<mode>conversation</mode><answer>最初の回答</answer>",
+                .milliseconds(30)
+            ),
+            .value("<mode>conversation</mode><answer>Deuxième réponse</answer>")
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: client,
+            store: AskAIStoreStub()
+        )
+        await model.load()
+
+        model.draft = "What is the first answer?"
+        model.send()
+        knowledge.askAIOutputLanguage = .french
+        try await waitUntilFinished(model)
+
+        model.draft = "What is the second answer?"
+        model.send()
+        try await waitUntilFinished(model)
+
+        let prompts = await client.messages
+        #expect(prompts.count == 2)
+        #expect(prompts[0].contains("DEFAULT ANSWER LANGUAGE: Japanese"))
+        #expect(!prompts[0].contains("DEFAULT ANSWER LANGUAGE: French"))
+        #expect(prompts[1].contains("DEFAULT ANSWER LANGUAGE: French"))
     }
 
     @Test
@@ -1452,6 +1489,7 @@ struct AskAIModelTests {
 private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var selectedAskAIDatabaseId = "db_test"
     var selectedAskAIDatabaseTitle = "Test DB"
+    var askAIOutputLanguage = WikiOutputLanguage.english
     var canAskAI = true
     var askAIDatabaseCandidates: [DatabaseSummary] = []
     let sources: [AskAIContextSource]

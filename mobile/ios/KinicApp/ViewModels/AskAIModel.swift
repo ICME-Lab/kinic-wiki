@@ -317,6 +317,7 @@ final class AskAIModel {
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
 
         let history = AskAIHistoryFormatter.semanticHistory(conversation.messages)
+        let outputLanguage = knowledgeProvider.askAIOutputLanguage
         let userMessage = AskAIMessage(role: .user, text: question)
         let assistantID = UUID()
         let trace = [
@@ -354,7 +355,8 @@ final class AskAIModel {
                 databaseTitle: conversation.databaseTitle,
                 assistantID: assistantID,
                 question: question,
-                history: history
+                history: history,
+                outputLanguage: outputLanguage
             )
         }
         let timeout = generationTimeout
@@ -409,7 +411,8 @@ final class AskAIModel {
         databaseTitle: String,
         assistantID: UUID,
         question: String,
-        history: [AskAIMessage]
+        history: [AskAIMessage],
+        outputLanguage: WikiOutputLanguage
     ) async {
         do {
             guard continueGeneration(
@@ -420,7 +423,8 @@ final class AskAIModel {
             let routePrompt = AskAIRouter.buildPrompt(
                 databaseTitle: databaseTitle,
                 question: question,
-                history: history
+                history: history,
+                outputLanguage: outputLanguage
             )
             let routeResponse = try await client.completeContent(
                 message: routePrompt,
@@ -452,7 +456,8 @@ final class AskAIModel {
                     message: AskAIRouter.buildRepairPrompt(
                         databaseTitle: databaseTitle,
                         question: question,
-                        history: history
+                        history: history,
+                        outputLanguage: outputLanguage
                     ),
                     timeout: .seconds(30)
                 )
@@ -566,7 +571,8 @@ final class AskAIModel {
                 databaseTitle: databaseTitle,
                 question: question,
                 history: history,
-                sources: contexts
+                sources: contexts,
+                outputLanguage: outputLanguage
             )
             let includedContexts = builtPrompt.includedContexts
 

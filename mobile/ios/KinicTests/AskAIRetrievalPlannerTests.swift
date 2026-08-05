@@ -460,7 +460,8 @@ struct AskAIRetrievalPlannerTests {
                     ),
                     content: evidence.content
                 )
-            ]
+            ],
+            outputLanguage: .english
         )
         #expect(builtPrompt.message.contains("PAYMENT-SIGNATURE for the supported answer"))
     }

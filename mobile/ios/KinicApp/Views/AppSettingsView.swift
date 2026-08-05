@@ -56,7 +56,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("Generation")
             } footer: {
-                Text("New captures generate wiki pages in this language.")
+                Text("New captures and Ask AI answers use this language.")
             }
 
             Section("Browse") {

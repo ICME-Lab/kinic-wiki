@@ -632,8 +632,10 @@ struct ShareInboxTests {
         )
 
         #expect(model.wikiOutputLanguage == .english)
+        #expect(model.askAIOutputLanguage == .english)
         model.wikiOutputLanguage = .korean
         #expect(store.wikiOutputLanguage == .korean)
+        #expect(model.askAIOutputLanguage == .korean)
     }
 
     @MainActor

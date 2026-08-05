@@ -75,7 +75,8 @@ struct AskAILiveEvaluationTests {
                 let prompt = AskAIRouter.buildPrompt(
                     databaseTitle: "testDB",
                     question: testCase.question,
-                    history: testCase.history
+                    history: testCase.history,
+                    outputLanguage: .english
                 )
                 var response = try await client.completeContent(message: prompt, timeout: .seconds(45))
                 completedRuns += 1
@@ -101,7 +102,8 @@ struct AskAILiveEvaluationTests {
                             message: AskAIRouter.buildRepairPrompt(
                                 databaseTitle: "testDB",
                                 question: testCase.question,
-                                history: testCase.history
+                                history: testCase.history,
+                                outputLanguage: .english
                             ),
                             timeout: .seconds(45)
                         )
@@ -192,7 +194,8 @@ struct AskAILiveEvaluationTests {
                 databaseTitle: "testDB",
                 question: testCase.question,
                 history: [],
-                sources: [source]
+                sources: [source],
+                outputLanguage: .english
             )
 
             for repetition in 1...repetitions {

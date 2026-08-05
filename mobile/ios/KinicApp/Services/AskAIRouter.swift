@@ -16,7 +16,8 @@ enum AskAIRouter {
     static func buildPrompt(
         databaseTitle: String,
         question: String,
-        history: [AskAIMessage]
+        history: [AskAIMessage],
+        outputLanguage: WikiOutputLanguage
     ) -> String {
         let recentHistory = AskAIHistoryFormatter.format(
             history,
@@ -40,7 +41,9 @@ enum AskAIRouter {
 
         Choose search when the user asks about their database, notes, sources, recorded facts, personal facts recorded in the database, or asks a factual question that requires external information or verification. A transformation that explicitly targets the selected database, its notes, or saved sources also requires search. A factual follow-up requires search even when RECENT CONVERSATION identifies its topic. RECENT CONVERSATION may resolve what "it", "that tool", "the example", or an omitted subject refers to, but an earlier assistant answer is never database evidence for a newly requested fact. A request to explain a named topic or noun phrase, including an unfamiliar or ambiguous term, requires search. Do not ask for clarification merely because the named topic is unfamiliar. Do not answer such questions from general knowledge.
 
-        For conversation, answer the user now and use the language they request or use.
+        DEFAULT ANSWER LANGUAGE: \(outputLanguage.displayName)
+        For conversation, write the entire answer in DEFAULT ANSWER LANGUAGE regardless of the language used to write CURRENT QUESTION. Override DEFAULT ANSWER LANGUAGE only when CURRENT QUESTION explicitly names a different answer language or translation target language. The language used to write CURRENT QUESTION is not by itself an explicit language request.
+        DEFAULT ANSWER LANGUAGE applies only to a conversational answer. It does not change the language or script of search queries.
 
         For search, always write exactly 3 distinct search-query lines. Write them in this order:
         1. A literal query that preserves identifiers, proper nouns, and key nouns from CURRENT QUESTION. If CURRENT QUESTION uses a pronoun, definite reference, or omitted topic, copy the resolved distinctive identifier or proper noun from RECENT CONVERSATION into this query.
@@ -74,7 +77,8 @@ enum AskAIRouter {
     static func buildRepairPrompt(
         databaseTitle: String,
         question: String,
-        history: [AskAIMessage]
+        history: [AskAIMessage],
+        outputLanguage: WikiOutputLanguage
     ) -> String {
         let requiredMode: String
         if requiresDatabaseSearch(question: question, history: history) {
@@ -82,7 +86,12 @@ enum AskAIRouter {
         } else {
             requiredMode = ""
         }
-        return buildPrompt(databaseTitle: databaseTitle, question: question, history: history) + """
+        return buildPrompt(
+            databaseTitle: databaseTitle,
+            question: question,
+            history: history,
+            outputLanguage: outputLanguage
+        ) + """
 
 
         CORRECTION: Your previous response was invalid or violated REQUIRED MODE. Try once more. Return exactly one of the two allowed <mode>/<answer> structures, close every tag, and include no text outside the tags.\(requiredMode)

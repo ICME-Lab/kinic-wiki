@@ -8,6 +8,7 @@ import Foundation
 protocol AskAIKnowledgeProviding: AnyObject {
     var selectedAskAIDatabaseId: String { get }
     var selectedAskAIDatabaseTitle: String { get }
+    var askAIOutputLanguage: WikiOutputLanguage { get }
     var canAskAI: Bool { get }
     var askAIDatabaseCandidates: [DatabaseSummary] { get }
 

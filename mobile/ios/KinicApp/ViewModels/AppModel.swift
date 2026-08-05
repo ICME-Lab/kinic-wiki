@@ -28,6 +28,10 @@ extension AppModel: AskAIKnowledgeProviding {
         selectedBrowseDatabase?.displayTitle ?? selectedAskAIDatabaseId
     }
 
+    var askAIOutputLanguage: WikiOutputLanguage {
+        wikiOutputLanguage
+    }
+
     var canAskAI: Bool {
         canBrowse
     }
