@@ -42,10 +42,40 @@ struct AskAIRetrievalPlannerTests {
 
         #expect(throws: AskAIQueryPlanError.invalidFormat) {
             try AskAIQueryPlanner.parseRecovery(
-                "<answer>PRE-DESIGN-MD 日本語\npre-design-md 対応\npre-design-md</answer>",
+                "<answer>日本語 PRE-DESIGN-MD\n対応 pre-design-md\npre-design-md</answer>",
                 excluding: previous
             )
         }
+    }
+
+    @Test
+    func recoveryEnrichmentDoesNotRestoreAnExcludedAnchor() throws {
+        let history = [
+            AskAIMessage(role: .user, text: "pre-design-mdについて教えて"),
+            AskAIMessage(role: .assistant, text: "デザインの土台を決めるツールです。")
+        ]
+        let initialModelPlan = try AskAIQueryPlanner.parse(
+            "<answer>デザインツール 日本語\nデザインツール 対応\nデザインツール</answer>"
+        )
+        let initialPlan = AskAIQueryPlanner.enriched(
+            initialModelPlan,
+            question: "例のツールは日本語対応？",
+            history: history
+        )
+        let parsedRecoveryPlan = try AskAIQueryPlanner.parseRecovery(
+            "<answer>pre-design-md 日本語\npre-design-md japanese support\n日本語対応</answer>",
+            excluding: initialPlan
+        )
+        let recoveryPlan = AskAIQueryPlanner.enriched(
+            parsedRecoveryPlan,
+            question: "例のツールは日本語対応？",
+            history: history,
+            excluding: initialPlan
+        )
+
+        #expect(initialPlan.queries.map(\.text).contains("pre-design-md"))
+        #expect(!recoveryPlan.queries.map(\.text).contains("pre-design-md"))
+        #expect(recoveryPlan.queries.count == 3)
     }
 
     @Test

@@ -132,25 +132,48 @@ struct AskAIModelTests {
         #expect(prompt?.contains("If the requested content is missing for a transformation, ask the user for it") == true)
     }
 
-    @Test
-    func translationSearchRouteRetriesAsConversation() async throws {
+    @Test(arguments: [
+        "Translate this: The database is offline.",
+        "次の文章を要約して: データベースは情報を整理する仕組みです。"
+    ])
+    func transformationPayloadCanUseConversationWithoutRepair(_ question: String) async throws {
         let knowledge = AskAIKnowledgeProviderStub(sources: [contextSource()])
         let client = AskAICompletionStub(responses: [
-            .value("<mode>search</mode><answer>design foundation</answer>"),
-            .value("<mode>conversation</mode><answer>design foundation</answer>")
+            .value("<mode>conversation</mode><answer>Transformed text.</answer>")
         ])
         let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
         await model.load()
 
-        model.draft = "次を英語にして: デザインの土台"
+        model.draft = question
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 0)
+        #expect(model.messages.last?.text == "Transformed text.")
+    }
+
+    @Test(arguments: [
+        "Does DeepL translate PDFs?",
+        "What is a rewrite rule?"
+    ])
+    func factualQuestionsContainingTransformationWordsCanSearch(_ question: String) async throws {
+        let source = contextSource()
+        let knowledge = AskAIKnowledgeProviderStub(sources: [source])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>factual topic\nfactual reference\ntopic</answer>"),
+            .value("<sources>S1</sources><answer>Grounded fact.</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = question
         model.send()
         try await waitUntilFinished(model)
 
         #expect(await client.callCount == 2)
-        #expect(knowledge.retrievalCallCount == 0)
-        #expect(model.messages.last?.text == "design foundation")
-        let prompts = await client.messages
-        #expect(prompts[1].contains("MUST use <mode>conversation</mode>"))
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.text == "Grounded fact.")
     }
 
     @Test
@@ -364,7 +387,7 @@ struct AskAIModelTests {
                 score: -1,
                 matchReasons: []
             ),
-            content: "DB所有者の本名はKinic Taroで、勤務先はExample社。"
+            content: "DB所有者の本名はKinic Taroです。DB所有者の勤務先はExample社です。"
         )
         let knowledge = AskAIKnowledgeProviderStub(sources: [explicitSource])
         let client = AskAICompletionStub(responses: [
@@ -381,6 +404,66 @@ struct AskAIModelTests {
         #expect(await client.callCount == 2)
         #expect(model.messages.last?.state == .complete)
         #expect(model.messages.last?.text.contains("Kinic Taro") == true)
+    }
+
+    @Test
+    func ambiguousIdentityRelationStopsBeforeAnswerGeneration() async throws {
+        let ambiguousSource = AskAIContextSource(
+            source: AskAISource(
+                id: "S1",
+                path: "/Knowledge/profile.md",
+                excerpt: "Owner asked about a developer",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "The database owner asked whether Bob is the developer."
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [ambiguousSource])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>search</mode><answer>database owner developer\nowner developer\ndeveloper</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "Am I the developer?"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 1)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .insufficient)
+    }
+
+    @Test
+    func identityConversationRouteIsRepairedToSearchWithoutHistory() async throws {
+        let explicitSource = AskAIContextSource(
+            source: AskAISource(
+                id: "S1",
+                path: "/Knowledge/profile.md",
+                excerpt: "Owner profile",
+                score: -1,
+                matchReasons: []
+            ),
+            content: "The database owner's real name is Kinic Taro."
+        )
+        let knowledge = AskAIKnowledgeProviderStub(sources: [explicitSource])
+        let client = AskAICompletionStub(responses: [
+            .value("<mode>conversation</mode><answer>Your name is Kinic Taro.</answer>"),
+            .value("<mode>search</mode><answer>database owner real name\nowner name\nreal name</answer>"),
+            .value("<sources>S1</sources><answer>Your name is Kinic Taro.</answer>")
+        ])
+        let model = AskAIModel(knowledgeProvider: knowledge, client: client, store: AskAIStoreStub())
+        await model.load()
+
+        model.draft = "What is my real name?"
+        model.send()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 3)
+        #expect(knowledge.retrievalCallCount == 1)
+        #expect(model.messages.last?.state == .complete)
+        let prompts = await client.messages
+        #expect(prompts[1].contains("MUST use <mode>search</mode>"))
     }
 
     @Test
@@ -943,6 +1026,40 @@ struct AskAIModelTests {
         try await waitForDeleteCount(store, count: 1)
 
         #expect(model.conversations.isEmpty)
+    }
+
+    @Test
+    func accountDeletionWaitsForPendingSaveBeforeDeletingTheSameScope() async throws {
+        let scope = AskAIHistoryScope(principal: "aaaaa-aa")
+        let store = AskAIControllableStoreStub(suspendsSave: true)
+        let client = AskAICompletionStub(responses: [
+            .delayed("<mode>search</mode><answer>late query</answer>", .seconds(60))
+        ])
+        let model = AskAIModel(
+            knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: client,
+            store: store,
+            historyScope: scope
+        )
+        await model.load()
+        model.draft = "A private question"
+        model.send()
+        try await waitForPendingSave(store)
+
+        let deletion = Task {
+            try await model.deleteStoredHistoryForAccountDeletion(scope: scope)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await store.deleteCount == 0)
+
+        await store.resumeSave()
+        try await deletion.value
+
+        #expect(await store.saveCompletionCount == 1)
+        #expect(await store.deleteCount == 1)
+        #expect(model.conversations.isEmpty)
+        #expect(model.loadState == .loading)
     }
 
     @Test

@@ -27,8 +27,6 @@ enum AskAIRouter {
         let requiredMode: String
         if requiresDatabaseSearch(question: question, history: history) {
             requiredMode = "search — this request requires evidence from the selected database"
-        } else if requiresConversation(question: question) {
-            requiredMode = "conversation — this is an explicit transformation or translation request"
         } else {
             requiredMode = "not predetermined — apply the rules below"
         }
@@ -81,8 +79,6 @@ enum AskAIRouter {
         let requiredMode: String
         if requiresDatabaseSearch(question: question, history: history) {
             requiredMode = " The corrected response MUST use <mode>search</mode>."
-        } else if requiresConversation(question: question) {
-            requiredMode = " The corrected response MUST use <mode>conversation</mode>."
         } else {
             requiredMode = ""
         }
@@ -98,18 +94,14 @@ enum AskAIRouter {
         history: [AskAIMessage]
     ) -> Bool {
         let normalized = question.precomposedStringWithCompatibilityMapping.lowercased()
+        let routingQuestion = routingQuestion(from: normalized)
+        if routingQuestion.hasTransformationPayload {
+            return requiresStoredDatabaseEvidence(normalizedQuestion: routingQuestion.instruction)
+        }
         if requiresStoredDatabaseEvidence(normalizedQuestion: normalized) {
             return true
         }
-        if requiresConversation(question: question) {
-            return false
-        }
-
-        let identityMarkers = [
-            "俺の本名", "私の本名", "勤務先", "職業", "本人", "俺だと言える", "私だと言える",
-            "database owner", "db owner", "my employer", "my occupation"
-        ]
-        if !history.isEmpty, identityMarkers.contains(where: normalized.contains) {
+        if AskAIIdentityPolicy.requiresExplicitEvidence(question: question) {
             return true
         }
 
@@ -123,26 +115,33 @@ enum AskAIRouter {
         return factualMarkers.contains(where: normalized.contains)
     }
 
-    static func requiresConversation(question: String) -> Bool {
-        let normalized = question.precomposedStringWithCompatibilityMapping.lowercased()
-        guard !requiresStoredDatabaseEvidence(normalizedQuestion: normalized) else {
-            return false
-        }
-        let transformationMarkers = [
-            "短くして", "短くまとめて", "書き直", "言い換え", "翻訳", "英語にして", "日本語にして",
-            "要約して", "rewrite", "translate", "shorter", "summarize"
-        ]
-        return transformationMarkers.contains(where: normalized.contains)
-    }
-
     private static func requiresStoredDatabaseEvidence(normalizedQuestion: String) -> Bool {
         let markers = [
-            "このdb", "dbの", "db内", "データベース", "ノート", "保存した記事", "保存したページ",
-            "保存済みの記事", "保存済みページ", "my database", "this database", "the database",
-            "my notes", "saved notes", "database notes", "this note", "the note", "saved article",
+            "このdb", "dbの", "db内", "このデータベース", "データベース内", "私のデータベース",
+            "俺のデータベース", "自分のデータベース", "ノートから", "保存した記事", "保存したページ",
+            "保存済みの記事", "保存済みページ", "my database", "this database", "my notes",
+            "saved notes", "database notes", "saved article",
             "saved page", "stored article", "stored page", "source note", "source document"
         ]
         return markers.contains(where: normalizedQuestion.contains)
+    }
+
+    private static func routingQuestion(
+        from normalizedQuestion: String
+    ) -> (instruction: String, hasTransformationPayload: Bool) {
+        guard let delimiter = normalizedQuestion.firstIndex(where: { $0 == ":" || $0 == "：" || $0 == "\n" }) else {
+            return (normalizedQuestion, false)
+        }
+        let instruction = normalizedQuestion[..<delimiter]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let transformationPrefixes = [
+            "translate", "rewrite", "summarize", "shorten", "翻訳", "要約", "書き直",
+            "次を", "次の文章を", "以下を", "これを", "この文章を", "前の回答を"
+        ]
+        guard transformationPrefixes.contains(where: instruction.hasPrefix) else {
+            return (normalizedQuestion, false)
+        }
+        return (instruction, true)
     }
 
     static func parse(_ response: String) throws -> AskAIRoute {

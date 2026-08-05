@@ -240,6 +240,8 @@ final class AppModel {
     private let logger: Logger
     private let deleteAccountRemotely: @Sendable (ICAuthSession) async throws -> Void
     private let deleteAskAIHistory: @Sendable (AskAIHistoryScope) async throws -> Void
+    private let removeAllSharedURLs: () throws -> Void
+    private let removeAllCaptureHistory: () throws -> Void
     private var session: ICAuthSession?
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
@@ -413,6 +415,8 @@ final class AppModel {
         sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil,
         deleteAccountRemotely: (@Sendable (ICAuthSession) async throws -> Void)? = nil,
         deleteAskAIHistory: (@Sendable (AskAIHistoryScope) async throws -> Void)? = nil,
+        removeAllSharedURLs: (() throws -> Void)? = nil,
+        removeAllCaptureHistory: (() throws -> Void)? = nil,
         initialSession: ICAuthSession? = nil
     ) {
         self.configuration = configuration
@@ -426,6 +430,12 @@ final class AppModel {
         }
         self.deleteAskAIHistory = deleteAskAIHistory ?? { scope in
             try await AskAIConversationStore.live(scope: scope).deleteAllStoredConversationData()
+        }
+        self.removeAllSharedURLs = removeAllSharedURLs ?? {
+            try shareInbox.removeAll()
+        }
+        self.removeAllCaptureHistory = removeAllCaptureHistory ?? {
+            try sourceCaptureHistoryStore?.removeAll()
         }
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         selectedDatabaseId = settingsStore.databaseId
@@ -981,7 +991,9 @@ final class AppModel {
         }
     }
 
-    func deleteAccount() async -> Bool {
+    func deleteAccount(
+        coordinatedHistoryDeletion: ((AskAIHistoryScope) async throws -> Void)? = nil
+    ) async -> Bool {
         guard !isDeletingAccount else {
             return false
         }
@@ -997,17 +1009,39 @@ final class AppModel {
         }
         do {
             try await deleteAccountRemotely(session)
-            try await deleteAskAIHistory(historyScope)
-            try shareInbox.removeAll()
-            try sourceCaptureHistoryStore?.removeAll()
-            pendingURLs = []
-            sourceCaptureHistory = []
-            signOut()
-            return true
         } catch {
             accountDeletionError = error.localizedDescription
             return false
         }
+
+        var localCleanupFailureCount = 0
+        do {
+            if let coordinatedHistoryDeletion {
+                try await coordinatedHistoryDeletion(historyScope)
+            } else {
+                try await deleteAskAIHistory(historyScope)
+            }
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        do {
+            try removeAllSharedURLs()
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        do {
+            try removeAllCaptureHistory()
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        pendingURLs = []
+        sourceCaptureHistory = []
+        signOut()
+        if localCleanupFailureCount > 0 {
+            logger.error("Account deleted with local cleanup failures count=\(localCleanupFailureCount, privacy: .public)")
+            statusMessage = "Your account was deleted and you were signed out, but some on-device data could not be removed. Delete the app to remove any remaining local data."
+        }
+        return true
     }
 
     func startSubmitNextPendingURL() {

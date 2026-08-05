@@ -92,10 +92,6 @@ struct AskAILiveEvaluationTests {
                            ) {
                             needsRepair = true
                         }
-                        if case .search = route,
-                           AskAIRouter.requiresConversation(question: testCase.question) {
-                            needsRepair = true
-                        }
                     } catch is AskAIRouteError {
                         route = .conversation(answer: "")
                         needsRepair = true

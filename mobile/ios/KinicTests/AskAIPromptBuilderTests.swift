@@ -151,7 +151,7 @@ struct AskAIPromptBuilderTests {
                 score: -1,
                 matchReasons: []
             ),
-            content: "DB所有者の本名はKinic Taroで、勤務先はExample社。"
+            content: "DB所有者の本名はKinic Taroです。DB所有者の勤務先はExample社です。"
         )
 
         let question = "俺の本名と勤務先を教えて。"
@@ -197,6 +197,40 @@ struct AskAIPromptBuilderTests {
         let question = "俺の本名と勤務先を教えて。"
         #expect(!AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [incomplete]))
         #expect(AskAIIdentityPolicy.hasDirectEvidence(question: question, sources: [explicit]))
+    }
+
+    @Test
+    func identityPolicyRejectsQuestionsNegationUncertaintyAndUnrelatedPeople() {
+        let question = "Am I the developer?"
+        for (index, content) in [
+            "Is the database owner the developer?",
+            "DB所有者は開発者か。",
+            "The database owner is not the developer.",
+            "The database owner may be the developer.",
+            "The database owner is probably the developer.",
+            "The database owner asked whether Bob is the developer."
+        ].enumerated() {
+            #expect(!AskAIIdentityPolicy.hasDirectEvidence(
+                question: question,
+                sources: [contextSource(id: "S\(index)", content: content)]
+            ))
+        }
+    }
+
+    @Test
+    func identityPolicyAcceptsExplicitJapaneseAndEnglishRelations() {
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(
+            question: "俺の本名は？",
+            sources: [contextSource(id: "S1", content: "DB所有者の本名はKinic Taroです。")]
+        ))
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(
+            question: "Am I the developer?",
+            sources: [contextSource(id: "S2", content: "The database owner is the developer.")]
+        ))
+        #expect(AskAIIdentityPolicy.hasDirectEvidence(
+            question: "作ったのは俺だと言える？",
+            sources: [contextSource(id: "S3", content: "DB所有者が開発した製品です。")]
+        ))
     }
 
     private func contextSource(id: String, content: String) -> AskAIContextSource {

@@ -53,12 +53,12 @@ struct AskAIResponseDecoderTests {
     }
 
     @Test
-    func treatsSourcesWithoutAnswerAsInsufficient() throws {
-        #expect(
+    func rejectsSourcesWithoutAnswer() {
+        #expect(throws: AskAIResponseError.invalidSources) {
             try AskAIResponseDecoder.decode(
                 "<sources>S1</sources><answer>  </answer>",
                 validSourceIDs: ["S1"]
-            ) == .insufficient
-        )
+            )
+        }
     }
 }

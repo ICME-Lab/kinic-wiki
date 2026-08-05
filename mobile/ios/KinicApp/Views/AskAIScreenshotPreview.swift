@@ -131,14 +131,6 @@ struct AskAIScreenshotPreview: View {
             }
             .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
-
-            Label(
-                "Messages and recent conversation are sent to Kinic AI. Relevant notes are included only when needed.",
-                systemImage: "lock.shield"
-            )
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)

@@ -53,21 +53,30 @@ enum AskAIQueryPlanner {
         _ response: String,
         excluding previousPlan: AskAIQueryPlan
     ) throws -> AskAIQueryPlan {
-        let parsed = try parse(response)
-        let excluded = Set(previousPlan.queries.map { normalizedQuery($0.text) })
-        let queries = parsed.queries.filter { !excluded.contains(normalizedQuery($0.text)) }
+        let parsed = try parse(response, appendingFallback: false)
+        let excluded = Set(previousPlan.queries.map { equivalentQueryKey($0.text) })
+        var queries = parsed.queries.filter { !excluded.contains(equivalentQueryKey($0.text)) }
         guard !queries.isEmpty else { throw AskAIQueryPlanError.invalidFormat }
+        var seen = excluded.union(queries.map { equivalentQueryKey($0.text) })
+        if queries.count < maximumQueries,
+           let fallback = fallbackAnchor(from: queries[0]),
+           seen.insert(equivalentQueryKey(fallback.text)).inserted {
+            queries.append(fallback)
+        }
         return AskAIQueryPlan(queries: queries)
     }
 
     static func enriched(
         _ plan: AskAIQueryPlan,
         question: String,
-        history: [AskAIMessage]
+        history: [AskAIMessage],
+        excluding excludedPlan: AskAIQueryPlan? = nil
     ) -> AskAIQueryPlan {
         guard let anchor = contextualAnchor(question: question, history: history) else { return plan }
-        let normalizedAnchor = normalizedQuery(anchor.text)
-        guard !plan.queries.contains(where: { normalizedQuery($0.text) == normalizedAnchor }) else {
+        let normalizedAnchor = equivalentQueryKey(anchor.text)
+        let excludedQueries = Set(excludedPlan?.queries.map { equivalentQueryKey($0.text) } ?? [])
+        guard !excludedQueries.contains(normalizedAnchor),
+              !plan.queries.contains(where: { equivalentQueryKey($0.text) == normalizedAnchor }) else {
             return plan
         }
 
@@ -98,6 +107,13 @@ enum AskAIQueryPlanner {
     }
 
     static func parse(_ response: String) throws -> AskAIQueryPlan {
+        try parse(response, appendingFallback: true)
+    }
+
+    private static func parse(
+        _ response: String,
+        appendingFallback: Bool
+    ) throws -> AskAIQueryPlan {
         guard !response.unicodeScalars.contains(where: { scalar in
             CharacterSet.controlCharacters.contains(scalar) && scalar != "\n" && scalar != "\r"
         }) else {
@@ -144,27 +160,39 @@ enum AskAIQueryPlanner {
             guard (1...maximumTermsPerQuery).contains(terms.count) else {
                 throw AskAIQueryPlanError.invalidFormat
             }
-            if seen.insert(normalized).inserted {
+            if seen.insert(equivalentQueryKey(normalized)).inserted {
                 queries.append(.init(text: normalized, terms: terms))
             }
         }
         guard !queries.isEmpty else {
             throw AskAIQueryPlanError.invalidFormat
         }
-        if queries.count < maximumQueries,
+        if appendingFallback,
+           queries.count < maximumQueries,
            let literal = queries.first,
            let fallback = fallbackAnchor(from: literal),
-           seen.insert(fallback.text).inserted {
+           seen.insert(equivalentQueryKey(fallback.text)).inserted {
             queries.append(fallback)
         }
         return AskAIQueryPlan(queries: queries)
     }
 
     static func normalizedQuery(_ value: String) -> String {
-        value
+        let normalized = value
             .precomposedStringWithCompatibilityMapping
             .lowercased(with: Locale(identifier: "en_US_POSIX"))
-            .trimmingCharacters(in: .whitespaces)
+        return normalized
+            .split(whereSeparator: \Character.isWhitespace)
+            .map(String.init)
+            .joined(separator: " ")
+    }
+
+    private static func equivalentQueryKey(_ value: String) -> String {
+        normalizedQuery(value)
+            .split(whereSeparator: \Character.isWhitespace)
+            .map(String.init)
+            .sorted()
+            .joined(separator: " ")
     }
 
     private static func fallbackAnchor(

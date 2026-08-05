@@ -6,6 +6,7 @@ import SwiftUI
 
 struct AppSettingsView: View {
     @Bindable var model: AppModel
+    let askAIModel: AskAIModel
     @Environment(\.dismiss) private var dismiss
     @State private var didCopyPrincipal = false
     @State private var showsDeleteAccountConfirmation = false
@@ -131,7 +132,9 @@ struct AppSettingsView: View {
 
     private func deleteAccount() {
         Task {
-            if await model.deleteAccount() {
+            if await model.deleteAccount(
+                coordinatedHistoryDeletion: askAIModel.deleteStoredHistoryForAccountDeletion
+            ) {
                 dismiss()
             }
         }
@@ -139,7 +142,8 @@ struct AppSettingsView: View {
 }
 
 #Preview {
+    let appModel = AppModel.preview()
     NavigationStack {
-        AppSettingsView(model: .preview())
+        AppSettingsView(model: appModel, askAIModel: AskAIModel(appModel: appModel))
     }
 }

@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/AskAIComposerView.swift
-// What: Multiline conversational composer and privacy notice.
-// Why: Sending scope must remain clear when chat or selected note text leaves the device.
+// What: Multiline conversational composer.
+// Why: Keep message entry and generation controls compact and accessible.
 
 import SwiftUI
 
@@ -43,14 +43,6 @@ struct AskAIComposerView: View {
                 .accessibilityLabel(
                     "\(model.remainingQuestionCharacters) characters remaining"
                 )
-
-            Label(
-                "Your message and recent conversation are sent to Kinic AI. Relevant notes are included only when a database search is needed, then deleted after processing.",
-                systemImage: "lock.shield"
-            )
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)

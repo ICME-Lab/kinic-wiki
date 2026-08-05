@@ -204,6 +204,30 @@ final class AskAIModel {
         isConfirmingHistoryReset = false
     }
 
+    func deleteStoredHistoryForAccountDeletion(scope: AskAIHistoryScope) async throws {
+        guard scope == historyScope else {
+            try await AskAIConversationStore.live(scope: scope).deleteAllStoredConversationData()
+            return
+        }
+
+        cancelGeneration(persistFailure: false)
+        historyContextID = UUID()
+        historyOperationID = nil
+        loadState = .loading
+        let pendingPersistence = persistenceTask
+        let targetStore = store
+        persistenceTask = nil
+
+        await pendingPersistence?.value
+        try await targetStore.deleteAllStoredConversationData()
+
+        conversations = []
+        currentConversation = nil
+        hasStoredConversationData = false
+        draft = ""
+        errorMessage = nil
+    }
+
     func syncSelectedDatabase() {
         guard loadState == .loaded else {
             currentConversation = nil
@@ -412,15 +436,11 @@ final class AskAIModel {
                 question: question,
                 history: history
             )
-            let routeRequiresConversation = AskAIRouter.requiresConversation(question: question)
             var route: AskAIRoute
             var needsRepair = false
             do {
                 route = try AskAIRouter.parse(routeResponse)
                 if case .conversation = route, routeRequiresSearch {
-                    needsRepair = true
-                }
-                if case .search = route, routeRequiresConversation {
                     needsRepair = true
                 }
             } catch is AskAIRouteError {
@@ -444,9 +464,6 @@ final class AskAIModel {
                 ) else { return }
                 route = try AskAIRouter.parse(repairResponse)
                 if case .conversation = route, routeRequiresSearch {
-                    throw AskAIRouteError.invalidFormat
-                }
-                if case .search = route, routeRequiresConversation {
                     throw AskAIRouteError.invalidFormat
                 }
             }
@@ -520,7 +537,8 @@ final class AskAIModel {
                     let recoveryPlan = AskAIQueryPlanner.enriched(
                         parsedRecoveryPlan,
                         question: question,
-                        history: history
+                        history: history,
+                        excluding: queryPlan
                     )
                     let recoveryRetrieval = try await knowledgeProvider.retrieveAskAISources(
                         databaseId: databaseID,

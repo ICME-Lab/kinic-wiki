@@ -32,6 +32,9 @@ enum AskAIResponseDecoder {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         if answer.isEmpty {
+            guard rawSources.isEmpty else {
+                throw AskAIResponseError.invalidSources
+            }
             return .insufficient
         }
         guard !rawSources.isEmpty,

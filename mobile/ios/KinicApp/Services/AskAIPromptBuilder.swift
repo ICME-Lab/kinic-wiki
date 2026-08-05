@@ -90,6 +90,23 @@ enum AskAIPromptBuilder {
 }
 
 enum AskAIIdentityPolicy {
+    private struct EvidenceSentence {
+        let value: String
+        let isQuestion: Bool
+    }
+
+    private enum RelationKind {
+        case realName
+        case employer
+        case occupation
+        case authorship
+    }
+
+    private struct RelationGroup {
+        let kind: RelationKind
+        let questionMarkers: [String]
+    }
+
     static func requiresExplicitEvidence(question: String) -> Bool {
         let value = normalize(question)
         let markers = [
@@ -119,34 +136,111 @@ enum AskAIIdentityPolicy {
         guard !requestedGroups.isEmpty else { return false }
         return requestedGroups.allSatisfy { group in
             sentences.contains { sentence in
-                subjectMarkers.contains(where: sentence.contains)
-                    && group.evidenceMarkers.contains(where: sentence.contains)
+                hasExplicitRelation(
+                    sentence: sentence,
+                    subjectMarkers: subjectMarkers,
+                    kind: group.kind
+                )
             }
         }
     }
 
-    private static let relationGroups: [(
-        questionMarkers: [String],
-        evidenceMarkers: [String]
-    )] = [
-        (["本名", "real name"], ["本名", "real name"]),
-        (["勤務先", "雇用主", "employer"], ["勤務先", "雇用主", "employer", "勤務して"]),
-        (["職業", "occupation"], ["職業", "occupation"]),
-        (
-            ["作った", "開発", "作者", "著者", "build", "write", "author", "developer"],
-            ["作った", "開発", "作者", "著者", "built", "wrote", "author", "developer"]
+    private static let relationGroups = [
+        RelationGroup(kind: .realName, questionMarkers: ["本名", "real name"]),
+        RelationGroup(kind: .employer, questionMarkers: ["勤務先", "雇用主", "employer"]),
+        RelationGroup(kind: .occupation, questionMarkers: ["職業", "occupation"]),
+        RelationGroup(
+            kind: .authorship,
+            questionMarkers: ["作った", "開発", "作者", "著者", "build", "write", "author", "developer"]
         )
+    ]
+
+    private static let disqualifyingMarkers = [
+        "ではな", "ではありません", "じゃない", "不明", "わからない", "未確認", "かどうか",
+        "かもしれ", "可能性", "おそらく", "推定", "と思われ", "尋ね", "質問した", " is not ",
+        " isn't ", " was not ", " wasn't ", "unknown", "unclear", "whether", "may be",
+        "might be", "probably", "possibly", "appears to be", "seems to be", "asked", "asks"
     ]
 
     private static func normalize(_ value: String) -> String {
         value.precomposedStringWithCompatibilityMapping.lowercased()
     }
 
-    private static func evidenceSentences(in content: String) -> [String] {
-        content
-            .split(whereSeparator: isEvidenceSentenceBoundary)
-            .map { normalize(String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+    private static func evidenceSentences(in content: String) -> [EvidenceSentence] {
+        var sentences: [EvidenceSentence] = []
+        var current = ""
+        for character in content {
+            if isEvidenceSentenceBoundary(character) {
+                appendEvidenceSentence(
+                    current,
+                    isQuestion: character == "?" || character == "？",
+                    to: &sentences
+                )
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        appendEvidenceSentence(current, isQuestion: false, to: &sentences)
+        return sentences
+    }
+
+    private static func appendEvidenceSentence(
+        _ rawValue: String,
+        isQuestion: Bool,
+        to sentences: inout [EvidenceSentence]
+    ) {
+        let value = normalize(rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        sentences.append(EvidenceSentence(value: value, isQuestion: isQuestion || value.hasSuffix("か")))
+    }
+
+    private static func hasExplicitRelation(
+        sentence: EvidenceSentence,
+        subjectMarkers: [String],
+        kind: RelationKind
+    ) -> Bool {
+        guard !sentence.isQuestion,
+              !disqualifyingMarkers.contains(where: sentence.value.contains) else {
+            return false
+        }
+        return subjectMarkers.contains { subject in
+            explicitRelationPatterns(subject: subject, kind: kind).contains { pattern in
+                sentence.value.contains(pattern)
+            }
+        }
+    }
+
+    private static func explicitRelationPatterns(subject: String, kind: RelationKind) -> [String] {
+        switch kind {
+        case .realName:
+            return possessivePatterns(subject: subject, attributes: ["本名", "real name"])
+        case .employer:
+            return possessivePatterns(subject: subject, attributes: ["勤務先", "雇用主", "employer"])
+                + ["\(subject)は勤務して", "\(subject)が勤務して", "\(subject) works at ", "\(subject) works for "]
+        case .occupation:
+            return possessivePatterns(subject: subject, attributes: ["職業", "occupation"])
+        case .authorship:
+            return [
+                "\(subject)は開発者", "\(subject)は作者", "\(subject)は著者",
+                "\(subject)が作った", "\(subject)が開発", "\(subject)が執筆",
+                "\(subject) is developer", "\(subject) is a developer", "\(subject) is the developer",
+                "\(subject) is author", "\(subject) is an author", "\(subject) is the author",
+                "\(subject) built ", "\(subject) wrote ", "\(subject) developed ", "\(subject) created "
+            ]
+        }
+    }
+
+    private static func possessivePatterns(subject: String, attributes: [String]) -> [String] {
+        attributes.flatMap { attribute in
+            [
+                "\(subject)の\(attribute)",
+                "\(subject)'s \(attribute)",
+                "\(subject)’s \(attribute)",
+                "\(attribute) of the \(subject)",
+                "\(attribute) of \(subject)"
+            ]
+        }
     }
 
     private static func isEvidenceSentenceBoundary(_ character: Character) -> Bool {

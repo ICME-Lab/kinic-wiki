@@ -62,7 +62,6 @@ struct AskAIRouterTests {
             question: "前の回答を短くして。",
             history: history
         ))
-        #expect(AskAIRouter.requiresConversation(question: "次を英語にして: デザインの土台"))
     }
 
     @Test
@@ -71,18 +70,46 @@ struct AskAIRouterTests {
             question: "このDBのノートを要約して",
             history: []
         ))
-        #expect(!AskAIRouter.requiresConversation(question: "このDBのノートを要約して"))
         #expect(AskAIRouter.requiresDatabaseSearch(
             question: "summarize my saved notes",
             history: []
         ))
-        #expect(!AskAIRouter.requiresConversation(question: "summarize my saved notes"))
         #expect(!AskAIRouter.requiresDatabaseSearch(
             question: "前の回答を短くして。",
             history: [AskAIMessage(role: .assistant, text: "A long answer")]
         ))
-        #expect(AskAIRouter.requiresConversation(question: "前の回答を短くして。"))
-        #expect(AskAIRouter.requiresConversation(question: "次を英語にして: デザインの土台"))
+    }
+
+    @Test
+    func identityQuestionsRequireSearchWithoutConversationHistory() {
+        for question in ["俺の本名は？", "What is my real name?", "Am I the developer?"] {
+            #expect(AskAIRouter.requiresDatabaseSearch(question: question, history: []))
+        }
+    }
+
+    @Test
+    func transformationWordsDoNotHardOverrideTheModelRoute() {
+        for question in ["Does DeepL translate PDFs?", "What is a rewrite rule?"] {
+            let prompt = AskAIRouter.buildPrompt(
+                databaseTitle: "memo",
+                question: question,
+                history: []
+            )
+            #expect(prompt.contains("REQUIRED MODE: not predetermined"))
+        }
+
+        for question in [
+            "Translate this: The database is offline.",
+            "次の文章を要約して: データベースは情報を整理する仕組みです。"
+        ] {
+            #expect(!AskAIRouter.requiresDatabaseSearch(question: question, history: []))
+            let prompt = AskAIRouter.buildPrompt(
+                databaseTitle: "memo",
+                question: question,
+                history: []
+            )
+            #expect(prompt.contains("REQUIRED MODE: not predetermined"))
+        }
     }
 
     @Test
