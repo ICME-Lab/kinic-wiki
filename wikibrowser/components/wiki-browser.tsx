@@ -4,10 +4,12 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { NodePublicationControls } from "@/components/node-publication-controls";
+import { FolderImportDialog, type FolderImportDialogState } from "@/components/folder-import-dialog";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
 import { GraphPanel } from "@/components/graph-panel";
@@ -23,6 +25,7 @@ import { parseSearchOptions } from "@/lib/search-options";
 import { databaseRouteBase } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import { buildFolderImportWrites, loadExistingImportNodes, prepareFolderImport, reconcileFolderImport, type FolderImportFile } from "@/lib/local-folder-import";
 import { folderIndexPath, isReservedFolderIndexName } from "@/lib/folder-index";
 import { wikiSeoTitle } from "@/lib/wiki-seo";
 import { DEFAULT_EXPLORER_SORT_ORDER, parseExplorerSortOrder, type ExplorerSortOrder } from "@/lib/child-sort";
@@ -133,6 +136,9 @@ function WikiBrowserContent() {
   const [explorerDraftName, setExplorerDraftName] = useState("");
   const [explorerActionError, setExplorerActionError] = useState<string | null>(null);
   const [explorerBusyAction, setExplorerBusyAction] = useState<"file" | "folder" | "rename" | "move" | "delete" | null>(null);
+  const [folderImportDialog, setFolderImportDialog] = useState<FolderImportDialogState | null>(null);
+  const folderImportInputRef = useRef<HTMLInputElement | null>(null);
+  const folderImportSequence = useRef(0);
   const nodeContextCache = useRef(new Map<string, NodeContext>());
   const childNodesCache = useRef(new Map<string, ChildNode[]>());
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
@@ -495,6 +501,69 @@ function WikiBrowserContent() {
     ? currentChildren.data ?? undefined
     : undefined;
   const explorerDeleteTarget = explorerMutationTarget && isDeletableExplorerNode(explorerMutationTarget, selectedExplorerChildren) ? explorerMutationTarget : null;
+
+  function openFolderImportPicker() {
+    if (!canLeaveDirtyEdit() || !explorerCreateDirectory) return;
+    setExplorerActionError(null);
+    setExplorerActionMode(null);
+    setExplorerMoveOpen(false);
+    const input = folderImportInputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }
+
+  async function prepareSelectedFolder(files: FolderImportFile[]) {
+    if (!explorerCreateDirectory || files.length === 0) return;
+    const sequence = ++folderImportSequence.current;
+    const destinationDirectory = explorerCreateDirectory;
+    setFolderImportDialog({ phase: "preparing", destinationDirectory });
+    try {
+      const prepared = await prepareFolderImport(files, destinationDirectory);
+      const existing = await loadExistingImportNodes(prepared, async (path) => {
+        const { listChildren } = await import("@/lib/vfs-client");
+        return listChildren(canisterId, databaseId, path, readIdentity ?? undefined);
+      });
+      if (sequence !== folderImportSequence.current) return;
+      setFolderImportDialog({ phase: "ready", plan: reconcileFolderImport(prepared, existing) });
+    } catch (cause) {
+      if (sequence !== folderImportSequence.current) return;
+      setFolderImportDialog({ phase: "error", destinationDirectory, message: errorMessage(cause) });
+    }
+  }
+
+  function cancelFolderImport() {
+    folderImportSequence.current += 1;
+    setFolderImportDialog(null);
+  }
+
+  async function runFolderImport(replacements: Set<string>) {
+    if (!folderImportDialog || folderImportDialog.phase !== "ready") return;
+    const plan = folderImportDialog.plan;
+    const selectedReplacements = new Set(replacements);
+    try {
+      if (!readIdentity) throw new Error("Login with Internet Identity to import folders.");
+      if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+      if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
+      const nodes = buildFolderImportWrites(plan, selectedReplacements);
+      if (plan.limitError || nodes.length === 0) return;
+      setFolderImportDialog({ phase: "writing", plan });
+      const { writeNodesAuthenticated } = await import("@/lib/vfs-client");
+      const results = await writeNodesAuthenticated(canisterId, readIdentity, { databaseId, nodes });
+      const created = results.filter((result) => result.created).length;
+      const replaced = results.length - created;
+      const skipped = plan.excluded.length
+        + plan.entries.filter((entry) => entry.status === "blocked").length
+        + plan.entries.filter((entry) => entry.status === "conflict" && !selectedReplacements.has(entry.path)).length;
+      invalidateBrowserCaches();
+      setFolderImportDialog(null);
+      toast.success(`Imported ${created} new, replaced ${replaced}, skipped ${skipped}.`);
+      navigate(hrefForPath(canisterId, databaseId, plan.rootPath, undefined, tab), { guard: false, replace: true });
+    } catch (cause) {
+      setFolderImportDialog({ phase: "ready", plan });
+      toast.error(errorMessage(cause));
+    }
+  }
   useEffect(() => {
     const nextTargets = loadedWikiFolders(childNodesCache.current, explorerMutationTarget);
     setExplorerMoveTargets((currentTargets) => sameStringList(currentTargets, nextTargets) ? currentTargets : nextTargets);
@@ -745,11 +814,13 @@ function WikiBrowserContent() {
                 renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
                 moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
+                importDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null || folderImportDialog !== null}
                 fileTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New file in ${explorerCreateDirectory}`}
                 folderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
                 deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file, source node, or folder without visible children to delete")}
+                importTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import a local folder into ${explorerCreateDirectory}`}
                 onSortOrderChange={updateExplorerSortOrder}
                 onNewFile={() => {
                   setExplorerActionError(null);
@@ -778,6 +849,7 @@ function WikiBrowserContent() {
                   setExplorerMoveOpen(true);
                 }}
                 onDelete={() => void runExplorerDelete()}
+                onImport={openFolderImportPicker}
               />
             ) : undefined}
           />
@@ -924,6 +996,25 @@ function WikiBrowserContent() {
           </aside>
         ) : null}
       </section>
+      <input
+        ref={(node) => {
+          folderImportInputRef.current = node;
+          node?.setAttribute("webkitdirectory", "");
+        }}
+        className="hidden"
+        type="file"
+        multiple
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []) as FolderImportFile[];
+          event.currentTarget.value = "";
+          void prepareSelectedFolder(files);
+        }}
+      />
+      {folderImportDialog ? (
+        <FolderImportDialog state={folderImportDialog} onCancel={cancelFolderImport} onImport={(replacements) => void runFolderImport(replacements)} />
+      ) : null}
     </main>
   );
 }

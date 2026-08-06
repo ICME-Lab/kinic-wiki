@@ -93,6 +93,8 @@ const typeOrder = [
   "GraphNeighborhoodRequest",
   "NodeContextRequest",
   "WriteNodeRequest",
+  "WriteNodeItem",
+  "WriteNodesRequest",
   "WriteSourceForGenerationRequest",
   "DeleteNodeRequest",
   "MkdirNodeRequest",
@@ -145,6 +147,7 @@ const typeOrder = [
   "ResultNat64",
   "WriteNodeResult",
   "ResultWriteNode",
+  "ResultWriteNodes",
   "WriteSourceForGenerationResult",
   "ResultWriteSourceForGeneration",
   "DeleteNodeResult",
@@ -221,6 +224,7 @@ const methodOrder = [
   "wiki_metrics_series",
   "purchase_database_cycles",
   "write_node",
+  "write_nodes",
   "write_source_for_generation"
 ];
 

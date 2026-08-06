@@ -373,6 +373,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     metadata_json: idl.Text,
     database_id: idl.Text
   });
+  const WriteNodeItem = idl.Record({
+    content: idl.Text,
+    kind: NodeKind,
+    path: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    metadata_json: idl.Text
+  });
+  const WriteNodesRequest = idl.Record({ nodes: idl.Vec(WriteNodeItem), database_id: idl.Text });
   const WriteSourceForGenerationRequest = idl.Record({
     content: idl.Text,
     path: idl.Text,
@@ -478,6 +486,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
+  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: idl.Text });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
   const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text });
   const DeleteNodeResult = idl.Record({ path: idl.Text });
@@ -554,6 +563,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     wiki_metrics_series: idl.Func([idl.Nat32], [ResultWikiMetricsSeries], ["query"]),
     purchase_database_cycles: idl.Func([DatabaseCyclesPurchaseRequest], [ResultCyclesPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
+    write_nodes: idl.Func([WriteNodesRequest], [ResultWriteNodes], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])
   });
 };
