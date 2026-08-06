@@ -164,8 +164,8 @@ jobs:
         run: pnpm build:worker
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
-      - name: Run support route smoke
-        run: pnpm e2e:support
+      - name: Run public route browser tests
+        run: pnpm e2e:public
 
   wiki-generator-check:
     needs: changes

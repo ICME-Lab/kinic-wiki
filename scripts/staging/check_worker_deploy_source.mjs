@@ -15,7 +15,7 @@ export const REQUIRED_PUBLIC_NODE_FILES = [
   "wikibrowser/components/node-publication-controls.tsx",
   "wikibrowser/lib/vfs-client.ts",
   "wikibrowser/src/routes/p.$publicId.tsx",
-  "wikibrowser/scripts/check-public-node-page.mjs"
+  "wikibrowser/app/p/[publicId]/page.test.tsx"
 ];
 
 export function checkWorkerDeploySource({
@@ -60,8 +60,12 @@ export function checkWorkerDeploySource({
   }
 
   requireSuccess(
-    run(process.execPath, [join(root, "wikibrowser/scripts/check-public-node-page.mjs")], root),
-    "public-node regression check failed"
+    run(
+      "pnpm",
+      ["--dir", join(root, "wikibrowser"), "exec", "vitest", "run", "app/p/[publicId]/page.test.tsx"],
+      root
+    ),
+    "public-node component test failed"
   );
 
   return { head, upstream, dirty: Boolean(worktree) };
