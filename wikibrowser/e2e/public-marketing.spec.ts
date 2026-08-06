@@ -160,6 +160,7 @@ async function expectExternalLink(link: Locator, href: string) {
 
 async function followInternalLink(page: Page, link: Locator, href: string, expectedUrl: RegExp) {
   await expect(link).toHaveAttribute("href", href);
+  await expectHydrated(page);
   await link.click();
   await expect(page).toHaveURL(expectedUrl);
 }
@@ -168,10 +169,15 @@ async function openMobileAdminNavigation(page: Page): Promise<Locator> {
   const navigation = page.getByRole("navigation", { name: "Admin navigation" });
   const trigger = page.getByRole("button", { name: "Open admin navigation" });
 
+  await expectHydrated(page);
   await trigger.click();
   await expect(navigation).toBeVisible();
 
   return navigation;
+}
+
+async function expectHydrated(page: Page) {
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "true");
 }
 
 async function expectActionableWithinViewport(page: Page, link: Locator) {

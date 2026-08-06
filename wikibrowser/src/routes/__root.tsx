@@ -1,4 +1,5 @@
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/app/globals.css";
@@ -31,10 +32,20 @@ function RootDocument() {
           <div className="flex min-h-screen flex-col"><Outlet /></div>
           <Toaster richColors position="bottom-right" />
         </TooltipProvider>
+        <HydrationSignal />
         <Scripts />
       </body>
     </html>
   );
+}
+
+function HydrationSignal() {
+  useEffect(() => {
+    // Passive effects run after hydration commits, when React event handlers are attached.
+    document.documentElement.dataset.hydrated = "true";
+  }, []);
+
+  return null;
 }
 
 function NotFound() {
