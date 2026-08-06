@@ -201,17 +201,20 @@ Cloudflare settings:
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
 - Build Command: `pnpm deploy:production`
-- Build Variables: `VITE_WIKI_IC_HOST=https://icp0.io` and `VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai` for Preview and Production
+- Build Variables: `VITE_WIKI_IC_HOST=https://icp0.io`, `VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`, and `KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT=<Play App Signing SHA-256 fingerprint>` for Preview and Production
 - Runtime: TanStack Start on Cloudflare Workers via `@cloudflare/vite-plugin`
 
-Both variables are public browser bundle values. Set them as Cloudflare build variables because Vite embeds `VITE_*` values in the client bundle. Server-only secrets remain Worker secrets or bindings.
+The `VITE_*` variables are public browser bundle values. The Android fingerprint is also public, but it is passed to the Worker at deploy time for `assetlinks.json`; the deploy preflight requires the same value in the build environment. Server-only secrets remain Worker secrets or bindings.
 
 CLI deploy from this directory:
 
 ```bash
 pnpm wrangler whoami
+export KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT=<Play-App-Signing-SHA-256-fingerprint>
 pnpm deploy:production
 ```
+
+The deploy command rejects a missing or malformed Android signing fingerprint before building. Use the uppercase, colon-delimited SHA-256 fingerprint shown in Play Console; do not use a local debug keystore fingerprint for production.
 
 Pre-deploy checklist:
 

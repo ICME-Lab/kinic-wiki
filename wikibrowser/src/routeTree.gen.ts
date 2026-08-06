@@ -24,6 +24,7 @@ import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CyclesRouteImport } from './routes/cycles'
+import { Route as AndroidAuthCallbackRouteImport } from './routes/android-auth-callback'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MarketplaceIndexRouteImport } from './routes/marketplace.index'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
@@ -122,6 +123,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const CyclesRoute = CyclesRouteImport.update({
   id: '/cycles',
   path: '/cycles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AndroidAuthCallbackRoute = AndroidAuthCallbackRouteImport.update({
+  id: '/android-auth-callback',
+  path: '/android-auth-callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -252,6 +258,7 @@ const ApiQueryAnswerRoute = ApiQueryAnswerRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
@@ -293,6 +300,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/favicon.ico': typeof FaviconDoticoRoute
   '/ios': typeof IosRoute
@@ -331,6 +339,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
@@ -374,6 +383,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/android-auth-callback'
     | '/cycles'
     | '/dashboard'
     | '/docs'
@@ -415,6 +425,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/android-auth-callback'
     | '/cycles'
     | '/favicon.ico'
     | '/ios'
@@ -452,6 +463,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/android-auth-callback'
     | '/cycles'
     | '/dashboard'
     | '/docs'
@@ -494,6 +506,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AndroidAuthCallbackRoute: typeof AndroidAuthCallbackRoute
   CyclesRoute: typeof CyclesRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
@@ -623,6 +636,13 @@ declare module '@tanstack/react-router' {
       path: '/cycles'
       fullPath: '/cycles'
       preLoaderRoute: typeof CyclesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/android-auth-callback': {
+      id: '/android-auth-callback'
+      path: '/android-auth-callback'
+      fullPath: '/android-auth-callback'
+      preLoaderRoute: typeof AndroidAuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -878,6 +898,7 @@ const DbDatabaseIdRouteWithChildren = DbDatabaseIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AndroidAuthCallbackRoute: AndroidAuthCallbackRoute,
   CyclesRoute: CyclesRoute,
   DashboardRoute: DashboardRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,

@@ -28,8 +28,12 @@ const triggerRouteModule = await importTs("../app/api/source-capture/trigger/rou
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
+const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
+const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
+const { normalizedAndroidAppLinkFingerprint } = await import("./android-app-links-config.mjs");
+const { verifyPublishedAndroidAppLinks } = await import("./smoke-android-app-links.mjs");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -81,6 +85,7 @@ assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
 assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
+assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback"\]\.includes\(url\.pathname\)/);
 assert.match(nativeAuthRoute, /event\.source !== idpWindow/);
 assert.match(nativeAuthLogos.apple, /fill="#000"/);
 assert.match(nativeAuthLogos.google, /#4285F4/);
@@ -111,8 +116,130 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
 }
 
 {
+  const fingerprint = Array.from({ length: 32 }, (_, index) =>
+    index.toString(16).padStart(2, "0").toUpperCase()
+  ).join(":");
+  const response = assetLinksRouteModule.GET(undefined, {
+    KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT: fingerprint
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(normalizedAndroidAppLinkFingerprint(fingerprint.toLowerCase()), fingerprint);
+  assert.deepEqual(JSON.parse(await response.text()), [
+    {
+      relation: ["delegate_permission/common.handle_all_urls"],
+      target: {
+        namespace: "android_app",
+        package_name: "xyz.kinic.android.kinicwiki",
+        sha256_cert_fingerprints: [fingerprint]
+      }
+    }
+  ]);
+}
+
+assert.throws(
+  () => normalizedAndroidAppLinkFingerprint("not-a-fingerprint"),
+  /must be the Play App Signing SHA-256 fingerprint/
+);
+
+{
+  const fingerprint = Array.from({ length: 32 }, (_, index) =>
+    index.toString(16).padStart(2, "0").toUpperCase()
+  ).join(":");
+  const verifiedUrl = await verifyPublishedAndroidAppLinks({
+    baseUrl: "https://wiki.kinic.xyz",
+    fingerprint,
+    fetchImpl: async (url, options) => {
+      assert.equal(url.toString(), "https://wiki.kinic.xyz/.well-known/assetlinks.json");
+      assert.equal(options.redirect, "manual");
+      return Response.json(
+        [
+          {
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {
+              namespace: "android_app",
+              package_name: "xyz.kinic.android.kinicwiki",
+              sha256_cert_fingerprints: [fingerprint]
+            }
+          }
+        ],
+        { headers: { "content-type": "application/json" } }
+      );
+    }
+  });
+  assert.equal(verifiedUrl, "https://wiki.kinic.xyz/.well-known/assetlinks.json");
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => new Response(null, { status: 302, headers: { location: "/elsewhere" } })
+    }),
+    /must not redirect/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => new Response(null, { status: 503 })
+    }),
+    /returned HTTP 503/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () => Response.json([])
+    }),
+    /does not authorize/
+  );
+  await assert.rejects(
+    verifyPublishedAndroidAppLinks({
+      fingerprint,
+      fetchImpl: async () =>
+        Response.json([
+          {
+            relation: ["delegate_permission/common.handle_all_urls"],
+            target: {
+              namespace: "android_app",
+              package_name: "xyz.kinic.android.kinicwiki",
+              sha256_cert_fingerprints: ["FF:".repeat(31) + "FF"]
+            }
+          }
+        ])
+    }),
+    /does not contain the Play App Signing fingerprint/
+  );
+}
+
+{
+  const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const deploy = packageJson.scripts.deploy;
+  const deployProduction = packageJson.scripts["deploy:production"];
+  assert.match(deploy, /node scripts\/android-app-links-config\.mjs/);
+  assert.match(
+    deploy,
+    /wrangler deploy --var "KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT:\$KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT"/
+  );
+  assert.match(deployProduction, /npm run deploy/);
+}
+
+{
+  const response = assetLinksRouteModule.GET(undefined, {
+    KINIC_ANDROID_APP_LINK_SHA256_CERT_FINGERPRINT: "not-a-fingerprint"
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+}
+
+{
   const response = iosAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/ios-auth-callback?state=s1&result=r1"));
   assert.equal(response.status, 200);
+  assert.match(await response.text(), /Return to KinicWikiApp/);
+}
+
+{
+  const response = androidAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/android-auth-callback?state=s1&result=r1"));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.match(await response.text(), /Return to KinicWikiApp/);
 }
 
@@ -350,6 +477,22 @@ assert.match(nativeAuthLogos.internetIdentity, /linearGradient/);
     assert.equal(callback.searchParams.get("state"), "state-1");
     assert.match(decodeBase64Url(callback.searchParams.get("error")), /authorization timed out/);
     assert.equal(sandbox.__listeners.message.length, 0);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({
+      search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/android-auth-callback" })
+    });
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__postMessages.length, 1);
+  }
+
+  {
+    const sandbox = runNativeAuthScript({
+      search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/native-auth-callback" })
+    });
+    sandbox.window.kinicNativeAuthStart("internet-identity");
+    assert.equal(sandbox.__postMessages.length, 0);
   }
 
   for (const maxTimeToLive of ["not-a-number", "99999999999999999999"]) {

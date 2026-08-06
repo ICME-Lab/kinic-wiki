@@ -306,7 +306,11 @@ function nativeAuthScript(config: { delegationTtlNs: string; derivationOrigin: s
 
   function callbackURL(value, currentLocation) {
     const url = new URL(value);
-    if (url.protocol !== "https:" || url.host !== currentLocation.host || url.pathname !== "/ios-auth-callback") {
+    if (
+      url.protocol !== "https:" ||
+      url.host !== currentLocation.host ||
+      !["/ios-auth-callback", "/android-auth-callback"].includes(url.pathname)
+    ) {
       throw new Error("callback is not allowed");
     }
     return url;
