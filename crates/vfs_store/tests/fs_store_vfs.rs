@@ -2,11 +2,13 @@ use rusqlite::Connection;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
-    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest,
-    SearchPreviewMode, SourceEvidenceRequest, WriteNodeRequest,
+    AppendNodeItem, AppendNodeRequest, DeleteNodeRequest, EditNodeItem, EditNodeRequest,
+    GlobNodeType, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    NodeMutation, NodeMutationResult, OutgoingLinksRequest, QueryContextRequest,
+    SearchNodePathsRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem,
+    WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -37,6 +39,95 @@ fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
             )
             .expect("parent folder should exist or be created");
     }
+}
+
+#[test]
+fn heterogeneous_mutation_batch_is_ordered_and_atomic() {
+    let (_dir, store) = new_store();
+    let original = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/original.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1,
+        )
+        .expect("fixture should write");
+
+    let error = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Append(AppendNodeItem {
+                        path: "/Knowledge/original.md".to_string(),
+                        content: " beta".to_string(),
+                        expected_etag: Some(original.node.etag.clone()),
+                        separator: None,
+                        metadata_json: None,
+                        kind: None,
+                    }),
+                    NodeMutation::Edit(EditNodeItem {
+                        path: "/Knowledge/missing.md".to_string(),
+                        old_text: "missing".to_string(),
+                        new_text: "updated".to_string(),
+                        expected_etag: Some("missing-etag".to_string()),
+                        replace_all: false,
+                    }),
+                ],
+            },
+            2,
+        )
+        .expect_err("a failed operation should roll back the batch");
+    assert!(error.starts_with("operation 1 failed:"));
+    assert_eq!(
+        store
+            .read_node("/Knowledge/original.md")
+            .expect("read should succeed")
+            .expect("fixture should remain")
+            .content,
+        "alpha"
+    );
+
+    let results = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Append(AppendNodeItem {
+                        path: "/Knowledge/original.md".to_string(),
+                        content: " beta".to_string(),
+                        expected_etag: Some(original.node.etag),
+                        separator: None,
+                        metadata_json: None,
+                        kind: None,
+                    }),
+                    NodeMutation::Write(WriteNodeItem {
+                        path: "/Knowledge/created.md".to_string(),
+                        kind: NodeKind::File,
+                        content: "created".to_string(),
+                        metadata_json: "{}".to_string(),
+                        expected_etag: None,
+                    }),
+                ],
+            },
+            3,
+        )
+        .expect("valid batch should commit");
+    assert!(matches!(results[0], NodeMutationResult::Append(_)));
+    assert!(matches!(results[1], NodeMutationResult::Write(_)));
+    assert_eq!(
+        store
+            .read_node("/Knowledge/original.md")
+            .expect("read should succeed")
+            .expect("node should exist")
+            .content,
+        "alpha beta"
+    );
 }
 
 #[test]

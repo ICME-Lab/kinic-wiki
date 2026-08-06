@@ -18,10 +18,11 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, PublishNodeRequest,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
-    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind, NodeMutation,
+    NodeMutationResult, OutgoingLinksRequest, PublishNodeRequest, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, StorageBillingBatchRequest, UpdateDatabaseMetadataRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 mod fs_entrypoints;
@@ -42,7 +43,7 @@ use super::{
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     mark_initial_free_database_grant_used_for_test, market_create_listing, market_get_listing,
     market_list_seller_listings, market_pause_listing, market_purchase_access, memory_manifest,
-    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    mkdir_node, move_node, multi_edit_node, mutate_nodes_batch, outgoing_links,
     parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
     query_database_sql_json, query_index_sql_json, read_node, read_node_context, rename_database,
     revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
@@ -2270,6 +2271,39 @@ fn write_nodes_records_instruction_charge_and_writes_nodes() {
             .expect("read should succeed")
             .is_some()
     );
+}
+
+#[test]
+fn mutate_nodes_batch_records_one_charge_and_returns_ordered_results() {
+    install_test_service();
+    set_update_charge_units_for_test(vec![20_000, 20_456]);
+
+    let results = mutate_nodes_batch(MutateNodesBatchRequest {
+        database_id: "default".to_string(),
+        operations: vec![
+            NodeMutation::Mkdir("/Memory".to_string()),
+            NodeMutation::Write(WriteNodeItem {
+                path: "/Memory/context.md".to_string(),
+                kind: NodeKind::File,
+                content: "remember this".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            }),
+        ],
+    })
+    .expect("heterogeneous batch should succeed");
+
+    assert!(matches!(results[0], NodeMutationResult::Mkdir(_)));
+    assert!(matches!(results[1], NodeMutationResult::Write(_)));
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("charge entry should exist");
+    assert_eq!(charge.amount_cycles, -20_000_456);
+    assert_eq!(charge.method.as_deref(), Some("mutate_nodes_batch"));
 }
 
 #[test]

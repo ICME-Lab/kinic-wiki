@@ -50,11 +50,12 @@ use vfs_types::{
     MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
     MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
     MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodePublication, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode,
-    PublishNodeRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeMutationResult,
+    NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
@@ -1195,6 +1196,17 @@ fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, Strin
         Some(database_id),
         RequiredRole::Writer,
         |service, caller, now| service.write_nodes(caller, request, now),
+    )
+}
+
+#[update]
+fn mutate_nodes_batch(request: MutateNodesBatchRequest) -> Result<Vec<NodeMutationResult>, String> {
+    let database_id = request.database_id.clone();
+    with_role_metered_update(
+        "mutate_nodes_batch",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.mutate_nodes_batch(caller, request, now),
     )
 }
 

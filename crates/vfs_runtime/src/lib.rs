@@ -46,8 +46,9 @@ use vfs_types::{
     MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
     MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
     MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodeKind, NodePublication, OpsAnswerSessionCheckRequest,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    NodeMutation, NodeMutationResult, NodePublication, OpsAnswerSessionCheckRequest,
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode,
     PublishNodeRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
@@ -520,6 +521,30 @@ impl VfsService {
         result
     }
 
+    pub fn mutate_nodes_batch(
+        &self,
+        caller: &str,
+        request: MutateNodesBatchRequest,
+        now: i64,
+    ) -> Result<Vec<NodeMutationResult>, String> {
+        let database_id = request.database_id.clone();
+        let publication_paths = mutation_publication_paths(&request.operations);
+        let publication_path_refs = publication_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &publication_path_refs,
+            |store| store.mutate_nodes_batch(request, now),
+        );
+        if result.is_ok() {
+            let _ = self.refresh_logical_size(&database_id);
+        }
+        result
+    }
+
     pub fn delete_node(
         &self,
         caller: &str,
@@ -959,6 +984,26 @@ impl VfsService {
     fn open_index(&self) -> Result<Connection, String> {
         Connection::open(&self.index_path).map_err(|error| error.to_string())
     }
+}
+
+fn mutation_publication_paths(operations: &[NodeMutation]) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    for operation in operations {
+        match operation {
+            NodeMutation::Write(item) if item.kind != NodeKind::File => {
+                paths.insert(item.path.clone());
+            }
+            NodeMutation::Move(item) => {
+                paths.insert(item.from_path.clone());
+                paths.insert(item.to_path.clone());
+            }
+            NodeMutation::Delete(item) => {
+                paths.insert(item.path.clone());
+            }
+            _ => {}
+        }
+    }
+    paths
 }
 
 fn default_cycles_billing_config() -> CyclesBillingConfig {

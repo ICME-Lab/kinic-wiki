@@ -4,7 +4,7 @@ import { sha256 } from "../src/auth/crypto.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,
   type AuthorizationSessionInput,
-  type McpAuthStateV2,
+  type McpAuthStateV3,
   type OAuthClientRecordV2
 } from "../src/auth/state.js";
 
@@ -24,7 +24,7 @@ describe("staging OAuth discovery and registration", () => {
     await expect(protectedResource.json()).resolves.toMatchObject({
       resource,
       authorization_servers: [origin],
-      scopes_supported: ["mcp:read", "offline_access"]
+      scopes_supported: ["mcp:read", "mcp:write", "offline_access"]
     });
 
     const server = await fetchWorker(`${origin}/.well-known/oauth-authorization-server`);
@@ -276,7 +276,31 @@ describe("staging OAuth discovery and registration", () => {
   });
 });
 
-describe("McpAuthStateV2 single-use records", () => {
+describe("McpAuthStateV3 single-use records", () => {
+  it("removes write scope from Questions-only II sessions", async () => {
+    const verifier = "q".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName("session:questions-scope");
+    const input = await session("questions-scope", verifier);
+    input.scope = "mcp:read mcp:write offline_access";
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", "questions-scope.cookie", Date.now());
+
+    const completed = await stub.completeConnect(Date.now() + 60_000, "queries", Date.now(), "questions-scope");
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now: Date.now()
+    });
+
+    await expect(stub.validateAccessToken(issued!.accessToken, resource, Date.now())).resolves.toMatchObject({
+      scope: "mcp:read offline_access",
+      iiPermission: "queries"
+    });
+  });
+
   it("atomically consumes state and authorization code", async () => {
     const verifier = "b".repeat(43);
     const stub = env.MCP_AUTH_STATE.getByName("session:single-use");
@@ -287,7 +311,7 @@ describe("McpAuthStateV2 single-use records", () => {
     ]);
     expect(claims.filter(Boolean)).toHaveLength(1);
 
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "single-use");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "single-use");
     expect(completed).not.toBeNull();
     const first = await stub.exchangeCode({
       code: completed!.code,
@@ -383,7 +407,7 @@ describe("McpAuthStateV2 single-use records", () => {
     await expect(stub.claimConnect("wrong", "negative.cookie", Date.now())).resolves.toBeNull();
     await expect(stub.claimConnect("connect-state", "wrong", Date.now())).resolves.toBeNull();
     await stub.claimConnect("connect-state", "negative.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "negative");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "negative");
     await expect(
       stub.exchangeCode({
         code: completed!.code,
@@ -404,7 +428,7 @@ describe("McpAuthStateV2 single-use records", () => {
       await session("code-expiry", verifier, now, now + 8 * 60 * 60 * 1000, now + 10 * 60 * 1000)
     );
     await stub.claimConnect("connect-state", "code-expiry.cookie", now);
-    const completed = await stub.completeConnect(now + 8 * 60 * 60 * 1000, now, "code-expiry");
+    const completed = await stub.completeConnect(now + 8 * 60 * 60 * 1000, "all", now, "code-expiry");
     await expect(
       stub.exchangeCode({
         code: completed!.code,
@@ -426,7 +450,7 @@ describe("McpAuthStateV2 single-use records", () => {
       await session("alarm-transition", verifier, now, sessionExpiresAt, now + 10 * 60 * 1000)
     );
     await stub.claimConnect("connect-state", "alarm-transition.cookie", now);
-    const completed = await stub.completeConnect(sessionExpiresAt, now, "alarm-transition");
+    const completed = await stub.completeConnect(sessionExpiresAt, "all", now, "alarm-transition");
     await expect(alarmTime(stub)).resolves.toBe(now + 10 * 60 * 1000);
     await stub.exchangeCode({
       code: completed!.code,
@@ -445,7 +469,7 @@ describe("McpAuthStateV2 single-use records", () => {
     await stub.claimConnect("connect-state", "invalidated.cookie", Date.now());
     await stub.invalidate();
 
-    await expect(stub.completeConnect(Date.now() + 60_000, Date.now(), "invalidated")).resolves.toBeNull();
+    await expect(stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "invalidated")).resolves.toBeNull();
   });
 
   it("revokes the token family only when a spent refresh token is replayed", async () => {
@@ -453,7 +477,7 @@ describe("McpAuthStateV2 single-use records", () => {
     const stub = env.MCP_AUTH_STATE.getByName("session:refresh");
     await stub.createSession(await session("refresh", verifier));
     await stub.claimConnect("connect-state", "refresh.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "refresh");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "refresh");
     const issued = await stub.exchangeCode({
       code: completed!.code,
       clientId: "client",
@@ -511,7 +535,7 @@ describe("McpAuthStateV2 single-use records", () => {
     const stub = env.MCP_AUTH_STATE.getByName("session:refresh-limit");
     await stub.createSession(await session("refresh-limit", verifier, Date.now(), Date.now() + 60_000));
     await stub.claimConnect("connect-state", "refresh-limit.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "refresh-limit");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "refresh-limit");
     let issued = await stub.exchangeCode({
       code: completed!.code,
       clientId: "client",
@@ -629,7 +653,7 @@ async function session(
   };
 }
 
-function alarmTime(stub: DurableObjectStub<McpAuthStateV2>) {
+function alarmTime(stub: DurableObjectStub<McpAuthStateV3>) {
   return runInDurableObject(stub, async (_instance, state) => state.storage.getAlarm());
 }
 

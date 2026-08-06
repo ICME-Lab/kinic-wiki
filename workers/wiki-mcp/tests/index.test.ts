@@ -5,30 +5,55 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { McpAuthStateV2 } from "../src/auth/state.js";
+import type { McpAuthStateV3 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
 const mocks = vi.hoisted(() => ({
+  appendNode: vi.fn(),
+  deleteNode: vi.fn(),
+  editNode: vi.fn(),
   listNodes: vi.fn(),
   listDatabases: vi.fn(),
   memoryManifest: vi.fn(),
+  mkdirNode: vi.fn(),
+  moveNode: vi.fn(),
+  multiEditNode: vi.fn(),
+  mutateNodesBatch: vi.fn(),
   queryContext: vi.fn(),
   queryDatabaseSqlJson: vi.fn(),
   readNode: vi.fn(),
   resolveCanisterId: vi.fn(),
-  searchNodes: vi.fn()
+  searchNodes: vi.fn(),
+  writeNode: vi.fn(),
+  writeNodes: vi.fn()
 }));
 
 vi.mock("../src/vfs.js", () => ({
+  KinicMutationError: class KinicMutationError extends Error {
+    constructor(readonly code: string, readonly failedIndex: number | null = null) {
+      super(code);
+    }
+  },
+  appendNode: mocks.appendNode,
+  deleteNode: mocks.deleteNode,
+  editNode: mocks.editNode,
   listDatabases: mocks.listDatabases,
   listNodes: mocks.listNodes,
   memoryManifest: mocks.memoryManifest,
+  mkdirNode: mocks.mkdirNode,
+  moveNode: mocks.moveNode,
+  multiEditNode: mocks.multiEditNode,
+  mutateNodesBatch: mocks.mutateNodesBatch,
   queryContext: mocks.queryContext,
   queryDatabaseSqlJson: mocks.queryDatabaseSqlJson,
   readNode: mocks.readNode,
   resolveCanisterId: mocks.resolveCanisterId,
-  searchNodes: mocks.searchNodes
+  searchNodes: mocks.searchNodes,
+  writeNode: mocks.writeNode,
+  writeNodes: mocks.writeNodes
 }));
+
+import { KinicMutationError } from "../src/vfs.js";
 
 import worker, {
   containsConnectPrivateCall,
@@ -50,6 +75,7 @@ const env = {
   KINIC_WIKI_IC_HOST: "https://icp0.io",
   KINIC_WIKI_PUBLIC_ORIGIN: "https://wiki.kinic.test",
   MCP_ACCESS_POLICY: "public",
+  MCP_WRITE_POLICY: "disabled",
   OPENAI_APPS_CHALLENGE_TOKEN: "test-openai-apps-challenge"
 };
 
@@ -57,7 +83,7 @@ function unavailableAuthBinding(): never {
   throw new Error("auth binding must not be used by this test");
 }
 
-const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV2> = {
+const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV3> = {
   newUniqueId: unavailableAuthBinding,
   idFromName: unavailableAuthBinding,
   idFromString: unavailableAuthBinding,
@@ -71,6 +97,7 @@ const privateOptInEnv = {
   KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
   KINIC_WIKI_MCP_TARGET_ORIGIN: "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app",
   MCP_ACCESS_POLICY: "private_opt_in",
+  MCP_WRITE_POLICY: "private",
   MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
   MCP_KEY_ENCRYPTION_KEY: "test-encryption-key",
   MCP_AUTH_STATE: fakeAuthNamespace,
@@ -83,6 +110,19 @@ describe("wiki mcp worker", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.resolveCanisterId.mockReturnValue("canister-a");
+    mocks.writeNode.mockResolvedValue({
+      node: { path: "/Memory/facts.md", kind: "file", updatedAt: "2", etag: "etag-2" },
+      created: false
+    });
+    mocks.mutateNodesBatch.mockResolvedValue([
+      {
+        type: "write",
+        value: {
+          node: { path: "/Memory/a.md", kind: "file", updatedAt: "2", etag: "etag-a" },
+          created: true
+        }
+      }
+    ]);
     mocks.listDatabases.mockResolvedValue([
       {
         databaseId: "db_beta",
@@ -314,7 +354,7 @@ describe("wiki mcp worker", () => {
     }
   });
 
-  it("advertises nine tools without authentication in private opt-in mode", async () => {
+  it("advertises private read and write tools without authentication in private opt-in mode", async () => {
     const response = await postMcp(
       { jsonrpc: "2.0", id: 12, method: "tools/list", params: {} },
       privateOptInEnv,
@@ -333,17 +373,31 @@ describe("wiki mcp worker", () => {
       "list",
       "memory_manifest",
       "context",
-      "connect_private"
+      "connect_private",
+      "write_node",
+      "append_node",
+      "edit_node",
+      "multi_edit_node",
+      "mkdir_node",
+      "move_node",
+      "delete_node",
+      "write_nodes",
+      "mutate_nodes_batch"
     ]);
-    for (const tool of tools.slice(0, -1)) {
+    for (const tool of tools.slice(0, 8)) {
       expect(tool._meta?.securitySchemes).toEqual([
         { type: "noauth" },
         { type: "oauth2", scopes: ["mcp:read"] }
       ]);
     }
-    expect(tools.at(-1)?._meta?.securitySchemes).toEqual([
-      { type: "oauth2", scopes: ["mcp:read"] }
+    expect(tools[8]?._meta?.securitySchemes).toEqual([
+      { type: "oauth2", scopes: ["mcp:read", "mcp:write"] }
     ]);
+    for (const tool of tools.slice(9)) {
+      expect(tool._meta?.securitySchemes).toEqual([
+        { type: "oauth2", scopes: ["mcp:read", "mcp:write"] }
+      ]);
+    }
   });
 
   it("advertises OAuth-only tools in private-required mode", async () => {
@@ -405,6 +459,7 @@ describe("wiki mcp worker", () => {
     const challenge = payload.result._meta["mcp/www_authenticate"][0] as string;
     expect(challenge).toContain('error="insufficient_scope"');
     expect(challenge).toContain('error_description="Private connection is required"');
+    expect(challenge).toContain('scope="mcp:read mcp:write"');
     expect(JSON.stringify(payload.result)).not.toContain("principal");
     expect(JSON.stringify(payload.result)).not.toContain("delegation");
     expect(JSON.stringify(payload.result)).not.toContain("token");
@@ -431,6 +486,7 @@ describe("wiki mcp worker", () => {
     );
     expect(challenge).toContain('error="insufficient_scope"');
     expect(challenge).toContain('error_description="Private connection is required"');
+    expect(challenge).toContain('scope="mcp:read mcp:write"');
   });
 
   it("does not downgrade an invalid bearer token to public mode", async () => {
@@ -481,8 +537,127 @@ describe("wiki mcp worker", () => {
       }
     );
     const payload = await parseMcpResponse(response);
-    expect(payload.result.structuredContent).toEqual({ connected: true, mode: "private" });
-    expect(JSON.parse(payload.result.content[0].text)).toEqual({ connected: true, mode: "private" });
+    expect(payload.result.structuredContent).toEqual({ connected: true, mode: "private", access: "read_only" });
+    expect(JSON.parse(payload.result.content[0].text)).toEqual({ connected: true, mode: "private", access: "read_only" });
+  });
+
+  it("writes a node for an Actions & questions session", async () => {
+    const result = await callPrivateTool(
+      {
+        ...privateOptInEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      "write_node",
+      {
+        database_id: "db_alpha",
+        path: "/Memory/facts.md",
+        content: "updated context",
+        expected_etag: "etag-1"
+      }
+    );
+
+    expect(result.result.isError).not.toBe(true);
+    expect(result.result.structuredContent).toMatchObject({
+      result: { node: { path: "/Memory/facts.md", etag: "etag-2" }, created: false }
+    });
+    expect(mocks.writeNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", {
+      path: "/Memory/facts.md",
+      kind: "file",
+      content: "updated context",
+      metadataJson: "{}",
+      expectedEtag: "etag-1"
+    });
+  });
+
+  it("rejects writes for a Questions-only session", async () => {
+    const result = await callPrivateTool(
+      {
+        ...privateOptInEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], iiPermission: "queries" as const }
+      },
+      "write_node",
+      { database_id: "db_alpha", path: "/Memory/facts.md", content: "blocked" }
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(result.result._meta["mcp/www_authenticate"][0]).toContain('scope="mcp:read mcp:write"');
+    expect(mocks.writeNode).not.toHaveBeenCalled();
+  });
+
+  it("returns the failed operation and current node on an atomic batch etag conflict", async () => {
+    mocks.mutateNodesBatch.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1));
+    mocks.readNode.mockResolvedValueOnce({
+      path: "/Memory/b.md",
+      kind: "file",
+      content: "current value",
+      metadataJson: "{}",
+      updatedAt: "3",
+      etag: "etag-current"
+    });
+    const result = await callPrivateTool(
+      {
+        ...privateOptInEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      "mutate_nodes_batch",
+      {
+        database_id: "db_alpha",
+        operations: [
+          { type: "mkdir", path: "/Memory" },
+          { type: "edit", path: "/Memory/b.md", old_text: "old", new_text: "new", expected_etag: "stale" }
+        ]
+      }
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(JSON.parse(result.result.content[0].text)).toMatchObject({
+      error: "etag_conflict",
+      failed_index: 1,
+      path: "/Memory/b.md",
+      current_etag: "etag-current",
+      current_content: "current value"
+    });
+    expect(mocks.readNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", "/Memory/b.md");
+  });
+
+  it("returns the failed node and current content on a write_nodes etag conflict", async () => {
+    mocks.writeNodes.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1));
+    mocks.readNode.mockResolvedValueOnce({
+      path: "/Memory/b.md",
+      kind: "file",
+      content: "current value",
+      metadataJson: "{}",
+      updatedAt: "3",
+      etag: "etag-current"
+    });
+    const result = await callPrivateTool(
+      {
+        ...privateOptInEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      "write_nodes",
+      {
+        database_id: "db_alpha",
+        nodes: [
+          { path: "/Memory/a.md", content: "first" },
+          { path: "/Memory/b.md", content: "second", expected_etag: "stale" }
+        ]
+      }
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(JSON.parse(result.result.content[0].text)).toMatchObject({
+      error: "etag_conflict",
+      failed_index: 1,
+      path: "/Memory/b.md",
+      current_etag: "etag-current",
+      current_content: "current value"
+    });
+    expect(mocks.readNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", "/Memory/b.md");
   });
 
   it("detects connect_private only as an exact tools/call name", () => {
@@ -1312,6 +1487,27 @@ async function postMcp(
 ) {
   const response = await fetchMcp(payload, runtimeEnv, url);
   expect(response.status).toBe(200);
+  return parseMcpResponse(response);
+}
+
+async function callPrivateTool(runtimeEnv: RuntimeEnv, name: string, args: Record<string, unknown>) {
+  const server = createServer(runtimeEnv, { accessPolicy: "private_opt_in", writesAvailable: true });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(transport);
+  const parsedBody = {
+    jsonrpc: "2.0" as const,
+    id: 99,
+    method: "tools/call",
+    params: { name, arguments: args }
+  };
+  const response = await transport.handleRequest(
+    new Request("https://wiki-mcp-staging.kinic.xyz/mcp", {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify(parsedBody)
+    }),
+    { parsedBody }
+  );
   return parseMcpResponse(response);
 }
 

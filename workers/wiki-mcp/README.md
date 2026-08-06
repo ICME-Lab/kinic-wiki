@@ -1,6 +1,6 @@
 # Kinic Wiki MCP
 
-Remote MCP Workers for Kinic Wiki recall: anonymous production and private opt-in staging. Staging exposes the same eight read tools publicly plus `connect_private`; after OAuth it runs the eight data tools only with the delegated Internet Identity.
+Remote MCP Workers for Kinic Wiki recall: anonymous read-only production and private opt-in staging. Staging keeps the eight read tools public, adds `connect_private`, and exposes authenticated content mutations to Internet Identity sessions with `Actions & questions` permission.
 
 Canonical documentation: `../../docs/mcp.md`.
 
@@ -20,7 +20,10 @@ Canonical documentation: `../../docs/mcp.md`.
 - `list`: list node inventory under a prefix without content.
 - `memory_manifest`: discover Store API roots, capabilities, and limits.
 - `context`: read task-scoped context through `query_context`.
-- `connect_private`: start OAuth/II connection when unauthenticated, or return only `{ connected: true, mode: "private" }` after authentication.
+- `connect_private`: start OAuth/II connection when unauthenticated, or return `{ connected: true, mode: "private", access: "read_only" | "read_write" }` after authentication.
+- `write_node`, `append_node`, `edit_node`, `multi_edit_node`, `mkdir_node`, `move_node`, `delete_node`: etag-aware single-node content mutations.
+- `write_nodes`: atomically write 1 to 100 nodes in one database.
+- `mutate_nodes_batch`: atomically apply 1 to 100 ordered, heterogeneous content mutations in one database.
 
 ## Local
 
@@ -32,7 +35,7 @@ pnpm dev
 pnpm smoke:staging -- --open
 ```
 
-The staging smoke command first scans all nine tools and calls `find_databases` anonymously, then calls `connect_private` and starts OAuth from the returned MCP `_meta["mcp/www_authenticate"]` challenge. Pass `--database-id <id>` and `--path <known-path>` to verify private database visibility plus `context` and `read_path` after connection. The command reports only success flags and response sizes, not tokens, principals, or private node text.
+The staging smoke command scans all 18 tools and calls `find_databases` anonymously, then calls `connect_private` and starts OAuth from the returned MCP `_meta["mcp/www_authenticate"]` challenge. Pass `--database-id <id>` and `--path <known-path>` to verify private reads. Add `--write-smoke-path <new-temporary-path>` to run `write_node`, `mutate_nodes_batch`, and cleanup with `delete_node`; select `Actions & questions` in II. The command reports only success flags and response sizes, not tokens, principals, or private node text.
 
 Staging requires `KINIC_WIKI_MCP_TARGET_ORIGIN` to be the bare
 `https://<KINIC_WIKI_CANISTER_ID>.ic0.app` origin. This is distinct from the

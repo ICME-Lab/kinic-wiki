@@ -13,16 +13,36 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const DEFAULT_SERVER_URL = "https://wiki-mcp-staging.kinic.xyz/mcp";
 export const FIND_DATABASE_LIMIT = 50;
 const EXPECTED_TOOLS = [
+  "append_node",
   "connect_private",
   "context",
+  "delete_node",
+  "edit_node",
   "fetch_many",
   "find_databases",
   "list",
   "memory_manifest",
+  "mkdir_node",
+  "move_node",
+  "multi_edit_node",
+  "mutate_nodes_batch",
   "read_path",
   "read_paths",
-  "search"
+  "search",
+  "write_node",
+  "write_nodes"
 ];
+const WRITE_TOOLS = new Set([
+  "append_node",
+  "delete_node",
+  "edit_node",
+  "mkdir_node",
+  "move_node",
+  "multi_edit_node",
+  "mutate_nodes_batch",
+  "write_node",
+  "write_nodes"
+]);
 
 export function createOAuthState() {
   return randomBytes(32).toString("base64url");
@@ -74,9 +94,10 @@ export function parseAuthenticationChallenge(challenge) {
 export function assertPrivateOptInToolSecurity(tools) {
   for (const tool of tools) {
     const actual = tool?._meta?.securitySchemes;
-    const expected =
-      tool?.name === "connect_private"
-        ? [{ type: "oauth2", scopes: ["mcp:read"] }]
+    const expected = WRITE_TOOLS.has(tool?.name)
+      ? [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
+      : tool?.name === "connect_private"
+        ? [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
         : [
             { type: "noauth" },
             { type: "oauth2", scopes: ["mcp:read"] }
@@ -219,12 +240,57 @@ async function main() {
       summary.read_path = summarizeToolResult(readResult);
     }
 
+    if (options.writeSmokePath) {
+      if (!options.databaseId) {
+        throw new Error("--write-smoke-path requires --database-id");
+      }
+      summary.write_batch_delete = await smokeWriteBatchDelete(client, options.databaseId, options.writeSmokePath);
+    }
+
     console.log(JSON.stringify(summary, null, 2));
   } finally {
     await callback.close();
     if (transport) {
       await transport.close();
     }
+  }
+}
+
+async function smokeWriteBatchDelete(client, databaseId, path) {
+  const marker = randomBytes(8).toString("hex");
+  const created = await client.callTool({
+    name: "write_node",
+    arguments: { database_id: databaseId, path, content: `staging-smoke:${marker}` }
+  });
+  assertToolSucceeded("write_node", created);
+  let etag = created.structuredContent?.result?.node?.etag;
+  if (typeof etag !== "string") {
+    throw new Error("write_node did not return an etag");
+  }
+  try {
+    const batch = await client.callTool({
+      name: "mutate_nodes_batch",
+      arguments: {
+        database_id: databaseId,
+        operations: [{ type: "append", path, content: "\nbatch-ok", expected_etag: etag }]
+      }
+    });
+    assertToolSucceeded("mutate_nodes_batch", batch);
+    etag = batch.structuredContent?.results?.[0]?.value?.node?.etag;
+    if (typeof etag !== "string") {
+      throw new Error("mutate_nodes_batch did not return an etag");
+    }
+    return {
+      write_node: summarizeToolResult(created),
+      mutate_nodes_batch: summarizeToolResult(batch),
+      delete_node: { ok: true }
+    };
+  } finally {
+    const deleted = await client.callTool({
+      name: "delete_node",
+      arguments: { database_id: databaseId, path, expected_etag: etag }
+    });
+    assertToolSucceeded("delete_node cleanup", deleted);
   }
 }
 
@@ -387,6 +453,7 @@ function parseArgs(args) {
     serverUrl: values.get("--server-url") ?? DEFAULT_SERVER_URL,
     databaseId: values.get("--database-id") ?? process.env.MCP_TEST_PRIVATE_DB_ID,
     path: values.get("--path") ?? process.env.MCP_TEST_PRIVATE_PATH,
+    writeSmokePath: values.get("--write-smoke-path") ?? process.env.MCP_TEST_WRITE_PATH,
     query: values.get("--query") ?? "",
     task: values.get("--task") ?? "Verify delegated access to the configured private Kinic Wiki database.",
     openBrowser: openBrowserRequested

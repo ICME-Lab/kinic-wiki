@@ -10,10 +10,11 @@ import {
   unwrapCandidResult,
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
-import type { McpAuthStateV2 } from "./auth/state.js";
+import type { IiPermission } from "./auth/internet-identity.js";
+import type { McpAuthStateV3 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
-type Variant = Record<string, null>;
+type Variant = Record<string, unknown>;
 type Result<T> = { Ok: T } | { Err: string };
 
 export type RuntimeEnv = {
@@ -23,11 +24,16 @@ export type RuntimeEnv = {
   KINIC_WIKI_PUBLIC_ORIGIN?: string;
   OPENAI_APPS_CHALLENGE_TOKEN?: string;
   MCP_ACCESS_POLICY?: string;
+  MCP_WRITE_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
   MCP_KEY_ENCRYPTION_KEY?: string;
-  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV2>;
+  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV3>;
   MCP_REGISTRATION_RATE_LIMIT?: RateLimit;
   KINIC_WIKI_IDENTITY?: Identity;
+  KINIC_WIKI_AUTHORIZATION?: {
+    scopes: string[];
+    iiPermission: IiPermission;
+  };
 };
 
 export type DatabaseSummary = {
@@ -64,6 +70,100 @@ export type WikiNode = {
   etag: string;
   metadataJson: string;
 };
+
+export type NodeKind = "file" | "source" | "folder";
+
+export type WriteNodeInput = {
+  path: string;
+  kind: NodeKind;
+  content: string;
+  metadataJson: string;
+  expectedEtag: string | null;
+};
+
+export type AppendNodeInput = {
+  path: string;
+  content: string;
+  expectedEtag: string | null;
+  separator: string | null;
+  metadataJson: string | null;
+  kind: NodeKind | null;
+};
+
+export type EditNodeInput = {
+  path: string;
+  oldText: string;
+  newText: string;
+  expectedEtag: string;
+  replaceAll: boolean;
+};
+
+export type MultiEditNodeInput = {
+  path: string;
+  edits: Array<{ oldText: string; newText: string }>;
+  expectedEtag: string;
+};
+
+export type MoveNodeInput = {
+  fromPath: string;
+  toPath: string;
+  expectedEtag: string;
+  overwrite: boolean;
+};
+
+export type DeleteNodeInput = {
+  path: string;
+  expectedEtag: string;
+  expectedFolderIndexEtag: string | null;
+};
+
+export type NodeMutationInput =
+  | { type: "write"; value: WriteNodeInput }
+  | { type: "append"; value: AppendNodeInput }
+  | { type: "edit"; value: EditNodeInput }
+  | { type: "multi_edit"; value: MultiEditNodeInput }
+  | { type: "mkdir"; value: { path: string } }
+  | { type: "move"; value: MoveNodeInput }
+  | { type: "delete"; value: DeleteNodeInput };
+
+export type MutationAck = {
+  path: string;
+  kind: NodeKind;
+  updatedAt: string;
+  etag: string;
+};
+
+export type WriteNodeOutput = { node: MutationAck; created: boolean };
+export type EditNodeOutput = { node: MutationAck; replacementCount: number };
+export type MkdirNodeOutput = { path: string; created: boolean };
+export type MoveNodeOutput = { node: MutationAck; fromPath: string; overwrote: boolean };
+export type DeleteNodeOutput = { path: string };
+
+export type NodeMutationOutput =
+  | { type: "write"; value: WriteNodeOutput }
+  | { type: "append"; value: WriteNodeOutput }
+  | { type: "edit"; value: EditNodeOutput }
+  | { type: "multi_edit"; value: EditNodeOutput }
+  | { type: "mkdir"; value: MkdirNodeOutput }
+  | { type: "move"; value: MoveNodeOutput }
+  | { type: "delete"; value: DeleteNodeOutput };
+
+export type MutationErrorCode =
+  | "etag_conflict"
+  | "not_found"
+  | "forbidden"
+  | "invalid_operation"
+  | "write_unavailable";
+
+export class KinicMutationError extends Error {
+  constructor(
+    readonly code: MutationErrorCode,
+    readonly failedIndex: number | null = null
+  ) {
+    super(code);
+    this.name = "KinicMutationError";
+  }
+}
 
 export type NodeEntry = {
   path: string;
@@ -188,6 +288,27 @@ type RawNode = {
   metadata_json: string;
 };
 
+type RawMutationAck = {
+  path: string;
+  kind: Variant;
+  updated_at: bigint;
+  etag: string;
+};
+
+type RawWriteNodeOutput = { node: RawMutationAck; created: boolean };
+type RawEditNodeOutput = { node: RawMutationAck; replacement_count: number };
+type RawMkdirNodeOutput = { path: string; created: boolean };
+type RawMoveNodeOutput = { node: RawMutationAck; from_path: string; overwrote: boolean };
+type RawDeleteNodeOutput = { path: string };
+type RawNodeMutationOutput =
+  | { Write: RawWriteNodeOutput }
+  | { Append: RawWriteNodeOutput }
+  | { Edit: RawEditNodeOutput }
+  | { MultiEdit: RawEditNodeOutput }
+  | { Mkdir: RawMkdirNodeOutput }
+  | { Move: RawMoveNodeOutput }
+  | { Delete: RawDeleteNodeOutput };
+
 type RawNodeEntry = {
   path: string;
   kind: Variant;
@@ -296,6 +417,15 @@ type VfsActor = {
   source_evidence: (request: { database_id: string; node_path: string }) => Promise<Result<RawSourceEvidence>>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<Result<RawIndexSqlJsonQueryResult>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
+  write_node: (request: unknown) => Promise<Result<RawWriteNodeOutput>>;
+  write_nodes: (request: unknown) => Promise<Result<RawWriteNodeOutput[]>>;
+  append_node: (request: unknown) => Promise<Result<RawWriteNodeOutput>>;
+  edit_node: (request: unknown) => Promise<Result<RawEditNodeOutput>>;
+  multi_edit_node: (request: unknown) => Promise<Result<RawEditNodeOutput>>;
+  mkdir_node: (request: unknown) => Promise<Result<RawMkdirNodeOutput>>;
+  move_node: (request: unknown) => Promise<Result<RawMoveNodeOutput>>;
+  delete_node: (request: unknown) => Promise<Result<RawDeleteNodeOutput>>;
+  mutate_nodes_batch: (request: unknown) => Promise<Result<RawNodeMutationOutput[]>>;
 };
 
 const actorCache = new Map<string, Promise<VfsActor>>();
@@ -348,6 +478,133 @@ export async function readNode(env: RuntimeEnv, databaseId: string, path: string
     env
   );
   return raw[0] ? normalizeNode(raw[0]) : null;
+}
+
+export async function writeNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: WriteNodeInput
+): Promise<WriteNodeOutput> {
+  const actor = await createVfsActor(env);
+  return normalizeWriteNodeOutput(
+    unwrapMutation(
+      await callVfs(env, "write_node", () => actor.write_node(rawWriteNodeRequest(databaseId, input)))
+    )
+  );
+}
+
+export async function writeNodes(
+  env: RuntimeEnv,
+  databaseId: string,
+  nodes: WriteNodeInput[]
+): Promise<WriteNodeOutput[]> {
+  const actor = await createVfsActor(env);
+  return unwrapMutation(
+    await callVfs(env, "write_nodes", () =>
+      actor.write_nodes({
+        database_id: databaseId,
+        nodes: nodes.map(rawWriteNodeItem)
+      })
+    )
+  ).map(normalizeWriteNodeOutput);
+}
+
+export async function appendNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: AppendNodeInput
+): Promise<WriteNodeOutput> {
+  const actor = await createVfsActor(env);
+  return normalizeWriteNodeOutput(
+    unwrapMutation(
+      await callVfs(env, "append_node", () =>
+        actor.append_node({
+          database_id: databaseId,
+          path: input.path,
+          content: input.content,
+          expected_etag: candidOptional(input.expectedEtag),
+          separator: candidOptional(input.separator),
+          metadata_json: candidOptional(input.metadataJson),
+          kind: candidOptional(input.kind ? rawNodeKind(input.kind) : null)
+        })
+      )
+    )
+  );
+}
+
+export async function editNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: EditNodeInput
+): Promise<EditNodeOutput> {
+  const actor = await createVfsActor(env);
+  return normalizeEditNodeOutput(
+    unwrapMutation(
+      await callVfs(env, "edit_node", () => actor.edit_node(rawEditNodeRequest(databaseId, input)))
+    )
+  );
+}
+
+export async function multiEditNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: MultiEditNodeInput
+): Promise<EditNodeOutput> {
+  const actor = await createVfsActor(env);
+  return normalizeEditNodeOutput(
+    unwrapMutation(
+      await callVfs(env, "multi_edit_node", () =>
+        actor.multi_edit_node(rawMultiEditNodeRequest(databaseId, input))
+      )
+    )
+  );
+}
+
+export async function mkdirNode(env: RuntimeEnv, databaseId: string, path: string): Promise<MkdirNodeOutput> {
+  const actor = await createVfsActor(env);
+  return unwrapMutation(
+    await callVfs(env, "mkdir_node", () => actor.mkdir_node({ database_id: databaseId, path }))
+  );
+}
+
+export async function moveNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: MoveNodeInput
+): Promise<MoveNodeOutput> {
+  const actor = await createVfsActor(env);
+  return normalizeMoveNodeOutput(
+    unwrapMutation(
+      await callVfs(env, "move_node", () => actor.move_node(rawMoveNodeRequest(databaseId, input)))
+    )
+  );
+}
+
+export async function deleteNode(
+  env: RuntimeEnv,
+  databaseId: string,
+  input: DeleteNodeInput
+): Promise<DeleteNodeOutput> {
+  const actor = await createVfsActor(env);
+  return unwrapMutation(
+    await callVfs(env, "delete_node", () => actor.delete_node(rawDeleteNodeRequest(databaseId, input)))
+  );
+}
+
+export async function mutateNodesBatch(
+  env: RuntimeEnv,
+  databaseId: string,
+  operations: NodeMutationInput[]
+): Promise<NodeMutationOutput[]> {
+  const actor = await createVfsActor(env);
+  return unwrapMutation(
+    await callVfs(env, "mutate_nodes_batch", () =>
+      actor.mutate_nodes_batch({
+        database_id: databaseId,
+        operations: operations.map(rawNodeMutation)
+      })
+    )
+  ).map(normalizeNodeMutationOutput);
 }
 
 export async function queryContext(
@@ -468,6 +725,30 @@ function unwrap<T>(result: Result<T>, env: RuntimeEnv): T {
   );
 }
 
+function unwrapMutation<T>(result: Result<T>): T {
+  if ("Ok" in result) {
+    return result.Ok;
+  }
+  const failedIndex = /^operation (\d+) failed:/u.exec(result.Err)?.[1];
+  throw new KinicMutationError(classifyMutationError(result.Err), failedIndex ? Number(failedIndex) : null);
+}
+
+function classifyMutationError(message: string): MutationErrorCode {
+  if (message.includes("expected_etag")) {
+    return "etag_conflict";
+  }
+  if (message.includes("does not exist") || message.includes("not found")) {
+    return "not_found";
+  }
+  if (message.includes("required database role") || message.includes("no access")) {
+    return "forbidden";
+  }
+  if (message.includes("cycles") || message.includes("suspended")) {
+    return "write_unavailable";
+  }
+  return "invalid_operation";
+}
+
 async function callVfs<T>(
   env: RuntimeEnv,
   stage: string,
@@ -561,6 +842,41 @@ function normalizeNode(raw: RawNode): WikiNode {
   };
 }
 
+function normalizeMutationAck(raw: RawMutationAck): MutationAck {
+  return {
+    path: raw.path,
+    kind: variantName(raw.kind) as NodeKind,
+    updatedAt: raw.updated_at.toString(),
+    etag: raw.etag
+  };
+}
+
+function normalizeWriteNodeOutput(raw: RawWriteNodeOutput): WriteNodeOutput {
+  return { node: normalizeMutationAck(raw.node), created: raw.created };
+}
+
+function normalizeEditNodeOutput(raw: RawEditNodeOutput): EditNodeOutput {
+  return { node: normalizeMutationAck(raw.node), replacementCount: raw.replacement_count };
+}
+
+function normalizeMoveNodeOutput(raw: RawMoveNodeOutput): MoveNodeOutput {
+  return {
+    node: normalizeMutationAck(raw.node),
+    fromPath: raw.from_path,
+    overwrote: raw.overwrote
+  };
+}
+
+function normalizeNodeMutationOutput(raw: RawNodeMutationOutput): NodeMutationOutput {
+  if ("Write" in raw) return { type: "write", value: normalizeWriteNodeOutput(raw.Write) };
+  if ("Append" in raw) return { type: "append", value: normalizeWriteNodeOutput(raw.Append) };
+  if ("Edit" in raw) return { type: "edit", value: normalizeEditNodeOutput(raw.Edit) };
+  if ("MultiEdit" in raw) return { type: "multi_edit", value: normalizeEditNodeOutput(raw.MultiEdit) };
+  if ("Mkdir" in raw) return { type: "mkdir", value: raw.Mkdir };
+  if ("Move" in raw) return { type: "move", value: normalizeMoveNodeOutput(raw.Move) };
+  return { type: "delete", value: raw.Delete };
+}
+
 function normalizeLinkEdge(raw: RawLinkEdge): LinkEdge {
   return {
     updatedAt: raw.updated_at.toString(),
@@ -646,6 +962,101 @@ function normalizeIndexSqlJsonQueryResult(raw: RawIndexSqlJsonQueryResult): Inde
   };
 }
 
+function rawNodeKind(kind: NodeKind): Variant {
+  if (kind === "source") return { Source: null };
+  if (kind === "folder") return { Folder: null };
+  return { File: null };
+}
+
+function rawWriteNodeItem(input: WriteNodeInput) {
+  return {
+    path: input.path,
+    kind: rawNodeKind(input.kind),
+    content: input.content,
+    metadata_json: input.metadataJson,
+    expected_etag: candidOptional(input.expectedEtag)
+  };
+}
+
+function rawWriteNodeRequest(databaseId: string, input: WriteNodeInput) {
+  return { database_id: databaseId, ...rawWriteNodeItem(input) };
+}
+
+function rawEditNodeRequest(databaseId: string, input: EditNodeInput) {
+  return {
+    database_id: databaseId,
+    path: input.path,
+    old_text: input.oldText,
+    new_text: input.newText,
+    expected_etag: candidOptional(input.expectedEtag),
+    replace_all: input.replaceAll
+  };
+}
+
+function rawMultiEditNodeRequest(databaseId: string, input: MultiEditNodeInput) {
+  return {
+    database_id: databaseId,
+    path: input.path,
+    edits: input.edits.map((edit) => ({ old_text: edit.oldText, new_text: edit.newText })),
+    expected_etag: candidOptional(input.expectedEtag)
+  };
+}
+
+function rawMoveNodeRequest(databaseId: string, input: MoveNodeInput) {
+  return {
+    database_id: databaseId,
+    from_path: input.fromPath,
+    to_path: input.toPath,
+    expected_etag: candidOptional(input.expectedEtag),
+    overwrite: input.overwrite
+  };
+}
+
+function rawDeleteNodeRequest(databaseId: string, input: DeleteNodeInput) {
+  return {
+    database_id: databaseId,
+    path: input.path,
+    expected_etag: candidOptional(input.expectedEtag),
+    expected_folder_index_etag: candidOptional(input.expectedFolderIndexEtag)
+  };
+}
+
+function rawNodeMutation(operation: NodeMutationInput): Variant {
+  switch (operation.type) {
+    case "write":
+      return { Write: rawWriteNodeItem(operation.value) };
+    case "append":
+      return {
+        Append: {
+          path: operation.value.path,
+          content: operation.value.content,
+          expected_etag: candidOptional(operation.value.expectedEtag),
+          separator: candidOptional(operation.value.separator),
+          metadata_json: candidOptional(operation.value.metadataJson),
+          kind: candidOptional(operation.value.kind ? rawNodeKind(operation.value.kind) : null)
+        }
+      };
+    case "edit": {
+      const { database_id: _, ...item } = rawEditNodeRequest("", operation.value);
+      return { Edit: item };
+    }
+    case "multi_edit": {
+      const { database_id: _, ...item } = rawMultiEditNodeRequest("", operation.value);
+      return { MultiEdit: item };
+    }
+    case "mkdir":
+      return { Mkdir: operation.value.path };
+    case "move": {
+      const { database_id: _, ...item } = rawMoveNodeRequest("", operation.value);
+      return { Move: item };
+    }
+    case "delete": {
+      const { database_id: _, ...item } = rawDeleteNodeRequest("", operation.value);
+      return { Delete: item };
+    }
+  }
+}
+
 function rawSearchPreviewMode(mode: SearchPreviewMode): Variant {
   if (mode === "content-start") {
     return { ContentStart: null };
@@ -695,6 +1106,128 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     updated_at: idl.Int64,
     etag: idl.Text,
     metadata_json: idl.Text
+  });
+  const NodeMutationAck = idl.Record({
+    path: idl.Text,
+    kind: NodeKind,
+    updated_at: idl.Int64,
+    etag: idl.Text
+  });
+  const WriteNodeResult = idl.Record({ node: NodeMutationAck, created: idl.Bool });
+  const EditNodeResult = idl.Record({ node: NodeMutationAck, replacement_count: idl.Nat32 });
+  const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
+  const MoveNodeResult = idl.Record({
+    node: NodeMutationAck,
+    from_path: idl.Text,
+    overwrote: idl.Bool
+  });
+  const DeleteNodeResult = idl.Record({ path: idl.Text });
+  const WriteNodeItem = idl.Record({
+    path: idl.Text,
+    kind: NodeKind,
+    content: idl.Text,
+    metadata_json: idl.Text,
+    expected_etag: idl.Opt(idl.Text)
+  });
+  const WriteNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    kind: NodeKind,
+    content: idl.Text,
+    metadata_json: idl.Text,
+    expected_etag: idl.Opt(idl.Text)
+  });
+  const WriteNodesRequest = idl.Record({ database_id: idl.Text, nodes: idl.Vec(WriteNodeItem) });
+  const AppendNodeItem = idl.Record({
+    path: idl.Text,
+    content: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    separator: idl.Opt(idl.Text),
+    metadata_json: idl.Opt(idl.Text),
+    kind: idl.Opt(NodeKind)
+  });
+  const AppendNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    content: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    separator: idl.Opt(idl.Text),
+    metadata_json: idl.Opt(idl.Text),
+    kind: idl.Opt(NodeKind)
+  });
+  const EditNodeItem = idl.Record({
+    path: idl.Text,
+    old_text: idl.Text,
+    new_text: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    replace_all: idl.Bool
+  });
+  const EditNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    old_text: idl.Text,
+    new_text: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    replace_all: idl.Bool
+  });
+  const MultiEdit = idl.Record({ old_text: idl.Text, new_text: idl.Text });
+  const MultiEditNodeItem = idl.Record({
+    path: idl.Text,
+    edits: idl.Vec(MultiEdit),
+    expected_etag: idl.Opt(idl.Text)
+  });
+  const MultiEditNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    edits: idl.Vec(MultiEdit),
+    expected_etag: idl.Opt(idl.Text)
+  });
+  const MkdirNodeRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
+  const MoveNodeItem = idl.Record({
+    from_path: idl.Text,
+    to_path: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    overwrite: idl.Bool
+  });
+  const MoveNodeRequest = idl.Record({
+    database_id: idl.Text,
+    from_path: idl.Text,
+    to_path: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    overwrite: idl.Bool
+  });
+  const DeleteNodeItem = idl.Record({
+    path: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    expected_folder_index_etag: idl.Opt(idl.Text)
+  });
+  const DeleteNodeRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    expected_folder_index_etag: idl.Opt(idl.Text)
+  });
+  const NodeMutation = idl.Variant({
+    Write: WriteNodeItem,
+    Append: AppendNodeItem,
+    Edit: EditNodeItem,
+    MultiEdit: MultiEditNodeItem,
+    Mkdir: idl.Text,
+    Move: MoveNodeItem,
+    Delete: DeleteNodeItem
+  });
+  const MutateNodesBatchRequest = idl.Record({
+    database_id: idl.Text,
+    operations: idl.Vec(NodeMutation)
+  });
+  const NodeMutationResult = idl.Variant({
+    Write: WriteNodeResult,
+    Append: WriteNodeResult,
+    Edit: EditNodeResult,
+    MultiEdit: EditNodeResult,
+    Mkdir: MkdirNodeResult,
+    Move: MoveNodeResult,
+    Delete: DeleteNodeResult
   });
   const NodeEntry = idl.Record({
     path: idl.Text,
@@ -812,6 +1345,13 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNodes = idl.Variant({ Ok: idl.Vec(NodeEntry), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
+  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
+  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: idl.Text });
+  const ResultEditNode = idl.Variant({ Ok: EditNodeResult, Err: idl.Text });
+  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
+  const ResultMoveNode = idl.Variant({ Ok: MoveNodeResult, Err: idl.Text });
+  const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: idl.Text });
+  const ResultMutationBatch = idl.Variant({ Ok: idl.Vec(NodeMutationResult), Err: idl.Text });
   const ResultMemoryManifest = idl.Variant({ Ok: MemoryManifest, Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
@@ -829,6 +1369,15 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
-    read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"])
+    read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
+    write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
+    write_nodes: idl.Func([WriteNodesRequest], [ResultWriteNodes], []),
+    append_node: idl.Func([AppendNodeRequest], [ResultWriteNode], []),
+    edit_node: idl.Func([EditNodeRequest], [ResultEditNode], []),
+    multi_edit_node: idl.Func([MultiEditNodeRequest], [ResultEditNode], []),
+    mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
+    move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),
+    delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
+    mutate_nodes_batch: idl.Func([MutateNodesBatchRequest], [ResultMutationBatch], [])
   });
 };

@@ -24,6 +24,8 @@ test("keeps staging on its canonical custom domain and permission-aware SDK", ()
     }
   ]);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_opt_in");
+  assert.equal(stagingConfig.vars.MCP_WRITE_POLICY, "private");
+  assert.equal(productionConfig.vars.MCP_WRITE_POLICY, "disabled");
   assert.equal(stagingConfig.vars.MCP_AUTH_ENABLED, undefined);
   assert.equal(packageConfig.dependencies["@icp-sdk/core"], "6.0.0");
   assert.equal(packageConfig.scripts["dev:staging"], undefined);
@@ -34,7 +36,7 @@ test("keeps production public until promotion and isolates staging auth state", 
   assert.equal(productionConfig.durable_objects, undefined);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_opt_in");
   assert.equal(stagingConfig.durable_objects.bindings[0].name, "MCP_AUTH_STATE");
-  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV2");
+  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV3");
   assert.deepEqual(stagingConfig.ratelimits, [
     {
       name: "MCP_REGISTRATION_RATE_LIMIT",
@@ -43,9 +45,9 @@ test("keeps production public until promotion and isolates staging auth state", 
     }
   ]);
   assert.deepEqual(stagingConfig.migrations.at(-1), {
-    tag: "v2",
-    new_sqlite_classes: ["McpAuthStateV2"],
-    deleted_classes: ["McpAuthState"]
+    tag: "v3",
+    new_sqlite_classes: ["McpAuthStateV3"],
+    deleted_classes: ["McpAuthStateV2"]
   });
   assert.notEqual(productionConfig.name, stagingConfig.name);
 });
@@ -97,7 +99,14 @@ test("extracts the OAuth resource metadata from a tool-level challenge", () => {
   );
 });
 
-test("requires optional OAuth on read tools and OAuth-only on connect_private", () => {
+test("extracts read and write scopes from the private connection challenge", () => {
+  const challenge =
+    'Bearer resource_metadata="https://wiki-mcp-staging.kinic.xyz/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="Private connection is required", scope="mcp:read mcp:write"';
+
+  assert.equal(parseAuthenticationChallenge(challenge).scope, "mcp:read mcp:write");
+});
+
+test("requires optional OAuth on reads and OAuth-only scopes on connect and writes", () => {
   assert.doesNotThrow(() =>
     assertPrivateOptInToolSecurity([
       {
@@ -112,7 +121,13 @@ test("requires optional OAuth on read tools and OAuth-only on connect_private", 
       {
         name: "connect_private",
         _meta: {
-          securitySchemes: [{ type: "oauth2", scopes: ["mcp:read"] }]
+          securitySchemes: [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
+        }
+      },
+      {
+        name: "mutate_nodes_batch",
+        _meta: {
+          securitySchemes: [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
         }
       }
     ])

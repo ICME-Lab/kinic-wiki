@@ -22,11 +22,11 @@ use vfs_types::{
     MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
     MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodePublication,
-    OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeMutationResult, NodePublication, OutgoingLinksRequest, PublicNode, PublishNodeRequest,
+    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -236,6 +236,14 @@ pub trait VfsApi: Sync {
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult>;
     async fn write_nodes(&self, _request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
         Err(anyhow!("write_nodes is not implemented by this client"))
+    }
+    async fn mutate_nodes_batch(
+        &self,
+        _request: MutateNodesBatchRequest,
+    ) -> Result<Vec<NodeMutationResult>> {
+        Err(anyhow!(
+            "mutate_nodes_batch is not implemented by this client"
+        ))
     }
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult>;
     async fn edit_node(&self, request: EditNodeRequest) -> Result<EditNodeResult>;
@@ -794,6 +802,15 @@ impl VfsApi for CanisterVfsClient {
     async fn write_nodes(&self, request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
         let result: Result<Vec<WriteNodeResult>, String> =
             self.update("write_nodes", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn mutate_nodes_batch(
+        &self,
+        request: MutateNodesBatchRequest,
+    ) -> Result<Vec<NodeMutationResult>> {
+        let result: Result<Vec<NodeMutationResult>, String> =
+            self.update("mutate_nodes_batch", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

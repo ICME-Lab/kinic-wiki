@@ -12,7 +12,7 @@ export const INTERNET_IDENTITY_CANISTER_ID = "rdmx6-jaaaa-aaaaa-aaadq-cai";
 export const INTERNET_IDENTITY_ORIGIN = "https://id.ai";
 export const PER_APP_DELEGATION_TTL_NS = 5n * 60n * 1_000_000_000n;
 
-type IiPermission = "queries" | "all";
+export type IiPermission = "queries" | "all";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Result<T, E = string> = { Ok: T } | { Err: E };
 type AccountDelegationError = { InternalCanisterError: string } | { Unauthorized: Principal } | { NoSuchDelegation: null };

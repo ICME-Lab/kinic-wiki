@@ -746,6 +746,75 @@ pub struct DeleteNodeResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct AppendNodeItem {
+    pub path: String,
+    pub content: String,
+    pub expected_etag: Option<String>,
+    pub separator: Option<String>,
+    pub metadata_json: Option<String>,
+    pub kind: Option<NodeKind>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct EditNodeItem {
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub expected_etag: Option<String>,
+    pub replace_all: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MultiEditNodeItem {
+    pub path: String,
+    pub edits: Vec<MultiEdit>,
+    pub expected_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MoveNodeItem {
+    pub from_path: String,
+    pub to_path: String,
+    pub expected_etag: Option<String>,
+    pub overwrite: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DeleteNodeItem {
+    pub path: String,
+    pub expected_etag: Option<String>,
+    pub expected_folder_index_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub enum NodeMutation {
+    Write(WriteNodeItem),
+    Append(AppendNodeItem),
+    Edit(EditNodeItem),
+    MultiEdit(MultiEditNodeItem),
+    Mkdir(String),
+    Move(MoveNodeItem),
+    Delete(DeleteNodeItem),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MutateNodesBatchRequest {
+    pub database_id: String,
+    pub operations: Vec<NodeMutation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub enum NodeMutationResult {
+    Write(WriteNodeResult),
+    Append(WriteNodeResult),
+    Edit(EditNodeResult),
+    MultiEdit(MultiEditNodeResult),
+    Mkdir(MkdirNodeResult),
+    Move(MoveNodeResult),
+    Delete(DeleteNodeResult),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SearchNodesRequest {
     pub database_id: String,
     pub query_text: String,

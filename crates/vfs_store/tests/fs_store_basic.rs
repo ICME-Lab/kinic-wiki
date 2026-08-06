@@ -665,6 +665,7 @@ fn write_nodes_rolls_back_when_later_item_fails() {
         )
         .expect_err("stale item should fail");
 
+    assert!(error.starts_with("operation 1 failed:"));
     assert!(error.contains("expected_etag"));
     assert!(
         store
