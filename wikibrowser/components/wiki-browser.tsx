@@ -25,6 +25,7 @@ import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, Wiki
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import { folderIndexPath, isReservedFolderIndexName } from "@/lib/folder-index";
 import { wikiSeoTitle } from "@/lib/wiki-seo";
+import { DEFAULT_EXPLORER_SORT_ORDER, parseExplorerSortOrder, type ExplorerSortOrder } from "@/lib/child-sort";
 import {
   errorHint,
   errorMessage,
@@ -43,6 +44,7 @@ import {
 import { ExplorerActionError, ExplorerCreateForm, ExplorerHeaderActions, ExplorerMoveForm, LeftPane, childPath, createDirectoryForExplorerNode, explorerNodeFromSelection, isDeletableExplorerNode, isMutableExplorerNode, loadedWikiFolders, normalizeMarkdownFileName, normalizePathSegment, sameStringList, wikiChildPath, wikiMarkdownChildPath, writeDisabledReason } from "@/components/wiki-browser/explorer-pane";
 import { TopBar, databaseListWarning, mergeDatabaseSummaries, withCurrentDatabase } from "@/components/wiki-browser/top-bar";
 const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
+const EXPLORER_SORT_STORAGE_KEY = "kinicWikiExplorerSortOrder";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const EMPTY_DATABASE_SUMMARIES: DatabaseSummary[] = [];
 const EMPTY_PUBLIC_DATABASE_IDS: ReadonlySet<string> = new Set<string>();
@@ -122,6 +124,7 @@ function WikiBrowserContent() {
   const [folderIndexNode, setFolderIndexNode] = useState<BrowserLoadState<WikiNode>>(browserLoadingState(canisterId, databaseId, folderIndexPath(selectedPath)));
   const [editState, setEditState] = useState<DocumentEditState>({ dirty: false, saveState: "idle" });
   const [explorerRevision, setExplorerRevision] = useState(0);
+  const [explorerSortOrder, setExplorerSortOrder] = useState<ExplorerSortOrder>(DEFAULT_EXPLORER_SORT_ORDER);
   const [selectedExplorerState, setSelectedExplorerState] = useState<{ key: string; node: ChildNode } | null>(null);
   const [explorerActionMode, setExplorerActionMode] = useState<"file" | "folder" | "rename" | null>(null);
   const [explorerMoveOpen, setExplorerMoveOpen] = useState(false);
@@ -135,6 +138,14 @@ function WikiBrowserContent() {
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
   const invalidCanister = validateCanisterText(canisterId);
   const canonicalRouteHref = useMemo(() => hrefForCanonicalDatabaseRoute(pathname, searchParams.toString()), [pathname, searchParams]);
+
+  useEffect(() => {
+    try {
+      setExplorerSortOrder(parseExplorerSortOrder(window.localStorage.getItem(EXPLORER_SORT_STORAGE_KEY)));
+    } catch {
+      setExplorerSortOrder(DEFAULT_EXPLORER_SORT_ORDER);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +163,15 @@ function WikiBrowserContent() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const updateExplorerSortOrder = useCallback((order: ExplorerSortOrder) => {
+    setExplorerSortOrder(order);
+    try {
+      window.localStorage.setItem(EXPLORER_SORT_STORAGE_KEY, order);
+    } catch {
+      // The in-memory preference remains usable when browser storage is unavailable.
+    }
   }, []);
 
   useEffect(() => {
@@ -719,6 +739,7 @@ function WikiBrowserContent() {
             title={tabTitle(tab)}
             actions={tab === "explorer" ? (
               <ExplorerHeaderActions
+                sortOrder={explorerSortOrder}
                 fileDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
                 folderDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
                 renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
@@ -729,6 +750,7 @@ function WikiBrowserContent() {
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
                 deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file, source node, or folder without visible children to delete")}
+                onSortOrderChange={updateExplorerSortOrder}
                 onNewFile={() => {
                   setExplorerActionError(null);
                   setExplorerActionMode("file");
@@ -805,6 +827,7 @@ function WikiBrowserContent() {
             readIdentityMode={currentReadIdentityMode}
             databaseCyclesError={currentDatabaseCycleReason}
             explorerRevision={explorerRevision}
+            explorerSortOrder={explorerSortOrder}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
         </aside>

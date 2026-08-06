@@ -2,12 +2,15 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
-import { Check, FilePlus, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
+import { ArrowDownAZ, Check, Ellipsis, FilePlus, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { SourceCapturePanel } from "@/components/source-capture-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { parseExplorerSortOrder, type ExplorerSortOrder } from "@/lib/child-sort";
 import { parentPath } from "@/lib/paths";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
 import { isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
@@ -31,6 +34,7 @@ export function LeftPane({
   readIdentityMode,
   databaseCyclesError,
   explorerRevision,
+  explorerSortOrder,
   onSelectedExplorerNode
 }: {
   tab: ModeTab;
@@ -45,6 +49,7 @@ export function LeftPane({
   readIdentityMode: "anonymous" | "user";
   databaseCyclesError: string | null;
   explorerRevision: number;
+  explorerSortOrder: ExplorerSortOrder;
   onSelectedExplorerNode: (node: ChildNode) => void;
 }) {
   if (tab === "query") {
@@ -80,12 +85,14 @@ export function LeftPane({
       autoExpandSelected={autoExpandExplorer}
       readIdentity={effectiveReadIdentity}
       childNodesCache={childNodesCache}
+      sortOrder={explorerSortOrder}
       onSelectedNode={onSelectedExplorerNode}
     />
   );
 }
 
 export function ExplorerHeaderActions({
+  sortOrder,
   fileDisabled,
   folderDisabled,
   renameDisabled,
@@ -96,12 +103,14 @@ export function ExplorerHeaderActions({
   renameTitle,
   moveTitle,
   deleteTitle,
+  onSortOrderChange,
   onNewFile,
   onNewFolder,
   onRename,
   onMove,
   onDelete
 }: {
+  sortOrder: ExplorerSortOrder;
   fileDisabled: boolean;
   folderDisabled: boolean;
   renameDisabled: boolean;
@@ -112,6 +121,7 @@ export function ExplorerHeaderActions({
   renameTitle: string;
   moveTitle: string;
   deleteTitle: string;
+  onSortOrderChange: (order: ExplorerSortOrder) => void;
   onNewFile: () => void;
   onNewFolder: () => void;
   onRename: () => void;
@@ -120,6 +130,29 @@ export function ExplorerHeaderActions({
 }) {
   return (
     <div className="flex items-center gap-1">
+      <Select value={sortOrder} onValueChange={(value) => onSortOrderChange(parseExplorerSortOrder(value))}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SelectTrigger
+              aria-label="Sort Explorer"
+              className="h-8 w-8 justify-center rounded-xl border-0 px-0 text-muted shadow-none hover:bg-accentSoft hover:text-accentText focus:ring-1 [&>svg:last-child]:hidden"
+            >
+              <ArrowDownAZ aria-hidden="true" size={15} />
+            </SelectTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            <p>{explorerSortLabel(sortOrder)}</p>
+          </TooltipContent>
+        </Tooltip>
+        <SelectContent align="end">
+          <SelectItem value="name-asc">Name (A–Z)</SelectItem>
+          <SelectItem value="name-desc">Name (Z–A)</SelectItem>
+          <SelectItem value="modified-desc">Date modified (newest)</SelectItem>
+          <SelectItem value="modified-asc">Date modified (oldest)</SelectItem>
+          <SelectItem value="size-desc">Size (largest)</SelectItem>
+          <SelectItem value="size-asc">Size (smallest)</SelectItem>
+        </SelectContent>
+      </Select>
       <ExplorerActionButton
         onClick={onNewFile}
         disabled={fileDisabled}
@@ -136,45 +169,63 @@ export function ExplorerHeaderActions({
       >
         <FolderPlus size={15} />
       </ExplorerActionButton>
-      <ExplorerActionButton
-        onClick={onRename}
-        disabled={renameDisabled}
-        title={renameTitle}
-        aria-label="Rename selected node"
-      >
-        <Pencil size={15} />
-      </ExplorerActionButton>
-      <ExplorerActionButton
-        onClick={onMove}
-        disabled={moveDisabled}
-        title={moveTitle}
-        aria-label="Move selected node"
-      >
-        <MoveRight size={15} />
-      </ExplorerActionButton>
-      <ExplorerActionButton
-        onClick={onDelete}
-        disabled={deleteDisabled}
-        title={deleteTitle}
-        aria-label="Delete selected Markdown file"
-        danger
-      >
-        <Trash2 size={15} />
-      </ExplorerActionButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-xl text-muted hover:bg-accentSoft hover:text-accentText"
+            aria-label="More Explorer actions"
+            title="More Explorer actions"
+          >
+            <Ellipsis aria-hidden="true" size={15} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={renameDisabled} title={renameTitle} onSelect={onRename}>
+            <Pencil aria-hidden="true" size={14} />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={moveDisabled} title={moveTitle} onSelect={onMove}>
+            <MoveRight aria-hidden="true" size={14} />
+            Move
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={deleteDisabled}
+            title={deleteTitle}
+            className="text-red-700 focus:bg-red-50 focus:text-red-700"
+            onSelect={onDelete}
+          >
+            <Trash2 aria-hidden="true" size={14} />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
 
+function explorerSortLabel(order: ExplorerSortOrder): string {
+  switch (order) {
+    case "name-asc": return "Sort: Name (A–Z)";
+    case "name-desc": return "Sort: Name (Z–A)";
+    case "modified-desc": return "Sort: Date modified (newest)";
+    case "modified-asc": return "Sort: Date modified (oldest)";
+    case "size-desc": return "Sort: Size (largest)";
+    case "size-asc": return "Sort: Size (smallest)";
+  }
+}
+
 function ExplorerActionButton({
   children,
-  danger = false,
   disabled,
   title,
   onClick,
   "aria-label": ariaLabel
 }: {
   children: ReactNode;
-  danger?: boolean;
   disabled: boolean;
   title: string;
   onClick: () => void;
@@ -188,7 +239,7 @@ function ExplorerActionButton({
             type="button"
             variant="ghost"
             size="icon"
-            className={`h-8 w-8 rounded-xl text-muted disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "hover:bg-red-50 hover:text-red-700" : "hover:bg-accentSoft hover:text-accentText"}`}
+            className="h-8 w-8 rounded-xl text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
             onClick={onClick}
             disabled={disabled}
             aria-label={ariaLabel}

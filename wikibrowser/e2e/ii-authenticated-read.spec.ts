@@ -31,7 +31,9 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   const principal = principalLabel?.slice("Principal ".length) ?? "";
   expect(principal).not.toEqual("");
   const databaseId = await seedPrivateDatabase(principal);
+  const secondDatabaseId = await seedPrivateDatabase(principal);
   const privateHref = `/db/${encodeURIComponent(databaseId)}${E2E_PATH}`;
+  const secondPrivateHref = `/db/${encodeURIComponent(secondDatabaseId)}${E2E_PATH}`;
 
   const anonymousContext = await browser.newContext();
   const anonymousPage = await anonymousContext.newPage();
@@ -43,6 +45,34 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await page.goto(privateHref);
   await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
+
+  const explorer = page.locator('[data-tid="wiki-explorer-panel"]');
+  const explorerNoteNames = () => explorer.locator('a[href*="/Knowledge/e2e"]').allTextContents();
+  await explorer.getByRole("combobox", { name: "Sort Explorer" }).click();
+  await page.getByRole("option", { name: "Name (Z–A)" }).click();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+  expect(await page.evaluate(() => window.localStorage.getItem("kinicWikiExplorerSortOrder"))).toBe("name-desc");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+
+  await page.goto(secondPrivateHref);
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+  await page.goto(privateHref);
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+
+  await explorer.getByRole("button", { name: "More Explorer actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Move" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  await explorer.getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await expect(explorer.getByRole("textbox", { name: "Rename selected node" })).toHaveValue("e2e.md");
+  await explorer.getByRole("button", { name: "Cancel Explorer action" }).click();
 
   const rscRequests: string[] = [];
   page.on("request", (request) => {
