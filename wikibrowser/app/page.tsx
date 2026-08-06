@@ -179,7 +179,7 @@ export default function HomePage() {
                 Get the iOS app
               </a>
               <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-bold text-ink no-underline hover:border-accent hover:bg-accentSoft ${focusRing}`} href="/docs/ios">
-                Read the iOS guide
+                iOS setup &amp; troubleshooting
               </Link>
             </SurfaceCard>
 

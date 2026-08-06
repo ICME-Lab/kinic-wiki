@@ -21,26 +21,22 @@ test("renders the home calls to action and follows internal routes", async ({ pa
   await expect(primaryNavigation.getByRole("link", { name: "Open Dashboard" })).toHaveAttribute("href", "/dashboard");
 
   const memoryFlow = page.getByRole("link", { name: "See how it works" });
-  await memoryFlow.click();
-  await expect(page).toHaveURL(/\/#memory-flow$/);
+  await followInternalLink(page, memoryFlow, "#memory-flow", /\/#memory-flow$/);
   await expect(page.getByRole("heading", { name: "Capture the context. Maintain the knowledge. Check the answer." })).toBeVisible();
 
   await expectExternalLink(page.getByRole("link", { name: "Get the iOS app" }), APP_STORE_URL);
   await expectExternalLink(page.getByRole("link", { name: "Install Clipper" }), CLIPPER_STORE_URL);
   await expect(page.getByRole("link", { name: "Install the CLI" })).toHaveAttribute("href", "/docs/cli");
 
-  await page.getByRole("link", { name: "Read the iOS guide" }).click();
-  await expect(page).toHaveURL(/\/docs\/ios$/);
-  await expect(page.getByRole("heading", { level: 1, name: "Save from Safari or X with the Share Extension" })).toBeVisible();
+  await followInternalLink(page, page.getByRole("link", { name: "iOS setup & troubleshooting" }), "/docs/ios", /\/docs\/ios$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Set up Save to KinicWiki." })).toBeVisible();
 
   await page.goto("/");
-  await page.getByRole("link", { name: "Read the Clipper guide" }).click();
-  await expect(page).toHaveURL(/\/docs\/clipper$/);
+  await followInternalLink(page, page.getByRole("link", { name: "Read the Clipper guide" }), "/docs/clipper", /\/docs\/clipper$/);
   await expect(page.getByRole("heading", { level: 1, name: "Save browser context with Wiki Clipper" })).toBeVisible();
 
   await page.goto("/");
-  await primaryNavigation.getByRole("link", { name: "Open Dashboard" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await followInternalLink(page, primaryNavigation.getByRole("link", { name: "Open Dashboard" }), "/dashboard", /\/dashboard$/);
 });
 
 test("redirects the native authentication hash route", async ({ page }) => {
@@ -71,15 +67,14 @@ test("renders the iOS overview and guide contracts", async ({ page }) => {
     await expect(page.getByText(requirement, { exact: false }).first()).toBeVisible();
   }
 
-  await page.getByRole("link", { name: "Read the Privacy Policy" }).click();
-  await expect(page).toHaveURL(/\/privacy-policy$/);
+  await followInternalLink(page, page.getByRole("link", { name: "Read the Privacy Policy" }), "/privacy-policy", /\/privacy-policy$/);
   await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
 
   await page.goto("/docs/ios");
   await expect(page).toHaveTitle("KinicWiki iOS Setup Guide | Kinic Wiki");
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", "https://wiki.kinic.xyz/docs/ios");
-  await expect(page.getByRole("heading", { level: 1, name: "Save from Safari or X with the Share Extension" })).toBeVisible();
-  await expectExternalLink(page.getByRole("link", { name: "Download on the App Store" }), APP_STORE_URL);
+  await expect(page.getByRole("heading", { level: 1, name: "Set up Save to KinicWiki." })).toBeVisible();
+  await expectExternalLink(page.getByRole("link", { name: "View on the App Store" }), APP_STORE_URL);
   for (const requirement of [
     "iOS 18 or later",
     "Owner or Writer",
@@ -93,15 +88,14 @@ test("renders the iOS overview and guide contracts", async ({ page }) => {
     "on-device queue",
     "Capture history",
     "under /Sources",
-    "Ask AI is scoped to the database you select",
-    "Ask AI history is stored on this device",
+    "Use Capture history to inspect requests",
+    "Ask AI history stays on this device",
     "Generation request data is discarded after processing"
   ]) {
     await expect(page.getByText(requirement, { exact: false }).first()).toBeVisible();
   }
 
-  await page.getByRole("link", { name: "See the app overview" }).click();
-  await expect(page).toHaveURL(/\/ios$/);
+  await followInternalLink(page, page.getByRole("link", { name: "See what the app does" }), "/ios", /\/ios$/);
 });
 
 test("renders the Clipper guide, requirements, and docs navigation", async ({ page }) => {
@@ -123,14 +117,17 @@ test("renders the Clipper guide, requirements, and docs navigation", async ({ pa
   }
 
   await page.goto("/docs");
-  await page.getByRole("region", { name: "Primary docs" }).getByRole("link", { name: /Wiki Clipper/ }).click();
-  await expect(page).toHaveURL(/\/docs\/clipper$/);
+  await followInternalLink(
+    page,
+    page.getByRole("region", { name: "Primary docs" }).getByRole("link", { name: /Wiki Clipper/ }),
+    "/docs/clipper",
+    /\/docs\/clipper$/
+  );
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/docs");
-  await page.getByRole("button", { name: "Open admin navigation" }).click();
-  await page.getByRole("navigation", { name: "Admin navigation" }).getByRole("link", { name: "iOS App" }).click();
-  await expect(page).toHaveURL(/\/docs\/ios$/);
+  const mobileNavigation = await openMobileAdminNavigation(page);
+  await followInternalLink(page, mobileNavigation.getByRole("link", { name: "iOS App" }), "/docs/ios", /\/docs\/ios$/);
 });
 
 for (const viewport of MOBILE_VIEWPORTS) {
@@ -139,7 +136,7 @@ for (const viewport of MOBILE_VIEWPORTS) {
     const cases = [
       { path: "/", name: "Install Clipper" },
       { path: "/ios", name: "Download on the App Store" },
-      { path: "/docs/ios", name: "Download on the App Store" },
+      { path: "/docs/ios", name: "View on the App Store" },
       { path: "/docs/clipper", name: "Add to Chrome" }
     ];
 
@@ -159,6 +156,26 @@ async function expectExternalLink(link: Locator, href: string) {
   await expect(link).toHaveAttribute("rel", /(?:^|\s)noopener(?:\s|$)/);
   await expect(link).toHaveAttribute("rel", /(?:^|\s)noreferrer(?:\s|$)/);
   await link.click({ trial: true });
+}
+
+async function followInternalLink(page: Page, link: Locator, href: string, expectedUrl: RegExp) {
+  await expect(link).toHaveAttribute("href", href);
+  await expect(async () => {
+    if (!expectedUrl.test(page.url())) await link.click();
+    await expect(page).toHaveURL(expectedUrl, { timeout: 1_000 });
+  }).toPass({ intervals: [100, 250, 500], timeout: 15_000 });
+}
+
+async function openMobileAdminNavigation(page: Page): Promise<Locator> {
+  const navigation = page.getByRole("navigation", { name: "Admin navigation" });
+  const trigger = page.getByRole("button", { name: "Open admin navigation" });
+
+  await expect(async () => {
+    if (!(await navigation.isVisible())) await trigger.click();
+    await expect(navigation).toBeVisible({ timeout: 1_000 });
+  }).toPass({ intervals: [100, 250, 500], timeout: 15_000 });
+
+  return navigation;
 }
 
 async function expectActionableWithinViewport(page: Page, link: Locator) {

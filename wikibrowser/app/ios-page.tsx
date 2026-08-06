@@ -146,7 +146,7 @@ export default function IOSPage() {
             <div className="mt-5 rounded-2xl border border-accentLine bg-accentSoft p-5 sm:p-6">
               <h3 className="text-base font-semibold text-ink">Built to finish the capture.</h3>
               <p className="mt-2 text-sm leading-6 text-muted">
-                KinicWiki flags a URL that is already saved. If it cannot submit immediately, it keeps the URL in an on-device queue; open Capture history to review or retry it. <Link className={`font-semibold text-accentText underline decoration-accentLine underline-offset-4 hover:text-ink ${linkFocus}`} href="/docs/ios">Read the iOS guide</Link>.
+                KinicWiki flags a URL that is already saved. If it cannot submit immediately, it keeps the URL in an on-device queue; open Capture history to review or retry it. <Link className={`font-semibold text-accentText underline decoration-accentLine underline-offset-4 hover:text-ink ${linkFocus}`} href="/docs/ios">Setup &amp; troubleshooting</Link>.
               </p>
             </div>
           </div>
