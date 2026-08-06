@@ -75,6 +75,11 @@ pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
 
 pub const HERMES_PLUGIN_FILES: &[PayloadFile] = &[
     PayloadFile {
+        path: "__init__.py",
+        content: include_str!("../../../plugins/hermes/__init__.py"),
+        executable: false,
+    },
+    PayloadFile {
         path: "plugin.yaml",
         content: include_str!("../../../plugins/hermes/plugin.yaml"),
         executable: false,
