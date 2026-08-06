@@ -139,6 +139,7 @@ function WikiBrowserContent() {
   const [folderImportDialog, setFolderImportDialog] = useState<FolderImportDialogState | null>(null);
   const folderImportInputRef = useRef<HTMLInputElement | null>(null);
   const folderImportSequence = useRef(0);
+  const folderImportAbortController = useRef<AbortController | null>(null);
   const nodeContextCache = useRef(new Map<string, NodeContext>());
   const childNodesCache = useRef(new Map<string, ChildNode[]>());
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
@@ -515,11 +516,14 @@ function WikiBrowserContent() {
 
   async function prepareSelectedFolder(files: FolderImportFile[]) {
     if (!explorerCreateDirectory || files.length === 0) return;
+    folderImportAbortController.current?.abort();
+    const abortController = new AbortController();
+    folderImportAbortController.current = abortController;
     const sequence = ++folderImportSequence.current;
     const destinationDirectory = explorerCreateDirectory;
     setFolderImportDialog({ phase: "preparing", destinationDirectory });
     try {
-      const prepared = await prepareFolderImport(files, destinationDirectory);
+      const prepared = await prepareFolderImport(files, destinationDirectory, { signal: abortController.signal });
       const existing = await loadExistingImportNodes(prepared, async (path) => {
         const { listChildren } = await import("@/lib/vfs-client");
         return listChildren(canisterId, databaseId, path, readIdentity ?? undefined);
@@ -527,15 +531,30 @@ function WikiBrowserContent() {
       if (sequence !== folderImportSequence.current) return;
       setFolderImportDialog({ phase: "ready", plan: reconcileFolderImport(prepared, existing) });
     } catch (cause) {
-      if (sequence !== folderImportSequence.current) return;
+      if (sequence !== folderImportSequence.current || abortController.signal.aborted || isAbortError(cause)) return;
       setFolderImportDialog({ phase: "error", destinationDirectory, message: errorMessage(cause) });
+    } finally {
+      if (folderImportAbortController.current === abortController) folderImportAbortController.current = null;
     }
   }
 
   function cancelFolderImport() {
+    folderImportAbortController.current?.abort();
+    folderImportAbortController.current = null;
     folderImportSequence.current += 1;
     setFolderImportDialog(null);
   }
+
+  useEffect(() => {
+    folderImportAbortController.current?.abort();
+    folderImportAbortController.current = null;
+    folderImportSequence.current += 1;
+    setFolderImportDialog(null);
+  }, [canisterId, databaseId]);
+
+  useEffect(() => () => {
+    folderImportAbortController.current?.abort();
+  }, []);
 
   async function runFolderImport(replacements: Set<string>) {
     if (!folderImportDialog || folderImportDialog.phase !== "ready") return;
@@ -1130,6 +1149,10 @@ function currentNodeState(
 
 function errorCode(error: unknown): string | null {
   return error instanceof ApiError ? error.code : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function currentNodeContextState(

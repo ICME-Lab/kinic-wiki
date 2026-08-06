@@ -14,6 +14,26 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe("FolderImportDialog", () => {
+  it("allows cancellation while preparing but locks cancellation while writing", async () => {
+    const onCancel = vi.fn();
+    const prepared = await prepareFolderImport([source("notes/a.md", "new")], "/Knowledge");
+    const plan = reconcileFolderImport(prepared, new Map());
+    const { rerender } = render(
+      <FolderImportDialog state={{ phase: "preparing", destinationDirectory: "/Knowledge" }} onCancel={onCancel} onImport={vi.fn()} />
+    );
+
+    const cancel = screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
+    expect(cancel.disabled).toBe(false);
+    fireEvent.click(cancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    onCancel.mockClear();
+    rerender(<FolderImportDialog state={{ phase: "writing", plan }} onCancel={onCancel} onImport={vi.fn()} />);
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it("keeps an existing file until replacement is explicitly selected", async () => {
     const prepared = await prepareFolderImport([source("notes/a.md", "new")], "/Knowledge");
     const existing = new Map<string, ChildNode>([

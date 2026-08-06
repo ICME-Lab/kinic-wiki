@@ -3,6 +3,7 @@ import { extractPdfForFolderImport, type ExtractedPdfImport } from "@/lib/pdf-fo
 
 export const FOLDER_IMPORT_NODE_LIMIT = 100;
 export const FOLDER_IMPORT_BYTE_LIMIT = 1_500_000;
+export const FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT = 20_000_000;
 
 export type FolderImportFile = Pick<File, "name" | "size" | "text" | "arrayBuffer"> & {
   webkitRelativePath: string;
@@ -50,11 +51,18 @@ export type ReconciledFolderImport = PreparedFolderImport & {
   entries: ReconciledImportEntry[];
 };
 
+export type PrepareFolderImportOptions = {
+  extractPdf?: (file: FolderImportFile, signal?: AbortSignal) => Promise<ExtractedPdfImport>;
+  signal?: AbortSignal;
+};
+
 export async function prepareFolderImport(
   selectedFiles: FolderImportFile[],
   destinationDirectory: string,
-  extractPdf: (file: FolderImportFile) => Promise<ExtractedPdfImport> = extractPdfForFolderImport
+  options: PrepareFolderImportOptions = {}
 ): Promise<PreparedFolderImport> {
+  const { extractPdf = extractPdfForFolderImport, signal } = options;
+  throwIfAborted(signal);
   if (selectedFiles.length === 0) throw new Error("Choose a folder containing Markdown or PDF files.");
   const relativePaths = selectedFiles.map(relativePath);
   const rootName = relativePaths[0]?.split("/")[0]?.trim();
@@ -65,12 +73,14 @@ export async function prepareFolderImport(
   const rootPath = joinImportPath(destinationDirectory, rootName);
   const excluded: FolderImportExclusion[] = [];
   const prepared: PreparedImportFile[] = [];
+  const candidates: Array<{ file: FolderImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }> = [];
   const claimedTargets = new Set<string>();
   const sorted = selectedFiles
     .map((file, index) => ({ file, sourcePath: relativePaths[index] }))
     .sort((left, right) => formatRank(left.sourcePath) - formatRank(right.sourcePath) || left.sourcePath.localeCompare(right.sourcePath));
 
   for (const { file, sourcePath } of sorted) {
+    throwIfAborted(signal);
     const segments = sourcePath.split("/").filter(Boolean);
     if (segments.some((segment) => segment.startsWith("."))) {
       excluded.push({ sourcePath, category: "excluded", reason: "Hidden paths are not imported." });
@@ -89,16 +99,32 @@ export async function prepareFolderImport(
       excluded.push({ sourcePath, category: "excluded", reason: "Another selected file maps to the same Markdown path." });
       continue;
     }
+    claimedTargets.add(targetPath);
+    if (file.size > FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT) {
+      excluded.push({
+        sourcePath,
+        category: "excluded",
+        reason: `Source files must be ${FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT.toLocaleString()} bytes or smaller.`
+      });
+      continue;
+    }
+    candidates.push({ file, sourcePath, targetPath, extension });
+  }
 
+  for (const { file, sourcePath, targetPath, extension } of candidates) {
+    throwIfAborted(signal);
     try {
       if (extension === "md") {
-        prepared.push({ sourcePath, targetPath, format: "markdown", content: await file.text(), metadataJson: "{}" });
+        const content = await file.text();
+        throwIfAborted(signal);
+        prepared.push({ sourcePath, targetPath, format: "markdown", content, metadataJson: "{}" });
       } else {
-        const pdf = await extractPdf(file);
+        const pdf = await extractPdf(file, signal);
+        throwIfAborted(signal);
         prepared.push({ sourcePath, targetPath, format: "pdf", content: pdf.content, metadataJson: pdf.metadataJson });
       }
-      claimedTargets.add(targetPath);
     } catch (error) {
+      if (isAbortError(error) || signal?.aborted) throw abortError();
       excluded.push({ sourcePath, category: "conversion-failed", reason: error instanceof Error ? error.message : String(error) });
     }
   }
@@ -120,7 +146,7 @@ export async function prepareFolderImport(
     limitError: nodeCount > FOLDER_IMPORT_NODE_LIMIT
       ? `This folder needs ${nodeCount} nodes; the limit is ${FOLDER_IMPORT_NODE_LIMIT}.`
       : inputBytes > FOLDER_IMPORT_BYTE_LIMIT
-        ? `This folder needs ${inputBytes.toLocaleString()} input bytes; the limit is ${FOLDER_IMPORT_BYTE_LIMIT.toLocaleString()}.`
+        ? `This folder needs ${inputBytes.toLocaleString()} encoded write bytes; the limit is ${FOLDER_IMPORT_BYTE_LIMIT.toLocaleString()}.`
         : null
   };
 }
@@ -254,4 +280,16 @@ function compareImportEntries(left: ReconciledImportEntry, right: ReconciledImpo
   return left.kind === "folder"
     ? pathDepth(left.path) - pathDepth(right.path) || left.path.localeCompare(right.path)
     : left.path.localeCompare(right.path);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function abortError(): DOMException {
+  return new DOMException("Folder import was cancelled.", "AbortError");
 }

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildFolderImportWrites,
+  FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT,
   loadExistingImportNodes,
   prepareFolderImport,
   reconcileFolderImport,
@@ -8,11 +9,11 @@ import {
 } from "@/lib/local-folder-import";
 import type { ChildNode } from "@/lib/types";
 
-function source(path: string, content: string): FolderImportFile {
+function source(path: string, content: string, size?: number): FolderImportFile {
   const bytes = new TextEncoder().encode(content);
   return {
     name: path.split("/").at(-1) ?? path,
-    size: bytes.byteLength,
+    size: size ?? bytes.byteLength,
     webkitRelativePath: path,
     text: async () => content,
     arrayBuffer: async () => bytes.buffer
@@ -55,7 +56,7 @@ describe("local folder import", () => {
       source("notes/a.md", "markdown"),
       source("notes/.git/config", "hidden"),
       source("notes/image.png", "image")
-    ], "/Memory", async () => ({ content: "pdf markdown", metadataJson: "{}", pageCount: 1 }));
+    ], "/Memory", { extractPdf: async () => ({ content: "pdf markdown", metadataJson: "{}", pageCount: 1 }) });
 
     expect(plan.files).toHaveLength(1);
     expect(plan.files[0]?.format).toBe("markdown");
@@ -71,8 +72,10 @@ describe("local folder import", () => {
     const plan = await prepareFolderImport([
       source("notes/broken.pdf", "broken"),
       source("notes/image.png", "image")
-    ], "/Knowledge", async () => {
-      throw new Error("Invalid PDF structure.");
+    ], "/Knowledge", {
+      extractPdf: async () => {
+        throw new Error("Invalid PDF structure.");
+      }
     });
 
     expect(plan.excluded).toEqual([
@@ -88,7 +91,59 @@ describe("local folder import", () => {
     expect(tooMany.limitError).toContain("limit is 100");
 
     const tooLarge = await prepareFolderImport([source("notes/large.md", "x".repeat(1_500_000))], "/Knowledge");
-    expect(tooLarge.limitError).toContain("input bytes");
+    expect(tooLarge.limitError).toContain("encoded write bytes");
+  });
+
+  it("excludes source files above 20 MB before reading them", async () => {
+    const atLimit = source("notes/limit.md", "accepted", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT);
+    const oversized = source("notes/large.pdf", "unread", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT + 1);
+    const unsupported = source("notes/video.mp4", "unread", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT + 1);
+    const extractPdf = vi.fn();
+    const oversizedArrayBuffer = vi.spyOn(oversized, "arrayBuffer");
+
+    const plan = await prepareFolderImport([atLimit, oversized, unsupported], "/Knowledge", { extractPdf });
+
+    expect(plan.files.map((file) => file.sourcePath)).toEqual(["notes/limit.md"]);
+    expect(plan.excluded.map((entry) => entry.sourcePath)).toEqual(["notes/large.pdf", "notes/video.mp4"]);
+    expect(plan.excluded[0]?.reason).toContain("20,000,000 bytes or smaller");
+    expect(extractPdf).not.toHaveBeenCalled();
+    expect(oversizedArrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("stops after cancellation without reporting a conversion failure", async () => {
+    const controller = new AbortController();
+    const first = source("notes/a.md", "first");
+    const second = source("notes/b.md", "second");
+    let finishFirst!: (value: string) => void;
+    first.text = vi.fn(() => new Promise<string>((resolve) => {
+      finishFirst = resolve;
+    }));
+    second.text = vi.fn(async () => "second");
+
+    const preparing = prepareFolderImport([first, second], "/Knowledge", { signal: controller.signal });
+    await vi.waitFor(() => expect(first.text).toHaveBeenCalledTimes(1));
+    controller.abort();
+    finishFirst("first");
+
+    await expect(preparing).rejects.toMatchObject({ name: "AbortError" });
+    expect(second.text).not.toHaveBeenCalled();
+  });
+
+  it("passes cancellation to the active PDF extractor", async () => {
+    const controller = new AbortController();
+    const extractPdf = vi.fn((_file: FolderImportFile, signal?: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
+    }));
+
+    const preparing = prepareFolderImport([source("notes/manual.pdf", "pdf")], "/Knowledge", {
+      extractPdf,
+      signal: controller.signal
+    });
+    await vi.waitFor(() => expect(extractPdf).toHaveBeenCalledTimes(1));
+    expect(extractPdf.mock.calls[0]?.[1]).toBe(controller.signal);
+    controller.abort();
+
+    await expect(preparing).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("protects conflicts unless replacement is selected", async () => {
