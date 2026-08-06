@@ -45,7 +45,7 @@ assert.throws(
 );
 assert.throws(
   () => checkWorkerDeploySource({ run: successfulRun({ publicCheckStatus: 1 }), fileExists: () => true }),
-  /public-node regression check failed/
+  /public-node component test failed/
 );
 
 console.log("Staging Worker deploy source guard OK");
@@ -65,7 +65,7 @@ function successfulRun({
     if (operation === "git merge-base --is-ancestor FETCH_HEAD HEAD") return result(ancestorStatus);
     if (operation === "git diff --name-only --diff-filter=U") return result(0, `${conflicts}\n`);
     if (operation === "git status --porcelain=v1 --untracked-files=all") return result(0, `${worktree}\n`);
-    if (command === process.execPath && args[0].endsWith("check-public-node-page.mjs")) {
+    if (command === "pnpm" && args.at(-1) === "app/p/[publicId]/page.test.tsx") {
       return result(publicCheckStatus);
     }
     throw new Error(`unexpected command: ${operation}`);

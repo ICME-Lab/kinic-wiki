@@ -5,26 +5,36 @@ import { AppLink as Link } from "@/components/app-link";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/kinicwiki-ai-memory/id6785718977";
 
-const experiences = [
+const captureSteps = [
   {
-    eyebrow: "Save from Safari",
-    title: "Keep the page before you lose the context.",
-    description: "Share any web page to KinicWiki, choose a writable database, and save the source without leaving Safari.",
-    path: "/Sources",
-    image: "/ios/save-from-safari.webp",
-    imageAlt: "KinicWiki share extension saving a Safari page to Personal Memory"
+    number: "01",
+    title: "Share the link.",
+    text: "From a Safari page or an X post, open the Share Sheet and choose Save to KinicWiki."
   },
   {
-    eyebrow: "Browse your wiki",
-    title: "Move from raw sources to useful knowledge.",
+    number: "02",
+    title: "Choose its database.",
+    text: "Select an active database where you are an Owner or Writer, then tap Save. KinicWiki remembers the destination for next time."
+  },
+  {
+    number: "03",
+    title: "Keep the source.",
+    text: "KinicWiki processes the page and its origin into an inspectable source under /Sources in the database you selected."
+  }
+];
+
+const followUpExperiences = [
+  {
+    eyebrow: "Browse what you saved",
+    title: "Move from a captured source to useful knowledge.",
     description: "Search and read Sources, Knowledge, Memory, Sessions, and Skills across the databases you choose.",
-    path: "/Knowledge",
+    path: "/Sources → /Knowledge",
     image: "/ios/browse-knowledge.webp",
     imageAlt: "KinicWiki Browse screen showing Sources, Knowledge, Memory, Sessions, and Skills"
   },
   {
-    eyebrow: "Ask with evidence",
-    title: "See the notes behind every supported answer.",
+    eyebrow: "Ask with the source attached",
+    title: "Check the notes behind every supported answer.",
     description: "Ask one selected database a question, then inspect the documents Kinic AI searched and cited.",
     path: "cited answer",
     image: "/ios/ask-with-sources.webp",
@@ -80,9 +90,10 @@ export default function IOSPage() {
                 <p className="mt-1 text-sm text-muted">For iPhone and iPad</p>
               </div>
             </div>
-            <h1 className="mt-8 max-w-[700px] text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-ink sm:text-6xl">Your AI memory, on iPhone and iPad.</h1>
+            <p className="mt-8 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">The Share Extension</p>
+            <h1 className="mt-3 max-w-[700px] text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-ink sm:text-6xl">Save what matters, straight to your AI memory.</h1>
             <p className="mt-6 max-w-[610px] text-lg leading-8 text-muted">
-              Save useful pages from Safari, browse the knowledge you keep, and ask questions with the source notes still attached.
+              Share a page from Safari or a post from X, choose a Kinic Wiki database, and keep an inspectable source without leaving what you are reading.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <a
@@ -94,8 +105,8 @@ export default function IOSPage() {
                 <AppleMark />
                 Download on the App Store
               </a>
-              <a className={`text-sm font-semibold text-muted underline decoration-line underline-offset-4 hover:text-accentText ${linkFocus}`} href="#how-it-works">
-                See how it works
+              <a className={`text-sm font-semibold text-muted underline decoration-line underline-offset-4 hover:text-accentText ${linkFocus}`} href="#share-extension">
+                See how sharing works
               </a>
             </div>
           </div>
@@ -104,48 +115,71 @@ export default function IOSPage() {
             <div className="absolute -left-10 top-[18%] h-36 w-36 rounded-full border border-accentLine bg-accentSoft" />
             <div className="absolute -right-12 bottom-[12%] h-24 w-24 rounded-full border border-line bg-white" />
             <div className="relative overflow-hidden rounded-[2.6rem] border-[8px] border-[#17253a] bg-white shadow-[0_24px_70px_rgba(23,37,58,0.20)]">
-              <img className="block h-auto w-full" src="/ios/ask-with-sources.webp" alt="KinicWiki Ask AI answer with a visible cited source" width={720} height={1440} />
+              <img className="block h-auto w-full" src="/ios/save-from-safari.webp" alt="Save to KinicWiki Share Extension selecting Personal Memory for a Safari page" width={720} height={1440} />
             </div>
           </div>
         </div>
       </section>
 
-      <section className="bg-paper px-4 py-16 sm:px-6 sm:py-20" id="how-it-works">
-        <div className="mx-auto max-w-[1080px]">
-          <div className="max-w-[680px]">
-            <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">One continuous memory</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">Capture the source. Keep the knowledge. Check the answer.</h2>
+      <section className="bg-paper px-4 py-16 sm:px-6 sm:py-20" id="share-extension">
+        <div className="mx-auto grid max-w-[1080px] gap-10 lg:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.28fr)] lg:items-start">
+          <div className="lg:sticky lg:top-8">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Save to KinicWiki</p>
+            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">From the Share Sheet to <code className="whitespace-nowrap text-[0.86em]">/Sources</code>.</h2>
+            <p className="mt-5 max-w-[470px] text-base leading-7 text-muted">
+              The Share Extension keeps capture close to the moment you find something useful. One shared web URL goes to one database you choose.
+            </p>
           </div>
 
-          <div className="relative mt-12">
-            <div className="absolute bottom-8 left-[19px] top-8 w-px bg-accentLine lg:bottom-auto lg:left-[16.66%] lg:right-[16.66%] lg:top-[19px] lg:h-px lg:w-auto" aria-hidden="true" />
-            <ol className="relative grid gap-8 lg:grid-cols-3 lg:gap-5">
-              {experiences.map((experience) => (
-                <li className="relative grid grid-cols-[40px_minmax(0,1fr)] gap-4 lg:block" key={experience.path}>
-                  <div className="relative z-10 grid h-10 w-10 place-items-center rounded-full border border-accentLine bg-white font-mono text-[10px] font-semibold text-accentText lg:mx-auto">
-                    <span className="h-2 w-2 rounded-full bg-accent" />
+          <div>
+            <ol className="overflow-hidden rounded-2xl border border-line bg-white shadow-[0_14px_40px_rgba(0,0,0,0.05)]">
+              {captureSteps.map((step, index) => (
+                <li className={`grid gap-4 p-5 sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:p-6 ${index > 0 ? "border-t border-line" : ""}`} key={step.number}>
+                  <span className="font-mono text-xs font-semibold text-accentText">{step.number}</span>
+                  <div>
+                    <h3 className="text-xl font-semibold tracking-[-0.025em] text-ink">{step.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-muted">{step.text}</p>
                   </div>
-                  <article className="min-w-0 overflow-hidden rounded-2xl border border-line bg-white shadow-[0_14px_40px_rgba(0,0,0,0.05)] lg:mt-6">
-                    <div className="border-b border-line px-5 py-5">
-                      <p className="font-mono text-[11px] font-semibold text-accentText">{experience.path}</p>
-                      <p className="mt-3 text-xs font-bold uppercase tracking-[0.12em] text-muted">{experience.eyebrow}</p>
-                      <h3 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.025em] text-ink">{experience.title}</h3>
-                      <p className="mt-3 text-sm leading-6 text-muted">{experience.description}</p>
-                    </div>
-                    <div className="bg-[#f1f3f7] p-4 sm:p-6 lg:p-4">
-                      <div className="mx-auto max-w-[260px] overflow-hidden rounded-[1.8rem] border-[5px] border-[#17253a] bg-white shadow-[0_16px_34px_rgba(23,37,58,0.15)]">
-                        <img className="block h-auto w-full" src={experience.image} alt={experience.imageAlt} width={720} height={1440} loading="lazy" />
-                      </div>
-                    </div>
-                  </article>
                 </li>
               ))}
             </ol>
+            <div className="mt-5 rounded-2xl border border-accentLine bg-accentSoft p-5 sm:p-6">
+              <h3 className="text-base font-semibold text-ink">Built to finish the capture.</h3>
+              <p className="mt-2 text-sm leading-6 text-muted">
+                KinicWiki flags a URL that is already saved. If it cannot submit immediately, it keeps the URL in an on-device queue; open Capture history to review or retry it. <Link className={`font-semibold text-accentText underline decoration-accentLine underline-offset-4 hover:text-ink ${linkFocus}`} href="/docs/ios">Setup &amp; troubleshooting</Link>.
+              </p>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="border-y border-line bg-white px-4 py-16 sm:px-6 sm:py-20">
+        <div className="mx-auto max-w-[1080px]">
+          <div className="max-w-[680px]">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">After capture</p>
+            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">Browse what you saved. Ask with the source attached.</h2>
+          </div>
+          <div className="mt-10 grid gap-5 lg:grid-cols-2">
+            {followUpExperiences.map((experience) => (
+              <article className="grid min-w-0 overflow-hidden rounded-2xl border border-line bg-paper shadow-[0_14px_40px_rgba(0,0,0,0.05)] sm:grid-cols-[minmax(0,1fr)_minmax(190px,0.72fr)]" key={experience.path}>
+                <div className="p-5 sm:p-6">
+                  <p className="font-mono text-[11px] font-semibold text-accentText">{experience.path}</p>
+                  <p className="mt-6 text-xs font-bold uppercase tracking-[0.12em] text-muted">{experience.eyebrow}</p>
+                  <h3 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.025em] text-ink">{experience.title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-muted">{experience.description}</p>
+                </div>
+                <div className="border-t border-line bg-[#f1f3f7] p-4 sm:border-l sm:border-t-0">
+                  <div className="mx-auto max-w-[220px] overflow-hidden rounded-[1.55rem] border-[5px] border-[#17253a] bg-white shadow-[0_16px_34px_rgba(23,37,58,0.15)]">
+                    <img className="block h-auto w-full" src={experience.image} alt={experience.imageAlt} width={720} height={1440} loading="lazy" />
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-[1080px] gap-10 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] lg:items-start">
           <div>
             <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Built for your memory</p>

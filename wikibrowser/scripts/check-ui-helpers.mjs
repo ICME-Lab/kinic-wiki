@@ -72,6 +72,7 @@ const vfsClientFiles = [
 const vfsClientSource = vfsClientFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const databasePreviewSource = readFileSync(new URL("../lib/database-preview.ts", import.meta.url), "utf8");
 const wranglerConfigSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+const assetsIgnoreSource = readFileSync(new URL("../public/.assetsignore", import.meta.url), "utf8");
 const globalsCss = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta.url), "utf8");
 
@@ -162,6 +163,7 @@ assert.match(adminRouteShellSource, /<AdminShell>\{children\}<\/AdminShell>/);
 assert.match(marketplaceLayoutSource, /<AdminRouteShell>/);
 assert.match(marketplaceLayoutSource, /<AdminContent>\{children\}<\/AdminContent>/);
 assert.match(wranglerConfigSource, /"r2_buckets"/);
+assert.match(assetsIgnoreSource, /^\.DS_Store$/m, "static asset uploads must exclude macOS metadata");
 assert.match(wranglerConfigSource, /"binding": "LINK_PREVIEW_IMAGES"/);
 assert.match(wranglerConfigSource, /"bucket_name": "kinic-wiki-link-preview-images"/);
 assert.match(wranglerConfigSource, /"queues"/);

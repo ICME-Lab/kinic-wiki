@@ -3,7 +3,7 @@ import IOSPage from "@/app/ios-page";
 import { routeHead } from "@/lib/route-head";
 
 const title = "KinicWiki for iPhone and iPad | Kinic Wiki";
-const description = "Save pages from Safari, browse your AI memory, and ask questions with visible source notes in the KinicWiki iOS app.";
+const description = "Use the KinicWiki Share Extension to save Safari pages and X posts under /Sources, then browse and ask questions with the source notes attached.";
 
 export const Route = createFileRoute("/ios")({
   head: () => ({

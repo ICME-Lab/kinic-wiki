@@ -15,6 +15,7 @@ struct MarkdownContent: View {
     var body: some View {
         StructuredText(markdown: markdown)
             .textual.structuredTextStyle(.gitHub)
+            .textual.overflowMode(.wrap)
             .textual.textSelection(.enabled)
             .foregroundStyle(.black)
             .environment(\.colorScheme, .light)
