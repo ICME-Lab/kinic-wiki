@@ -160,20 +160,16 @@ async function expectExternalLink(link: Locator, href: string) {
 
 async function followInternalLink(page: Page, link: Locator, href: string, expectedUrl: RegExp) {
   await expect(link).toHaveAttribute("href", href);
-  await expect(async () => {
-    if (!expectedUrl.test(page.url())) await link.click();
-    await expect(page).toHaveURL(expectedUrl, { timeout: 1_000 });
-  }).toPass({ intervals: [100, 250, 500], timeout: 15_000 });
+  await link.click();
+  await expect(page).toHaveURL(expectedUrl);
 }
 
 async function openMobileAdminNavigation(page: Page): Promise<Locator> {
   const navigation = page.getByRole("navigation", { name: "Admin navigation" });
   const trigger = page.getByRole("button", { name: "Open admin navigation" });
 
-  await expect(async () => {
-    if (!(await navigation.isVisible())) await trigger.click();
-    await expect(navigation).toBeVisible({ timeout: 1_000 });
-  }).toPass({ intervals: [100, 250, 500], timeout: 15_000 });
+  await trigger.click();
+  await expect(navigation).toBeVisible();
 
   return navigation;
 }
