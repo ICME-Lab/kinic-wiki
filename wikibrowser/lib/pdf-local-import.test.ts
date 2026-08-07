@@ -2,9 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { MarkdownPreview } from "@/components/markdown-preview";
-import { pdfPagesToMarkdown, pdfTextItemsToPlainText } from "@/lib/pdf-folder-import";
+import { pdfPagesToMarkdown, pdfTextItemsToPlainText } from "@/lib/pdf-local-import";
 
-describe("PDF folder import formatting", () => {
+describe("PDF local import formatting", () => {
   it("preserves text item contents and uses only explicit line endings", () => {
     expect(pdfTextItemsToPlainText([
       { str: "日", hasEOL: false },

@@ -2,7 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
-import { ArrowDownAZ, Check, Ellipsis, FilePlus, FolderInput, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
+import { ArrowDownAZ, Check, Ellipsis, FileInput, FilePlus, FolderInput, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { SourceCapturePanel } from "@/components/source-capture-panel";
 import { QueryPanel } from "@/components/query-panel";
@@ -104,14 +104,16 @@ export function ExplorerHeaderActions({
   renameTitle,
   moveTitle,
   deleteTitle,
-  importTitle,
+  importFilesTitle,
+  importFolderTitle,
   onSortOrderChange,
   onNewFile,
   onNewFolder,
   onRename,
   onMove,
   onDelete,
-  onImport
+  onImportFiles,
+  onImportFolder
 }: {
   sortOrder: ExplorerSortOrder;
   fileDisabled: boolean;
@@ -125,14 +127,16 @@ export function ExplorerHeaderActions({
   renameTitle: string;
   moveTitle: string;
   deleteTitle: string;
-  importTitle: string;
+  importFilesTitle: string;
+  importFolderTitle: string;
   onSortOrderChange: (order: ExplorerSortOrder) => void;
   onNewFile: () => void;
   onNewFolder: () => void;
   onRename: () => void;
   onMove: () => void;
   onDelete: () => void;
-  onImport: () => void;
+  onImportFiles: () => void;
+  onImportFolder: () => void;
 }) {
   return (
     <div className="flex items-center gap-1">
@@ -189,9 +193,13 @@ export function ExplorerHeaderActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={importDisabled} title={importTitle} onSelect={onImport}>
+          <DropdownMenuItem disabled={importDisabled} title={importFilesTitle} onSelect={onImportFiles}>
+            <FileInput aria-hidden="true" size={14} />
+            Import files
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={importDisabled} title={importFolderTitle} onSelect={onImportFolder}>
             <FolderInput aria-hidden="true" size={14} />
-            Import local folder
+            Import folder
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={renameDisabled} title={renameTitle} onSelect={onRename}>

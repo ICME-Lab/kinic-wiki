@@ -1,4 +1,4 @@
-export const PDF_IMPORT_EXTRACTOR = "pdfjs-dist@6.2.108";
+export const PDF_LOCAL_IMPORT_EXTRACTOR = "pdfjs-dist@6.2.108";
 
 const GFM_AUTOLINK_BREAK = "\u2060";
 
@@ -13,7 +13,7 @@ type PdfTextItem = {
   hasEOL: boolean;
 };
 
-export async function extractPdfForFolderImport(
+export async function extractPdfForLocalImport(
   file: Pick<File, "name" | "arrayBuffer">,
   signal?: AbortSignal
 ): Promise<ExtractedPdfImport> {
@@ -65,7 +65,7 @@ export async function extractPdfForFolderImport(
         source_filename: file.name,
         source_sha256: sourceSha256,
         page_count: document.numPages,
-        extractor: PDF_IMPORT_EXTRACTOR
+        extractor: PDF_LOCAL_IMPORT_EXTRACTOR
       }),
       pageCount: document.numPages
     };

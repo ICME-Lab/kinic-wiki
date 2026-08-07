@@ -1,17 +1,19 @@
 import type { ChildNode, WriteNodeItem } from "@/lib/types";
-import { extractPdfForFolderImport, type ExtractedPdfImport } from "@/lib/pdf-folder-import";
+import { extractPdfForLocalImport, type ExtractedPdfImport } from "@/lib/pdf-local-import";
 
-export const FOLDER_IMPORT_NODE_LIMIT = 100;
-export const FOLDER_IMPORT_BYTE_LIMIT = 1_500_000;
-export const FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT = 20_000_000;
-export const FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT = 100_000_000;
-export const FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT = 50_000_000;
+export const LOCAL_IMPORT_NODE_LIMIT = 100;
+export const LOCAL_IMPORT_BYTE_LIMIT = 1_500_000;
+export const LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT = 20_000_000;
+export const LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT = 100_000_000;
+export const LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT = 50_000_000;
 
-export type FolderImportFile = Pick<File, "name" | "size" | "text" | "arrayBuffer"> & {
+export type LocalImportMode = "files" | "folder";
+
+export type LocalImportFile = Pick<File, "name" | "size" | "text" | "arrayBuffer"> & {
   webkitRelativePath: string;
 };
 
-export type FolderImportExclusion = {
+export type LocalImportExclusion = {
   sourcePath: string;
   category: "excluded" | "conversion-failed";
   reason: string;
@@ -25,13 +27,14 @@ export type PreparedImportFile = {
   metadataJson: string;
 };
 
-export type PreparedFolderImport = {
+export type PreparedLocalImport = {
+  mode: LocalImportMode;
   destinationDirectory: string;
-  rootName: string;
-  rootPath: string;
+  selectionLabel: string;
+  navigationPath: string;
   folders: string[];
   files: PreparedImportFile[];
-  excluded: FolderImportExclusion[];
+  excluded: LocalImportExclusion[];
   markdownCount: number;
   pdfCount: number;
   nodeCount: number;
@@ -49,35 +52,38 @@ export type ReconciledImportEntry = {
   file: PreparedImportFile | null;
 };
 
-export type ReconciledFolderImport = PreparedFolderImport & {
+export type ReconciledLocalImport = PreparedLocalImport & {
   entries: ReconciledImportEntry[];
 };
 
-export type PrepareFolderImportOptions = {
-  extractPdf?: (file: FolderImportFile, signal?: AbortSignal) => Promise<ExtractedPdfImport>;
+export type PrepareLocalImportOptions = {
+  extractPdf?: (file: LocalImportFile, signal?: AbortSignal) => Promise<ExtractedPdfImport>;
   signal?: AbortSignal;
 };
 
-export async function prepareFolderImport(
-  selectedFiles: FolderImportFile[],
+export async function prepareLocalImport(
+  selectedFiles: LocalImportFile[],
   destinationDirectory: string,
-  options: PrepareFolderImportOptions = {}
-): Promise<PreparedFolderImport> {
-  const { extractPdf = extractPdfForFolderImport, signal } = options;
+  mode: LocalImportMode,
+  options: PrepareLocalImportOptions = {}
+): Promise<PreparedLocalImport> {
+  const { extractPdf = extractPdfForLocalImport, signal } = options;
   throwIfAborted(signal);
-  if (selectedFiles.length === 0) throw new Error("Choose a folder containing Markdown or PDF files.");
-  const relativePaths = selectedFiles.map(relativePath);
-  const rootName = relativePaths[0]?.split("/")[0]?.trim();
-  if (!rootName || relativePaths.some((path) => path.split("/")[0] !== rootName)) {
-    throw new Error("Choose one local folder at a time.");
+  if (selectedFiles.length === 0) {
+    throw new Error(mode === "folder" ? "Choose a folder containing Markdown or PDF files." : "Choose one or more Markdown or PDF files.");
   }
+  const sourcePaths = selectedFiles.map((file) => sourcePath(file, mode));
+  const rootName = mode === "folder" ? folderRootName(sourcePaths) : null;
+  const rootPath = rootName ? joinImportPath(destinationDirectory, rootName) : null;
+  const selectionLabel = mode === "folder"
+    ? rootName ?? ""
+    : selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} selected files`;
 
-  const rootPath = joinImportPath(destinationDirectory, rootName);
-  const excluded: FolderImportExclusion[] = [];
+  const excluded: LocalImportExclusion[] = [];
   const prepared: PreparedImportFile[] = [];
-  const candidates: Array<{ file: FolderImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }> = [];
+  const candidates: Array<{ file: LocalImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }> = [];
   const sorted = selectedFiles
-    .map((file, index) => ({ file, sourcePath: relativePaths[index] }))
+    .map((file, index) => ({ file, sourcePath: sourcePaths[index] }))
     .sort((left, right) => formatRank(left.sourcePath) - formatRank(right.sourcePath) || left.sourcePath.localeCompare(right.sourcePath));
 
   for (const { file, sourcePath } of sorted) {
@@ -96,18 +102,18 @@ export async function prepareFolderImport(
       ? sourcePath.replace(/\.pdf$/i, ".md")
       : sourcePath.replace(/\.md$/i, ".md");
     const targetPath = joinImportPath(destinationDirectory, relativeTarget);
-    if (file.size > FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT) {
+    if (file.size > LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT) {
       excluded.push({
         sourcePath,
         category: "excluded",
-        reason: `Source files must be ${FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT.toLocaleString()} bytes or smaller.`
+        reason: `Source files must be ${LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT.toLocaleString()} bytes or smaller.`
       });
       continue;
     }
     candidates.push({ file, sourcePath, targetPath, extension });
   }
 
-  validateFolderImportPreflight(rootPath, candidates);
+  validateLocalImportPreflight(mode, rootPath, candidates);
 
   const candidateGroups = new Map<string, typeof candidates>();
   for (const candidate of candidates) {
@@ -145,13 +151,19 @@ export async function prepareFolderImport(
     }
   }
 
-  const folders = importedFolderPaths(rootPath, prepared.map((file) => file.targetPath));
+  const folders = mode === "folder" && rootPath
+    ? importedFolderPaths(rootPath, prepared.map((file) => file.targetPath))
+    : [];
   const nodeCount = folders.length + prepared.length;
   const inputBytes = estimateImportInputBytes(folders, prepared);
+  const navigationPath = mode === "folder"
+    ? rootPath ?? destinationDirectory
+    : prepared.length === 1 ? prepared[0].targetPath : destinationDirectory;
   return {
+    mode,
     destinationDirectory,
-    rootName,
-    rootPath,
+    selectionLabel,
+    navigationPath,
     folders,
     files: prepared.sort((left, right) => left.targetPath.localeCompare(right.targetPath)),
     excluded: excluded.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath)),
@@ -159,13 +171,13 @@ export async function prepareFolderImport(
     pdfCount: prepared.filter((file) => file.format === "pdf").length,
     nodeCount,
     inputBytes,
-    limitError: inputBytes > FOLDER_IMPORT_BYTE_LIMIT
-      ? `This folder needs ${inputBytes.toLocaleString()} encoded write bytes; the limit is ${FOLDER_IMPORT_BYTE_LIMIT.toLocaleString()}.`
+    limitError: inputBytes > LOCAL_IMPORT_BYTE_LIMIT
+      ? `This import needs ${inputBytes.toLocaleString()} encoded write bytes; the limit is ${LOCAL_IMPORT_BYTE_LIMIT.toLocaleString()}.`
       : null
   };
 }
 
-export function reconcileFolderImport(prepared: PreparedFolderImport, existingNodes: Map<string, ChildNode>): ReconciledFolderImport {
+export function reconcileLocalImport(prepared: PreparedLocalImport, existingNodes: Map<string, ChildNode>): ReconciledLocalImport {
   const entries: ReconciledImportEntry[] = [];
   const blockedFolders = new Set<string>();
   for (const path of prepared.folders) {
@@ -201,7 +213,7 @@ export function reconcileFolderImport(prepared: PreparedFolderImport, existingNo
   return { ...prepared, entries };
 }
 
-export function buildFolderImportWrites(importPlan: ReconciledFolderImport, replacements: Set<string>): WriteNodeItem[] {
+export function buildLocalImportWrites(importPlan: ReconciledLocalImport, replacements: Set<string>): WriteNodeItem[] {
   return importPlan.entries
     .filter((entry) => entry.status === "new" || (entry.status === "conflict" && replacements.has(entry.path)))
     .sort(compareImportEntries)
@@ -216,8 +228,8 @@ export function buildFolderImportWrites(importPlan: ReconciledFolderImport, repl
         });
 }
 
-export async function loadExistingImportNodes(
-  prepared: PreparedFolderImport,
+export async function loadExistingLocalImportNodes(
+  prepared: PreparedLocalImport,
   listChildrenAt: (path: string) => Promise<ChildNode[]>,
   signal?: AbortSignal
 ): Promise<Map<string, ChildNode>> {
@@ -241,31 +253,47 @@ export async function loadExistingImportNodes(
   return existing;
 }
 
-function validateFolderImportPreflight(
-  rootPath: string,
-  candidates: Array<{ file: FolderImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }>
+function validateLocalImportPreflight(
+  mode: LocalImportMode,
+  rootPath: string | null,
+  candidates: Array<{ file: LocalImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }>
 ): void {
   const targetPaths = [...new Set(candidates.map((candidate) => candidate.targetPath))];
-  const maximumNodeCount = importedFolderPaths(rootPath, targetPaths).length + targetPaths.length;
-  if (maximumNodeCount > FOLDER_IMPORT_NODE_LIMIT) {
-    throw new Error(`This folder can produce ${maximumNodeCount} nodes; the limit is ${FOLDER_IMPORT_NODE_LIMIT}.`);
+  const folderCount = mode === "folder" && rootPath ? importedFolderPaths(rootPath, targetPaths).length : 0;
+  const maximumNodeCount = folderCount + targetPaths.length;
+  if (maximumNodeCount > LOCAL_IMPORT_NODE_LIMIT) {
+    throw new Error(`This import can produce ${maximumNodeCount} nodes; the limit is ${LOCAL_IMPORT_NODE_LIMIT}.`);
   }
 
   const sourceBytes = candidates.reduce((total, candidate) => total + candidate.file.size, 0);
-  if (sourceBytes > FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT) {
-    throw new Error(`Selected source files total ${sourceBytes.toLocaleString()} bytes; the limit is ${FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT.toLocaleString()}.`);
+  if (sourceBytes > LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT) {
+    throw new Error(`Selected source files total ${sourceBytes.toLocaleString()} bytes; the limit is ${LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT.toLocaleString()}.`);
   }
 
   const pdfBytes = candidates.reduce((total, candidate) => total + (candidate.extension === "pdf" ? candidate.file.size : 0), 0);
-  if (pdfBytes > FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT) {
-    throw new Error(`Selected PDF files total ${pdfBytes.toLocaleString()} bytes; the limit is ${FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT.toLocaleString()}.`);
+  if (pdfBytes > LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT) {
+    throw new Error(`Selected PDF files total ${pdfBytes.toLocaleString()} bytes; the limit is ${LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT.toLocaleString()}.`);
   }
 }
 
-function relativePath(file: FolderImportFile): string {
-  const path = file.webkitRelativePath.replace(/^\/+/, "");
-  if (!path || !path.includes("/")) throw new Error("The browser did not preserve the selected folder path.");
-  return path;
+function sourcePath(file: LocalImportFile, mode: LocalImportMode): string {
+  if (mode === "folder") {
+    const path = file.webkitRelativePath.replace(/^\/+/, "");
+    if (!path || !path.includes("/")) throw new Error("The browser did not preserve the selected folder path.");
+    return path;
+  }
+  if (!file.name || file.name.includes("/") || file.name.includes("\\")) {
+    throw new Error("A selected file has an invalid name.");
+  }
+  return file.name;
+}
+
+function folderRootName(sourcePaths: string[]): string {
+  const rootName = sourcePaths[0]?.split("/")[0]?.trim();
+  if (!rootName || sourcePaths.some((path) => path.split("/")[0] !== rootName)) {
+    throw new Error("Choose one local folder at a time.");
+  }
+  return rootName;
 }
 
 function joinImportPath(directory: string, relativePath: string): string {
@@ -329,5 +357,5 @@ function isAbortError(error: unknown): boolean {
 }
 
 function abortError(): DOMException {
-  return new DOMException("Folder import was cancelled.", "AbortError");
+  return new DOMException("Local import was cancelled.", "AbortError");
 }
