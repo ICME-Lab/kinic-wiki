@@ -3,45 +3,31 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import {
-  UnauthorizedError,
-  auth,
-  extractWWWAuthenticateParams
-} from "@modelcontextprotocol/sdk/client/auth.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const DEFAULT_SERVER_URL = "https://wiki-mcp-staging.kinic.xyz/mcp";
 export const FIND_DATABASE_LIMIT = 50;
 const EXPECTED_TOOLS = [
-  "append_node",
-  "connect_private",
   "context",
-  "delete_node",
-  "edit_node",
   "fetch_many",
   "find_databases",
   "list",
   "memory_manifest",
-  "mkdir_node",
-  "move_node",
-  "multi_edit_node",
   "mutate_nodes_batch",
   "read_path",
   "read_paths",
   "search",
-  "write_node",
   "write_nodes"
 ];
-const WRITE_TOOLS = new Set([
-  "append_node",
-  "delete_node",
-  "edit_node",
-  "mkdir_node",
-  "move_node",
-  "multi_edit_node",
-  "mutate_nodes_batch",
-  "write_node",
-  "write_nodes"
+const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes"]);
+const VALUE_ARGUMENTS = new Set([
+  "--server-url",
+  "--database-id",
+  "--path",
+  "--write-smoke-path",
+  "--query",
+  "--task"
 ]);
 
 export function createOAuthState() {
@@ -67,45 +53,81 @@ export function summarizeToolResult(result) {
   };
 }
 
-export function toolAuthenticationChallenge(result) {
-  const challenges = result?._meta?.["mcp/www_authenticate"];
-  if (result?.isError !== true || !Array.isArray(challenges) || typeof challenges[0] !== "string") {
-    throw new Error("connect_private did not return an MCP OAuth challenge");
-  }
-  const challenge = challenges[0];
-  if (!challenge.includes('error="insufficient_scope"') || !challenge.includes("error_description=")) {
-    throw new Error("connect_private returned an incomplete MCP OAuth challenge");
-  }
-  return challenge;
-}
-
-export function parseAuthenticationChallenge(challenge) {
-  const response = new Response(null, {
-    status: 401,
-    headers: { "www-authenticate": challenge }
-  });
-  const params = extractWWWAuthenticateParams(response);
-  if (!params.resourceMetadataUrl || params.error !== "insufficient_scope") {
-    throw new Error("connect_private returned invalid OAuth challenge parameters");
-  }
-  return params;
-}
-
-export function assertPrivateOptInToolSecurity(tools) {
+export function assertPrivateRequiredToolSecurity(tools) {
   for (const tool of tools) {
     const actual = tool?._meta?.securitySchemes;
     const expected = WRITE_TOOLS.has(tool?.name)
       ? [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
-      : tool?.name === "connect_private"
-        ? [{ type: "oauth2", scopes: ["mcp:read", "mcp:write"] }]
-        : [
-            { type: "noauth" },
-            { type: "oauth2", scopes: ["mcp:read"] }
-          ];
+      : [{ type: "oauth2", scopes: ["mcp:read"] }];
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`Unexpected authentication metadata for ${tool?.name ?? "unknown tool"}`);
     }
   }
+}
+
+export function smokeTempPaths(path, marker) {
+  return {
+    rollbackPath: smokeSiblingPath(path, `${marker}-rollback`),
+    batchPaths: [
+      smokeSiblingPath(path, `${marker}-batch-a`),
+      smokeSiblingPath(path, `${marker}-batch-b`)
+    ]
+  };
+}
+
+export async function cleanupSmokeArtifacts(client, databaseId, artifacts) {
+  let failureCount = 0;
+  for (const artifact of artifacts) {
+    try {
+      let etag = artifact.etag;
+      if (typeof etag !== "string") {
+        const read = await client.callTool({
+          name: "read_path",
+          arguments: { database_id: databaseId, path: artifact.path }
+        });
+        if (isReadPathNotFoundResult(read)) {
+          continue;
+        }
+        assertToolSucceeded("smoke cleanup read_path", read);
+        if (!toolResultText(read).includes(artifact.expectedContent)) {
+          throw new Error("smoke cleanup content marker did not match");
+        }
+        etag = read.structuredContent?.metadata?.etag;
+        if (typeof etag !== "string") {
+          throw new Error("smoke cleanup read_path did not return an etag");
+        }
+      }
+      const deleted = await client.callTool({
+        name: "mutate_nodes_batch",
+        arguments: {
+          database_id: databaseId,
+          operations: [{ type: "delete", path: artifact.path, expected_etag: etag }]
+        }
+      });
+      if (isMutationNotFoundResult(deleted)) {
+        continue;
+      }
+      assertToolSucceeded("smoke cleanup mutate_nodes_batch", deleted);
+    } catch {
+      failureCount += 1;
+    }
+  }
+  return failureCount;
+}
+
+export function smokeCompletionError(operationError, cleanupFailureCount) {
+  if (operationError !== undefined) {
+    if (cleanupFailureCount === 0) {
+      return operationError instanceof Error ? operationError : new Error("Staging smoke failed");
+    }
+    const message = operationError instanceof Error ? operationError.message : "Staging smoke failed";
+    return new Error(`${message}; cleanup failed for ${cleanupFailureCount} smoke artifact(s)`, {
+      cause: operationError
+    });
+  }
+  return cleanupFailureCount === 0
+    ? null
+    : new Error(`Cleanup failed for ${cleanupFailureCount} smoke artifact(s)`);
 }
 
 class SmokeOAuthProvider {
@@ -175,27 +197,15 @@ async function main() {
   let transport;
   try {
     transport = await connectClient(client, provider, callback.waitForCode, options.serverUrl);
+    console.error("staging smoke stage: tools");
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name).sort();
     if (JSON.stringify(toolNames) !== JSON.stringify(EXPECTED_TOOLS)) {
       throw new Error(`Unexpected MCP tools: ${toolNames.join(", ")}`);
     }
-    assertPrivateOptInToolSecurity(tools.tools);
+    assertPrivateRequiredToolSecurity(tools.tools);
 
-    const publicFindResult = await client.callTool({
-      name: "find_databases",
-      arguments: { query: options.query, limit: FIND_DATABASE_LIMIT }
-    });
-    assertToolSucceeded("public find_databases", publicFindResult);
-
-    const connectResult = await connectPrivate(
-      client,
-      provider,
-      callback.waitForCode,
-      options.serverUrl
-    );
-    assertToolSucceeded("connect_private", connectResult);
-
+    console.error("staging smoke stage: private-read");
     const findResult = await client.callTool({
       name: "find_databases",
       arguments: { query: options.query, limit: FIND_DATABASE_LIMIT }
@@ -204,8 +214,6 @@ async function main() {
     const findText = toolResultText(findResult);
     const summary = {
       tools: { ok: true, count: toolNames.length },
-      public_find_databases: summarizeToolResult(publicFindResult),
-      connect_private: summarizeToolResult(connectResult),
       find_databases: {
         ...summarizeToolResult(findResult),
         ...(options.databaseId ? { private_database_visible: findText.includes(options.databaseId) } : {})
@@ -216,6 +224,7 @@ async function main() {
     }
 
     if (options.databaseId) {
+      console.error("staging smoke stage: context");
       const contextResult = await client.callTool({
         name: "context",
         arguments: {
@@ -244,6 +253,7 @@ async function main() {
       if (!options.databaseId) {
         throw new Error("--write-smoke-path requires --database-id");
       }
+      console.error("staging smoke stage: write-suite");
       summary.write_batch_delete = await smokeWriteBatchDelete(client, options.databaseId, options.writeSmokePath);
     }
 
@@ -256,18 +266,113 @@ async function main() {
   }
 }
 
-async function smokeWriteBatchDelete(client, databaseId, path) {
+export async function smokeWriteBatchDelete(client, databaseId, path) {
   const marker = randomBytes(8).toString("hex");
-  const created = await client.callTool({
-    name: "write_node",
-    arguments: { database_id: databaseId, path, content: `staging-smoke:${marker}` }
-  });
-  assertToolSucceeded("write_node", created);
-  let etag = created.structuredContent?.result?.node?.etag;
-  if (typeof etag !== "string") {
-    throw new Error("write_node did not return an etag");
-  }
+  const { rollbackPath, batchPaths } = smokeTempPaths(path, marker);
+  const mainArtifact = { path, expectedContent: `staging-smoke:${marker}`, etag: undefined };
+  const rollbackContent = `staging-smoke-rollback:${marker}`;
+  const batchArtifacts = batchPaths.map((batchPath, index) => ({
+    path: batchPath,
+    expectedContent: `staging-smoke-batch:${marker}:${index}`,
+    etag: undefined
+  }));
+  const artifacts = [];
+  let operationError;
+  let summary;
   try {
+    artifacts.push(mainArtifact);
+    const created = await client.callTool({
+      name: "write_nodes",
+      arguments: { database_id: databaseId, nodes: [{ path, content: mainArtifact.expectedContent }] }
+    });
+    assertToolSucceeded("write_nodes single", created);
+    let etag = created.structuredContent?.results?.[0]?.node?.etag;
+    mainArtifact.etag = etag;
+    if (typeof etag !== "string") {
+      throw new Error("write_nodes single did not return an etag");
+    }
+
+    console.error("staging smoke write stage: etag-conflict");
+    const conflict = await client.callTool({
+      name: "write_nodes",
+      arguments: {
+        database_id: databaseId,
+        nodes: [{ path, content: "stale-write-must-not-commit", expected_etag: `stale-${marker}` }]
+      }
+    });
+    const conflictDetail = assertEtagConflict("write_nodes stale etag", conflict, path, etag);
+    if (!conflictDetail.current_content.includes(marker)) {
+      throw new Error("etag_conflict did not return the current content");
+    }
+
+    console.error("staging smoke write stage: atomic-rollback");
+    const rollback = await client.callTool({
+      name: "write_nodes",
+      arguments: {
+        database_id: databaseId,
+        nodes: [
+          { path: rollbackPath, content: rollbackContent },
+          { path, content: "stale-batch-must-not-commit", expected_etag: `stale-${marker}` }
+        ]
+      }
+    });
+    const rollbackDetail = assertEtagConflict("write_nodes atomic rollback", rollback, path, etag, false);
+    if (rollbackDetail.failed_index !== 1) {
+      throw new Error("write_nodes did not identify the failed batch index");
+    }
+    const currentAfterConflict = await client.callTool({
+      name: "read_path",
+      arguments: { database_id: databaseId, path }
+    });
+    assertToolSucceeded("write_nodes conflict reread", currentAfterConflict);
+    if (
+      currentAfterConflict.structuredContent?.metadata?.etag !== etag ||
+      !toolResultText(currentAfterConflict).includes(marker)
+    ) {
+      throw new Error("write_nodes conflict reread did not return the unchanged current node");
+    }
+    const rolledBackRead = await client.callTool({
+      name: "read_path",
+      arguments: { database_id: databaseId, path: rollbackPath }
+    });
+    if (!isReadPathNotFoundResult(rolledBackRead)) {
+      throw new Error(
+        rolledBackRead?.isError === true
+          ? "write_nodes rollback verification returned an unexpected MCP tool error"
+          : "write_nodes left a partial write after an etag conflict"
+      );
+    }
+
+    console.error("staging smoke write stage: write-nodes");
+    artifacts.push(...batchArtifacts);
+    const writtenBatch = await client.callTool({
+      name: "write_nodes",
+      arguments: {
+        database_id: databaseId,
+        nodes: batchArtifacts.map((artifact) => ({
+          path: artifact.path,
+          content: artifact.expectedContent
+        }))
+      }
+    });
+    assertToolSucceeded("write_nodes", writtenBatch);
+    const batchEtags = writtenBatch.structuredContent?.results?.map(
+      (result) => result?.node?.etag ?? result?.value?.node?.etag
+    );
+    if (Array.isArray(batchEtags)) {
+      for (let index = 0; index < batchPaths.length; index += 1) {
+        batchArtifacts[index].etag = batchEtags[index];
+      }
+    }
+    if (
+      !Array.isArray(batchEtags) ||
+      batchEtags.length !== batchPaths.length ||
+      batchEtags.some((value) => typeof value !== "string")
+    ) {
+      throw new Error("write_nodes did not return every batch etag");
+    }
+
+    console.error("staging smoke write stage: mutate-batch");
     const batch = await client.callTool({
       name: "mutate_nodes_batch",
       arguments: {
@@ -277,21 +382,83 @@ async function smokeWriteBatchDelete(client, databaseId, path) {
     });
     assertToolSucceeded("mutate_nodes_batch", batch);
     etag = batch.structuredContent?.results?.[0]?.value?.node?.etag;
+    mainArtifact.etag = etag;
     if (typeof etag !== "string") {
       throw new Error("mutate_nodes_batch did not return an etag");
     }
-    return {
-      write_node: summarizeToolResult(created),
+    summary = {
+      write_nodes_single: summarizeToolResult(created),
+      etag_conflict: summarizeToolResult(conflict),
+      atomic_rollback: summarizeToolResult(rollback),
+      write_nodes: summarizeToolResult(writtenBatch),
       mutate_nodes_batch: summarizeToolResult(batch),
-      delete_node: { ok: true }
+      cleanup_batch: { ok: true }
     };
-  } finally {
-    const deleted = await client.callTool({
-      name: "delete_node",
-      arguments: { database_id: databaseId, path, expected_etag: etag }
-    });
-    assertToolSucceeded("delete_node cleanup", deleted);
+  } catch (error) {
+    operationError = error instanceof Error ? error : new Error("Staging smoke failed");
   }
+  console.error("staging smoke write stage: cleanup");
+  const cleanupFailureCount = await cleanupSmokeArtifacts(client, databaseId, artifacts);
+  const completionError = smokeCompletionError(operationError, cleanupFailureCount);
+  if (completionError) {
+    throw completionError;
+  }
+  return summary;
+}
+
+function assertEtagConflict(name, result, expectedPath, expectedEtag, requireCurrent = true) {
+  if (result?.isError !== true) {
+    throw new Error(`${name} unexpectedly succeeded`);
+  }
+  let detail;
+  try {
+    detail = JSON.parse(toolResultText(result));
+  } catch {
+    throw new Error(`${name} did not return a JSON error`);
+  }
+  if (
+    detail?.error !== "etag_conflict" ||
+    detail?.path !== expectedPath ||
+    (requireCurrent && detail?.current_etag !== expectedEtag)
+  ) {
+    throw new Error(
+      `${name} returned an incomplete etag conflict: ${JSON.stringify({
+        error: detail?.error ?? null,
+        failed_index: detail?.failed_index ?? null,
+        path_matches: detail?.path === expectedPath,
+        current_etag_present: typeof detail?.current_etag === "string",
+        current_etag_matches: detail?.current_etag === expectedEtag,
+        current_content_present: typeof detail?.current_content === "string"
+      })}`
+    );
+  }
+  return detail;
+}
+
+export function isReadPathNotFoundResult(result) {
+  if (result?.isError !== true) {
+    return false;
+  }
+  try {
+    return JSON.parse(toolResultText(result))?.error === "node not found";
+  } catch {
+    return false;
+  }
+}
+
+export function isMutationNotFoundResult(result) {
+  if (result?.isError !== true) {
+    return false;
+  }
+  try {
+    return JSON.parse(toolResultText(result))?.error === "not_found";
+  } catch {
+    return false;
+  }
+}
+
+function smokeSiblingPath(path, suffix) {
+  return path.endsWith(".md") ? `${path.slice(0, -3)}-${suffix}.md` : `${path}-${suffix}`;
 }
 
 async function connectClient(client, provider, waitForCode, serverUrl) {
@@ -309,34 +476,6 @@ async function connectClient(client, provider, waitForCode, serverUrl) {
   transport = new StreamableHTTPClientTransport(new URL(serverUrl), { authProvider: provider });
   await client.connect(transport);
   return transport;
-}
-
-async function connectPrivate(client, provider, waitForCode, serverUrl) {
-  const unauthenticatedResult = await client.callTool({
-    name: "connect_private",
-    arguments: {}
-  });
-  const challenge = toolAuthenticationChallenge(unauthenticatedResult);
-  const { resourceMetadataUrl, scope } = parseAuthenticationChallenge(challenge);
-  const started = await auth(provider, {
-    serverUrl,
-    resourceMetadataUrl,
-    scope: scope ?? "mcp:read"
-  });
-  if (started !== "REDIRECT") {
-    throw new Error("connect_private OAuth flow did not request authorization");
-  }
-  const authorizationCode = await waitForCode;
-  const completed = await auth(provider, {
-    serverUrl,
-    authorizationCode,
-    resourceMetadataUrl,
-    scope: scope ?? "mcp:read"
-  });
-  if (completed !== "AUTHORIZED") {
-    throw new Error("connect_private OAuth code exchange did not complete");
-  }
-  return client.callTool({ name: "connect_private", arguments: {} });
 }
 
 async function startCallbackServer(oauthState) {
@@ -431,7 +570,7 @@ function openBrowser(url) {
   child.unref();
 }
 
-function parseArgs(args) {
+export function parseArgs(args) {
   const values = new Map();
   let openBrowserRequested = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -443,7 +582,7 @@ function parseArgs(args) {
       openBrowserRequested = true;
       continue;
     }
-    if (!arg.startsWith("--") || !args[index + 1] || args[index + 1].startsWith("--")) {
+    if (!VALUE_ARGUMENTS.has(arg) || !args[index + 1] || args[index + 1].startsWith("--")) {
       throw new Error(`Invalid argument: ${arg}`);
     }
     values.set(arg, args[index + 1]);

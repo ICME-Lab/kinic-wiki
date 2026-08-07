@@ -3,6 +3,7 @@
 // Why: Store, runtime, client, and canister layers should share one transport model.
 use candid::CandidType;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
@@ -504,6 +505,79 @@ pub struct WriteNodesRequest {
     pub database_id: String,
     pub nodes: Vec<WriteNodeItem>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeMutationErrorCode {
+    EtagConflict,
+    NotFound,
+    Forbidden,
+    WriteUnavailable,
+    InvalidOperation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodeMutationError {
+    pub code: NodeMutationErrorCode,
+    pub message: String,
+    pub failed_index: Option<u32>,
+    pub conflict_path: Option<String>,
+}
+
+impl NodeMutationError {
+    pub fn invalid_operation(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::InvalidOperation, message)
+    }
+
+    pub fn not_found(path: &str) -> Self {
+        Self::new(
+            NodeMutationErrorCode::NotFound,
+            format!("node does not exist: {path}"),
+        )
+    }
+
+    pub fn etag_conflict(message: impl Into<String>, path: impl Into<String>) -> Self {
+        let mut error = Self::new(NodeMutationErrorCode::EtagConflict, message);
+        error.conflict_path = Some(path.into());
+        error
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::Forbidden, message)
+    }
+
+    pub fn write_unavailable(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::WriteUnavailable, message)
+    }
+
+    pub fn with_failed_index(mut self, index: usize) -> Self {
+        self.failed_index = u32::try_from(index).ok();
+        self
+    }
+
+    fn new(code: NodeMutationErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            failed_index: None,
+            conflict_path: None,
+        }
+    }
+}
+
+impl From<String> for NodeMutationError {
+    fn from(message: String) -> Self {
+        Self::invalid_operation(message)
+    }
+}
+
+impl fmt::Display for NodeMutationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NodeMutationError {}
 
 impl WriteNodeRequest {
     pub fn into_write_nodes_request(self) -> WriteNodesRequest {

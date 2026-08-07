@@ -21,6 +21,8 @@ import type { RuntimeEnv } from "../src/vfs.js";
 
 const KINIC_CANISTER_ID = "6emaw-iyaaa-aaaay-aacka-cai";
 const KINIC_MCP_TARGET_ORIGIN = `https://${KINIC_CANISTER_ID}.ic0.app`;
+const STAGING_CANISTER_ID = "3ryrw-kyaaa-aaaaf-qgxpq-cai";
+const STAGING_MCP_TARGET_ORIGIN = `https://${STAGING_CANISTER_ID}.ic0.app`;
 
 describe("Internet Identity MCP protocol", () => {
   it("restores an actual serialized two-hop registration delegation", async () => {
@@ -93,7 +95,7 @@ describe("Internet Identity MCP protocol", () => {
       const actor = actorStub();
       const appKey = generateIiKey();
       actor.mcp_prepare_delegation = vi.fn().mockImplementation(
-        async (_origin, _account, publicKey) => ({
+        async (_origin, _account, _publicKey) => ({
           Ok: { user_key: appKey.getPublicKey().toDer(), expiration: 20_000_000_000n, account_number: [] }
         })
       );
@@ -199,18 +201,18 @@ describe("Internet Identity MCP protocol", () => {
 
 describe("staging authentication boundary", () => {
   const stagingEnv = {
-    KINIC_WIKI_CANISTER_ID: KINIC_CANISTER_ID,
-    KINIC_WIKI_MCP_TARGET_ORIGIN: KINIC_MCP_TARGET_ORIGIN,
-    MCP_ACCESS_POLICY: "private_opt_in",
+    KINIC_WIKI_CANISTER_ID: STAGING_CANISTER_ID,
+    KINIC_WIKI_MCP_TARGET_ORIGIN: STAGING_MCP_TARGET_ORIGIN,
+    MCP_ACCESS_POLICY: "private_required",
     MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
     MCP_KEY_ENCRYPTION_KEY: "test-key",
     MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],
     MCP_REGISTRATION_RATE_LIMIT: {} as RuntimeEnv["MCP_REGISTRATION_RATE_LIMIT"]
   } satisfies RuntimeEnv;
 
-  it("enables private opt-in only on the canonical staging origin", async () => {
+  it("enables required private access only on the canonical staging origin", async () => {
     expect(authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), stagingEnv)).toBe(
-      "private_opt_in"
+      "private_required"
     );
 
     const mismatchedMode = authenticationMode(
@@ -244,7 +246,7 @@ describe("staging authentication boundary", () => {
     const invalidTargetMode = authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
       KINIC_WIKI_CANISTER_ID: KINIC_CANISTER_ID,
       KINIC_WIKI_MCP_TARGET_ORIGIN: `https://${KINIC_CANISTER_ID}.icp0.io`,
-      MCP_ACCESS_POLICY: "private_opt_in",
+      MCP_ACCESS_POLICY: "private_required",
       MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
       MCP_KEY_ENCRYPTION_KEY: "test-key",
       MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],

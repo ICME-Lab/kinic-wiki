@@ -480,19 +480,6 @@ export async function readNode(env: RuntimeEnv, databaseId: string, path: string
   return raw[0] ? normalizeNode(raw[0]) : null;
 }
 
-export async function writeNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: WriteNodeInput
-): Promise<WriteNodeOutput> {
-  const actor = await createVfsActor(env);
-  return normalizeWriteNodeOutput(
-    unwrapMutation(
-      await callVfs(env, "write_node", () => actor.write_node(rawWriteNodeRequest(databaseId, input)))
-    )
-  );
-}
-
 export async function writeNodes(
   env: RuntimeEnv,
   databaseId: string,
@@ -507,88 +494,6 @@ export async function writeNodes(
       })
     )
   ).map(normalizeWriteNodeOutput);
-}
-
-export async function appendNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: AppendNodeInput
-): Promise<WriteNodeOutput> {
-  const actor = await createVfsActor(env);
-  return normalizeWriteNodeOutput(
-    unwrapMutation(
-      await callVfs(env, "append_node", () =>
-        actor.append_node({
-          database_id: databaseId,
-          path: input.path,
-          content: input.content,
-          expected_etag: candidOptional(input.expectedEtag),
-          separator: candidOptional(input.separator),
-          metadata_json: candidOptional(input.metadataJson),
-          kind: candidOptional(input.kind ? rawNodeKind(input.kind) : null)
-        })
-      )
-    )
-  );
-}
-
-export async function editNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: EditNodeInput
-): Promise<EditNodeOutput> {
-  const actor = await createVfsActor(env);
-  return normalizeEditNodeOutput(
-    unwrapMutation(
-      await callVfs(env, "edit_node", () => actor.edit_node(rawEditNodeRequest(databaseId, input)))
-    )
-  );
-}
-
-export async function multiEditNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: MultiEditNodeInput
-): Promise<EditNodeOutput> {
-  const actor = await createVfsActor(env);
-  return normalizeEditNodeOutput(
-    unwrapMutation(
-      await callVfs(env, "multi_edit_node", () =>
-        actor.multi_edit_node(rawMultiEditNodeRequest(databaseId, input))
-      )
-    )
-  );
-}
-
-export async function mkdirNode(env: RuntimeEnv, databaseId: string, path: string): Promise<MkdirNodeOutput> {
-  const actor = await createVfsActor(env);
-  return unwrapMutation(
-    await callVfs(env, "mkdir_node", () => actor.mkdir_node({ database_id: databaseId, path }))
-  );
-}
-
-export async function moveNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: MoveNodeInput
-): Promise<MoveNodeOutput> {
-  const actor = await createVfsActor(env);
-  return normalizeMoveNodeOutput(
-    unwrapMutation(
-      await callVfs(env, "move_node", () => actor.move_node(rawMoveNodeRequest(databaseId, input)))
-    )
-  );
-}
-
-export async function deleteNode(
-  env: RuntimeEnv,
-  databaseId: string,
-  input: DeleteNodeInput
-): Promise<DeleteNodeOutput> {
-  const actor = await createVfsActor(env);
-  return unwrapMutation(
-    await callVfs(env, "delete_node", () => actor.delete_node(rawDeleteNodeRequest(databaseId, input)))
-  );
 }
 
 export async function mutateNodesBatch(
@@ -729,7 +634,7 @@ function unwrapMutation<T>(result: Result<T>): T {
   if ("Ok" in result) {
     return result.Ok;
   }
-  const failedIndex = /^operation (\d+) failed:/u.exec(result.Err)?.[1];
+  const failedIndex = /operation (\d+) failed:/u.exec(result.Err)?.[1];
   throw new KinicMutationError(classifyMutationError(result.Err), failedIndex ? Number(failedIndex) : null);
 }
 
@@ -976,10 +881,6 @@ function rawWriteNodeItem(input: WriteNodeInput) {
     metadata_json: input.metadataJson,
     expected_etag: candidOptional(input.expectedEtag)
   };
-}
-
-function rawWriteNodeRequest(databaseId: string, input: WriteNodeInput) {
-  return { database_id: databaseId, ...rawWriteNodeItem(input) };
 }
 
 function rawEditNodeRequest(databaseId: string, input: EditNodeInput) {

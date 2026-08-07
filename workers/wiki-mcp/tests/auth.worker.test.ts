@@ -35,63 +35,50 @@ describe("staging OAuth discovery and registration", () => {
     });
   });
 
-  it("returns a tool-level OAuth challenge only when connect_private is called", async () => {
-    const publicResponse = await fetchWorker(`${origin}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "find_databases", arguments: {} }
-      })
-    });
-    expect(publicResponse.status).toBe(200);
-    await expect(publicResponse.json()).resolves.toEqual({ ok: true, mode: "public" });
+  it.each(["initialize", "tools/list", "tools/call"])(
+    "requires OAuth at the staging HTTP boundary for %s",
+    async (method) => {
+      const response = await fetchWorker(`${origin}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params: method === "tools/call" ? { name: "find_databases", arguments: {} } : {}
+        })
+      });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toContain(
+        "/.well-known/oauth-protected-resource/mcp"
+      );
+    }
+  );
 
+  it("ends unsupported stateless SSE requests without leaving a Worker open", async () => {
     const response = await fetchWorker(`${origin}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: { name: "connect_private", arguments: {} }
-      })
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-protocol-version": "2025-11-25" }
     });
-    expect(response.status).toBe(200);
-    const payload = await response.json<{
-      result: { isError: boolean; _meta: { "mcp/www_authenticate": string[] } };
-    }>();
-    expect(payload.result.isError).toBe(true);
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      "/.well-known/oauth-protected-resource/mcp"
-    );
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      'error="insufficient_scope"'
-    );
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      'error_description="Private connection is required"'
-    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+    await expect(response.text()).resolves.toBe("");
   });
 
-  it("keeps a connect_private batch behind an HTTP OAuth boundary", async () => {
+  it("keeps every JSON-RPC batch behind the HTTP OAuth boundary", async () => {
     const response = await fetchWorker(`${origin}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify([
         { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} },
-        {
-          jsonrpc: "2.0",
-          id: 4,
-          method: "tools/call",
-          params: { name: "connect_private", arguments: {} }
-        }
+        { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "find_databases", arguments: {} } }
       ])
     });
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
-    expect(response.headers.get("www-authenticate")).toContain("error_description");
+    expect(response.headers.get("www-authenticate")).toContain(
+      "/.well-known/oauth-protected-resource/mcp"
+    );
   });
 
   it("serves safe callback messages without embedding connection data", async () => {

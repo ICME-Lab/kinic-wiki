@@ -212,7 +212,7 @@ sequenceDiagram
 | `kinic-wiki-ingest` | raw source を `/Sources/...` に取り込み、review-ready まで整形 |
 | `kinic-wiki-lint` | wiki health 点検 |
 | `kinic-wiki-query` | knowledge base query |
-| `kinic-wiki-mcp` | public read-only MCP のtool選択・呼び出し |
+| `kinic-wiki-mcp` | 移行中のStaging private MCPに対するreadと明示的batch writeのtool選択・呼び出し（Production Pluginへ再取り込みしない） |
 
 query / ingest / lint / edit の使い分けは `skills/` 側を正本にする。
 

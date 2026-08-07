@@ -45,7 +45,7 @@ type OAuthClientRegistrationRequest = {
   client_name?: unknown;
 };
 
-export type McpAccessPolicy = "public" | "private_required" | "private_opt_in";
+export type McpAccessPolicy = "public" | "private_required";
 
 export type AuthenticationMode =
   | McpAccessPolicy
@@ -55,7 +55,7 @@ export type AuthenticationMode =
 
 export function authenticationMode(request: Request, env: RuntimeEnv): AuthenticationMode {
   const policy = env.MCP_ACCESS_POLICY?.trim();
-  if (policy !== "public" && policy !== "private_required" && policy !== "private_opt_in") {
+  if (policy !== "public" && policy !== "private_required") {
     return "misconfigured";
   }
   if (policy === "public") {
@@ -93,7 +93,7 @@ export function authenticationBoundaryResponse(mode: AuthenticationMode): Respon
 
 export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promise<Response | null> {
   const mode = authenticationMode(request, env);
-  if (mode !== "private_required" && mode !== "private_opt_in") {
+  if (mode !== "private_required") {
     return null;
   }
   const url = new URL(request.url);
