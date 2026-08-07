@@ -105,6 +105,32 @@ type RawMkdirNodeResult = {
 };
 
 type Result<T> = { Ok: T } | { Err: string };
+type RawNodeMutationError = {
+  code: Variant;
+  message: string;
+  failed_index: [] | [number];
+  conflict_path: [] | [string];
+};
+type MutationResult<T> = { Ok: T } | { Err: RawNodeMutationError };
+
+export type NodeMutationErrorCode =
+  | "etag_conflict"
+  | "not_found"
+  | "forbidden"
+  | "write_unavailable"
+  | "invalid_operation";
+
+export class NodeMutationError extends Error {
+  constructor(
+    readonly code: NodeMutationErrorCode,
+    readonly failedIndex: number | null,
+    readonly conflictPath: string | null,
+    message: string
+  ) {
+    super(message);
+    this.name = "NodeMutationError";
+  }
+}
 
 type VfsActor = {
   list_databases: () => Promise<Result<RawDatabaseSummary[]>>;
@@ -121,8 +147,8 @@ type VfsActor = {
     session_nonce: string;
   }) => Promise<Result<null>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
-  mkdir_node: (request: RawMkdirNodeRequest) => Promise<Result<RawMkdirNodeResult>>;
-  write_node: (request: RawWriteNodeRequest) => Promise<Result<RawWriteNodeResult>>;
+  mkdir_node: (request: RawMkdirNodeRequest) => Promise<MutationResult<RawMkdirNodeResult>>;
+  write_node: (request: RawWriteNodeRequest) => Promise<MutationResult<RawWriteNodeResult>>;
   search_nodes: (request: {
     database_id: string;
     query_text: string;
@@ -197,9 +223,9 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
     },
     readNode: async (databaseId, path) => normalizeOptionalNode(await unwrap(actor.read_node(databaseId, path))),
     mkdirNode: async (request) => {
-      await unwrap(actor.mkdir_node({ database_id: request.databaseId, path: request.path }));
+      await unwrapMutation(actor.mkdir_node({ database_id: request.databaseId, path: request.path }));
     },
-    writeNode: async (request) => normalizeWriteNodeAck((await unwrap(actor.write_node(toRawWriteNodeRequest(request)))).node),
+    writeNode: async (request) => normalizeWriteNodeAck((await unwrapMutation(actor.write_node(toRawWriteNodeRequest(request)))).node),
     searchNodes: async (databaseId, queryText, limit, prefix) =>
       (await unwrap(
         actor.search_nodes({
@@ -264,6 +290,28 @@ export async function ensureParentFolders(vfs: VfsClient, databaseId: string, pa
 
 async function unwrap<T>(result: Promise<Result<T>>): Promise<T> {
   return unwrapCandidResult(await result);
+}
+
+async function unwrapMutation<T>(result: Promise<MutationResult<T>>): Promise<T> {
+  const decoded = await result;
+  if ("Err" in decoded) {
+    throw new NodeMutationError(
+      normalizeMutationErrorCode(decoded.Err.code),
+      decoded.Err.failed_index[0] ?? null,
+      decoded.Err.conflict_path[0] ?? null,
+      decoded.Err.message
+    );
+  }
+  return decoded.Ok;
+}
+
+function normalizeMutationErrorCode(code: Variant): NodeMutationErrorCode {
+  if ("EtagConflict" in code) return "etag_conflict";
+  if ("NotFound" in code) return "not_found";
+  if ("Forbidden" in code) return "forbidden";
+  if ("WriteUnavailable" in code) return "write_unavailable";
+  if ("InvalidOperation" in code) return "invalid_operation";
+  throw new Error("unknown node mutation error code");
 }
 
 function normalizeOptionalNode(raw: [] | [RawNode]): WikiNode | null {

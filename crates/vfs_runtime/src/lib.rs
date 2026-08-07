@@ -46,15 +46,16 @@ use vfs_types::{
     MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
     MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
     MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodeKind, NodePublication, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode,
-    PublishNodeRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
-    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    NodeMutation, NodeMutationError, NodeMutationResult, NodePublication,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -357,6 +358,21 @@ impl VfsService {
         })
     }
 
+    pub fn prepare_node_mutation(
+        &self,
+        database_id: &str,
+        caller: &str,
+    ) -> Result<CyclesBillingConfig, NodeMutationError> {
+        self.require_role(database_id, caller, RequiredRole::Writer)
+            .map_err(NodeMutationError::forbidden)?;
+        let config = self
+            .cycles_billing_config()
+            .map_err(NodeMutationError::write_unavailable)?;
+        self.require_database_write_cycles_available(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
+        Ok(config)
+    }
+
     pub fn check_database_write_cycles(
         &self,
         database_id: &str,
@@ -418,7 +434,7 @@ impl VfsService {
         caller: &str,
         request: WriteNodeRequest,
         now: i64,
-    ) -> Result<WriteNodeResult, String> {
+    ) -> Result<WriteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let publication_paths = if request.kind == NodeKind::File {
             Vec::new()
@@ -446,18 +462,24 @@ impl VfsService {
         caller: &str,
         request: WriteSourceForGenerationRequest,
         now: i64,
-    ) -> Result<WriteSourceForGenerationResult, String> {
+    ) -> Result<WriteSourceForGenerationResult, NodeMutationError> {
         if caller == ANONYMOUS_PRINCIPAL {
-            return Err("anonymous caller not allowed".to_string());
+            return Err(NodeMutationError::forbidden("anonymous caller not allowed"));
         }
-        sessions::validate_source_for_generation_request(&request)?;
-        self.require_role(&request.database_id, caller, RequiredRole::Writer)?;
+        sessions::validate_source_for_generation_request(&request)
+            .map_err(NodeMutationError::invalid_operation)?;
+        self.require_role(&request.database_id, caller, RequiredRole::Writer)
+            .map_err(NodeMutationError::forbidden)?;
         self.require_role(
             &request.database_id,
             DEFAULT_LLM_WRITER_PRINCIPAL,
             RequiredRole::Writer,
         )
-        .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
+        .map_err(|error| {
+            NodeMutationError::forbidden(format!(
+                "LLM writer principal lacks writer access: {error}"
+            ))
+        })?;
 
         let database_id = request.database_id.clone();
         let session_nonce = request.session_nonce.clone();
@@ -496,7 +518,7 @@ impl VfsService {
         caller: &str,
         request: WriteNodesRequest,
         now: i64,
-    ) -> Result<Vec<WriteNodeResult>, String> {
+    ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
         let database_id = request.database_id.clone();
         let publication_paths = request
             .nodes
@@ -520,12 +542,36 @@ impl VfsService {
         result
     }
 
+    pub fn mutate_nodes_batch(
+        &self,
+        caller: &str,
+        request: MutateNodesBatchRequest,
+        now: i64,
+    ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+        let database_id = request.database_id.clone();
+        let publication_paths = mutation_publication_paths(&request.operations);
+        let publication_path_refs = publication_paths
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &publication_path_refs,
+            |store| store.mutate_nodes_batch(request, now),
+        );
+        if result.is_ok() {
+            let _ = self.refresh_logical_size(&database_id);
+        }
+        result
+    }
+
     pub fn delete_node(
         &self,
         caller: &str,
         request: DeleteNodeRequest,
         now: i64,
-    ) -> Result<DeleteNodeResult, String> {
+    ) -> Result<DeleteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let path = request.path.clone();
         let result =
@@ -543,12 +589,11 @@ impl VfsService {
         caller: &str,
         request: AppendNodeRequest,
         now: i64,
-    ) -> Result<WriteNodeResult, String> {
+    ) -> Result<WriteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.append_node(request, now)
-            });
+        let result = self.with_node_mutation_store(&database_id, caller, |store| {
+            store.append_node(request, now)
+        });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -560,12 +605,10 @@ impl VfsService {
         caller: &str,
         request: EditNodeRequest,
         now: i64,
-    ) -> Result<EditNodeResult, String> {
+    ) -> Result<EditNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.edit_node(request, now)
-            });
+        let result = self
+            .with_node_mutation_store(&database_id, caller, |store| store.edit_node(request, now));
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -577,12 +620,10 @@ impl VfsService {
         caller: &str,
         request: MkdirNodeRequest,
         now: i64,
-    ) -> Result<MkdirNodeResult, String> {
+    ) -> Result<MkdirNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.mkdir_node(request, now)
-            });
+        let result = self
+            .with_node_mutation_store(&database_id, caller, |store| store.mkdir_node(request, now));
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -594,7 +635,7 @@ impl VfsService {
         caller: &str,
         request: MoveNodeRequest,
         now: i64,
-    ) -> Result<MoveNodeResult, String> {
+    ) -> Result<MoveNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let from_path = request.from_path.clone();
         let to_path = request.to_path.clone();
@@ -707,12 +748,11 @@ impl VfsService {
         caller: &str,
         request: MultiEditNodeRequest,
         now: i64,
-    ) -> Result<MultiEditNodeResult, String> {
+    ) -> Result<MultiEditNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result =
-            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.multi_edit_node(request, now)
-            });
+        let result = self.with_node_mutation_store(&database_id, caller, |store| {
+            store.multi_edit_node(request, now)
+        });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -776,27 +816,56 @@ impl VfsService {
         f(&store)
     }
 
+    fn with_node_mutation_store<T>(
+        &self,
+        database_id: &str,
+        caller: &str,
+        f: impl FnOnce(&FsStore) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        self.require_role(database_id, caller, RequiredRole::Writer)
+            .map_err(NodeMutationError::forbidden)?;
+        let meta = self
+            .database_meta(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
+        let store = self
+            .database_store(&meta)
+            .map_err(NodeMutationError::write_unavailable)?;
+        f(&store)
+    }
+
     fn with_detached_node_publications<T>(
         &self,
         database_id: &str,
         caller: &str,
         paths: &[&str],
-        f: impl FnOnce(&FsStore) -> Result<T, String>,
-    ) -> Result<T, String> {
-        self.require_role(database_id, caller, RequiredRole::Writer)?;
-        let meta = self.database_meta(database_id)?;
-        let store = self.database_store(&meta)?;
+        f: impl FnOnce(&FsStore) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        self.require_role(database_id, caller, RequiredRole::Writer)
+            .map_err(NodeMutationError::forbidden)?;
+        let meta = self
+            .database_meta(database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
+        let store = self
+            .database_store(&meta)
+            .map_err(NodeMutationError::write_unavailable)?;
         if paths.is_empty() {
             return f(&store);
         }
-        let detached = self.detach_node_publications_for_paths(database_id, paths)?;
+        let detached = self
+            .detach_node_publications_for_paths(database_id, paths)
+            .map_err(NodeMutationError::write_unavailable)?;
         match f(&store) {
             Ok(value) => Ok(value),
             Err(mutation_error) => match self.restore_node_publications(&detached) {
                 Ok(()) => Err(mutation_error),
-                Err(restore_error) => Err(format!(
-                    "{mutation_error}; published pages remain unpublished because publication restore failed: {restore_error}"
-                )),
+                Err(restore_error) => {
+                    let mut error = NodeMutationError::write_unavailable(format!(
+                        "{mutation_error}; published pages remain unpublished because publication restore failed: {restore_error}"
+                    ));
+                    error.failed_index = mutation_error.failed_index;
+                    error.conflict_path = mutation_error.conflict_path;
+                    Err(error)
+                }
             },
         }
     }
@@ -959,6 +1028,26 @@ impl VfsService {
     fn open_index(&self) -> Result<Connection, String> {
         Connection::open(&self.index_path).map_err(|error| error.to_string())
     }
+}
+
+fn mutation_publication_paths(operations: &[NodeMutation]) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    for operation in operations {
+        match operation {
+            NodeMutation::Write(item) if item.kind != NodeKind::File => {
+                paths.insert(item.path.clone());
+            }
+            NodeMutation::Move(item) => {
+                paths.insert(item.from_path.clone());
+                paths.insert(item.to_path.clone());
+            }
+            NodeMutation::Delete(item) => {
+                paths.insert(item.path.clone());
+            }
+            _ => {}
+        }
+    }
+    paths
 }
 
 fn default_cycles_billing_config() -> CyclesBillingConfig {

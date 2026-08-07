@@ -57,7 +57,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "lucide-react": "0.555.0",
-    "pdfjs-dist": "6.1.200",
+    "pdfjs-dist": "6.2.108",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-markdown": "10.1.0",

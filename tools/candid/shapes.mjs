@@ -406,6 +406,25 @@ export const expectedTypes = {
   },
   NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null", Folder: "null" } },
   NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
+  NodeMutationErrorCode: {
+    kind: "variant",
+    cases: {
+      EtagConflict: "null",
+      NotFound: "null",
+      Forbidden: "null",
+      WriteUnavailable: "null",
+      InvalidOperation: "null"
+    }
+  },
+  NodeMutationError: {
+    kind: "record",
+    fields: {
+      code: "NodeMutationErrorCode",
+      message: "text",
+      failed_index: "opt nat32",
+      conflict_path: "opt text"
+    }
+  },
   WriteNodeRequest: {
     kind: "record",
     fields: {
@@ -622,11 +641,11 @@ export const expectedTypes = {
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
-  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
-  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "text" } },
-  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
-  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
-  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "text" } },
+  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "NodeMutationError" } },
+  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "NodeMutationError" } },
+  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "NodeMutationError" } },
+  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "NodeMutationError" } },
+  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "NodeMutationError" } },
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
@@ -650,7 +669,7 @@ export const expectedTypes = {
   },
   ResultWriteSourceForGeneration: {
     kind: "variant",
-    cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
+    cases: { Ok: "WriteSourceForGenerationResult", Err: "NodeMutationError" }
   },
   SearchNodeHit: {
     kind: "record",
@@ -755,23 +774,23 @@ export const didTypeAliases = {
   ResultMemoryManifest: "Result_29",
   ResultMkdirNode: "Result_30",
   ResultMoveNode: "Result_31",
-  ResultNodePublication: "Result_32",
-  ResultCyclesPurchase: "Result_33",
-  ResultQueryContext: "Result_34",
-  ResultIndexSqlJsonQuery: "Result_35",
-  ResultNode: "Result_36",
-  ResultNodeContext: "Result_37",
-  ResultPublicNode: "Result_38",
-  ResultSearch: "Result_39",
-  ResultStorageBillingBatch: "Result_40",
-  ResultSourceEvidence: "Result_41",
+  ResultNodePublication: "Result_33",
+  ResultCyclesPurchase: "Result_34",
+  ResultQueryContext: "Result_35",
+  ResultIndexSqlJsonQuery: "Result_36",
+  ResultNode: "Result_37",
+  ResultNodeContext: "Result_38",
+  ResultPublicNode: "Result_39",
+  ResultSearch: "Result_40",
+  ResultStorageBillingBatch: "Result_41",
+  ResultSourceEvidence: "Result_42",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteNodes: "Result_45",
-  ResultDatabaseMetadata: "Result_42",
-  ResultWikiMetrics: "Result_43",
-  ResultWikiMetricsSeries: "Result_44",
-  ResultWriteSourceForGeneration: "Result_46"
+  ResultWriteNodes: "Result_46",
+  ResultDatabaseMetadata: "Result_43",
+  ResultWikiMetrics: "Result_44",
+  ResultWikiMetricsSeries: "Result_45",
+  ResultWriteSourceForGeneration: "Result_47"
 };
 
 export const expectedMethods = {

@@ -1,18 +1,19 @@
 # Kinic Wiki Remote MCP
 
-`workers/wiki-mcp` provides two read-only deployment stages:
+`workers/wiki-mcp` provides two deployment stages:
 
-- production is public and anonymous;
-- staging is private opt-in: unauthenticated requests use an anonymous Actor, while authenticated requests use an Internet Identity delegated Actor.
+- production is public, anonymous, and read-only;
+- staging is private-required: the MCP connection authenticates with OAuth before tool discovery, every data call uses an Internet Identity delegated Actor, and batch writes require II `Actions & questions` permission.
 
 ## Boundary
 
 - Production reads public databases only and queries the canister anonymously.
-- Staging exposes the existing eight data tools plus `connect_private`. Tool discovery and the eight data tools work anonymously; `connect_private` alone requires OAuth.
-- After connection, all eight data tools use only the delegated principal. Anonymous public database results are not merged into private results.
+- Staging exposes exactly the existing eight read tools plus `write_nodes` and `mutate_nodes_batch`. `initialize`, `tools/list`, and `tools/call` all require OAuth.
+- After connection, all data tools use only the delegated principal. Anonymous public database results are never merged into private results.
 - A supplied but invalid, expired, revoked, or wrong-resource Bearer token returns `401`; it never falls back to anonymous.
 - Private database authorization remains in the Kinic canister; the Worker does not accept a database owner principal as input.
-- Billing, marketplace purchase, and archive operations are not exposed.
+- Mutations are limited to VFS content CRUD. Database administration, members, billing, marketplace purchase, publication, and archive operations are not exposed.
+- Production has `MCP_WRITE_POLICY=disabled`; staging has `MCP_WRITE_POLICY=private`. Missing or unknown policy values fail closed with `503`.
 - Existing memory app endpoint `https://mcp.kinic.xyz/mcp` is a separate service and must not be changed for Kinic Wiki.
 - `https://wiki.kinic.xyz` remains the wiki browser and public node URL origin.
 
@@ -26,13 +27,13 @@
 
 Route behavior:
 
-- `POST /mcp`: canonical MCP endpoint.
-- `GET /mcp`: Streamable HTTP transport endpoint.
+- `POST /mcp`: the only MCP transport endpoint.
+- `GET /mcp`: unsupported by the stateless transport; returns `405` with `Allow: POST`.
 - `GET /health`: health JSON.
 - `GET /`: human-readable info JSON with endpoint and tool names.
 - `POST /`: not an MCP alias.
 
-On staging, unauthenticated initialization, tool discovery, and calls to the existing eight tools stay public. Tool descriptors advertise `noauth` plus OAuth for those eight tools and OAuth-only for `connect_private`. An unauthenticated single `connect_private` call returns an MCP tool error with `_meta["mcp/www_authenticate"]`, while a JSON-RPC batch containing `connect_private` makes the whole HTTP request authentication-required. The MCP POST body is limited to 256 KiB across the complete JSON-RPC request or batch and is read once before the exact `tools/call` name is classified. Requests over that transport limit return `413` with `{"error":"payload_too_large"}` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
+On staging, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; both batch mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
 
 ## Staging authentication
 
@@ -54,11 +55,11 @@ Discovery and OAuth endpoints:
 - `GET /.well-known/ii-auth-callbacks`
 - `GET|POST /mcp/connect`
 
-OAuth uses authorization code with mandatory S256 PKCE and DCR. The only scopes are `mcp:read` and `offline_access`; the staging audience is fixed to `https://wiki-mcp-staging.kinic.xyz/mcp`. Authorization codes expire after at most ten minutes, access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration. Reuse of an authorization code or rotated refresh token revokes the active local session. A session also requires a fresh connection after 64 refresh rotations.
+OAuth uses authorization code with mandatory S256 PKCE and DCR. The scopes are `mcp:read`, `mcp:write`, and `offline_access`; the staging audience is fixed to `https://wiki-mcp-staging.kinic.xyz/mcp`. Authorization codes expire after at most ten minutes, access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration. Reuse of an authorization code or rotated refresh token revokes the active local session. A session also requires a fresh connection after 64 refresh rotations.
 
 DCR applies a best-effort limit of ten registration attempts per connecting IP per minute in each Cloudflare location. Cloudflare's rate limiter is eventually consistent, so concurrent requests can temporarily exceed that limit. A rejected request returns `429` with `Retry-After: 60`; a rate-limiter failure returns `503`. Registered clients expire after 180 days without use and extend that deadline when an unexpired client ID is referenced by an OAuth request.
 
-The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. The direct MCP backend calls therefore pass `https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app` unchanged to `mcp_get_accounts`, `mcp_prepare_delegation`, and `mcp_get_delegation` so they derive the same existing Kinic principal. The resulting per-app delegation preserves the access level selected in II: read-only carries `permissions = "queries"`, while full access uses the protocol's unrestricted form with the optional permissions field absent. Delegations last at most five minutes and are never cached across requests. The MCP surface remains read-only.
+The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Production browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. Staging uses its isolated canister derivation origin `https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. Direct MCP backend calls pass the environment's configured bare `ic0.app` origin unchanged. A Questions-only grant removes `mcp:write` from the local OAuth session and remains read-only. An Actions & questions grant preserves `mcp:write` and enables content mutations. Delegations last at most five minutes and are never cached across requests.
 
 II revocation takes effect the next time staging tries to mint a per-app delegation. The local OAuth session is invalidated and the client receives `invalid_token`; reconnect through the client to restore access. Changing `MCP_KEY_ENCRYPTION_KEY` intentionally invalidates all existing sessions.
 
@@ -74,7 +75,7 @@ Staging logs only a random trace id, the connection, per-app delegation, or auth
 
 - `find_databases`
   - Input: `{ "query": "agent memory", "limit": 10 }`
-  - Reads `list_databases()` as the request principal (anonymous before connection, II delegated after connection)
+  - Reads `list_databases()` as the request principal (anonymous in Production, II delegated in Staging)
   - Ranks only the metadata returned for that principal using name, tags, summary, and description
 - `search`
   - Input: `{ "database_id": "db_...", "query": "...", "prefix": "/", "limit": 10, "preview_mode": "light" }`
@@ -105,17 +106,27 @@ Staging logs only a random trace id, the connection, per-app delegation, or auth
   - Calls canister `query_context`
   - Use first for normal question answering and task-scoped context collection
   - Omitting `namespace` searches from `/`; pass `/Knowledge` explicitly to restrict recall to that store
-- `connect_private`
-  - Input: `{}`
-  - Without a Bearer token, returns an MCP tool error carrying `_meta["mcp/www_authenticate"]` so clients can start per-tool OAuth
-  - After authentication, returns only `{ "connected": true, "mode": "private" }`
-  - Does not return a principal, delegation, token, database list, or database content
+- `write_nodes`
+  - Preferred for creation and full replacement, including a single node
+  - Atomically creates or replaces 1 to 100 nodes in one database, in order
+  - Every item requires `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` is optional
+- `mutate_nodes_batch`
+  - Preferred for the whole requested change set when any operation is `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete`, including a single operation
+  - Atomically applies 1 to 100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations in one database
+  - A `write` operation has the same required fields as `write_nodes`
+  - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
-All tools keep read-only annotations:
+Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: false`.
 
-- `readOnlyHint: true`
-- `destructiveHint: false`
-- `openWorldHint: false`
+## Agent Write Workflow
+
+1. Read task-scoped private context with `context`, `read_path`, or `read_paths`.
+2. Write only when the user explicitly requests a change. Automatic skill invocation does not authorize writes.
+3. Use `write_nodes` for create/full replacement only, even for one node. If any append, edit, multi-edit, mkdir, move, or delete is present, place the entire ordered change set in `mutate_nodes_batch`, even for one operation.
+4. Keep each 1–100 item batch in one database and preserve returned etags.
+5. On `etag_conflict`, treat `path` as the failed operation input and `conflict_path` as the actual stale node. Compare supplied `current_content` and `current_etag` with the intended change, noting `current_content_truncated` and `current_content_size`; the inline content is capped at 40,000 characters. Regenerate the batch and retry at most twice only if intent remains unambiguous. Otherwise return the current/desired difference instead of overwriting.
+
+The node mutation Candid methods return `NodeMutationError { code; message; failed_index; conflict_path }`, where `code` is one of `EtagConflict`, `NotFound`, `Forbidden`, `WriteUnavailable`, or `InvalidOperation`. This intentionally replaces `Err : text` for all node mutations. Canister and bundled clients must be released together; old mutation decoders are incompatible. No database migration is required.
 
 ## Agent Read Workflows
 
@@ -177,25 +188,30 @@ pnpm --dir workers/wiki-mcp smoke:staging -- --open
 pnpm --dir workers/wiki-mcp smoke:staging -- \
   --open \
   --database-id db_private_example \
-  --path /Knowledge/index.md
+  --path /Knowledge/index.md \
+  --write-smoke-path /Knowledge/mcp-staging-smoke.md
 ```
 
-The staging client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It verifies the exact nine-tool contract, runs public `find_databases`, calls `connect_private`, and starts OAuth from that call's MCP authentication challenge. It then retries `connect_private` and runs private `find_databases`; when a database id is supplied, it also runs `context`, and when a path is supplied, `read_path`. Output contains only tool counts, visibility/success flags, and response byte lengths. This diagnostic client deliberately keeps OAuth credentials in memory only, so each new process requires consent again. Normal ChatGPT/Codex connections retain and rotate their refresh token for the configured session lifetime and do not require consent for every tool call.
+The staging client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. OAuth begins at initial MCP connection. It verifies the exact 10-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths. This diagnostic client keeps OAuth credentials in memory only, so each process requires consent again.
 
 ## Configuration
 
 Production uses `wrangler.jsonc`; staging uses `wrangler.staging.jsonc` and a separate Worker plus Durable Object namespace.
 
-- `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
+- production: `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
+- staging: `KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai`
 - `KINIC_WIKI_IC_HOST=https://icp0.io`
-- `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
-- staging only: `KINIC_WIKI_MCP_TARGET_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app`
+- production: `KINIC_WIKI_PUBLIC_ORIGIN=https://wiki.kinic.xyz`
+- staging: `KINIC_WIKI_PUBLIC_ORIGIN=https://kinic-wiki-browser-staging.hude.workers.dev`
+- staging only: `KINIC_WIKI_MCP_TARGET_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`
 - production until promotion: `MCP_ACCESS_POLICY=public`
-- staging: `MCP_ACCESS_POLICY=private_opt_in`
+- staging: `MCP_ACCESS_POLICY=private_required`
+- production: `MCP_WRITE_POLICY=disabled`
+- staging: `MCP_WRITE_POLICY=private`
 
-`MCP_ACCESS_POLICY` accepts only `public`, `private_required`, or `private_opt_in`. A missing or unknown value returns `503` instead of guessing another mode.
+`MCP_ACCESS_POLICY` accepts only `public` or `private_required`. `MCP_WRITE_POLICY` accepts only `disabled` or `private`. A missing or unknown value returns `503` instead of guessing another mode.
 
-Staging requires both the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. The V2 auth-state migration deletes the V1 Durable Object namespace and all existing OAuth clients and sessions. After that deployment, every previously connected client must register and connect again. Production remains public and has neither binding.
+Staging requires both the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. The V3 auth-state migration deletes V2 authorization state so permission and write scope cannot be inferred for old sessions. After deployment, every previously connected client must register and connect again. Production remains public and has neither binding.
 
 `KINIC_WIKI_IC_HOST` is the IC API gateway. `KINIC_WIKI_MCP_TARGET_ORIGIN` is the exact origin used by the II backend to derive the existing Kinic principal; it must be a bare HTTPS `ic0.app` origin for `KINIC_WIKI_CANISTER_ID`. The Worker does not rewrite, discover, or fall back between origins at runtime. The canister's `/.well-known/ii-alternative-origins` remains responsible only for allowing the controlled `wiki.kinic.xyz` frontend to request the public derivation origin.
 
@@ -210,19 +226,17 @@ Before deploying staging, create a 32-byte random value and store its base64/bas
 pnpm --dir workers/wiki-mcp exec wrangler secret put MCP_KEY_ENCRYPTION_KEY --config wrangler.staging.jsonc
 ```
 
-Do not put this value in Wrangler vars or logs. Before the staging per-tool OAuth gate passes, production has no auth-state binding and does not share staging storage.
+Do not put this value in Wrangler vars or logs. Production has no auth-state binding and does not share staging storage.
 
 ## ChatGPT Developer Mode
 
 Use a separate wiki app or staging app. Do not replace the existing memory app endpoint.
 
 1. In II Settings, add `https://wiki-mcp-staging.kinic.xyz/mcp` as the trusted connector.
-2. Configure the same MCP URL in ChatGPT/Codex without pre-connecting OAuth.
-3. Refresh tools and confirm the exact nine-tool list contains the existing eight tools plus `connect_private`.
-4. Run public `find_databases`, `context`, and `read_path`.
-5. Call `connect_private` and confirm ChatGPT starts OAuth from that call's MCP `_meta["mcp/www_authenticate"]` challenge. Complete II consent with either `Questions only` or `Actions & questions`.
-6. Confirm the automatic retry returns `{ "connected": true, "mode": "private" }`.
-7. Run review test cases:
+2. Configure the same MCP URL in ChatGPT/Codex and confirm the initial connection starts OAuth from the HTTP `401` challenge.
+3. Refresh tools and confirm the exact 10-tool list contains eight reads plus `write_nodes` and `mutate_nodes_batch`, with no `connect_private` or single-mutation tools.
+4. Complete II consent with either `Questions only` or `Actions & questions`, then run authenticated `find_databases`, `context`, and `read_path`.
+5. Run review test cases:
    - `find_databases` can select `KINIC-WIKI`.
    - `context` returns task-scoped nodes and evidence for a known public DB.
    - `search` for `clipper usage` returns an evidence node with `preview_mode: "content-start"`.
@@ -233,11 +247,16 @@ Use a separate wiki app or staging app. Do not replace the existing memory app e
    - a known owner private database is visible and readable;
    - the same database stays unavailable anonymously and to another principal;
    - unknown or stale ids return a common unavailable error.
-8. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
+   - Questions-only sessions cannot call a mutation;
+   - Actions & questions sessions use `write_nodes` for single/multiple create or replace, and `mutate_nodes_batch` for append, edit, multi-edit, mkdir, move, and etag-guarded delete;
+   - a stale etag returns the failed operation index plus current content and etag, and does not partially commit the batch.
+6. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
 
-Production promotion is blocked until step 5 succeeds in ChatGPT. After it succeeds, production receives its own Durable Object namespace and `MCP_KEY_ENCRYPTION_KEY`, `MCP_PUBLIC_ORIGIN=https://wiki-mcp.kinic.xyz`, `MCP_ACCESS_POLICY=private_opt_in`, callback `https://wiki-mcp.kinic.xyz/mcp/connect`, and a separate II connector registration. Staging OAuth clients, sessions, and tokens are never migrated or shared. If ChatGPT does not start OAuth from the tool-level MCP challenge, production remains unchanged while an alternate connection UX is evaluated.
+Production promotion is a separate change. It requires its own OAuth settings, storage, connector registration, skill URL update, and submission update; staging OAuth clients, sessions, and tokens are never migrated or shared. Until that work is approved, Production remains anonymous with eight read tools.
 
-For the public production review submission, choose **With MCP**, attach `skills/kinic-wiki-mcp/`, and do not package an `.app.json` reference to the existing Developer Mode app. Run the production submission smoke three times:
+During this migration, `skills/kinic-wiki-mcp/` points to staging. Do not attach or republish it in the public Production plugin. The existing Production submission JSON and MCP configuration remain unchanged.
+
+For a later public production review submission, first restore the skill to the promoted Production endpoint, then run the production submission smoke three times:
 
 ```bash
 pnpm --dir workers/wiki-mcp review:smoke -- --mcp-url https://wiki-mcp.kinic.xyz/mcp --repeats 3
@@ -247,10 +266,10 @@ Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-s
 
 ## Review Checklist
 
-- Production remains public until the per-tool OAuth gate passes; staging is private opt-in.
-- No write tools.
+- Production remains public and anonymous; staging requires OAuth at connection.
+- Production exposes no write tools; staging write tools require both `mcp:write` and II `Actions & questions`.
 - Production has no private database access.
-- The submitted **With MCP** plugin includes `skills/kinic-wiki-mcp/`, and `agents/openai.yaml` points to `https://wiki-mcp.kinic.xyz/mcp`.
+- The existing skill points to `https://wiki-mcp-staging.kinic.xyz/mcp` during migration and is not republished into the Production plugin.
 - Production responses contain only public database metadata, public node URLs, and public node text.
 - Staging responses are restricted by the delegated caller in the Kinic canister.
 - Logs do not include raw principals, delegations, tokens, private keys, or private database bodies.

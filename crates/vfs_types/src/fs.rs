@@ -3,6 +3,7 @@
 // Why: Store, runtime, client, and canister layers should share one transport model.
 use candid::CandidType;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
@@ -505,6 +506,73 @@ pub struct WriteNodesRequest {
     pub nodes: Vec<WriteNodeItem>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeMutationErrorCode {
+    EtagConflict,
+    NotFound,
+    Forbidden,
+    WriteUnavailable,
+    InvalidOperation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodeMutationError {
+    pub code: NodeMutationErrorCode,
+    pub message: String,
+    pub failed_index: Option<u32>,
+    pub conflict_path: Option<String>,
+}
+
+impl NodeMutationError {
+    pub fn invalid_operation(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::InvalidOperation, message)
+    }
+
+    pub fn not_found(path: &str) -> Self {
+        Self::new(
+            NodeMutationErrorCode::NotFound,
+            format!("node does not exist: {path}"),
+        )
+    }
+
+    pub fn etag_conflict(message: impl Into<String>, path: impl Into<String>) -> Self {
+        let mut error = Self::new(NodeMutationErrorCode::EtagConflict, message);
+        error.conflict_path = Some(path.into());
+        error
+    }
+
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::Forbidden, message)
+    }
+
+    pub fn write_unavailable(message: impl Into<String>) -> Self {
+        Self::new(NodeMutationErrorCode::WriteUnavailable, message)
+    }
+
+    pub fn with_failed_index(mut self, index: usize) -> Self {
+        self.failed_index = u32::try_from(index).ok();
+        self
+    }
+
+    fn new(code: NodeMutationErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            failed_index: None,
+            conflict_path: None,
+        }
+    }
+}
+
+impl fmt::Display for NodeMutationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NodeMutationError {}
+
 impl WriteNodeRequest {
     pub fn into_write_nodes_request(self) -> WriteNodesRequest {
         WriteNodesRequest {
@@ -743,6 +811,75 @@ pub struct DeleteNodeRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DeleteNodeResult {
     pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct AppendNodeItem {
+    pub path: String,
+    pub content: String,
+    pub expected_etag: Option<String>,
+    pub separator: Option<String>,
+    pub metadata_json: Option<String>,
+    pub kind: Option<NodeKind>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct EditNodeItem {
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub expected_etag: Option<String>,
+    pub replace_all: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MultiEditNodeItem {
+    pub path: String,
+    pub edits: Vec<MultiEdit>,
+    pub expected_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MoveNodeItem {
+    pub from_path: String,
+    pub to_path: String,
+    pub expected_etag: Option<String>,
+    pub overwrite: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DeleteNodeItem {
+    pub path: String,
+    pub expected_etag: Option<String>,
+    pub expected_folder_index_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub enum NodeMutation {
+    Write(WriteNodeItem),
+    Append(AppendNodeItem),
+    Edit(EditNodeItem),
+    MultiEdit(MultiEditNodeItem),
+    Mkdir(String),
+    Move(MoveNodeItem),
+    Delete(DeleteNodeItem),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MutateNodesBatchRequest {
+    pub database_id: String,
+    pub operations: Vec<NodeMutation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub enum NodeMutationResult {
+    Write(WriteNodeResult),
+    Append(WriteNodeResult),
+    Edit(EditNodeResult),
+    MultiEdit(MultiEditNodeResult),
+    Mkdir(MkdirNodeResult),
+    Move(MoveNodeResult),
+    Delete(DeleteNodeResult),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

@@ -1,13 +1,13 @@
 interface:
   display_name: "Kinic Wiki MCP"
-  short_description: "Call the public Kinic Wiki MCP safely."
-  default_prompt: "Use $kinic-wiki-mcp to find, search, and read public Kinic Wiki evidence through MCP."
+  short_description: "Read and explicitly batch-edit private Kinic Wiki data."
+  default_prompt: "Use $kinic-wiki-mcp to read private Kinic Wiki evidence and use batch mutations only for changes I explicitly request."
 dependencies:
   tools:
     - type: "mcp"
       value: "kinic-wiki-mcp"
-      description: "Anonymous read-only Kinic Wiki public database MCP"
+      description: "OAuth-protected Kinic Wiki staging MCP for private reads and explicit batch writes"
       transport: "streamable_http"
-      url: "https://wiki-mcp.kinic.xyz/mcp"
+      url: "https://wiki-mcp-staging.kinic.xyz/mcp"
 policy:
   allow_implicit_invocation: true

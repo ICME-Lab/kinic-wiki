@@ -68,7 +68,7 @@ KINIC_VFS_STAGING_II_ORIGIN=https://kinic-wiki-browser-staging.hude.workers.dev 
 
 ## Deploy
 
-For routine updates, deploy the canister before the Worker. This order lets the existing Worker continue to use the older response shape while ensuring that a new Worker never expects a Candid field that the deployed canister does not yet return.
+For routine backward-compatible updates, deploy the canister before the Worker. The structured node-mutation error release is an explicit exception: it replaces mutation `Err : text` with `Err : NodeMutationError`, so the canister, MCP Worker, Wiki Browser, Skill Registry, Wiki Generator, Rust client, and iOS client must be promoted as one coordinated release. Old mutation decoders are incompatible with the new Candid result type.
 
 Upgrade the existing canister:
 

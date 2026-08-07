@@ -103,6 +103,10 @@ export function throwCanisterError(message: string): never {
   throw new ApiError(error.error, error.status ?? 400, error.hint, error.code);
 }
 
+export function throwNodeMutationError(error: { message: string }): never {
+  return throwCanisterError(error.message);
+}
+
 
 export function rawDatabaseCycleCursor(cursor: string | null): [] | [bigint] {
   if (!cursor) return [];

@@ -1117,7 +1117,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
             100,
         )
         .expect_err("reader should not write source for generation");
-    assert!(reader.contains("lacks required database role"));
+    assert!(reader.message.contains("lacks required database role"));
 
     let written = service
         .write_source_for_generation(
@@ -1251,7 +1251,11 @@ fn source_for_generation_requires_default_llm_writer() {
             102,
         )
         .expect_err("revoked LLM writer should fail source write authorization");
-    assert!(write.contains("LLM writer principal lacks writer access"));
+    assert!(
+        write
+            .message
+            .contains("LLM writer principal lacks writer access")
+    );
 }
 
 #[test]
@@ -1801,7 +1805,7 @@ fn pending_database_activation_seeds_all_store_roots() {
             10,
         )
         .expect_err("source capture request root move should fail");
-    assert!(move_error.contains("cannot move protected folder"));
+    assert!(move_error.message.contains("cannot move protected folder"));
     let delete_error = service
         .delete_node(
             "owner",
@@ -1814,7 +1818,11 @@ fn pending_database_activation_seeds_all_store_roots() {
             11,
         )
         .expect_err("source capture request root delete should fail");
-    assert!(delete_error.contains("cannot delete protected folder"));
+    assert!(
+        delete_error
+            .message
+            .contains("cannot delete protected folder")
+    );
 }
 
 #[test]
