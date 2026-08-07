@@ -50,6 +50,27 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
 
+  const markdownImportPath = testInfo.outputPath("selected-local.md");
+  const pdfImportPath = testInfo.outputPath("selected-manual.pdf");
+  await writeFile(markdownImportPath, "# Selected Markdown\n\nImported as an individual file.\n");
+  await writeFile(pdfImportPath, textPdf("Selected PDF text"));
+
+  const explorerPanel = page.locator('[data-tid="wiki-explorer-panel"]');
+  await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Import local files" }).click();
+  await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles([markdownImportPath, pdfImportPath]);
+  const fileImportDialog = page.getByRole("dialog", { name: "Import files" });
+  await expect(fileImportDialog.getByText("2 selected files")).toBeVisible();
+  await fileImportDialog.getByRole("button", { name: "Import 2" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/Knowledge(?:\\?tab=explorer)?$`));
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/selected-local.md`);
+  await expect(page.getByRole("heading", { name: "Selected Markdown" })).toBeVisible();
+  await expect(page.getByText("Imported as an individual file.")).toBeVisible();
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/selected-manual.md`);
+  await expect(page.getByText("Selected PDF text")).toBeVisible();
+  await page.goto(privateHref);
+
   const importDirectory = testInfo.outputPath(IMPORT_ROOT_NAME);
   await mkdir(join(importDirectory, "nested"), { recursive: true });
   await writeFile(join(importDirectory, "nested", "local.md"), "# Local Markdown\n\nImported from a local folder.\n");
@@ -57,7 +78,6 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await writeFile(join(importDirectory, "existing.md"), "# Replaced content\n");
   await writeFile(join(importDirectory, "image.png"), "not-an-image");
 
-  const explorerPanel = page.locator('[data-tid="wiki-explorer-panel"]');
   await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
   await page.getByRole("menuitem", { name: "Import local folder" }).click();
   await page.locator('input[type="file"][webkitdirectory]').setInputFiles(importDirectory);

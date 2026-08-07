@@ -2,8 +2,8 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { FolderImportDialog } from "@/components/folder-import-dialog";
-import { prepareFolderImport, reconcileFolderImport, type FolderImportFile } from "@/lib/local-folder-import";
+import { LocalImportDialog } from "@/components/local-import-dialog";
+import { prepareLocalImport, reconcileLocalImport, type LocalImportFile } from "@/lib/local-import";
 import type { ChildNode } from "@/lib/types";
 
 beforeAll(() => {
@@ -13,13 +13,13 @@ beforeAll(() => {
 
 afterEach(cleanup);
 
-describe("FolderImportDialog", () => {
+describe("LocalImportDialog", () => {
   it("allows cancellation while preparing but locks cancellation while writing", async () => {
     const onCancel = vi.fn();
-    const prepared = await prepareFolderImport([source("notes/a.md", "new")], "/Knowledge");
-    const plan = reconcileFolderImport(prepared, new Map());
+    const prepared = await prepareLocalImport([source("notes/a.md", "new")], "/Knowledge", "folder");
+    const plan = reconcileLocalImport(prepared, new Map());
     const { rerender } = render(
-      <FolderImportDialog state={{ phase: "preparing", destinationDirectory: "/Knowledge" }} onCancel={onCancel} onImport={vi.fn()} />
+      <LocalImportDialog state={{ phase: "preparing", mode: "folder", destinationDirectory: "/Knowledge" }} onCancel={onCancel} onImport={vi.fn()} />
     );
 
     expect(screen.getByText("20.00 MB per file · 100.00 MB total · 50.00 MB PDF · 1.50 MB encoded · up to 100 nodes")).toBeTruthy();
@@ -29,21 +29,21 @@ describe("FolderImportDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
 
     onCancel.mockClear();
-    rerender(<FolderImportDialog state={{ phase: "writing", plan }} onCancel={onCancel} onImport={vi.fn()} />);
+    rerender(<LocalImportDialog state={{ phase: "writing", plan }} onCancel={onCancel} onImport={vi.fn()} />);
     expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
     expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("keeps an existing file until replacement is explicitly selected", async () => {
-    const prepared = await prepareFolderImport([source("notes/a.md", "new")], "/Knowledge");
+    const prepared = await prepareLocalImport([source("notes/a.md", "new")], "/Knowledge", "folder");
     const existing = new Map<string, ChildNode>([
       ["/Knowledge/notes", child("/Knowledge/notes", "folder", "folder")],
       ["/Knowledge/notes/a.md", child("/Knowledge/notes/a.md", "file", "etag")]
     ]);
-    const plan = reconcileFolderImport(prepared, existing);
+    const plan = reconcileLocalImport(prepared, existing);
     const onImport = vi.fn();
-    render(<FolderImportDialog state={{ phase: "ready", plan }} onCancel={vi.fn()} onImport={onImport} />);
+    render(<LocalImportDialog state={{ phase: "ready", plan }} onCancel={vi.fn()} onImport={onImport} />);
 
     expect(screen.getByText("1 existing file will be kept unless replacement is selected.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Import 0" }) as HTMLButtonElement).disabled).toBe(true);
@@ -52,9 +52,20 @@ describe("FolderImportDialog", () => {
     expect(onImport).toHaveBeenCalledTimes(1);
     expect([...onImport.mock.calls[0][0]]).toEqual(["/Knowledge/notes/a.md"]);
   });
+
+  it("shows file-specific copy for a file selection", async () => {
+    const prepared = await prepareLocalImport([source("guide.md", "# Guide")], "/Knowledge", "files");
+    const plan = reconcileLocalImport(prepared, new Map());
+
+    render(<LocalImportDialog state={{ phase: "ready", plan }} onCancel={vi.fn()} onImport={vi.fn()} />);
+
+    expect(screen.getByRole("dialog", { name: "Import files" })).toBeTruthy();
+    expect(screen.getByText("Local files → Wiki")).toBeTruthy();
+    expect(screen.getByText("guide.md")).toBeTruthy();
+  });
 });
 
-function source(path: string, content: string): FolderImportFile {
+function source(path: string, content: string): LocalImportFile {
   const bytes = new TextEncoder().encode(content);
   return {
     name: path.split("/").at(-1) ?? path,

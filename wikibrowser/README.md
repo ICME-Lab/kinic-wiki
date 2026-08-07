@@ -53,6 +53,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Browse `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
 - Create databases and manage database access
 - Edit Markdown notes when the selected node is editable
+- Import individual Markdown/PDF files or a local folder into the selected wiki folder
 - Create web source captures under safe `/Sources/...` paths from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
@@ -65,6 +66,10 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Show route-level 404 and VFS not-found states
 
 No full lint workflow is included.
+
+## Local Import
+
+Use the Explorer action menu to import either selected `.md` / `.pdf` files or one local folder. Individual files are written directly into the selected wiki folder; folder imports preserve the selected folder name and its nested paths. PDF text is extracted locally and stored as Markdown, while the original PDF is not uploaded or retained. PDFs that require OCR or a password are not supported.
 
 ## Source Capture
 
