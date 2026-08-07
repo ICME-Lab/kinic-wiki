@@ -52,6 +52,7 @@ describe("staging OAuth discovery and registration", () => {
       expect(response.headers.get("www-authenticate")).toContain(
         "/.well-known/oauth-protected-resource/mcp"
       );
+      expect(response.headers.get("www-authenticate")).toContain('scope="mcp:read"');
     }
   );
 

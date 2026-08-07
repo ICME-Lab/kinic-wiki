@@ -51,8 +51,8 @@ use vfs_types::{
     MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
     MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeMutationResult,
-    NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeMutationError,
+    NodeMutationResult, NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
     OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
     QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
@@ -1165,47 +1165,41 @@ fn delete_account() -> Result<(), String> {
 }
 
 #[update]
-fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
+fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.write_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("write_node", Some(database_id), |service, caller, now| {
+        service.write_node(caller, request, now)
+    })
 }
 
 #[update]
 fn write_source_for_generation(
     request: WriteSourceForGenerationRequest,
-) -> Result<WriteSourceForGenerationResult, String> {
+) -> Result<WriteSourceForGenerationResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_node_mutation_metered_update(
         "write_source_for_generation",
         Some(database_id),
-        RequiredRole::Writer,
         |service, caller, now| service.write_source_for_generation(caller, request, now),
     )
 }
 
 #[update]
-fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
+fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_nodes",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.write_nodes(caller, request, now),
-    )
+    with_node_mutation_metered_update("write_nodes", Some(database_id), |service, caller, now| {
+        service.write_nodes(caller, request, now)
+    })
 }
 
 #[update]
-fn mutate_nodes_batch(request: MutateNodesBatchRequest) -> Result<Vec<NodeMutationResult>, String> {
+fn mutate_nodes_batch(
+    request: MutateNodesBatchRequest,
+) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_node_mutation_metered_update(
         "mutate_nodes_batch",
         Some(database_id),
-        RequiredRole::Writer,
         |service, caller, now| service.mutate_nodes_batch(caller, request, now),
     )
 }
@@ -1261,58 +1255,43 @@ fn check_source_run_session(request: SourceRunSessionCheckRequest) -> Result<(),
 }
 
 #[update]
-fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
+fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "append_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.append_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("append_node", Some(database_id), |service, caller, now| {
+        service.append_node(caller, request, now)
+    })
 }
 
 #[update]
-fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
+fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "edit_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.edit_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("edit_node", Some(database_id), |service, caller, now| {
+        service.edit_node(caller, request, now)
+    })
 }
 
 #[update]
-fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
+fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "delete_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.delete_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("delete_node", Some(database_id), |service, caller, now| {
+        service.delete_node(caller, request, now)
+    })
 }
 
 #[update]
-fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
+fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "move_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.move_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("move_node", Some(database_id), |service, caller, now| {
+        service.move_node(caller, request, now)
+    })
 }
 
 #[update]
-fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
+fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "mkdir_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.mkdir_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("mkdir_node", Some(database_id), |service, caller, now| {
+        service.mkdir_node(caller, request, now)
+    })
 }
 
 #[query]
@@ -1356,12 +1335,13 @@ fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, Str
 }
 
 #[update]
-fn multi_edit_node(request: MultiEditNodeRequest) -> Result<MultiEditNodeResult, String> {
+fn multi_edit_node(
+    request: MultiEditNodeRequest,
+) -> Result<MultiEditNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_node_mutation_metered_update(
         "multi_edit_node",
         Some(database_id),
-        RequiredRole::Writer,
         |service, caller, now| service.multi_edit_node(caller, request, now),
     )
 }
@@ -2176,6 +2156,51 @@ where
         },
         f,
     )
+}
+
+fn with_node_mutation_metered_update<T, F>(
+    method: &str,
+    database_id: Option<String>,
+    f: F,
+) -> Result<T, NodeMutationError>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, NodeMutationError>,
+{
+    let caller = caller_text();
+    let now = now_millis();
+    let before_charge_units = update_charge_units();
+    SERVICE.with(|slot| {
+        let borrowed = slot.borrow();
+        let service = borrowed.as_ref().ok_or_else(|| {
+            NodeMutationError::write_unavailable("wiki service is not initialized")
+        })?;
+        let authorization_database_id = database_id.as_deref().ok_or_else(|| {
+            NodeMutationError::invalid_operation(
+                "database_id is required for node mutation metering",
+            )
+        })?;
+        let cycles_billing_config =
+            service.prepare_node_mutation(authorization_database_id, &caller)?;
+        let result = f(service, &caller, now);
+        let after_charge_units = update_charge_units();
+        if result.is_ok() {
+            let charge_result = update_charge_cycles(before_charge_units, after_charge_units)
+                .and_then(|cycles_delta| {
+                    service.charge_database_update(
+                        &cycles_billing_config,
+                        authorization_database_id,
+                        &caller,
+                        method,
+                        cycles_delta,
+                        now,
+                    )
+                });
+            if let Err(error) = charge_result {
+                ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            }
+        }
+        result
+    })
 }
 
 fn with_role_unmetered_update<T, F>(

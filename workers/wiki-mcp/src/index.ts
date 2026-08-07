@@ -271,9 +271,9 @@ const nodeKindSchema = z.enum(["file", "source", "folder"]);
 const writeNodeInputSchema = {
   database_id: z.string().min(1),
   path: z.string().min(1),
-  kind: nodeKindSchema.optional(),
+  kind: nodeKindSchema,
   content: z.string(),
-  metadata_json: z.string().optional(),
+  metadata_json: z.string(),
   expected_etag: z.string().min(1).optional()
 };
 const mutationBatchOutputSchema = z.object({ results: z.array(z.record(z.string(), z.unknown())) });
@@ -373,7 +373,7 @@ export default {
     if (mcpRequestRequiresAuthentication(authMode)) {
       if (!request.headers.has("authorization")) {
         return withCors(
-          mcpUnauthorizedResponse(env, writesAvailable ? "mcp:read mcp:write" : undefined)
+          mcpUnauthorizedResponse(env, "mcp:read")
         );
       }
       const authenticated = await authenticateMcpRequest(request, env);
@@ -614,9 +614,9 @@ function registerMutationTools(
       executeMutationBatch(env, database_id, nodes.map((node) => node.path), () =>
         writeNodes(env, database_id, nodes.map((node) => ({
           path: node.path,
-          kind: node.kind ?? "file",
+          kind: node.kind,
           content: node.content,
-          metadataJson: node.metadata_json ?? "{}",
+          metadataJson: node.metadata_json,
           expectedEtag: node.expected_etag ?? null
         })))
       )
@@ -701,12 +701,17 @@ async function mutationToolError(
       : {})
   };
   if (path) payload.path = path;
-  if (code === "etag_conflict" && path) {
+  const conflictPath = error instanceof KinicMutationError ? error.conflictPath : null;
+  if (conflictPath) payload.conflict_path = conflictPath;
+  if (code === "etag_conflict" && conflictPath) {
     try {
-      const current = await readNode(env, databaseId, path);
+      const current = await readNode(env, databaseId, conflictPath);
       if (current) {
+        const currentContentSize = current.content.length;
         payload.current_etag = current.etag;
-        payload.current_content = current.content;
+        payload.current_content = clipText(current.content, MAX_FETCH_TEXT_CHARS);
+        payload.current_content_truncated = currentContentSize > MAX_FETCH_TEXT_CHARS;
+        payload.current_content_size = currentContentSize;
       }
     } catch {
       // The stable conflict response remains useful when the follow-up read is unavailable.
@@ -728,9 +733,9 @@ function toNodeMutationInput(operation: z.infer<typeof batchOperationSchema>): N
         type: "write",
         value: {
           path: operation.path,
-          kind: operation.kind ?? "file",
+          kind: operation.kind,
           content: operation.content,
-          metadataJson: operation.metadata_json ?? "{}",
+          metadataJson: operation.metadata_json,
           expectedEtag: operation.expected_etag ?? null
         }
       };

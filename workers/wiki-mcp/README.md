@@ -19,7 +19,9 @@ Staging additionally exposes:
 - `write_nodes`: atomically create or fully replace 1–100 nodes in one database; use it even for a single create or replacement.
 - `mutate_nodes_batch`: atomically apply 1–100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations; use it for the whole change set whenever any non-write operation is present, even for one operation.
 
-Both mutation tools require OAuth `mcp:read mcp:write` and II `Actions & questions`. Questions-only sessions can read but cannot mutate. There is no connection tool or single-mutation MCP tool.
+Initial connection requires only OAuth `mcp:read`. Both mutation tools require OAuth `mcp:read mcp:write` and II `Actions & questions`, with step-up authorization when a read-only token attempts a mutation. Questions-only sessions can read but cannot mutate. There is no connection tool or single-mutation MCP tool.
+
+Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
 
 ## Local
 

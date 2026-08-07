@@ -257,6 +257,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const DatabaseCycleEntryPage = idl.Record({ entries: idl.Vec(DatabaseCycleEntry), next_cursor: idl.Opt(idl.Nat64) });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
+  const NodeMutationErrorCode = idl.Variant({
+    EtagConflict: idl.Null,
+    NotFound: idl.Null,
+    Forbidden: idl.Null,
+    WriteUnavailable: idl.Null,
+    InvalidOperation: idl.Null
+  });
+  const NodeMutationError = idl.Record({
+    code: NodeMutationErrorCode,
+    message: idl.Text,
+    failed_index: idl.Opt(idl.Nat32),
+    conflict_path: idl.Opt(idl.Text)
+  });
   const NodeEntryKind = idl.Variant({ File: idl.Null, Source: idl.Null, Directory: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     updated_at: idl.Int64,
@@ -485,16 +498,16 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
-  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
-  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: idl.Text });
+  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
+  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
-  const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text });
+  const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: NodeMutationError });
   const DeleteNodeResult = idl.Record({ path: idl.Text });
-  const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: idl.Text });
+  const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: NodeMutationError });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
-  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
+  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError });
   const MoveNodeResult = idl.Record({ from_path: idl.Text, node: NodeMutationAck, overwrote: idl.Bool });
-  const ResultMoveNode = idl.Variant({ Ok: MoveNodeResult, Err: idl.Text });
+  const ResultMoveNode = idl.Variant({ Ok: MoveNodeResult, Err: NodeMutationError });
   const ResultUnit = idl.Variant({ Ok: idl.Null, Err: idl.Text });
   const ResultOpsAnswerSessionCheck = idl.Variant({ Ok: OpsAnswerSessionCheckResult, Err: idl.Text });
 

@@ -48,14 +48,16 @@ There is no `connect_private` tool and no single-mutation tool. OAuth happens wh
     },
     {
       "path": "/Knowledge/existing.md",
+      "kind": "file",
       "content": "complete replacement",
+      "metadata_json": "{}",
       "expected_etag": "current-etag"
     }
   ]
 }
 ```
 
-Omit `expected_etag` only when creating a path known to be absent. A replacement requires the etag returned by the latest read.
+`path`, `kind`, `content`, and `metadata_json` are always required. Omit `expected_etag` only when creating a path known to be absent. A replacement requires the etag returned by the latest read.
 
 ### `mutate_nodes_batch`
 
@@ -78,7 +80,7 @@ Omit `expected_etag` only when creating a path known to be absent. A replacement
 ## Conflict and failure handling
 
 - A failed atomic batch returns `failed_index`; no operation from that call commits.
-- On `etag_conflict`, use `current_etag` and `current_content` when supplied. Otherwise reread the failed path.
+- On `etag_conflict`, `path` identifies the failed operation input and `conflict_path` identifies the actual stale node (including a folder's `index.md`). Use `current_etag` and `current_content` when supplied. If `current_content_truncated` is true, use `current_content_size` as context and reread `conflict_path`.
 - Rebuild the intended batch against current state and retry at most twice only when intent is preserved.
 - Do not silently set `overwrite: true`, remove an etag, or broaden a delete to make a retry pass.
 - The complete MCP request body is limited to 256 KiB.

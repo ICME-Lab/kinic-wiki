@@ -434,6 +434,24 @@ struct VFSCandidCodecTests {
         try VFSCandidDecoder.decodeWriteNodesResult(candidWriteNodesOk())
     }
 
+    @Test
+    func decodesStructuredNodeMutationError() throws {
+        let expected = VFSNodeMutationFailure(
+            code: .etagConflict,
+            message: "folder index changed",
+            failedIndex: 2,
+            conflictPath: "/Knowledge/topic/index.md"
+        )
+        #expect(throws: VFSCandidError.nodeMutationRejected(expected)) {
+            try VFSCandidDecoder.decodeWriteNodeResult(candidNodeMutationErr(
+                code: "EtagConflict",
+                message: expected.message,
+                failedIndex: expected.failedIndex,
+                conflictPath: expected.conflictPath
+            ))
+        }
+    }
+
     #if false
     @Test
     func decodesSourceCaptureURLStates() throws {
@@ -2366,6 +2384,102 @@ private func candidResultErr(_ message: String) -> Data {
     let bytes = Data(message.utf8)
     appendUnsigned(UInt64(bytes.count), to: &data)
     data.append(bytes)
+    return data
+}
+
+private func candidNodeMutationErr(
+    code: String,
+    message: String,
+    failedIndex: UInt32?,
+    conflictPath: String?
+) -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+    let typeNull: Int64 = -1
+    let typeNat32: Int64 = -7
+    let typeText: Int64 = -15
+    let typeOpt: Int64 = -18
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 { VFSCandidLabels.id(name) }
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type): appendSigned(type, to: &data)
+        case .table(let index): appendSigned(index, to: &data)
+        }
+    }
+    func sorted(_ fields: [(String, Ref)]) -> [(String, Ref)] {
+        fields.sorted { label($0.0) < label($1.0) }
+    }
+    func appendFields(_ fields: [(String, Ref)]) {
+        let fields = sorted(fields)
+        appendUnsigned(UInt64(fields.count), to: &data)
+        for field in fields {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+    func appendText(_ value: String) {
+        let bytes = Data(value.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    let resultCases = [("Ok", Ref.primitive(typeNull)), ("Err", Ref.table(1))]
+    let errorFields = [
+        ("code", Ref.table(2)),
+        ("message", Ref.primitive(typeText)),
+        ("failed_index", Ref.table(3)),
+        ("conflict_path", Ref.table(4))
+    ]
+    let codeCases = ["EtagConflict", "NotFound", "Forbidden", "WriteUnavailable", "InvalidOperation"]
+
+    appendUnsigned(5, to: &data)
+    appendSigned(typeVariant, to: &data)
+    appendFields(resultCases)
+    appendSigned(typeRecord, to: &data)
+    appendFields(errorFields)
+    appendSigned(typeVariant, to: &data)
+    appendFields(codeCases.map { ($0, Ref.primitive(typeNull)) })
+    appendSigned(typeOpt, to: &data)
+    appendSigned(typeNat32, to: &data)
+    appendSigned(typeOpt, to: &data)
+    appendSigned(typeText, to: &data)
+
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+    let sortedResultCases = resultCases.map(\.0).sorted { label($0) < label($1) }
+    appendUnsigned(UInt64(sortedResultCases.firstIndex(of: "Err")!), to: &data)
+    for field in sorted(errorFields) {
+        switch field.0 {
+        case "code":
+            let sortedCodeCases = codeCases.sorted { label($0) < label($1) }
+            appendUnsigned(UInt64(sortedCodeCases.firstIndex(of: code)!), to: &data)
+        case "message":
+            appendText(message)
+        case "failed_index":
+            if let failedIndex {
+                data.append(1)
+                var littleEndian = failedIndex.littleEndian
+                withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+            } else {
+                data.append(0)
+            }
+        case "conflict_path":
+            if let conflictPath {
+                data.append(1)
+                appendText(conflictPath)
+            } else {
+                data.append(0)
+            }
+        default:
+            preconditionFailure("unknown mutation error field")
+        }
+    }
     return data
 }
 

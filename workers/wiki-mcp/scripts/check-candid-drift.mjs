@@ -40,6 +40,8 @@ const expectedTypes = {
     "DatabaseMetadata",
     "DatabaseSummary",
     "NodeKind",
+    "NodeMutationErrorCode",
+    "NodeMutationError",
     "NodeEntryKind",
     "Node",
     "LinkEdge",
@@ -167,8 +169,8 @@ const expectedTypes = {
       Mkdir: "MkdirNodeResult", Delete: "DeleteNodeResult", Append: "WriteNodeResult"
     }
   },
-  ResultEditNode: { kind: "variant", cases: { Ok: "EditNodeResult", Err: "text" } },
-  ResultMutationBatch: { kind: "variant", cases: { Ok: "vec NodeMutationResult", Err: "text" } }
+  ResultEditNode: { kind: "variant", cases: { Ok: "EditNodeResult", Err: "NodeMutationError" } },
+  ResultMutationBatch: { kind: "variant", cases: { Ok: "vec NodeMutationResult", Err: "NodeMutationError" } }
 };
 
 const expectedMethods = {

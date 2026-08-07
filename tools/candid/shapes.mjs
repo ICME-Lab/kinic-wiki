@@ -406,6 +406,25 @@ export const expectedTypes = {
   },
   NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null", Folder: "null" } },
   NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
+  NodeMutationErrorCode: {
+    kind: "variant",
+    cases: {
+      EtagConflict: "null",
+      NotFound: "null",
+      Forbidden: "null",
+      WriteUnavailable: "null",
+      InvalidOperation: "null"
+    }
+  },
+  NodeMutationError: {
+    kind: "record",
+    fields: {
+      code: "NodeMutationErrorCode",
+      message: "text",
+      failed_index: "opt nat32",
+      conflict_path: "opt text"
+    }
+  },
   WriteNodeRequest: {
     kind: "record",
     fields: {
@@ -622,11 +641,11 @@ export const expectedTypes = {
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
-  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
-  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "text" } },
-  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
-  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
-  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "text" } },
+  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "NodeMutationError" } },
+  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "NodeMutationError" } },
+  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "NodeMutationError" } },
+  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "NodeMutationError" } },
+  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "NodeMutationError" } },
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
@@ -650,7 +669,7 @@ export const expectedTypes = {
   },
   ResultWriteSourceForGeneration: {
     kind: "variant",
-    cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
+    cases: { Ok: "WriteSourceForGenerationResult", Err: "NodeMutationError" }
   },
   SearchNodeHit: {
     kind: "record",

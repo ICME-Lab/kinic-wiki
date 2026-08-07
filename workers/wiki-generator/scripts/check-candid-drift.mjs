@@ -57,6 +57,25 @@ const expectedTypes = {
     kind: "record",
     fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
   },
+  NodeMutationErrorCode: {
+    kind: "variant",
+    cases: {
+      EtagConflict: "null",
+      NotFound: "null",
+      Forbidden: "null",
+      WriteUnavailable: "null",
+      InvalidOperation: "null"
+    }
+  },
+  NodeMutationError: {
+    kind: "record",
+    fields: {
+      code: "NodeMutationErrorCode",
+      message: "text",
+      failed_index: "opt nat32",
+      conflict_path: "opt text"
+    }
+  },
   SearchPreviewField: { kind: "variant", cases: { Path: "null", Content: "null" } },
   SearchPreviewMode: { kind: "variant", cases: { Light: "null", ContentStart: "null", None: "null" } },
   SearchPreview: {
@@ -159,8 +178,8 @@ const expectedTypes = {
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
-  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
-  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
+  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "NodeMutationError" } },
+  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "NodeMutationError" } },
   ResultExportSnapshot: { kind: "variant", cases: { Ok: "ExportSnapshotResponse", Err: "text" } },
   ResultFetchUpdates: { kind: "variant", cases: { Ok: "FetchUpdatesResponse", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } }

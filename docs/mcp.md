@@ -33,7 +33,7 @@ Route behavior:
 - `GET /`: human-readable info JSON with endpoint and tool names.
 - `POST /`: not an MCP alias.
 
-On staging, every unauthenticated MCP POST returns HTTP `401` with the RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; both batch mutation tools advertise OAuth-only `mcp:read mcp:write`. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
+On staging, every unauthenticated MCP POST returns HTTP `401` with an `mcp:read` RFC 9728 OAuth challenge before any canister call. Read descriptors advertise OAuth-only `mcp:read`; both batch mutation tools advertise OAuth-only `mcp:read mcp:write`, and a read-only token receives that step-up challenge only when it calls a mutation tool. The MCP POST body is limited to 256 KiB across the complete request or JSON-RPC batch. Requests over that limit return `413` before token authentication. OAuth endpoint request bodies keep their separate 16 KiB limit.
 
 ## Staging authentication
 
@@ -109,10 +109,12 @@ Staging logs only a random trace id, the connection, per-app delegation, or auth
 - `write_nodes`
   - Preferred for creation and full replacement, including a single node
   - Atomically creates or replaces 1 to 100 nodes in one database, in order
+  - Every item requires `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` is optional
 - `mutate_nodes_batch`
   - Preferred for the whole requested change set when any operation is `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete`, including a single operation
   - Atomically applies 1 to 100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations in one database
-  - The first failure rolls back the entire transaction and returns `failed_index`
+  - A `write` operation has the same required fields as `write_nodes`
+  - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
 Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: false`.
 
@@ -122,7 +124,9 @@ Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false
 2. Write only when the user explicitly requests a change. Automatic skill invocation does not authorize writes.
 3. Use `write_nodes` for create/full replacement only, even for one node. If any append, edit, multi-edit, mkdir, move, or delete is present, place the entire ordered change set in `mutate_nodes_batch`, even for one operation.
 4. Keep each 1–100 item batch in one database and preserve returned etags.
-5. On `etag_conflict`, compare supplied `current_content` and `current_etag` with the intended change, regenerate the batch, and retry at most twice only if intent remains unambiguous. Otherwise return the current/desired difference instead of overwriting.
+5. On `etag_conflict`, treat `path` as the failed operation input and `conflict_path` as the actual stale node. Compare supplied `current_content` and `current_etag` with the intended change, noting `current_content_truncated` and `current_content_size`; the inline content is capped at 40,000 characters. Regenerate the batch and retry at most twice only if intent remains unambiguous. Otherwise return the current/desired difference instead of overwriting.
+
+The node mutation Candid methods return `NodeMutationError { code; message; failed_index; conflict_path }`, where `code` is one of `EtagConflict`, `NotFound`, `Forbidden`, `WriteUnavailable`, or `InvalidOperation`. This intentionally replaces `Err : text` for all node mutations. Canister and bundled clients must be released together; old mutation decoders are incompatible. No database migration is required.
 
 ## Agent Read Workflows
 

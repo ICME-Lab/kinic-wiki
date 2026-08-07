@@ -23,10 +23,11 @@ use vfs_types::{
     MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeMutationResult, NodePublication, OutgoingLinksRequest, PublicNode, PublishNodeRequest,
-    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, UpdateDatabaseMetadataRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    NodeMutationError, NodeMutationResult, NodePublication, OutgoingLinksRequest, PublicNode,
+    PublishNodeRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -795,12 +796,13 @@ impl VfsApi for CanisterVfsClient {
     }
 
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
-        let result: Result<WriteNodeResult, String> = self.update("write_node", &request).await?;
+        let result: Result<WriteNodeResult, NodeMutationError> =
+            self.update("write_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn write_nodes(&self, request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
-        let result: Result<Vec<WriteNodeResult>, String> =
+        let result: Result<Vec<WriteNodeResult>, NodeMutationError> =
             self.update("write_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
@@ -809,33 +811,38 @@ impl VfsApi for CanisterVfsClient {
         &self,
         request: MutateNodesBatchRequest,
     ) -> Result<Vec<NodeMutationResult>> {
-        let result: Result<Vec<NodeMutationResult>, String> =
+        let result: Result<Vec<NodeMutationResult>, NodeMutationError> =
             self.update("mutate_nodes_batch", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult> {
-        let result: Result<WriteNodeResult, String> = self.update("append_node", &request).await?;
+        let result: Result<WriteNodeResult, NodeMutationError> =
+            self.update("append_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn edit_node(&self, request: EditNodeRequest) -> Result<EditNodeResult> {
-        let result: Result<EditNodeResult, String> = self.update("edit_node", &request).await?;
+        let result: Result<EditNodeResult, NodeMutationError> =
+            self.update("edit_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult> {
-        let result: Result<DeleteNodeResult, String> = self.update("delete_node", &request).await?;
+        let result: Result<DeleteNodeResult, NodeMutationError> =
+            self.update("delete_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn move_node(&self, request: MoveNodeRequest) -> Result<MoveNodeResult> {
-        let result: Result<MoveNodeResult, String> = self.update("move_node", &request).await?;
+        let result: Result<MoveNodeResult, NodeMutationError> =
+            self.update("move_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
     async fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult> {
-        let result: Result<MkdirNodeResult, String> = self.update("mkdir_node", &request).await?;
+        let result: Result<MkdirNodeResult, NodeMutationError> =
+            self.update("mkdir_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -866,7 +873,7 @@ impl VfsApi for CanisterVfsClient {
     }
 
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
-        let result: Result<MultiEditNodeResult, String> =
+        let result: Result<MultiEditNodeResult, NodeMutationError> =
             self.update("multi_edit_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }

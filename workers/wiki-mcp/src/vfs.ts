@@ -16,6 +16,13 @@ import type { McpAuthStateV3 } from "./auth/state.js";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, unknown>;
 type Result<T> = { Ok: T } | { Err: string };
+type RawNodeMutationError = {
+  code: Variant;
+  message: string;
+  failed_index: [] | [number];
+  conflict_path: [] | [string];
+};
+type MutationResult<T> = { Ok: T } | { Err: RawNodeMutationError };
 
 export type RuntimeEnv = {
   KINIC_WIKI_CANISTER_ID?: string;
@@ -158,9 +165,11 @@ export type MutationErrorCode =
 export class KinicMutationError extends Error {
   constructor(
     readonly code: MutationErrorCode,
-    readonly failedIndex: number | null = null
+    readonly failedIndex: number | null = null,
+    readonly conflictPath: string | null = null,
+    message: string = code
   ) {
-    super(code);
+    super(message);
     this.name = "KinicMutationError";
   }
 }
@@ -417,15 +426,15 @@ type VfsActor = {
   source_evidence: (request: { database_id: string; node_path: string }) => Promise<Result<RawSourceEvidence>>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<Result<RawIndexSqlJsonQueryResult>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
-  write_node: (request: unknown) => Promise<Result<RawWriteNodeOutput>>;
-  write_nodes: (request: unknown) => Promise<Result<RawWriteNodeOutput[]>>;
-  append_node: (request: unknown) => Promise<Result<RawWriteNodeOutput>>;
-  edit_node: (request: unknown) => Promise<Result<RawEditNodeOutput>>;
-  multi_edit_node: (request: unknown) => Promise<Result<RawEditNodeOutput>>;
-  mkdir_node: (request: unknown) => Promise<Result<RawMkdirNodeOutput>>;
-  move_node: (request: unknown) => Promise<Result<RawMoveNodeOutput>>;
-  delete_node: (request: unknown) => Promise<Result<RawDeleteNodeOutput>>;
-  mutate_nodes_batch: (request: unknown) => Promise<Result<RawNodeMutationOutput[]>>;
+  write_node: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput>>;
+  write_nodes: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput[]>>;
+  append_node: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput>>;
+  edit_node: (request: unknown) => Promise<MutationResult<RawEditNodeOutput>>;
+  multi_edit_node: (request: unknown) => Promise<MutationResult<RawEditNodeOutput>>;
+  mkdir_node: (request: unknown) => Promise<MutationResult<RawMkdirNodeOutput>>;
+  move_node: (request: unknown) => Promise<MutationResult<RawMoveNodeOutput>>;
+  delete_node: (request: unknown) => Promise<MutationResult<RawDeleteNodeOutput>>;
+  mutate_nodes_batch: (request: unknown) => Promise<MutationResult<RawNodeMutationOutput[]>>;
 };
 
 const actorCache = new Map<string, Promise<VfsActor>>();
@@ -630,35 +639,37 @@ function unwrap<T>(result: Result<T>, env: RuntimeEnv): T {
   );
 }
 
-function unwrapMutation<T>(result: Result<T>): T {
+export function unwrapMutation<T>(result: MutationResult<T>): T {
   if ("Ok" in result) {
     return result.Ok;
   }
-  const failedIndex = /operation (\d+) failed:/u.exec(result.Err)?.[1];
-  throw new KinicMutationError(classifyMutationError(result.Err), failedIndex ? Number(failedIndex) : null);
+  throw new KinicMutationError(
+    mutationErrorCode(result.Err.code),
+    result.Err.failed_index[0] ?? null,
+    result.Err.conflict_path[0] ?? null,
+    result.Err.message
+  );
 }
 
-function classifyMutationError(message: string): MutationErrorCode {
-  if (message.includes("expected_etag")) {
-    return "etag_conflict";
+function mutationErrorCode(code: Variant): MutationErrorCode {
+  const name = variantName(code);
+  switch (name) {
+    case "etag_conflict":
+    case "not_found":
+    case "forbidden":
+    case "write_unavailable":
+    case "invalid_operation":
+      return name;
+    default:
+      throw new Error(`unknown node mutation error code: ${name}`);
   }
-  if (message.includes("does not exist") || message.includes("not found")) {
-    return "not_found";
-  }
-  if (message.includes("required database role") || message.includes("no access")) {
-    return "forbidden";
-  }
-  if (message.includes("cycles") || message.includes("suspended")) {
-    return "write_unavailable";
-  }
-  return "invalid_operation";
 }
 
-async function callVfs<T>(
+async function callVfs<T, E = string>(
   env: RuntimeEnv,
   stage: string,
-  call: () => Promise<Result<T>>
-): Promise<Result<T>> {
+  call: () => Promise<{ Ok: T } | { Err: E }>
+): Promise<{ Ok: T } | { Err: E }> {
   try {
     const result = await call();
     if ("Err" in result) {
@@ -1014,6 +1025,19 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     updated_at: idl.Int64,
     etag: idl.Text
   });
+  const NodeMutationErrorCode = idl.Variant({
+    EtagConflict: idl.Null,
+    NotFound: idl.Null,
+    Forbidden: idl.Null,
+    WriteUnavailable: idl.Null,
+    InvalidOperation: idl.Null
+  });
+  const NodeMutationError = idl.Record({
+    code: NodeMutationErrorCode,
+    message: idl.Text,
+    failed_index: idl.Opt(idl.Nat32),
+    conflict_path: idl.Opt(idl.Text)
+  });
   const WriteNodeResult = idl.Record({ node: NodeMutationAck, created: idl.Bool });
   const EditNodeResult = idl.Record({ node: NodeMutationAck, replacement_count: idl.Nat32 });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
@@ -1246,13 +1270,16 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNodes = idl.Variant({ Ok: idl.Vec(NodeEntry), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
-  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
-  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: idl.Text });
-  const ResultEditNode = idl.Variant({ Ok: EditNodeResult, Err: idl.Text });
-  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
-  const ResultMoveNode = idl.Variant({ Ok: MoveNodeResult, Err: idl.Text });
-  const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: idl.Text });
-  const ResultMutationBatch = idl.Variant({ Ok: idl.Vec(NodeMutationResult), Err: idl.Text });
+  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
+  const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
+  const ResultEditNode = idl.Variant({ Ok: EditNodeResult, Err: NodeMutationError });
+  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError });
+  const ResultMoveNode = idl.Variant({ Ok: MoveNodeResult, Err: NodeMutationError });
+  const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: NodeMutationError });
+  const ResultMutationBatch = idl.Variant({
+    Ok: idl.Vec(NodeMutationResult),
+    Err: NodeMutationError
+  });
   const ResultMemoryManifest = idl.Variant({ Ok: MemoryManifest, Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });

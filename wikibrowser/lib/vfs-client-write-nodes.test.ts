@@ -46,7 +46,14 @@ describe("writeNodesAuthenticated", () => {
   });
 
   it("surfaces canister errors", async () => {
-    mocks.writeNodes.mockResolvedValue({ Err: "expected_etag does not match current etag" });
+    mocks.writeNodes.mockResolvedValue({
+      Err: {
+        code: { EtagConflict: null },
+        message: "expected_etag does not match current etag",
+        failed_index: [0],
+        conflict_path: ["/Knowledge/notes/a.md"]
+      }
+    });
     await expect(writeNodesAuthenticated("aaaaa-aa", {} as Identity, { databaseId: "db-1", nodes: [] }))
       .rejects.toThrow("expected_etag does not match current etag");
   });

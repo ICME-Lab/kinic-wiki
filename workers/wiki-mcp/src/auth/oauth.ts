@@ -192,7 +192,7 @@ export async function authenticateMcpRequest(
   }
 }
 
-export function mcpUnauthorizedResponse(env: RuntimeEnv, scope?: string): Response {
+export function mcpUnauthorizedResponse(env: RuntimeEnv, scope = "mcp:read"): Response {
   return json(
     { error: "unauthorized" },
     401,

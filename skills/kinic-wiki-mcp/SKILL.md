@@ -26,8 +26,9 @@ Read [references/tools.md](references/tools.md) before substantive MCP work.
    - creation and full replacement only: use `write_nodes`, even for one node;
    - if any operation is append, edit, multi-edit, mkdir, move, or delete: use `mutate_nodes_batch` for the entire set, even for one operation.
 7. Keep a batch within one database, preserve user-requested order, and send 1–100 items. The server applies the batch atomically and rolls back every operation on failure.
-8. On `etag_conflict`, compare `current_content` and `current_etag` with the intended change. Retry at most twice, and only when the user's intent is still unambiguous. Otherwise report the current/desired difference instead of overwriting.
-9. Report changed paths and returned etags. For reads, cite the database ID and exact VFS paths used.
+8. For every `write_nodes` item or batch `write`, explicitly send `path`, `kind`, `content`, and `metadata_json`. Never infer omitted replacement fields.
+9. On `etag_conflict`, use `conflict_path` for the stale node and compare `current_content` and `current_etag` with the intended change. Respect `current_content_truncated` and `current_content_size`; reread when the inline content is incomplete. Retry at most twice, and only when the user's intent is still unambiguous. Otherwise report the current/desired difference instead of overwriting.
+10. Report changed paths and returned etags. For reads, cite the database ID and exact VFS paths used.
 
 ## Safety
 

@@ -6,9 +6,9 @@ use vfs_types::{
     GlobNodeType, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    NodeMutation, NodeMutationResult, OutgoingLinksRequest, QueryContextRequest,
-    SearchNodePathsRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem,
-    WriteNodeRequest,
+    NodeMutation, NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest,
+    QueryContextRequest, SearchNodePathsRequest, SearchPreviewMode, SourceEvidenceRequest,
+    WriteNodeItem, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -18,6 +18,28 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
         .run_fs_migrations()
         .expect("fs migrations should succeed");
     (dir, store)
+}
+
+#[test]
+fn database_open_failure_is_write_unavailable() {
+    let dir = tempdir().expect("temp dir should exist");
+    let store = FsStore::new(dir.path().to_path_buf());
+
+    let error = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/unavailable.md".to_string(),
+                kind: NodeKind::File,
+                content: "content".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1,
+        )
+        .expect_err("opening a directory as SQLite should fail");
+
+    assert_eq!(error.code, NodeMutationErrorCode::WriteUnavailable);
 }
 
 fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
@@ -83,7 +105,9 @@ fn heterogeneous_mutation_batch_is_ordered_and_atomic() {
             2,
         )
         .expect_err("a failed operation should roll back the batch");
-    assert!(error.starts_with("operation 1 failed:"));
+    assert_eq!(error.failed_index, Some(1));
+    assert_eq!(error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(error.conflict_path, None);
     assert_eq!(
         store
             .read_node("/Knowledge/original.md")
@@ -147,7 +171,7 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         )
         .expect_err("write without parent folder should fail");
     assert_eq!(
-        write_error,
+        write_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
 
@@ -166,7 +190,7 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         )
         .expect_err("append without parent folder should fail");
     assert_eq!(
-        append_error,
+        append_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
 
@@ -180,7 +204,7 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         )
         .expect_err("mkdir without parent folder should fail");
     assert_eq!(
-        mkdir_error,
+        mkdir_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
 
@@ -211,7 +235,7 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         )
         .expect_err("move without target parent folder should fail");
     assert_eq!(
-        move_error,
+        move_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
 }
@@ -247,7 +271,7 @@ fn file_and_source_parents_cannot_contain_children() {
         )
         .expect_err("write below file should fail");
     assert_eq!(
-        file_child_error,
+        file_child_error.message,
         "parent path is not a folder: /Knowledge/file"
     );
 
@@ -276,7 +300,7 @@ fn file_and_source_parents_cannot_contain_children() {
         )
         .expect_err("mkdir below source should fail");
     assert_eq!(
-        mkdir_error,
+        mkdir_error.message,
         "parent path is not a folder: /Sources/source/source.md"
     );
     let move_error = store
@@ -292,7 +316,7 @@ fn file_and_source_parents_cannot_contain_children() {
         )
         .expect_err("move below source should fail");
     assert_eq!(
-        move_error,
+        move_error.message,
         "parent path is not a folder: /Sources/source/source.md"
     );
 }
@@ -363,7 +387,9 @@ fn append_node_creates_updates_and_checks_etag() {
             12,
         )
         .expect_err("stale append should fail");
-    assert!(stale.contains("expected_etag"));
+    assert!(stale.message.contains("expected_etag"));
+    assert_eq!(stale.code, NodeMutationErrorCode::EtagConflict);
+    assert_eq!(stale.conflict_path.as_deref(), Some("/Knowledge/log.md"));
 }
 
 #[test]
@@ -1096,7 +1122,7 @@ fn edit_node_enforces_plain_text_replacement_rules() {
             11,
         )
         .expect_err("ambiguous edit should fail");
-    assert!(ambiguous.contains("multiple"));
+    assert!(ambiguous.message.contains("multiple"));
 
     let edited = store
         .edit_node(
@@ -1134,7 +1160,7 @@ fn edit_node_enforces_plain_text_replacement_rules() {
             13,
         )
         .expect_err("missing edit should fail");
-    assert!(missing.contains("did not match"));
+    assert!(missing.message.contains("did not match"));
 }
 
 #[test]
@@ -1165,7 +1191,8 @@ fn mkdir_node_creates_folder_node() {
             11,
         )
         .expect_err("invalid mkdir path should fail");
-    assert!(invalid.contains("must not end with"));
+    assert!(invalid.message.contains("must not end with"));
+    assert_eq!(invalid.code, NodeMutationErrorCode::InvalidOperation);
 
     let conn = Connection::open(store.database_path()).expect("db should open");
     let count = conn
@@ -1305,7 +1332,7 @@ fn move_node_rejects_protected_root_folders() {
                 11,
             )
             .expect_err("protected root move should fail");
-        assert!(error.contains("cannot move protected folder"));
+        assert!(error.message.contains("cannot move protected folder"));
     }
 }
 
@@ -1336,7 +1363,7 @@ fn delete_node_rejects_empty_protected_root_folders() {
                 12,
             )
             .expect_err("protected root delete should fail");
-        assert!(error.contains("cannot delete protected folder"));
+        assert!(error.message.contains("cannot delete protected folder"));
     }
 }
 
@@ -1445,7 +1472,7 @@ fn folder_move_collision_fails_without_partial_updates() {
         )
         .expect_err("folder move collision should fail");
 
-    assert!(error.contains("target node already exists"));
+    assert!(error.message.contains("target node already exists"));
     assert_eq!(
         store
             .read_node("/Knowledge/work/item.md")
@@ -1851,7 +1878,7 @@ fn multi_edit_node_is_atomic() {
             12,
         )
         .expect_err("multi edit should rollback on missing text");
-    assert!(failed.contains("did not match"));
+    assert!(failed.message.contains("did not match"));
 
     let current = store
         .read_node("/Knowledge/multi.md")

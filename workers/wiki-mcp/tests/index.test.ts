@@ -23,7 +23,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/vfs.js", () => ({
   KinicMutationError: class KinicMutationError extends Error {
-    constructor(readonly code: string, readonly failedIndex: number | null = null) {
+    constructor(
+      readonly code: string,
+      readonly failedIndex: number | null = null,
+      readonly conflictPath: string | null = null
+    ) {
       super(code);
     }
   },
@@ -353,7 +357,7 @@ describe("wiki mcp worker", () => {
     expect(response.headers.get("www-authenticate")).toContain(
       'resource_metadata="https://wiki-mcp-staging.kinic.xyz/.well-known/oauth-protected-resource/mcp"'
     );
-    expect(response.headers.get("www-authenticate")).toContain('scope="mcp:read mcp:write"');
+    expect(response.headers.get("www-authenticate")).toContain('scope="mcp:read"');
     expect(mocks.listDatabases).not.toHaveBeenCalled();
   });
 
@@ -435,7 +439,7 @@ describe("wiki mcp worker", () => {
       "write_nodes",
       {
         database_id: "db_alpha",
-        nodes: [{ path: "/Memory/facts.md", content: "updated context", expected_etag: "etag-1" }]
+        nodes: [{ path: "/Memory/facts.md", kind: "file", content: "updated context", metadata_json: "{}", expected_etag: "etag-1" }]
       }
     );
 
@@ -454,6 +458,27 @@ describe("wiki mcp worker", () => {
     ]);
   });
 
+  it.each([
+    ["write_nodes kind", "write_nodes", { database_id: "db_alpha", nodes: [{ path: "/a.md", content: "a", metadata_json: "{}" }] }],
+    ["write_nodes metadata", "write_nodes", { database_id: "db_alpha", nodes: [{ path: "/a.md", kind: "file", content: "a" }] }],
+    ["batch write kind", "mutate_nodes_batch", { database_id: "db_alpha", operations: [{ type: "write", path: "/a.md", content: "a", metadata_json: "{}" }] }],
+    ["batch write metadata", "mutate_nodes_batch", { database_id: "db_alpha", operations: [{ type: "write", path: "/a.md", kind: "file", content: "a" }] }]
+  ])("rejects missing full-replacement field: %s", async (_caseName, tool, args) => {
+    const result = await callPrivateTool(
+      {
+        ...privateRequiredEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      tool,
+      args
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(mocks.writeNodes).not.toHaveBeenCalled();
+    expect(mocks.mutateNodesBatch).not.toHaveBeenCalled();
+  });
+
   it("rejects writes for a Questions-only session", async () => {
     const result = await callPrivateTool(
       {
@@ -462,7 +487,7 @@ describe("wiki mcp worker", () => {
         KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], iiPermission: "queries" as const }
       },
       "write_nodes",
-      { database_id: "db_alpha", nodes: [{ path: "/Memory/facts.md", content: "blocked" }] }
+      { database_id: "db_alpha", nodes: [{ path: "/Memory/facts.md", kind: "file", content: "blocked", metadata_json: "{}" }] }
     );
 
     expect(result.result.isError).toBe(true);
@@ -497,7 +522,7 @@ describe("wiki mcp worker", () => {
       {
         database_id: "db_alpha",
         operations: [
-          { type: "write", path: "/a.md", content: "a" },
+          { type: "write", path: "/a.md", kind: "file", content: "a", metadata_json: "{}" },
           { type: "append", path: "/a.md", content: "b", expected_etag: "e1", separator: "\n" },
           { type: "edit", path: "/a.md", old_text: "a", new_text: "A", expected_etag: "e2" },
           { type: "multi_edit", path: "/a.md", edits: [{ old_text: "A", new_text: "B" }], expected_etag: "e3" },
@@ -520,7 +545,7 @@ describe("wiki mcp worker", () => {
   });
 
   it("returns the failed operation and current node on an atomic batch etag conflict", async () => {
-    mocks.mutateNodesBatch.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1));
+    mocks.mutateNodesBatch.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1, "/Memory/b.md"));
     mocks.readNode.mockResolvedValueOnce({
       path: "/Memory/b.md",
       kind: "file",
@@ -550,14 +575,17 @@ describe("wiki mcp worker", () => {
       error: "etag_conflict",
       failed_index: 1,
       path: "/Memory/b.md",
+      conflict_path: "/Memory/b.md",
       current_etag: "etag-current",
-      current_content: "current value"
+      current_content: "current value",
+      current_content_truncated: false,
+      current_content_size: 13
     });
     expect(mocks.readNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", "/Memory/b.md");
   });
 
   it("returns the failed node and current content on a write_nodes etag conflict", async () => {
-    mocks.writeNodes.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1));
+    mocks.writeNodes.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 1, "/Memory/b.md"));
     mocks.readNode.mockResolvedValueOnce({
       path: "/Memory/b.md",
       kind: "file",
@@ -576,8 +604,8 @@ describe("wiki mcp worker", () => {
       {
         database_id: "db_alpha",
         nodes: [
-          { path: "/Memory/a.md", content: "first" },
-          { path: "/Memory/b.md", content: "second", expected_etag: "stale" }
+          { path: "/Memory/a.md", kind: "file", content: "first", metadata_json: "{}" },
+          { path: "/Memory/b.md", kind: "file", content: "second", metadata_json: "{}", expected_etag: "stale" }
         ]
       }
     );
@@ -587,10 +615,81 @@ describe("wiki mcp worker", () => {
       error: "etag_conflict",
       failed_index: 1,
       path: "/Memory/b.md",
+      conflict_path: "/Memory/b.md",
       current_etag: "etag-current",
-      current_content: "current value"
+      current_content: "current value",
+      current_content_truncated: false,
+      current_content_size: 13
     });
     expect(mocks.readNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", "/Memory/b.md");
+  });
+
+  it("reads the actual index node for a folder index etag conflict", async () => {
+    mocks.mutateNodesBatch.mockRejectedValueOnce(
+      new KinicMutationError("etag_conflict", 0, "/Memory/topic/index.md")
+    );
+    mocks.readNode.mockResolvedValueOnce({
+      path: "/Memory/topic/index.md",
+      kind: "file",
+      content: "index content",
+      metadataJson: "{}",
+      updatedAt: "3",
+      etag: "index-current"
+    });
+    const result = await callPrivateTool(
+      {
+        ...privateRequiredEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      "mutate_nodes_batch",
+      {
+        database_id: "db_alpha",
+        operations: [{ type: "delete", path: "/Memory/topic", expected_etag: "folder", expected_folder_index_etag: "stale" }]
+      }
+    );
+
+    expect(JSON.parse(result.result.content[0].text)).toMatchObject({
+      path: "/Memory/topic",
+      conflict_path: "/Memory/topic/index.md",
+      current_etag: "index-current",
+      current_content: "index content"
+    });
+    expect(mocks.readNode).toHaveBeenCalledWith(expect.anything(), "db_alpha", "/Memory/topic/index.md");
+  });
+
+  it("bounds conflict content and the serialized MCP error", async () => {
+    const content = "x".repeat(300_000);
+    mocks.writeNodes.mockRejectedValueOnce(
+      new KinicMutationError("etag_conflict", 0, "/Memory/large.md")
+    );
+    mocks.readNode.mockResolvedValueOnce({
+      path: "/Memory/large.md",
+      kind: "file",
+      content,
+      metadataJson: "{}",
+      updatedAt: "3",
+      etag: "etag-current"
+    });
+    const result = await callPrivateTool(
+      {
+        ...privateRequiredEnv,
+        KINIC_WIKI_IDENTITY: {} as Identity,
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+      },
+      "write_nodes",
+      {
+        database_id: "db_alpha",
+        nodes: [{ path: "/Memory/large.md", kind: "file", content: "new", metadata_json: "{}", expected_etag: "stale" }]
+      }
+    );
+    const serialized = result.result.content[0].text;
+    const payload = JSON.parse(serialized);
+
+    expect(payload.current_content.length).toBeLessThanOrEqual(40_000);
+    expect(payload.current_content_truncated).toBe(true);
+    expect(payload.current_content_size).toBe(300_000);
+    expect(serialized.length).toBeLessThan(256 * 1024);
   });
 
   it("accepts the documented list limit through MCP JSON-RPC", async () => {

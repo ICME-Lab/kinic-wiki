@@ -19,10 +19,10 @@ use vfs_types::{
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind, NodeMutation,
-    NodeMutationResult, OutgoingLinksRequest, PublishNodeRequest, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, StorageBillingBatchRequest, UpdateDatabaseMetadataRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest, PublishNodeRequest,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
+    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 mod fs_entrypoints;
@@ -2466,7 +2466,8 @@ fn failed_update_keeps_original_error_when_instruction_counter_decreases() {
     })
     .expect_err("stale etag write should fail");
 
-    assert!(error.contains("etag"));
+    assert_eq!(error.code, NodeMutationErrorCode::NotFound);
+    assert!(error.message.contains("/Knowledge/stale.md"));
     let entries = list_database_cycle_entries("default".to_string(), None, 20)
         .expect("database cycles ledger should load")
         .entries;
@@ -2498,8 +2499,10 @@ fn write_nodes_rejects_low_database_cycles_balance() {
     })
     .expect_err("low balance database should reject batch write");
 
-    assert!(single.contains("database cycles are suspended"));
-    assert!(error.contains("database cycles are suspended"));
+    assert!(single.message.contains("database cycles are suspended"));
+    assert!(error.message.contains("database cycles are suspended"));
+    assert_eq!(single.code, NodeMutationErrorCode::WriteUnavailable);
+    assert_eq!(error.code, NodeMutationErrorCode::WriteUnavailable);
     assert!(
         read_node(
             "default".to_string(),
@@ -2539,8 +2542,8 @@ fn suspended_database_rejects_metered_mutations() {
     })
     .expect_err("suspended database should reject mkdir");
 
-    assert!(batch.contains("database cycles are suspended"));
-    assert!(mkdir.contains("database cycles are suspended"));
+    assert!(batch.message.contains("database cycles are suspended"));
+    assert!(mkdir.message.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -2605,8 +2608,8 @@ fn metered_update_checks_access_before_cycles_state() {
     })
     .expect_err("non-member should fail before cycles state");
 
-    assert!(error.contains("principal has no access"));
-    assert!(!error.contains("database cycles are suspended"));
+    assert!(error.message.contains("principal has no access"));
+    assert!(!error.message.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -2716,7 +2719,12 @@ fn write_nodes_rejects_reader_role() {
     })
     .expect_err("reader should not write");
 
-    assert!(error.contains("principal lacks required database role"));
+    assert!(
+        error
+            .message
+            .contains("principal lacks required database role")
+    );
+    assert_eq!(error.code, NodeMutationErrorCode::Forbidden);
 }
 
 #[test]

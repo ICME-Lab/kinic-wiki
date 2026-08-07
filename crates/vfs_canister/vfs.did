@@ -507,6 +507,19 @@ type NodeMutationAck = record {
   kind : NodeKind;
   path : text;
 };
+type NodeMutationError = record {
+  code : NodeMutationErrorCode;
+  conflict_path : opt text;
+  failed_index : opt nat32;
+  message : text;
+};
+type NodeMutationErrorCode = variant {
+  WriteUnavailable;
+  NotFound;
+  EtagConflict;
+  Forbidden;
+  InvalidOperation;
+};
 type NodeMutationResult = variant {
   MultiEdit : EditNodeResult;
   Edit : EditNodeResult;
@@ -552,7 +565,7 @@ type QueryContextRequest = record {
   namespace : opt text;
 };
 type RenameDatabaseRequest = record { name : text; database_id : text };
-type Result = variant { Ok : WriteNodeResult; Err : text };
+type Result = variant { Ok : WriteNodeResult; Err : NodeMutationError };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : InitialFreeDatabaseGrantStatus; Err : text };
 type Result_11 = variant { Ok : opt NodePublication; Err : text };
@@ -576,9 +589,12 @@ type Result_27 = variant { Ok : MarketPurchasePreview; Err : text };
 type Result_28 = variant { Ok : MarketOrder; Err : text };
 type Result_29 = variant { Ok : MemoryManifest; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_30 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_31 = variant { Ok : MoveNodeResult; Err : text };
-type Result_32 = variant { Ok : vec NodeMutationResult; Err : text };
+type Result_30 = variant { Ok : MkdirNodeResult; Err : NodeMutationError };
+type Result_31 = variant { Ok : MoveNodeResult; Err : NodeMutationError };
+type Result_32 = variant {
+  Ok : vec NodeMutationResult;
+  Err : NodeMutationError;
+};
 type Result_33 = variant { Ok : NodePublication; Err : text };
 type Result_34 = variant { Ok : CyclesPurchaseResult; Err : text };
 type Result_35 = variant { Ok : QueryContext; Err : text };
@@ -593,10 +609,13 @@ type Result_42 = variant { Ok : SourceEvidence; Err : text };
 type Result_43 = variant { Ok : DatabaseMetadata; Err : text };
 type Result_44 = variant { Ok : WikiMetrics; Err : text };
 type Result_45 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_46 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_47 = variant { Ok : WriteSourceForGenerationResult; Err : text };
-type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
-type Result_6 = variant { Ok : EditNodeResult; Err : text };
+type Result_46 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
+type Result_47 = variant {
+  Ok : WriteSourceForGenerationResult;
+  Err : NodeMutationError;
+};
+type Result_5 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
+type Result_6 = variant { Ok : EditNodeResult; Err : NodeMutationError };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
 type Result_8 = variant { Ok : FetchUpdatesResponse; Err : text };
 type Result_9 = variant { Ok : CyclesBillingConfig; Err : text };

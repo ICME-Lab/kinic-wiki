@@ -565,12 +565,6 @@ impl NodeMutationError {
     }
 }
 
-impl From<String> for NodeMutationError {
-    fn from(message: String) -> Self {
-        Self::invalid_operation(message)
-    }
-}
-
 impl fmt::Display for NodeMutationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)

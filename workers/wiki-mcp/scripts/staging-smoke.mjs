@@ -283,7 +283,7 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
     artifacts.push(mainArtifact);
     const created = await client.callTool({
       name: "write_nodes",
-      arguments: { database_id: databaseId, nodes: [{ path, content: mainArtifact.expectedContent }] }
+      arguments: { database_id: databaseId, nodes: [{ path, kind: "file", content: mainArtifact.expectedContent, metadata_json: "{}" }] }
     });
     assertToolSucceeded("write_nodes single", created);
     let etag = created.structuredContent?.results?.[0]?.node?.etag;
@@ -297,7 +297,7 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
       name: "write_nodes",
       arguments: {
         database_id: databaseId,
-        nodes: [{ path, content: "stale-write-must-not-commit", expected_etag: `stale-${marker}` }]
+        nodes: [{ path, kind: "file", content: "stale-write-must-not-commit", metadata_json: "{}", expected_etag: `stale-${marker}` }]
       }
     });
     const conflictDetail = assertEtagConflict("write_nodes stale etag", conflict, path, etag);
@@ -311,8 +311,8 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
       arguments: {
         database_id: databaseId,
         nodes: [
-          { path: rollbackPath, content: rollbackContent },
-          { path, content: "stale-batch-must-not-commit", expected_etag: `stale-${marker}` }
+          { path: rollbackPath, kind: "file", content: rollbackContent, metadata_json: "{}" },
+          { path, kind: "file", content: "stale-batch-must-not-commit", metadata_json: "{}", expected_etag: `stale-${marker}` }
         ]
       }
     });
@@ -351,7 +351,9 @@ export async function smokeWriteBatchDelete(client, databaseId, path) {
         database_id: databaseId,
         nodes: batchArtifacts.map((artifact) => ({
           path: artifact.path,
-          content: artifact.expectedContent
+          kind: "file",
+          content: artifact.expectedContent,
+          metadata_json: "{}"
         }))
       }
     });

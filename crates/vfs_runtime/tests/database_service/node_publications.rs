@@ -247,7 +247,11 @@ fn write_node_unpublishes_when_file_becomes_source_without_resurrection() {
             5,
         )
         .expect_err("source conversion should stop when publication detach fails");
-    assert!(detach_error.contains("injected publication detach failure"));
+    assert!(
+        detach_error
+            .message
+            .contains("injected publication detach failure")
+    );
 
     service
         .write_node(
@@ -922,7 +926,11 @@ fn publication_detach_failure_aborts_overwrite_move() {
             5,
         )
         .expect_err("move should stop when publication detach fails");
-    assert!(error.contains("injected publication detach failure"));
+    assert!(
+        error
+            .message
+            .contains("injected publication detach failure")
+    );
     assert_eq!(
         service
             .read_node("publication-move-detach", "owner", "/Knowledge/private.md")

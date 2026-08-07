@@ -107,18 +107,20 @@ fn current_etag(path: &str) -> Option<String> {
 fn write_seed(path: &str, content: &str, expected_etag: Option<String>, now: i64) -> String {
     with_service(|service| {
         let caller = caller_text();
-        service.write_node(
-            &caller,
-            WriteNodeRequest {
-                database_id: BENCH_DATABASE_ID.to_string(),
-                path: path.to_string(),
-                kind: NodeKind::File,
-                content: content.to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag,
-            },
-            now,
-        )
+        service
+            .write_node(
+                &caller,
+                WriteNodeRequest {
+                    database_id: BENCH_DATABASE_ID.to_string(),
+                    path: path.to_string(),
+                    kind: NodeKind::File,
+                    content: content.to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag,
+                },
+                now,
+            )
+            .map_err(|error| error.to_string())
     })
     .expect("bench seed write should succeed")
     .node
@@ -129,14 +131,16 @@ fn ensure_seed_parent_folders(parent_paths: &BTreeSet<String>, now: i64) {
     for parent_path in parent_paths {
         with_service(|service| {
             let caller = caller_text();
-            service.mkdir_node(
-                &caller,
-                MkdirNodeRequest {
-                    database_id: BENCH_DATABASE_ID.to_string(),
-                    path: parent_path.clone(),
-                },
-                now,
-            )
+            service
+                .mkdir_node(
+                    &caller,
+                    MkdirNodeRequest {
+                        database_id: BENCH_DATABASE_ID.to_string(),
+                        path: parent_path.clone(),
+                    },
+                    now,
+                )
+                .map_err(|error| error.to_string())
         })
         .expect("bench seed parent folder should exist or be created");
     }
@@ -321,18 +325,20 @@ fn seed_storage_billing_databases(case: BenchCase) {
                 &caller,
                 10_000 + i64::try_from(index).unwrap_or(i64::MAX),
             )?;
-            service.write_node(
-                &caller,
-                WriteNodeRequest {
-                    database_id: database_id.clone(),
-                    path: "/Knowledge/storage-billing.md".to_string(),
-                    kind: NodeKind::File,
-                    content: node_content(index, true),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                },
-                20_000 + i64::try_from(index).unwrap_or(i64::MAX),
-            )?;
+            service
+                .write_node(
+                    &caller,
+                    WriteNodeRequest {
+                        database_id: database_id.clone(),
+                        path: "/Knowledge/storage-billing.md".to_string(),
+                        kind: NodeKind::File,
+                        content: node_content(index, true),
+                        metadata_json: "{}".to_string(),
+                        expected_etag: None,
+                    },
+                    20_000 + i64::try_from(index).unwrap_or(i64::MAX),
+                )
+                .map_err(|error| error.to_string())?;
             Ok(())
         })
         .expect("bench storage billing database should seed");

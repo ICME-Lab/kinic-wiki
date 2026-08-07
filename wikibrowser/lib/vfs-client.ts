@@ -46,7 +46,7 @@ export * from "./vfs-client/actor";
 export * from "./vfs-client/cycles";
 export * from "./vfs-client/market";
 import type { CreateDatabaseResult, RawCanisterHealth, RawChild, RawDatabaseMember, RawNode, RawNodeContext, RawNodePublication, RawPublicNode, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, Variant } from "./vfs-client/raw-types";
-import { callVfs, createAuthenticatedActor, createReadActor, healthCache, normalizeDatabaseRole, normalizeDatabaseStatus, normalizeLinkEdge, normalizeDatabaseMetadata, rawOptionalText, throwCanisterError, createVfsActor } from "./vfs-client/actor";
+import { callVfs, createAuthenticatedActor, createReadActor, healthCache, normalizeDatabaseRole, normalizeDatabaseStatus, normalizeLinkEdge, normalizeDatabaseMetadata, rawOptionalText, throwCanisterError, throwNodeMutationError, createVfsActor } from "./vfs-client/actor";
 import { normalizeInitialFreeDatabaseGrantStatus } from "./vfs-client/cycles";
 export async function readNode(canisterId: string, databaseId: string, path: string, identity?: Identity): Promise<WikiNode | null> {
   return callVfs(async () => {
@@ -194,7 +194,7 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
       expected_etag: request.expectedEtag ? [request.expectedEtag] : []
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return {
       created: result.Ok.created,
@@ -217,7 +217,7 @@ export async function writeNodesAuthenticated(canisterId: string, identity: Iden
       }))
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return result.Ok.map((write) => ({ created: write.created, node: normalizeRecentNode(write.node) }));
   });
@@ -239,7 +239,7 @@ export async function writeSourceForGenerationAuthenticated(
       session_nonce: request.sessionNonce
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return {
       write: {
@@ -261,7 +261,7 @@ export async function deleteNodeAuthenticated(canisterId: string, identity: Iden
       expected_folder_index_etag: request.expectedFolderIndexEtag ? [request.expectedFolderIndexEtag] : []
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return result.Ok;
   });
@@ -275,7 +275,7 @@ export async function mkdirNodeAuthenticated(canisterId: string, identity: Ident
       path: request.path
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return result.Ok;
   });
@@ -292,7 +292,7 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
       overwrite: request.overwrite
     });
     if ("Err" in result) {
-      throwCanisterError(result.Err);
+      throwNodeMutationError(result.Err);
     }
     return {
       fromPath: result.Ok.from_path,
