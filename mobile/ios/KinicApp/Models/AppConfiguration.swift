@@ -64,7 +64,7 @@ struct AppConfiguration: Equatable, Sendable {
     static let preview = AppConfiguration(
         canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
         apiBaseURL: URL(string: "https://icp0.io")!,
-        identityProvider: URL(string: "https://id.ai/#authorize")!,
+        identityProvider: URL(string: "https://id.ai/authorize")!,
         derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
         authOrigin: URL(string: "https://wiki.kinic.xyz")!,
         callbackDomain: "wiki.kinic.xyz",

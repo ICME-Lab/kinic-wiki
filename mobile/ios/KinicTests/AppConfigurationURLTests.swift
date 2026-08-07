@@ -8,6 +8,16 @@ import Testing
 
 struct AppConfigurationURLTests {
     @Test
+    func usesDirectInternetIdentityAuthorizationURL() {
+        let identityProvider = AppConfiguration.preview.identityProvider
+        #expect(identityProvider.scheme == "https")
+        #expect(identityProvider.host == "id.ai")
+        #expect(identityProvider.path == "/authorize")
+        #expect(identityProvider.query == nil)
+        #expect(identityProvider.fragment == nil)
+    }
+
+    @Test
     func buildsDatabaseNodeURLWithEncodedComponents() {
         let url = AppConfiguration.preview.databaseNodeURL(
             databaseId: "db demo",
