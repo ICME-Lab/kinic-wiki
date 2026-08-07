@@ -195,11 +195,11 @@ export function ExplorerHeaderActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem disabled={importDisabled} title={importFilesTitle} onSelect={onImportFiles}>
             <FileInput aria-hidden="true" size={14} />
-            Import local files
+            Import files
           </DropdownMenuItem>
           <DropdownMenuItem disabled={importDisabled} title={importFolderTitle} onSelect={onImportFolder}>
             <FolderInput aria-hidden="true" size={14} />
-            Import local folder
+            Import folder
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled={renameDisabled} title={renameTitle} onSelect={onRename}>

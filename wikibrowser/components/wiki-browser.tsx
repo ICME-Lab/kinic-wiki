@@ -840,8 +840,8 @@ function WikiBrowserContent() {
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
                 deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file, source node, or folder without visible children to delete")}
-                importFilesTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import local files into ${explorerCreateDirectory}`}
-                importFolderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import a local folder into ${explorerCreateDirectory}`}
+                importFilesTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import files into ${explorerCreateDirectory}`}
+                importFolderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import folder into ${explorerCreateDirectory}`}
                 onSortOrderChange={updateExplorerSortOrder}
                 onNewFile={() => {
                   setExplorerActionError(null);

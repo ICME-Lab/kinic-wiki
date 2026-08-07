@@ -57,7 +57,7 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
 
   const explorerPanel = page.locator('[data-tid="wiki-explorer-panel"]');
   await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
-  await page.getByRole("menuitem", { name: "Import local files" }).click();
+  await page.getByRole("menuitem", { name: "Import files" }).click();
   await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles([markdownImportPath, pdfImportPath]);
   const fileImportDialog = page.getByRole("dialog", { name: "Import files" });
   await expect(fileImportDialog.getByText("2 selected files")).toBeVisible();
@@ -79,7 +79,7 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await writeFile(join(importDirectory, "image.png"), "not-an-image");
 
   await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
-  await page.getByRole("menuitem", { name: "Import local folder" }).click();
+  await page.getByRole("menuitem", { name: "Import folder" }).click();
   await page.locator('input[type="file"][webkitdirectory]').setInputFiles(importDirectory);
   const importDialog = page.getByRole("dialog", { name: "Import folder" });
   await expect(importDialog.getByText("PDF converted")).toBeVisible();
