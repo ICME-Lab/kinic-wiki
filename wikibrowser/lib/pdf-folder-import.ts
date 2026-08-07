@@ -1,4 +1,4 @@
-export const PDF_IMPORT_EXTRACTOR = "pdfjs-dist@6.1.200";
+export const PDF_IMPORT_EXTRACTOR = "pdfjs-dist@6.2.108";
 
 const GFM_AUTOLINK_BREAK = "\u2060";
 
