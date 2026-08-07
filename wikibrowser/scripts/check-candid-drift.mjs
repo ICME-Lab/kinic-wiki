@@ -8,7 +8,8 @@ import { checkCandidSubset } from "@kinic/candid-tools/subset-check";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 const did = readFileSync(join(root, "crates", "vfs_canister", "vfs.did"), "utf8");
-const idl = readFileSync(join(here, "..", "lib", "vfs-idl.ts"), "utf8");
+const idlPath = join(root, "packages", "vfs-candid", "index.ts");
+const idl = readFileSync(idlPath, "utf8");
 
 const failures = checkCandidSubset({
   didSource: did,
@@ -23,7 +24,7 @@ try {
   const generated = generateVfsIdlFromDid(did);
   if (idl !== generated) {
     failures.push(
-      "wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node node_modules/@kinic/candid-tools/generate-vfs-idl.mjs --out lib/vfs-idl.ts"
+      "packages/vfs-candid/index.ts is not generated from crates/vfs_canister/vfs.did; run pnpm --dir packages/vfs-candid generate"
     );
   }
 } catch (error) {

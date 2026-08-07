@@ -39,6 +39,12 @@ importers:
 
   ../../packages/source-contracts: {}
 
+  ../../packages/vfs-candid:
+    dependencies:
+      '@icp-sdk/core':
+        specifier: ^5.4.0
+        version: 5.4.0
+
   ../../packages/vfs-client-core: {}
 
   ../../tools/candid: {}

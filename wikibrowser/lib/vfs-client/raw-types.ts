@@ -323,6 +323,13 @@ export type RawWriteNodeResult = {
   node: RawRecent;
 };
 
+export type RawWriteNodeItem = Omit<RawWriteNodeRequest, "database_id">;
+
+export type RawWriteNodesRequest = {
+  database_id: string;
+  nodes: RawWriteNodeItem[];
+};
+
 export type RawWriteSourceForGenerationRequest = {
   database_id: string;
   path: string;
@@ -520,6 +527,7 @@ export type VfsActor = {
     preview_mode: [] | [Variant];
   }) => Promise<{ Ok: RawSearchHit[] } | { Err: string }>;
   write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
+  write_nodes: (request: RawWriteNodesRequest) => Promise<{ Ok: RawWriteNodeResult[] } | { Err: string }>;
   write_source_for_generation: (request: RawWriteSourceForGenerationRequest) => Promise<
     { Ok: RawWriteSourceForGenerationResult } | { Err: string }
   >;

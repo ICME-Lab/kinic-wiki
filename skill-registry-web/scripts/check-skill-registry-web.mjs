@@ -14,7 +14,7 @@ const packages = readFileSync(new URL("../lib/skill-registry-package.ts", import
 const wikiHelpers = readFileSync(new URL("../lib/wiki-helpers.ts", import.meta.url), "utf8");
 const types = readFileSync(new URL("../lib/types.ts", import.meta.url), "utf8");
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
-const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
+const vfsIdl = readFileSync(new URL("../../packages/vfs-candid/index.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const did = readFileSync(new URL("../../crates/vfs_canister/vfs.did", import.meta.url), "utf8");
 

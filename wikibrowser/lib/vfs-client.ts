@@ -36,6 +36,7 @@ import type {
   WikiNode,
   WriteNodeRequest,
   WriteNodeResult,
+  WriteNodesRequest,
   WriteSourceForGenerationRequest,
   WriteSourceForGenerationResult
 } from "@/lib/types";
@@ -199,6 +200,26 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
       created: result.Ok.created,
       node: normalizeRecentNode(result.Ok.node)
     };
+  });
+}
+
+export async function writeNodesAuthenticated(canisterId: string, identity: Identity, request: WriteNodesRequest): Promise<WriteNodeResult[]> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.write_nodes({
+      database_id: request.databaseId,
+      nodes: request.nodes.map((node) => ({
+        path: node.path,
+        kind: nodeKindVariant(node.kind),
+        content: node.content,
+        metadata_json: node.metadataJson,
+        expected_etag: node.expectedEtag ? [node.expectedEtag] : []
+      }))
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.map((write) => ({ created: write.created, node: normalizeRecentNode(write.node) }));
   });
 }
 

@@ -60,6 +60,8 @@ const wikiBrowserFiles = [
   "../components/wiki-browser/top-bar.tsx"
 ];
 const wikiBrowserSource = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
+const folderImportDialogSource = readFileSync(new URL("../components/folder-import-dialog.tsx", import.meta.url), "utf8");
+const localFolderImportSource = readFileSync(new URL("../lib/local-folder-import.ts", import.meta.url), "utf8");
 const queryPanelSource = readFileSync(new URL("../components/query-panel.tsx", import.meta.url), "utf8");
 const queryContextSource = readFileSync(new URL("../lib/query-context.ts", import.meta.url), "utf8");
 const vfsClientFiles = [
@@ -123,6 +125,18 @@ assert.match(wikiBrowserSource, /deleteNodeAuthenticated/);
 assert.match(wikiBrowserSource, /writeNodeAuthenticated/);
 assert.match(wikiBrowserSource, /mkdirNodeAuthenticated/);
 assert.match(wikiBrowserSource, /moveNodeAuthenticated/);
+assert.match(wikiBrowserSource, /Import local folder/);
+assert.match(wikiBrowserSource, /webkitdirectory/);
+assert.match(wikiBrowserSource, /writeNodesAuthenticated/);
+assert.match(folderImportDialogSource, /Local folder → Wiki/);
+assert.match(folderImportDialogSource, /existing file.*will be kept unless replacement is selected/);
+assert.match(folderImportDialogSource, /const busy = state\.phase === "writing"/);
+assert.match(localFolderImportSource, /FOLDER_IMPORT_NODE_LIMIT = 100/);
+assert.match(localFolderImportSource, /FOLDER_IMPORT_BYTE_LIMIT = 1_500_000/);
+assert.match(localFolderImportSource, /FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT = 20_000_000/);
+assert.match(localFolderImportSource, /status === "conflict" && replacements\.has\(entry\.path\)/);
+assert.match(wikiBrowserSource, /new AbortController\(\)/);
+assert.match(wikiBrowserSource, /folderImportAbortController\.current\?\.abort\(\);[\s\S]{0,240}\}, \[canisterId, databaseId\]\);/);
 assert.match(wikiBrowserSource, /nodeContextCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /childNodesCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /expectedEtag: null/);

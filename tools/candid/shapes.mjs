@@ -417,6 +417,20 @@ export const expectedTypes = {
       database_id: "text"
     }
   },
+  WriteNodeItem: {
+    kind: "record",
+    fields: {
+      content: "text",
+      kind: "NodeKind",
+      path: "text",
+      expected_etag: "opt text",
+      metadata_json: "text"
+    }
+  },
+  WriteNodesRequest: {
+    kind: "record",
+    fields: { nodes: "vec WriteNodeItem", database_id: "text" }
+  },
   WriteNodeResult: {
     kind: "record",
     fields: { created: "bool", node: "NodeMutationAck" }
@@ -609,6 +623,7 @@ export const expectedTypes = {
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
   ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
+  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "text" } },
   ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
   ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
   ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "text" } },
@@ -752,6 +767,7 @@ export const didTypeAliases = {
   ResultSourceEvidence: "Result_41",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
+  ResultWriteNodes: "Result_45",
   ResultDatabaseMetadata: "Result_42",
   ResultWikiMetrics: "Result_43",
   ResultWikiMetricsSeries: "Result_44",
@@ -822,5 +838,6 @@ export const expectedMethods = {
   update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
+  write_nodes: { input: ["WriteNodesRequest"], output: "ResultWriteNodes", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };

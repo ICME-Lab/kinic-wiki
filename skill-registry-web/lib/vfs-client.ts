@@ -8,7 +8,7 @@ import { isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import { idlFactory } from "@/lib/vfs-idl";
+import { idlFactory } from "@kinic/vfs-candid";
 import type { ChildNode, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
