@@ -12,7 +12,7 @@ const vfsClientFiles = [
 ];
 const client = vfsClientFiles.map((p) => readProjectFile(p)).join("\n");
 const types = readProjectFile("../lib/types.ts");
-const idl = readProjectFile("../lib/vfs-idl.ts");
+const idl = readProjectFile("../../packages/vfs-candid/index.ts");
 
 assert.match(listingDetail, /whitespace-pre-wrap/);
 assert.match(listingDetail, /Purchase complete\. Ledger block \$\{order\.ledgerBlockIndex\}\./);

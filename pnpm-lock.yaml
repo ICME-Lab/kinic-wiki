@@ -57,6 +57,12 @@ importers:
 
   packages/source-contracts: {}
 
+  packages/vfs-candid:
+    dependencies:
+      '@icp-sdk/core':
+        specifier: ^5.4.0
+        version: 5.4.0
+
   packages/vfs-client-core: {}
 
   skill-registry-web:
@@ -67,6 +73,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0
+      '@kinic/vfs-candid':
+        specifier: workspace:*
+        version: link:../packages/vfs-candid
       '@kinic/vfs-client-core':
         specifier: workspace:*
         version: link:../packages/vfs-client-core
@@ -163,6 +172,9 @@ importers:
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts
+      '@kinic/vfs-candid':
+        specifier: workspace:*
+        version: link:../packages/vfs-candid
       '@kinic/vfs-client-core':
         specifier: workspace:*
         version: link:../packages/vfs-client-core

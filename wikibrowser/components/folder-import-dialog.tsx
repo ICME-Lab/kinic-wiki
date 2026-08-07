@@ -4,7 +4,14 @@ import { FileText, FolderTree, Loader2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useModalDialog } from "@/components/use-modal-dialog";
-import { buildFolderImportWrites, FOLDER_IMPORT_BYTE_LIMIT, FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT, type ReconciledFolderImport } from "@/lib/local-folder-import";
+import {
+  buildFolderImportWrites,
+  FOLDER_IMPORT_BYTE_LIMIT,
+  FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT,
+  FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT,
+  FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT,
+  type ReconciledFolderImport
+} from "@/lib/local-folder-import";
 
 export type FolderImportDialogState =
   | { phase: "preparing"; destinationDirectory: string }
@@ -135,7 +142,9 @@ export function FolderImportDialog({
         </div>
 
         <footer className="flex flex-col-reverse gap-2 border-t border-line bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-[11px] text-muted">{formatBytes(FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT)} per source file · {formatBytes(FOLDER_IMPORT_BYTE_LIMIT)} encoded write · up to 100 nodes</p>
+          <p className="text-[11px] text-muted">
+            {formatBytes(FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT)} per file · {formatBytes(FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT)} total · {formatBytes(FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT)} PDF · {formatBytes(FOLDER_IMPORT_BYTE_LIMIT)} encoded · up to 100 nodes
+          </p>
           <div className="flex justify-end gap-2">
             <button data-modal-initial-focus className={secondaryButtonClass} disabled={busy} type="button" onClick={onCancel}>Cancel</button>
             {plan ? (

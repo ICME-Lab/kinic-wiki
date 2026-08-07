@@ -1,5 +1,7 @@
 export const PDF_IMPORT_EXTRACTOR = "pdfjs-dist@6.1.200";
 
+const GFM_AUTOLINK_BREAK = "\u2060";
+
 export type ExtractedPdfImport = {
   content: string;
   metadataJson: string;
@@ -91,14 +93,42 @@ export function pdfTextItemsToPlainText(items: PdfTextItem[]): string {
 export function pdfPagesToMarkdown(fileName: string, pages: string[]): string {
   const title = fileName.replace(/\.pdf$/i, "").replace(/[\r\n]+/g, " ").trim() || "Imported PDF";
   const sections = pages.map((page, index) => {
-    const body = page.trim() || "_No extractable text on this page._";
+    const body = page.trim() ? serializePdfPlainText(page.trim()) : "_No extractable text on this page._";
     return `## Page ${index + 1}\n\n${body}`;
   });
   return [
-    `# ${title}`,
-    `<!-- Text extracted locally from ${fileName.replace(/[\r\n]+/g, " ")}. Original PDF is not stored. -->`,
+    `# ${serializePdfPlainText(title)}`,
+    "<!-- Text extracted locally. Original PDF is not stored. -->",
     ...sections
   ].join("\n\n");
+}
+
+function serializePdfPlainText(value: string): string {
+  const withoutGfmAutolinks = value
+    .replace(/\bhttps?:\/\//giu, (match) => `${match.slice(0, -3)}${GFM_AUTOLINK_BREAK}://`)
+    .replace(/\bwww\./giu, (match) => `${match.slice(0, -1)}${GFM_AUTOLINK_BREAK}.`)
+    .replace(/([\p{L}\p{N}._%+-]+)@(?=[\p{L}\p{N}.-]+\.[\p{L}]{2,})/gu, (_match, localPart: string) => `${localPart}${GFM_AUTOLINK_BREAK}@`);
+
+  return withoutGfmAutolinks.replace(/\r\n?/g, "\n").split("\n").map((line) => {
+    const characters = Array.from(line);
+    const firstContent = characters.findIndex((character) => character !== " " && character !== "\t");
+    let lastContent = characters.length - 1;
+    while (lastContent >= 0 && (characters[lastContent] === " " || characters[lastContent] === "\t")) lastContent -= 1;
+    return characters.map((character, index) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const boundaryWhitespace = (character === " " || character === "\t")
+        && (firstContent === -1 || index < firstContent || index > lastContent);
+      if (boundaryWhitespace || isAsciiPunctuation(codePoint)) return `&#${codePoint};`;
+      return character;
+    }).join("");
+  }).join("\n");
+}
+
+function isAsciiPunctuation(codePoint: number): boolean {
+  return (codePoint >= 33 && codePoint <= 47)
+    || (codePoint >= 58 && codePoint <= 64)
+    || (codePoint >= 91 && codePoint <= 96)
+    || (codePoint >= 123 && codePoint <= 126);
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {

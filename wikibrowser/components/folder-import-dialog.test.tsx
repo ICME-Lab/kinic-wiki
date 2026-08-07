@@ -22,6 +22,7 @@ describe("FolderImportDialog", () => {
       <FolderImportDialog state={{ phase: "preparing", destinationDirectory: "/Knowledge" }} onCancel={onCancel} onImport={vi.fn()} />
     );
 
+    expect(screen.getByText("20.00 MB per file · 100.00 MB total · 50.00 MB PDF · 1.50 MB encoded · up to 100 nodes")).toBeTruthy();
     const cancel = screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
     expect(cancel.disabled).toBe(false);
     fireEvent.click(cancel);

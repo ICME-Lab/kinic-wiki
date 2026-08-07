@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildFolderImportWrites,
+  FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT,
   FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT,
+  FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT,
   loadExistingImportNodes,
   prepareFolderImport,
   reconcileFolderImport,
@@ -84,14 +86,58 @@ describe("local folder import", () => {
     ]);
   });
 
-  it("rejects node and byte limits before writing", async () => {
+  it("rejects the maximum node count before reading files", async () => {
     const many = Array.from({ length: 100 }, (_, index) => source(`notes/${index}.md`, "x"));
-    const tooMany = await prepareFolderImport(many, "/Knowledge");
-    expect(tooMany.nodeCount).toBe(101);
-    expect(tooMany.limitError).toContain("limit is 100");
+    const readers = many.map((file) => vi.spyOn(file, "text"));
 
+    await expect(prepareFolderImport(many, "/Knowledge")).rejects.toThrow("can produce 101 nodes; the limit is 100");
+    expect(readers.every((reader) => reader.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("reports the encoded write limit after reading files", async () => {
     const tooLarge = await prepareFolderImport([source("notes/large.md", "x".repeat(1_500_000))], "/Knowledge");
     expect(tooLarge.limitError).toContain("encoded write bytes");
+  });
+
+  it("enforces aggregate source limits before reading any candidate", async () => {
+    const atLimit = Array.from({ length: 5 }, (_, index) => source(
+      `notes/${index}.md`,
+      "accepted",
+      FOLDER_IMPORT_SOURCE_TOTAL_BYTE_LIMIT / 5
+    ));
+    await expect(prepareFolderImport(atLimit, "/Knowledge")).resolves.toMatchObject({ markdownCount: 5 });
+
+    const overLimit = [
+      ...Array.from({ length: 5 }, (_, index) => source(`notes/over-${index}.md`, "unread", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT)),
+      source("notes/one-more.md", "unread", 1)
+    ];
+    const readers = overLimit.map((file) => vi.spyOn(file, "text"));
+
+    await expect(prepareFolderImport(overLimit, "/Knowledge")).rejects.toThrow("Selected source files total 100,000,001 bytes");
+    expect(readers.every((reader) => reader.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("enforces aggregate PDF limits before loading the extractor", async () => {
+    const extractPdf = vi.fn(async () => ({ content: "pdf markdown", metadataJson: "{}", pageCount: 1 }));
+    const atLimit = [
+      source("notes/a.pdf", "pdf", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT),
+      source("notes/b.pdf", "pdf", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT),
+      source("notes/c.pdf", "pdf", FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT - (2 * FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT))
+    ];
+    await expect(prepareFolderImport(atLimit, "/Knowledge", { extractPdf })).resolves.toMatchObject({ pdfCount: 3 });
+    expect(extractPdf).toHaveBeenCalledTimes(3);
+
+    extractPdf.mockClear();
+    const overLimit = [
+      source("notes/over-a.pdf", "pdf", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT),
+      source("notes/over-b.pdf", "pdf", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT),
+      source("notes/over-c.pdf", "pdf", FOLDER_IMPORT_PDF_TOTAL_BYTE_LIMIT - (2 * FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT) + 1)
+    ];
+    const arrayBufferReaders = overLimit.map((file) => vi.spyOn(file, "arrayBuffer"));
+
+    await expect(prepareFolderImport(overLimit, "/Knowledge", { extractPdf })).rejects.toThrow("Selected PDF files total 50,000,001 bytes");
+    expect(extractPdf).not.toHaveBeenCalled();
+    expect(arrayBufferReaders.every((reader) => reader.mock.calls.length === 0)).toBe(true);
   });
 
   it("excludes source files above 20 MB before reading them", async () => {
@@ -108,6 +154,42 @@ describe("local folder import", () => {
     expect(plan.excluded[0]?.reason).toContain("20,000,000 bytes or smaller");
     expect(extractPdf).not.toHaveBeenCalled();
     expect(oversizedArrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a valid PDF when the preferred Markdown is oversized", async () => {
+    const markdown = source("notes/manual.md", "unread", FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT + 1);
+    const extractPdf = vi.fn(async () => ({ content: "PDF content", metadataJson: "{}", pageCount: 1 }));
+
+    const plan = await prepareFolderImport([markdown, source("notes/manual.pdf", "pdf")], "/Knowledge", { extractPdf });
+
+    expect(plan.files).toEqual([expect.objectContaining({ sourcePath: "notes/manual.pdf", format: "pdf" })]);
+    expect(plan.excluded).toContainEqual(expect.objectContaining({ sourcePath: "notes/manual.md", category: "excluded" }));
+    expect(extractPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a valid PDF when reading the preferred Markdown fails", async () => {
+    const markdown = source("notes/manual.md", "unread");
+    markdown.text = vi.fn(async () => { throw new Error("Local read failed."); });
+    const extractPdf = vi.fn(async () => ({ content: "PDF content", metadataJson: "{}", pageCount: 1 }));
+
+    const plan = await prepareFolderImport([markdown, source("notes/manual.pdf", "pdf")], "/Knowledge", { extractPdf });
+
+    expect(plan.files).toEqual([expect.objectContaining({ sourcePath: "notes/manual.pdf", format: "pdf" })]);
+    expect(plan.excluded).toContainEqual({ sourcePath: "notes/manual.md", category: "conversion-failed", reason: "Local read failed." });
+    expect(extractPdf).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not parse a duplicate PDF after the preferred Markdown succeeds", async () => {
+    const extractPdf = vi.fn();
+
+    const plan = await prepareFolderImport([
+      source("notes/manual.pdf", "pdf"),
+      source("notes/manual.md", "Markdown content")
+    ], "/Knowledge", { extractPdf });
+
+    expect(plan.files).toEqual([expect.objectContaining({ sourcePath: "notes/manual.md", format: "markdown" })]);
+    expect(plan.excluded).toContainEqual(expect.objectContaining({ sourcePath: "notes/manual.pdf", category: "excluded" }));
+    expect(extractPdf).not.toHaveBeenCalled();
   });
 
   it("stops after cancellation without reporting a conversion failure", async () => {
@@ -178,5 +260,22 @@ describe("local folder import", () => {
     expect(visited).toEqual(["/Knowledge", "/Knowledge/notes", "/Knowledge/notes/topic"]);
     expect(existing.get("/Knowledge/notes")?.kind).toBe("directory");
     expect(existing.get("/Knowledge/notes/topic/a.md")?.etag).toBe("file-etag");
+  });
+
+  it("stops existing-node discovery after an in-flight listing is cancelled", async () => {
+    const prepared = await prepareFolderImport([source("notes/topic/a.md", "a")], "/Knowledge");
+    const controller = new AbortController();
+    let finishListing!: (children: ChildNode[]) => void;
+    const listChildrenAt = vi.fn(() => new Promise<ChildNode[]>((resolve) => {
+      finishListing = resolve;
+    }));
+
+    const loading = loadExistingImportNodes(prepared, listChildrenAt, controller.signal);
+    await vi.waitFor(() => expect(listChildrenAt).toHaveBeenCalledTimes(1));
+    controller.abort();
+    finishListing([child("/Knowledge/notes", "directory")]);
+
+    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+    expect(listChildrenAt).toHaveBeenCalledTimes(1);
   });
 });

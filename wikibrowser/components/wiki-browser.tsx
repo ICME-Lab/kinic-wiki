@@ -527,7 +527,7 @@ function WikiBrowserContent() {
       const existing = await loadExistingImportNodes(prepared, async (path) => {
         const { listChildren } = await import("@/lib/vfs-client");
         return listChildren(canisterId, databaseId, path, readIdentity ?? undefined);
-      });
+      }, abortController.signal);
       if (sequence !== folderImportSequence.current) return;
       setFolderImportDialog({ phase: "ready", plan: reconcileFolderImport(prepared, existing) });
     } catch (cause) {
