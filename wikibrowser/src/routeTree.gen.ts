@@ -37,6 +37,7 @@ import { Route as DocsClipperRouteImport } from './routes/docs.clipper'
 import { Route as DocsCliRouteImport } from './routes/docs.cli'
 import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
 import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
+import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
 import { Route as DbDatabaseIdIndexRouteImport } from './routes/db.$databaseId.index'
 import { Route as MarketplaceSellerPrincipalRouteImport } from './routes/marketplace.seller.$principal'
@@ -189,6 +190,12 @@ const DbDatabaseIdRoute = DbDatabaseIdRouteImport.update({
   path: '/db/$databaseId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DotwellKnownIiAuthCallbacksRoute =
+  DotwellKnownIiAuthCallbacksRouteImport.update({
+    id: '/.well-known/ii-auth-callbacks',
+    path: '/.well-known/ii-auth-callbacks',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DotwellKnownAppleAppSiteAssociationRoute =
   DotwellKnownAppleAppSiteAssociationRouteImport.update({
     id: '/.well-known/apple-app-site-association',
@@ -268,6 +275,7 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -306,6 +314,7 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
@@ -347,6 +356,7 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
@@ -390,6 +400,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -428,6 +439,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/docs/canister-api'
     | '/docs/cli'
     | '/docs/clipper'
@@ -468,6 +480,7 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
@@ -510,6 +523,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SupportRoute: typeof SupportRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
+  DotwellKnownIiAuthCallbacksRoute: typeof DotwellKnownIiAuthCallbacksRoute
   DbDatabaseIdRoute: typeof DbDatabaseIdRouteWithChildren
   PPublicIdRoute: typeof PPublicIdRoute
   SkillsDatabaseIdRoute: typeof SkillsDatabaseIdRoute
@@ -716,6 +730,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DbDatabaseIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/ii-auth-callbacks': {
+      id: '/.well-known/ii-auth-callbacks'
+      path: '/.well-known/ii-auth-callbacks'
+      fullPath: '/.well-known/ii-auth-callbacks'
+      preLoaderRoute: typeof DotwellKnownIiAuthCallbacksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/.well-known/apple-app-site-association': {
       id: '/.well-known/apple-app-site-association'
       path: '/.well-known/apple-app-site-association'
@@ -895,6 +916,7 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
+  DotwellKnownIiAuthCallbacksRoute: DotwellKnownIiAuthCallbacksRoute,
   DbDatabaseIdRoute: DbDatabaseIdRouteWithChildren,
   PPublicIdRoute: PPublicIdRoute,
   SkillsDatabaseIdRoute: SkillsDatabaseIdRoute,
