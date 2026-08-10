@@ -39,7 +39,7 @@ test("renders the home calls to action and follows internal routes", async ({ pa
   await followInternalLink(page, primaryNavigation.getByRole("link", { name: "Open Dashboard" }), "/dashboard", /\/dashboard$/);
 });
 
-test("redirects the native authentication hash route", async ({ page }) => {
+test("redirects the legacy iOS native authentication hash route", async ({ page }) => {
   await page.goto("/#/native-auth?session=test-session&callback=kinicwiki%3A%2F%2Fauth");
 
   await expect(page).toHaveURL(/\/native-auth\?session=test-session&callback=kinicwiki%3A%2F%2Fauth$/);

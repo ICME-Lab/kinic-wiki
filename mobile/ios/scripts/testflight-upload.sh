@@ -6,6 +6,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+requested_build_number="${KINIC_IOS_BUILD_NUMBER:-}"
+requested_marketing_version="${KINIC_IOS_MARKETING_VERSION:-}"
 env_files=("$repo_root/mobile/ios/.env.local" "$repo_root/mobile/ios/.env.testflight.local")
 if [[ -n "${KINIC_IOS_ENV_FILE:-}" ]]; then
   env_files=("$KINIC_IOS_ENV_FILE")
@@ -18,6 +20,12 @@ for env_file in "${env_files[@]}"; do
     set +a
   fi
 done
+if [[ -n "$requested_build_number" ]]; then
+  KINIC_IOS_BUILD_NUMBER="$requested_build_number"
+fi
+if [[ -n "$requested_marketing_version" ]]; then
+  KINIC_IOS_MARKETING_VERSION="$requested_marketing_version"
+fi
 
 project="$repo_root/mobile/ios/Kinic.xcodeproj"
 scheme="${KINIC_IOS_SCHEME:-Kinic}"
@@ -25,7 +33,7 @@ configuration="${KINIC_IOS_CONFIGURATION:-Release}"
 team_id="AKN976G7AK"
 bundle_id="xyz.kinic.ios.KinicWiki"
 build_number="${KINIC_IOS_BUILD_NUMBER:-}"
-marketing_version="${KINIC_IOS_MARKETING_VERSION:-0.1.0}"
+marketing_version="${KINIC_IOS_MARKETING_VERSION:-1.0.3}"
 archive_path="${KINIC_IOS_ARCHIVE_PATH:-$repo_root/mobile/ios/build/TestFlight/KinicWiki-$marketing_version-$build_number.xcarchive}"
 export_path="${KINIC_IOS_EXPORT_PATH:-$repo_root/mobile/ios/build/TestFlight/export-$marketing_version-$build_number}"
 asc_key_path="${ASC_KEY_PATH:-}"
@@ -55,7 +63,7 @@ Environment:
     ASC_ISSUER_ID               App Store Connect issuer id.
 
   Optional:
-    KINIC_IOS_MARKETING_VERSION Defaults to 0.1.0.
+    KINIC_IOS_MARKETING_VERSION Defaults to 1.0.3.
     KINIC_IOS_ARCHIVE_PATH      Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_EXPORT_PATH       Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_SCHEME            Defaults to Kinic.

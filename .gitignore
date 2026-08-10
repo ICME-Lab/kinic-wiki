@@ -21,6 +21,10 @@ AGENTS.md
 **/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 **/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/
 
+# Android signing material
+**/*.jks
+**/*.keystore
+
 # Rust build artifacts
 /target/
 **/target/
@@ -51,6 +55,7 @@ __pycache__/
 
 # Frontend build and test artifacts
 **/.next/
+**/.gradle/
 **/.open-next/
 **/.tmp-test/
 **/dist/

@@ -19,7 +19,8 @@ final class KinicAuthService {
     ) {
         let authenticator = ICInternetIdentityAuthenticator(
             configuration: configuration.icClientConfiguration,
-            callbackDomain: configuration.callbackDomain
+            callbackDomain: configuration.callbackDomain,
+            callbackPath: AppConfiguration.nativeAuthCallbackPath
         )
         let store = KinicAuthSessionStore(configuration: configuration)
         authenticateSession = { prefersEphemeralWebBrowserSession in

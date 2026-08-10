@@ -14,6 +14,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as NativeAuthCallbackRouteImport } from './routes/native-auth-callback'
 import { Route as NativeAuthRouteImport } from './routes/native-auth'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
@@ -74,6 +75,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
   id: '/privacy-policy',
   path: '/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NativeAuthCallbackRoute = NativeAuthCallbackRouteImport.update({
+  id: '/native-auth-callback',
+  path: '/native-auth-callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const NativeAuthRoute = NativeAuthRouteImport.update({
@@ -275,6 +281,7 @@ export interface FileRoutesByFullPath {
   '/marketplace': typeof MarketplaceRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -315,6 +322,7 @@ export interface FileRoutesByTo {
   '/ios-share': typeof IosShareRoute
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -357,6 +365,7 @@ export interface FileRoutesById {
   '/marketplace': typeof MarketplaceRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -402,6 +411,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -442,6 +452,7 @@ export interface FileRouteTypes {
     | '/ios-share'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -483,6 +494,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -527,6 +539,7 @@ export interface RootRouteChildren {
   MarketplaceRoute: typeof MarketplaceRouteWithChildren
   MetricsRoute: typeof MetricsRoute
   NativeAuthRoute: typeof NativeAuthRoute
+  NativeAuthCallbackRoute: typeof NativeAuthCallbackRoute
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
   ProfileRoute: typeof ProfileRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
@@ -577,6 +590,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy-policy'
       fullPath: '/privacy-policy'
       preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/native-auth-callback': {
+      id: '/native-auth-callback'
+      path: '/native-auth-callback'
+      fullPath: '/native-auth-callback'
+      preLoaderRoute: typeof NativeAuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/native-auth': {
@@ -928,6 +948,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarketplaceRoute: MarketplaceRouteWithChildren,
   MetricsRoute: MetricsRoute,
   NativeAuthRoute: NativeAuthRoute,
+  NativeAuthCallbackRoute: NativeAuthCallbackRoute,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
   ProfileRoute: ProfileRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
