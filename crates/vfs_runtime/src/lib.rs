@@ -436,10 +436,10 @@ impl VfsService {
         now: i64,
     ) -> Result<WriteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let publication_paths = if request.kind == NodeKind::File {
-            Vec::new()
-        } else {
+        let publication_paths = if request.kind == NodeKind::Source {
             vec![request.path.clone()]
+        } else {
+            Vec::new()
         };
         let publication_path_refs = publication_paths
             .iter()
@@ -523,7 +523,7 @@ impl VfsService {
         let publication_paths = request
             .nodes
             .iter()
-            .filter(|item| item.kind != NodeKind::File)
+            .filter(|item| item.kind == NodeKind::Source)
             .map(|item| item.path.clone())
             .collect::<BTreeSet<_>>();
         let publication_path_refs = publication_paths
@@ -1034,7 +1034,7 @@ fn mutation_publication_paths(operations: &[NodeMutation]) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     for operation in operations {
         match operation {
-            NodeMutation::Write(item) if item.kind != NodeKind::File => {
+            NodeMutation::Write(item) if item.kind == NodeKind::Source => {
                 paths.insert(item.path.clone());
             }
             NodeMutation::Move(item) => {

@@ -2,7 +2,7 @@ import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { candidOptional, isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, classifyCanisterError, invalidCanisterIdError } from "@/lib/api-errors";
-import { idlFactory } from "@/lib/vfs-idl";
+import { idlFactory } from "@kinic/vfs-candid";
 import type {
   CanisterHealth,
   DatabaseMetadata,

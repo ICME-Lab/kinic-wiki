@@ -5,7 +5,8 @@
 use super::*;
 use vfs_runtime::fail_next_publication_detach_for_test;
 use vfs_types::{
-    ListChildrenRequest, MkdirNodeRequest, PublishNodeRequest, WriteNodeItem, WriteNodesRequest,
+    ListChildrenRequest, MkdirNodeRequest, MutateNodesBatchRequest, NodeMutation,
+    PublishNodeRequest, WriteNodeItem, WriteNodesRequest,
 };
 
 fn node_publication_count(root: &std::path::Path, database_id: &str) -> i64 {
@@ -335,6 +336,114 @@ fn write_node_unpublishes_when_file_becomes_source_without_resurrection() {
             .is_none(),
         "returning to File must not resurrect the old public URL"
     );
+}
+
+#[test]
+fn folder_writes_preserve_descendant_publications_across_mutation_entrypoints() {
+    let service = service();
+    service
+        .create_database("folder-publication", "owner", 1)
+        .expect("database should create");
+    let folder_path = "/Knowledge/published";
+    let file_path = "/Knowledge/published/page.md";
+    service
+        .mkdir_node(
+            "owner",
+            MkdirNodeRequest {
+                database_id: "folder-publication".to_string(),
+                path: folder_path.to_string(),
+            },
+            2,
+        )
+        .expect("folder should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "folder-publication".to_string(),
+                path: file_path.to_string(),
+                kind: NodeKind::File,
+                content: "public body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("file should write");
+    let publication_request = PublishNodeRequest {
+        database_id: "folder-publication".to_string(),
+        path: file_path.to_string(),
+    };
+    let publication = service
+        .publish_node(
+            "owner",
+            publication_request.clone(),
+            "00112233445566778899aabbccddeeff",
+            4,
+        )
+        .expect("file should publish");
+    let folder_write = || WriteNodeItem {
+        path: folder_path.to_string(),
+        kind: NodeKind::Folder,
+        content: String::new(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    };
+    let assert_publication = || {
+        assert_eq!(
+            service
+                .get_node_publication("owner", publication_request.clone())
+                .expect("publication state should load"),
+            Some(publication.clone())
+        );
+        assert!(
+            service
+                .read_public_node(&publication.public_id)
+                .expect("public lookup should succeed")
+                .is_some()
+        );
+    };
+
+    let item = folder_write();
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "folder-publication".to_string(),
+                path: item.path,
+                kind: item.kind,
+                content: item.content,
+                metadata_json: item.metadata_json,
+                expected_etag: item.expected_etag,
+            },
+            5,
+        )
+        .expect("single folder write should be a no-op");
+    assert_publication();
+
+    service
+        .write_nodes(
+            "owner",
+            WriteNodesRequest {
+                database_id: "folder-publication".to_string(),
+                nodes: vec![folder_write()],
+            },
+            6,
+        )
+        .expect("folder batch write should be a no-op");
+    assert_publication();
+
+    service
+        .mutate_nodes_batch(
+            "owner",
+            MutateNodesBatchRequest {
+                database_id: "folder-publication".to_string(),
+                operations: vec![NodeMutation::Write(folder_write())],
+            },
+            7,
+        )
+        .expect("folder mutation write should be a no-op");
+    assert_publication();
 }
 
 #[test]

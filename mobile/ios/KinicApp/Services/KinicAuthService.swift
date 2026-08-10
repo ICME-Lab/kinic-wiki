@@ -7,39 +7,63 @@ import ICNativeClient
 
 @MainActor
 final class KinicAuthService {
-    private let authenticator: ICInternetIdentityAuthenticator
-    private let store: KinicAuthSessionStore
+    private let authenticateSession: (Bool) async throws -> ICAuthSession
+    private let restoreSession: () -> ICAuthSession?
+    private let saveSession: (ICAuthSession) throws -> Void
+    private let clearSession: () -> Void
     private let prefersEphemeralWebBrowserSession: Bool
 
     init(
         configuration: AppConfiguration,
         prefersEphemeralWebBrowserSession: Bool? = nil
     ) {
-        authenticator = ICInternetIdentityAuthenticator(
+        let authenticator = ICInternetIdentityAuthenticator(
             configuration: configuration.icClientConfiguration,
-            authOrigin: configuration.authOrigin,
             callbackDomain: configuration.callbackDomain
         )
-        store = KinicAuthSessionStore(configuration: configuration)
+        let store = KinicAuthSessionStore(configuration: configuration)
+        authenticateSession = { prefersEphemeralWebBrowserSession in
+            try await authenticator.authenticate(
+                prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
+            )
+        }
+        restoreSession = { store.restore() }
+        saveSession = { try store.save($0) }
+        clearSession = { store.clear() }
         self.prefersEphemeralWebBrowserSession =
             prefersEphemeralWebBrowserSession
             ?? Self.debugPrefersEphemeralWebBrowserSession(environment: ProcessInfo.processInfo.environment)
     }
 
-    func restore() -> ICAuthSession? {
-        store.restore()
+    init(
+        prefersEphemeralWebBrowserSession: Bool = false,
+        authenticateSession: @escaping (Bool) async throws -> ICAuthSession,
+        restoreSession: @escaping () -> ICAuthSession? = { nil },
+        saveSession: @escaping (ICAuthSession) throws -> Void,
+        clearSession: @escaping () -> Void = {}
+    ) {
+        self.authenticateSession = authenticateSession
+        self.restoreSession = restoreSession
+        self.saveSession = saveSession
+        self.clearSession = clearSession
+        self.prefersEphemeralWebBrowserSession = prefersEphemeralWebBrowserSession
     }
 
-    func signIn() async throws -> ICAuthSession {
-        let session = try await authenticator.authenticate(
-            prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
-        )
-        try store.save(session)
+    func restore() -> ICAuthSession? {
+        restoreSession()
+    }
+
+    func signIn(
+        verify: (ICAuthSession) async throws -> Void
+    ) async throws -> ICAuthSession {
+        let session = try await authenticateSession(prefersEphemeralWebBrowserSession)
+        try await verify(session)
+        try saveSession(session)
         return session
     }
 
     func signOut() {
-        store.clear()
+        clearSession()
     }
 
     nonisolated static func debugPrefersEphemeralWebBrowserSession(

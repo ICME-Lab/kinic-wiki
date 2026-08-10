@@ -1307,7 +1307,9 @@ final class AppModel {
             isSigningIn = false
         }
         do {
-            session = try await authService.signIn()
+            session = try await authService.signIn { [client] candidate in
+                _ = try await client.listReadableDatabases(session: candidate)
+            }
             statusMessage = nil
             logger.info("Kinic sign in succeeded principal=\(self.session?.principal ?? "", privacy: .public)")
             await refreshDatabases()

@@ -4,19 +4,28 @@ import { FileText, FolderTree, Loader2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useModalDialog } from "@/components/use-modal-dialog";
-import { buildFolderImportWrites, FOLDER_IMPORT_BYTE_LIMIT, FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT, type ReconciledFolderImport } from "@/lib/local-folder-import";
+import {
+  buildLocalImportWrites,
+  LOCAL_IMPORT_BYTE_LIMIT,
+  LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT,
+  LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT,
+  LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT,
+  summarizeLocalImportWrites,
+  type LocalImportMode,
+  type ReconciledLocalImport
+} from "@/lib/local-import";
 
-export type FolderImportDialogState =
-  | { phase: "preparing"; destinationDirectory: string }
-  | { phase: "ready" | "writing"; plan: ReconciledFolderImport }
-  | { phase: "error"; destinationDirectory: string; message: string };
+export type LocalImportDialogState =
+  | { phase: "preparing"; mode: LocalImportMode; destinationDirectory: string }
+  | { phase: "ready" | "writing"; plan: ReconciledLocalImport }
+  | { phase: "error"; mode: LocalImportMode; destinationDirectory: string; message: string };
 
-export function FolderImportDialog({
+export function LocalImportDialog({
   state,
   onCancel,
   onImport
 }: {
-  state: FolderImportDialogState;
+  state: LocalImportDialogState;
   onCancel: () => void;
   onImport: (replacements: Set<string>) => void;
 }) {
@@ -25,34 +34,37 @@ export function FolderImportDialog({
   const plan = state.phase === "ready" || state.phase === "writing" ? state.plan : null;
   const [replacements, setReplacements] = useState<Set<string>>(new Set());
 
-  useEffect(() => setReplacements(new Set()), [plan?.rootPath]);
+  useEffect(() => setReplacements(new Set()), [plan?.mode, plan?.navigationPath]);
 
-  const writes = useMemo(() => plan ? buildFolderImportWrites(plan, replacements) : [], [plan, replacements]);
+  const writes = useMemo(() => plan ? buildLocalImportWrites(plan, replacements) : [], [plan, replacements]);
+  const writeSummary = useMemo(() => summarizeLocalImportWrites(writes), [writes]);
   const conflictCount = plan?.entries.filter((entry) => entry.status === "conflict").length ?? 0;
   const blockedCount = plan?.entries.filter((entry) => entry.status === "blocked").length ?? 0;
   const newFolderCount = plan?.entries.filter((entry) => entry.kind === "folder" && entry.status === "new").length ?? 0;
   const excluded = plan?.excluded.filter((entry) => entry.category === "excluded") ?? [];
   const conversionFailures = plan?.excluded.filter((entry) => entry.category === "conversion-failed") ?? [];
   const destination = plan?.destinationDirectory ?? ("destinationDirectory" in state ? state.destinationDirectory : "");
-  const cannotImport = !plan || Boolean(plan.limitError) || writes.length === 0 || state.phase === "writing";
+  const mode = plan?.mode ?? ("mode" in state ? state.mode : "folder");
+  const title = mode === "folder" ? "Import folder" : "Import files";
+  const cannotImport = !plan || Boolean(writeSummary.limitError) || writes.length === 0 || state.phase === "writing";
 
   return (
     <dialog
       ref={dialogRef}
-      aria-labelledby="folder-import-title"
+      aria-labelledby="local-import-title"
       aria-modal="true"
       className="fixed inset-0 z-50 m-0 hidden h-full w-full max-h-none max-w-none items-center justify-center border-0 bg-ink/35 p-3 open:flex sm:p-6"
       onCancel={handleCancel}
     >
-      <button aria-label="Close folder import dialog" className="absolute inset-0" disabled={busy} tabIndex={-1} type="button" onClick={onCancel} />
+      <button aria-label="Close local import dialog" className="absolute inset-0" disabled={busy} tabIndex={-1} type="button" onClick={onCancel} />
       <section className="relative z-10 flex max-h-[min(90vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-line bg-paper shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-line px-4 py-4 sm:px-5">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Local folder → Wiki</p>
-            <h2 id="folder-import-title" className="mt-1 text-lg font-semibold text-ink">Import folder</h2>
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Local {mode === "folder" ? "folder" : "files"} → Wiki</p>
+            <h2 id="local-import-title" className="mt-1 text-lg font-semibold text-ink">{title}</h2>
             <p className="mt-1 break-all font-mono text-xs text-muted">Destination: {destination}</p>
           </div>
-          <button className="rounded-xl p-2 text-muted hover:bg-accentSoft hover:text-accentText disabled:opacity-40" disabled={busy} type="button" onClick={onCancel} aria-label="Close folder import dialog">
+          <button className="rounded-xl p-2 text-muted hover:bg-accentSoft hover:text-accentText disabled:opacity-40" disabled={busy} type="button" onClick={onCancel} aria-label="Close local import dialog">
             <X size={16} />
           </button>
         </header>
@@ -66,7 +78,7 @@ export function FolderImportDialog({
             </div>
           ) : state.phase === "error" ? (
             <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-              <p className="font-semibold">Folder could not be prepared</p>
+              <p className="font-semibold">{mode === "folder" ? "Folder" : "Files"} could not be prepared</p>
               <p className="mt-2 leading-6">{state.message}</p>
             </div>
           ) : plan ? (
@@ -75,17 +87,17 @@ export function FolderImportDialog({
                 <Metric label="Markdown" value={plan.markdownCount} />
                 <Metric label="PDF converted" value={plan.pdfCount} />
                 <Metric label="New folders" value={newFolderCount} />
-                <Metric label="Encoded write" value={formatBytes(plan.inputBytes)} />
+                <Metric label="Encoded write" value={formatBytes(writeSummary.inputBytes)} />
               </div>
 
-              {plan.limitError ? <Notice tone="error">{plan.limitError}</Notice> : null}
+              {writeSummary.limitError ? <Notice tone="error">{writeSummary.limitError}</Notice> : null}
               {conflictCount > 0 ? <Notice tone="warning">{conflictCount} existing file{conflictCount === 1 ? "" : "s"} will be kept unless replacement is selected.</Notice> : null}
               {blockedCount > 0 ? <Notice tone="error">{blockedCount} path{blockedCount === 1 ? " is" : "s are"} blocked by an incompatible existing node.</Notice> : null}
 
               <section className="mt-4 overflow-hidden rounded-xl border border-line bg-white">
                 <div className="flex items-center justify-between border-b border-line px-3 py-2">
                   <div className="flex items-center gap-2 text-xs font-semibold text-ink"><FolderTree size={14} /> Import ledger</div>
-                  <span className="font-mono text-[10px] text-muted">{plan.rootName}</span>
+                  <span className="font-mono text-[10px] text-muted">{plan.selectionLabel}</span>
                 </div>
                 <div className="divide-y divide-line">
                   {plan.entries.map((entry) => (
@@ -135,7 +147,9 @@ export function FolderImportDialog({
         </div>
 
         <footer className="flex flex-col-reverse gap-2 border-t border-line bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-[11px] text-muted">{formatBytes(FOLDER_IMPORT_SOURCE_FILE_BYTE_LIMIT)} per source file · {formatBytes(FOLDER_IMPORT_BYTE_LIMIT)} encoded write · up to 100 nodes</p>
+          <p className="text-[11px] text-muted">
+            {formatBytes(LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT)} per file · {formatBytes(LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT)} total · {formatBytes(LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT)} PDF · {formatBytes(LOCAL_IMPORT_BYTE_LIMIT)} encoded · up to 100 nodes
+          </p>
           <div className="flex justify-end gap-2">
             <button data-modal-initial-focus className={secondaryButtonClass} disabled={busy} type="button" onClick={onCancel}>Cancel</button>
             {plan ? (

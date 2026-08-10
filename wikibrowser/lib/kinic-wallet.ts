@@ -5,7 +5,7 @@ import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToB
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
-import { idlFactory } from "@/lib/vfs-idl";
+import { idlFactory } from "@kinic/vfs-candid";
 import { cyclesForPaymentAmountE8s, formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64 } from "@/lib/cycles";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { configuredIcHost } from "@/lib/wallet-runtime";
