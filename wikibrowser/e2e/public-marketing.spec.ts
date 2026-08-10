@@ -139,13 +139,13 @@ test("renders the skills overview and each workflow detail", async ({ page }) =>
   await expect(skillLinks.getByRole("link")).toHaveCount(7);
 
   for (const skill of [
-    { slug: "query", title: "Query", skillName: "kinic-wiki-query" },
-    { slug: "edit", title: "Edit", skillName: "kinic-wiki-edit" },
-    { slug: "mcp", title: "MCP", skillName: "kinic-wiki-mcp" },
-    { slug: "ingest", title: "Ingest", skillName: "kinic-wiki-ingest" },
-    { slug: "lint", title: "Lint", skillName: "kinic-wiki-lint" },
-    { slug: "context-pack", title: "Context Pack", skillName: "kinic-context-pack" },
-    { slug: "registry", title: "Skill Registry", skillName: "kinic-skill-registry" }
+    { slug: "query", title: "Query", skillName: "kinic-wiki-query", referenceHref: "query.md", referenceHeading: "Kinic Wiki Query Workflow" },
+    { slug: "edit", title: "Edit", skillName: "kinic-wiki-edit", referenceHref: "edit.md", referenceHeading: "Kinic Wiki Edit Workflow" },
+    { slug: "mcp", title: "MCP", skillName: "kinic-wiki-mcp", referenceHref: "references/tools.md", referenceHeading: "Kinic Wiki MCP Tool Reference" },
+    { slug: "ingest", title: "Ingest", skillName: "kinic-wiki-ingest", referenceHref: "ingest.md", referenceHeading: "Kinic Wiki Ingest Workflow" },
+    { slug: "lint", title: "Lint", skillName: "kinic-wiki-lint", referenceHref: "lint.md", referenceHeading: "Kinic Wiki Lint Workflow" },
+    { slug: "context-pack", title: "Context Pack", skillName: "kinic-context-pack", referenceHref: "context-pack.md", referenceHeading: "Kinic Context Pack Workflow" },
+    { slug: "registry", title: "Skill Registry", skillName: "kinic-skill-registry", referenceHref: "../../docs/SKILL_REGISTRY.md", referenceHeading: "Skill Registry" }
   ]) {
     await followInternalLink(
       page,
@@ -156,20 +156,23 @@ test("renders the skills overview and each workflow detail", async ({ page }) =>
     await expect(page).toHaveTitle(`Kinic Wiki ${skill.title} Skill`);
     await expect(page.getByRole("heading", { level: 1, name: skill.title })).toBeVisible();
     await expect(page.getByRole("heading", { level: 2, name: "SKILL.md" })).toBeVisible();
+    for (const removedSection of ["Common commands", "Safety", "Responsibilities"]) {
+      await expect(page.getByRole("heading", { level: 2, name: removedSection })).toHaveCount(0);
+    }
     const renderedSkill = page.getByRole("region", { name: "Rendered SKILL.md" });
     await expect(renderedSkill.getByText(skill.skillName, { exact: true })).toBeVisible();
+    const reference = page.getByRole("region", { name: `Reference ${skill.referenceHref}` });
+    await expect(renderedSkill.getByRole("link", { name: skill.referenceHref })).toHaveAttribute("href", /^#skill-reference-/);
+    await expect(reference.getByRole("heading", { level: 3, name: skill.referenceHeading })).toBeVisible();
     if (skill.slug === "query") {
       await expect(page.getByRole("button", { name: "Rendered" })).toHaveAttribute("aria-pressed", "true");
-      await expect(renderedSkill.getByRole("heading", { level: 3, name: "Kinic Wiki Query" })).toBeVisible();
+      await expect(renderedSkill.getByRole("heading", { level: 3, name: "Kinic Wiki Query", exact: true })).toBeVisible();
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
       await page.getByRole("button", { name: "Copy SKILL.md" }).click();
       await expect(page.getByRole("button", { name: "SKILL.md copied" })).toBeVisible();
       expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(`name: ${skill.skillName}`);
       await page.getByRole("button", { name: "Raw" }).click();
       await expect(page.getByRole("region", { name: "Raw SKILL.md" }).locator("pre")).toContainText(`name: ${skill.skillName}`);
-      for (const section of ["Common commands", "Safety", "Responsibilities"]) {
-        await expect(page.getByRole("heading", { name: section })).toBeVisible();
-      }
     }
     await followInternalLink(page, page.locator("#admin-main").getByRole("link", { name: "Skills", exact: true }), "/docs/skills", /\/docs\/skills$/);
   }

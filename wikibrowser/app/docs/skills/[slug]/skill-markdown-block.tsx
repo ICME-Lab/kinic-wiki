@@ -6,8 +6,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AdminPanel } from "@/components/admin-ui";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
+import type { SkillMarkdownReference } from "../../skill-markdown";
 
-export function SkillMarkdownBlock({ markdown }: { markdown: string }) {
+export function SkillMarkdownBlock({ markdown, references }: { markdown: string; references: SkillMarkdownReference[] }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [view, setView] = useState<"rendered" | "raw">("rendered");
   const frontmatter = splitMarkdownFrontmatter(markdown);
@@ -82,32 +83,15 @@ export function SkillMarkdownBlock({ markdown }: { markdown: string }) {
               </div>
             ) : null}
             <article className="markdown-body min-w-0 rounded-lg border border-line bg-white px-5 py-6 text-sm text-ink sm:px-7">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  h1({ children }) {
-                    return <h3 className="mt-0 text-xl font-semibold text-ink">{children}</h3>;
-                  },
-                  h2({ children }) {
-                    return <h4 className="mt-8 text-base font-semibold text-ink">{children}</h4>;
-                  },
-                  h3({ children }) {
-                    return <h5 className="mt-6 text-sm font-semibold text-ink">{children}</h5>;
-                  },
-                  ul({ children, ...props }) {
-                    return <ul className="list-disc" {...props}>{children}</ul>;
-                  },
-                  ol({ children, ...props }) {
-                    return <ol className="list-decimal" {...props}>{children}</ol>;
-                  },
-                  a({ children, href }) {
-                    return href?.startsWith("https://") ? <a href={href} rel="noreferrer noopener" target="_blank">{children}</a> : <span className="font-medium text-accentText">{children}</span>;
-                  }
-                }}
-              >
-                {renderedMarkdown}
-              </ReactMarkdown>
+              <SkillMarkdownDocument markdown={renderedMarkdown} references={references} />
             </article>
+            {references.map((reference) => (
+              <section aria-label={`Reference ${reference.href}`} className="mt-6" id={referenceAnchorId(reference.href)} key={reference.href}>
+                <article className="markdown-body min-w-0 rounded-lg border border-line bg-white px-5 py-6 text-sm text-ink sm:px-7">
+                  <SkillMarkdownDocument markdown={reference.markdown} references={[]} />
+                </article>
+              </section>
+            ))}
           </section>
         ) : null}
 
@@ -119,4 +103,40 @@ export function SkillMarkdownBlock({ markdown }: { markdown: string }) {
       </div>
     </AdminPanel>
   );
+}
+
+function SkillMarkdownDocument({ markdown, references }: { markdown: string; references: SkillMarkdownReference[] }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1({ children }) {
+          return <h3 className="mt-0 text-xl font-semibold text-ink">{children}</h3>;
+        },
+        h2({ children }) {
+          return <h4 className="mt-8 text-base font-semibold text-ink">{children}</h4>;
+        },
+        h3({ children }) {
+          return <h5 className="mt-6 text-sm font-semibold text-ink">{children}</h5>;
+        },
+        ul({ children, ...props }) {
+          return <ul className="list-disc" {...props}>{children}</ul>;
+        },
+        ol({ children, ...props }) {
+          return <ol className="list-decimal" {...props}>{children}</ol>;
+        },
+        a({ children, href }) {
+          if (href?.startsWith("https://")) return <a href={href} rel="noreferrer noopener" target="_blank">{children}</a>;
+          const reference = references.find((entry) => entry.href === href);
+          return reference ? <a href={`#${referenceAnchorId(reference.href)}`}>{children}</a> : <span className="font-medium text-accentText">{children}</span>;
+        }
+      }}
+    >
+      {markdown}
+    </ReactMarkdown>
+  );
+}
+
+function referenceAnchorId(href: string): string {
+  return `skill-reference-${href.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 }
