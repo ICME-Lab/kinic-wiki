@@ -73,6 +73,17 @@ test("webSourcePathForUrl ignores hash fragments", async () => {
   );
 });
 
+test("webSourcePathForUrl distinguishes hash routes", async () => {
+  assert.notEqual(
+    await webSourcePathForUrl("https://example.com/#/page-a", "Example App"),
+    await webSourcePathForUrl("https://example.com/#/page-b", "Example App")
+  );
+  assert.notEqual(
+    await webSourcePathForUrl("https://example.com/#!/page-a", "Example App"),
+    await webSourcePathForUrl("https://example.com/#!/page-b", "Example App")
+  );
+});
+
 test("buildWebEvidenceSource preserves unicode title slugs", async () => {
   const raw = await buildWebEvidenceSource({
     url: "https://example.com/unicode",

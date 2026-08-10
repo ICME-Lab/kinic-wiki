@@ -471,6 +471,30 @@ test("action click skips write and generation for existing browser source when s
   ]);
 });
 
+test("action click refuses to overwrite an occupied web source path with a different URL", async () => {
+  const calls = [];
+  const response = await handleActionClick(
+    { id: 7, url: "https://example.com/page", title: "Example" },
+    actionDeps({
+      findWebSource: async () => {
+        throw new Error("WEB_SOURCE_PATH_CONFLICT");
+      },
+      sendOffscreen: async (message) => {
+        calls.push(["message", message.type]);
+        return { ok: true, result: { accepted: true, taskId: message.taskId } };
+      },
+      writeStatus: async (status) => calls.push(["status", status.status, status.message]),
+      setBadge: async (text) => calls.push(["badge", text])
+    })
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error, "WEB_SOURCE_PATH_CONFLICT");
+  assert.equal(calls.some((call) => call[0] === "message"), false);
+  assert.ok(calls.some((call) => call[0] === "status" && call[1] === "error"));
+  assert.ok(calls.some((call) => call[0] === "badge" && call[1] === "ERR"));
+});
+
 test("action click reports generation requested before trigger completion", async () => {
   const calls = [];
   const response = await handleActionClick(
@@ -609,6 +633,7 @@ test("source capture task failure stores URL error status and releases lock", as
         tabId: task.tabId,
         ok: false,
         url: task.url,
+        databaseId: task.config.databaseId,
         error: "worker trigger failed: HTTP 502"
       },
       { url: "chrome-extension://id/offscreen/offscreen.html" }
@@ -889,6 +914,7 @@ test("tab badge refresh marks existing sources imported", async () => {
 
   assert.equal(result.state, "source_exists");
   assert.deepEqual(calls, [
+    ["badge", "", 9],
     ["lookup", result.sourcePath],
     ["badge", "IN", 9]
   ]);
@@ -920,10 +946,86 @@ test("tab badge refresh clears missing sources and unsupported pages", async () 
   assert.equal(missing.state, "clear");
   assert.equal(unsupported.reason, "unsupported url");
   assert.deepEqual(calls, [
-    ["lookup", missing.sourcePath],
     ["badge", "", 10],
+    ["lookup", missing.sourcePath],
     ["badge", "", 11]
   ]);
+});
+
+test("tab badge refresh ignores an older lookup that completes after navigation", async () => {
+  const oldLookup = createDeferred();
+  const calls = [];
+  let currentUrl = "https://example.com/old";
+  const deps = actionDeps({
+    findWebSource: async (_config, sourcePath, expectedUrl) => {
+      calls.push(["lookup", expectedUrl]);
+      if (expectedUrl === "https://example.com/old") return oldLookup.promise;
+      return { exists: false, path: sourcePath, etag: null };
+    },
+    tabMatchesUrl: async (_tabId, expectedUrl) => expectedUrl === currentUrl,
+    setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+  });
+
+  const oldRefresh = refreshTabBadgeForTest({ id: 20, url: currentUrl, title: "Old" }, deps);
+  await waitUntil(() => calls.some((call) => call[0] === "lookup"));
+  currentUrl = "https://example.com/new";
+  const newRefresh = await refreshTabBadgeForTest({ id: 20, url: currentUrl, title: "New" }, deps);
+  oldLookup.resolve({ exists: true, path: "/Sources/web/old.md", etag: "etag-old" });
+  const staleRefresh = await oldRefresh;
+
+  assert.equal(newRefresh.state, "clear");
+  assert.equal(staleRefresh.state, "stale");
+  assert.equal(calls.some((call) => call[0] === "badge" && call[1] === "IN"), false);
+});
+
+test("source capture task result does not update a tab that navigated away", async () => {
+  resetSourceCaptureInFlightForTest();
+  const restore = installChromeForAction({ tabUrl: "https://example.com/old" });
+  try {
+    const started = await handleActionClick({ id: 1, url: "https://example.com/old", title: "Old" });
+    assert.equal(started.ok, true);
+    const task = restore.messages[1];
+    restore.setTabUrl("https://example.com/new");
+    restore.badges.length = 0;
+
+    const completed = await completeSourceCaptureTask(task);
+
+    assert.deepEqual(completed, { ok: true, result: { accepted: true, status: "ok" } });
+    assert.equal(restore.badges.some((badge) => badge.text === "IN" || badge.text === "SRC"), false);
+    assert.equal(restore.sessionStorage.getItem("kinic-source-capture-in-flight-v1"), null);
+    assert.equal(JSON.parse(restore.sessionStorage.getItem("kinic-source-capture-status-v1")).status, "ok");
+  } finally {
+    resetSourceCaptureInFlightForTest();
+    restore();
+  }
+});
+
+test("database and auth changes clear tab badges and invalidate pending refreshes", async () => {
+  const oldLookup = createDeferred();
+  const calls = [];
+  const restore = installChromeForAction({ tabUrl: "https://example.com/old" });
+  try {
+    const refresh = refreshTabBadgeForTest(
+      { id: 1, url: "https://example.com/old", title: "Old" },
+      actionDeps({
+        findWebSource: async () => oldLookup.promise,
+        setBadge: async (text, _color, tabId) => calls.push(["refresh-badge", text, tabId])
+      })
+    );
+    await waitUntil(() => calls.length === 1);
+
+    await handleMessage({ type: "save-config", config: { databaseId: "other-db" } });
+    oldLookup.resolve({ exists: true, path: "/Sources/web/old.md", etag: "etag-old" });
+    assert.equal((await refresh).state, "stale");
+    assert.equal(calls.some((call) => call[1] === "IN"), false);
+    assert.ok(restore.badges.some((badge) => badge.text === ""));
+
+    restore.badges.length = 0;
+    await handleMessage({ type: "auth-session-changed" });
+    assert.ok(restore.badges.some((badge) => badge.text === ""));
+  } finally {
+    restore();
+  }
 });
 
 test("tab badge refresh clears without opening settings when config or auth is unavailable", async () => {
@@ -1109,13 +1211,14 @@ function installChromeForOffscreenReset(calls, hasOffscreen) {
   };
 }
 
-function installChromeForAction({ databaseId = "team-db", sessionStorage = memoryStorage(), sessionArea = null, sendOffscreen } = {}) {
+function installChromeForAction({ databaseId = "team-db", sessionStorage = memoryStorage(), sessionArea = null, sendOffscreen, tabUrl = "https://example.com/" } = {}) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   const syncStorage = memoryStorage();
   syncStorage.setItem("databaseId", databaseId);
   const badges = [];
   const messages = [];
   let sendCount = 0;
+  let currentTabUrl = tabUrl;
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
@@ -1155,6 +1258,14 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
           return [{ result: { url: "https://example.com/", title: "Example", text: "Page text" } }];
         }
       },
+      tabs: {
+        async get(tabId) {
+          return { id: tabId, url: currentTabUrl, title: "Example" };
+        },
+        async query() {
+          return [{ id: 1, url: currentTabUrl, title: "Example" }];
+        }
+      },
       storage: {
         sync: storageArea(syncStorage),
         session: sessionArea || storageArea(sessionStorage)
@@ -1168,6 +1279,9 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
   restore.badges = badges;
   restore.messages = messages;
   restore.sessionStorage = sessionStorage;
+  restore.setTabUrl = (value) => {
+    currentTabUrl = value;
+  };
   return restore;
 }
 
@@ -1207,8 +1321,8 @@ function actionDeps(overrides = {}) {
     }),
     ensureOffscreen: async () => {},
     sendOffscreen,
-    findWebSource: async (config, sourcePath) => {
-      const response = await sendOffscreen({ target: "offscreen", type: "web-source-exists", sourcePath, config });
+    findWebSource: async (config, sourcePath, expectedUrl) => {
+      const response = await sendOffscreen({ target: "offscreen", type: "web-source-exists", sourcePath, expectedUrl, config });
       if (!response?.ok) {
         throw new Error(response?.error || "source lookup failed");
       }
@@ -1224,6 +1338,7 @@ function actionDeps(overrides = {}) {
     reserveSourceCapture: async () => true,
     releaseSourceCapture: async () => {},
     captureTabSource: async () => rawWebSource(),
+    tabMatchesUrl: async () => true,
     ...overrides
   };
 }
@@ -1255,6 +1370,7 @@ async function completeSourceCaptureTask(taskMessage, overrides = {}) {
       inFlightKey: taskMessage.inFlightKey,
       tabId: taskMessage.tabId,
       ok: true,
+      databaseId: taskMessage.config.databaseId,
       result: {
         url: taskMessage.url,
         title: taskMessage.title,

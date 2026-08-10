@@ -39,6 +39,7 @@ import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
 import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
 import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
+import { Route as DocsSkillsIndexRouteImport } from './routes/docs.skills.index'
 import { Route as DbDatabaseIdIndexRouteImport } from './routes/db.$databaseId.index'
 import { Route as MarketplaceSellerPrincipalRouteImport } from './routes/marketplace.seller.$principal'
 import { Route as DocsSkillsSlugRouteImport } from './routes/docs.skills.$slug'
@@ -202,6 +203,11 @@ const DotwellKnownAppleAppSiteAssociationRoute =
     path: '/.well-known/apple-app-site-association',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DocsSkillsIndexRoute = DocsSkillsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsSkillsRoute,
+} as any)
 const DbDatabaseIdIndexRoute = DbDatabaseIdIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -298,6 +304,7 @@ export interface FileRoutesByFullPath {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId/': typeof DbDatabaseIdIndexRoute
+  '/docs/skills/': typeof DocsSkillsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -319,7 +326,6 @@ export interface FileRoutesByTo {
   '/docs/cli': typeof DocsCliRoute
   '/docs/clipper': typeof DocsClipperRoute
   '/docs/ios': typeof DocsIosRoute
-  '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
   '/skills/$databaseId': typeof SkillsDatabaseIdRoute
@@ -336,6 +342,7 @@ export interface FileRoutesByTo {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId': typeof DbDatabaseIdIndexRoute
+  '/docs/skills': typeof DocsSkillsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -379,6 +386,7 @@ export interface FileRoutesById {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId/': typeof DbDatabaseIdIndexRoute
+  '/docs/skills/': typeof DocsSkillsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -423,6 +431,7 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId/'
+    | '/docs/skills/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -444,7 +453,6 @@ export interface FileRouteTypes {
     | '/docs/cli'
     | '/docs/clipper'
     | '/docs/ios'
-    | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
     | '/skills/$databaseId'
@@ -461,6 +469,7 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId'
+    | '/docs/skills'
   id:
     | '__root__'
     | '/'
@@ -503,6 +512,7 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId/'
+    | '/docs/skills/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -744,6 +754,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/docs/skills/': {
+      id: '/docs/skills/'
+      path: '/'
+      fullPath: '/docs/skills/'
+      preLoaderRoute: typeof DocsSkillsIndexRouteImport
+      parentRoute: typeof DocsSkillsRoute
+    }
     '/db/$databaseId/': {
       id: '/db/$databaseId/'
       path: '/'
@@ -833,10 +850,12 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 
 interface DocsSkillsRouteChildren {
   DocsSkillsSlugRoute: typeof DocsSkillsSlugRoute
+  DocsSkillsIndexRoute: typeof DocsSkillsIndexRoute
 }
 
 const DocsSkillsRouteChildren: DocsSkillsRouteChildren = {
   DocsSkillsSlugRoute: DocsSkillsSlugRoute,
+  DocsSkillsIndexRoute: DocsSkillsIndexRoute,
 }
 
 const DocsSkillsRouteWithChildren = DocsSkillsRoute._addFileChildren(

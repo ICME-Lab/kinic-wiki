@@ -130,20 +130,74 @@ test("renders the Clipper guide, requirements, and docs navigation", async ({ pa
   await followInternalLink(page, mobileNavigation.getByRole("link", { name: "iOS App" }), "/docs/ios", /\/docs\/ios$/);
 });
 
+test("renders the skills overview and each workflow detail", async ({ page }) => {
+  await page.goto("/docs/skills");
+
+  await expect(page).toHaveTitle("Kinic Wiki Skills Docs");
+  await expect(page.getByRole("heading", { level: 1, name: "Agent workflow skills" })).toBeVisible();
+  const skillLinks = page.getByRole("region", { name: "Skill workflow docs" });
+  await expect(skillLinks.getByRole("link")).toHaveCount(7);
+
+  for (const skill of [
+    { slug: "query", title: "Query", skillName: "kinic-wiki-query", referenceHref: "query.md", referenceHeading: "Kinic Wiki Query Workflow" },
+    { slug: "edit", title: "Edit", skillName: "kinic-wiki-edit", referenceHref: "edit.md", referenceHeading: "Kinic Wiki Edit Workflow" },
+    { slug: "mcp", title: "MCP", skillName: "kinic-wiki-mcp", referenceHref: "references/tools.md", referenceHeading: "Kinic Wiki MCP Tool Reference" },
+    { slug: "ingest", title: "Ingest", skillName: "kinic-wiki-ingest", referenceHref: "ingest.md", referenceHeading: "Kinic Wiki Ingest Workflow" },
+    { slug: "lint", title: "Lint", skillName: "kinic-wiki-lint", referenceHref: "lint.md", referenceHeading: "Kinic Wiki Lint Workflow" },
+    { slug: "context-pack", title: "Context Pack", skillName: "kinic-context-pack", referenceHref: "context-pack.md", referenceHeading: "Kinic Context Pack Workflow" },
+    { slug: "registry", title: "Skill Registry", skillName: "kinic-skill-registry", referenceHref: "../../docs/SKILL_REGISTRY.md", referenceHeading: "Skill Registry" }
+  ]) {
+    await followInternalLink(
+      page,
+      page.getByRole("region", { name: "Skill workflow docs" }).getByRole("link", { name: new RegExp(skill.title) }),
+      `/docs/skills/${skill.slug}`,
+      new RegExp(`/docs/skills/${skill.slug}$`)
+    );
+    await expect(page).toHaveTitle(`Kinic Wiki ${skill.title} Skill`);
+    await expect(page.getByRole("heading", { level: 1, name: skill.title })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "SKILL.md" })).toBeVisible();
+    for (const removedSection of ["Common commands", "Safety", "Responsibilities"]) {
+      await expect(page.getByRole("heading", { level: 2, name: removedSection })).toHaveCount(0);
+    }
+    const renderedSkill = page.getByRole("region", { name: "Rendered SKILL.md" });
+    await expect(renderedSkill.getByText(skill.skillName, { exact: true })).toBeVisible();
+    const reference = page.getByRole("region", { name: `Reference ${skill.referenceHref}` });
+    await expect(renderedSkill.getByRole("link", { name: skill.referenceHref })).toHaveAttribute("href", /^#skill-reference-/);
+    await expect(reference.getByRole("heading", { level: 3, name: skill.referenceHeading })).toBeVisible();
+    if (skill.slug === "query") {
+      await expect(page.getByRole("button", { name: "Rendered" })).toHaveAttribute("aria-pressed", "true");
+      await expect(renderedSkill.getByRole("heading", { level: 3, name: "Kinic Wiki Query", exact: true })).toBeVisible();
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+      await page.getByRole("button", { name: "Copy SKILL.md" }).click();
+      await expect(page.getByRole("button", { name: "SKILL.md copied" })).toBeVisible();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(`name: ${skill.skillName}`);
+      await page.getByRole("button", { name: "Raw" }).click();
+      await expect(page.getByRole("region", { name: "Raw SKILL.md" }).locator("pre")).toContainText(`name: ${skill.skillName}`);
+    }
+    await followInternalLink(page, page.locator("#admin-main").getByRole("link", { name: "Skills", exact: true }), "/docs/skills", /\/docs\/skills$/);
+  }
+});
+
 for (const viewport of MOBILE_VIEWPORTS) {
   test(`keeps public calls to action visible at ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const cases = [
-      { path: "/", name: "Install Clipper" },
-      { path: "/ios", name: "Download on the App Store" },
-      { path: "/docs/ios", name: "View on the App Store" },
-      { path: "/docs/clipper", name: "Add to Chrome" }
+      { path: "/", action: (target: Page) => target.getByRole("link", { name: "Install Clipper" }) },
+      { path: "/ios", action: (target: Page) => target.getByRole("link", { name: "Download on the App Store" }) },
+      { path: "/docs/ios", action: (target: Page) => target.getByRole("link", { name: "View on the App Store" }) },
+      { path: "/docs/clipper", action: (target: Page) => target.getByRole("link", { name: "Add to Chrome" }) },
+      { path: "/docs/skills/query", action: (target: Page) => target.getByRole("button", { name: "Copy SKILL.md" }) }
     ];
 
     for (const entry of cases) {
       await page.goto(entry.path);
-      const callToAction = page.getByRole("link", { name: entry.name }).first();
+      const callToAction = entry.action(page).first();
       await expectActionableWithinViewport(page, callToAction);
+      if (entry.path === "/docs/skills/query") {
+        await page.getByRole("button", { name: "Raw" }).click();
+        const rawMarkdown = page.getByRole("region", { name: "Raw SKILL.md" }).locator("pre");
+        expect(await rawMarkdown.evaluate((element) => element.scrollHeight === element.clientHeight)).toBe(true);
+      }
       await expectNoHorizontalOverflow(page);
     }
   });
@@ -180,11 +234,11 @@ async function expectHydrated(page: Page) {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "true");
 }
 
-async function expectActionableWithinViewport(page: Page, link: Locator) {
-  await link.scrollIntoViewIfNeeded();
-  await expect(link).toBeVisible();
-  await link.click({ trial: true });
-  const box = await link.boundingBox();
+async function expectActionableWithinViewport(page: Page, action: Locator) {
+  await action.scrollIntoViewIfNeeded();
+  await expect(action).toBeVisible();
+  await action.click({ trial: true });
+  const box = await action.boundingBox();
   const viewport = page.viewportSize();
   expect(box).not.toBeNull();
   expect(viewport).not.toBeNull();
