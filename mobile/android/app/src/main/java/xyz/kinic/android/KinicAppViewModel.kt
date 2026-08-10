@@ -77,6 +77,7 @@ data class KinicAppUiState(
     val sourceCaptureHistory: List<SourceCaptureHistoryRecord> = emptyList(),
     val isLoadingSourceCaptureHistory: Boolean = false,
     val sourceCaptureRetryPaths: Set<String> = emptySet(),
+    val isSubmittingCapture: Boolean = false,
     val manage: ManageUiState = ManageUiState(),
     val requestedDestination: KinicTopLevelDestination = KinicTopLevelDestination.HOME,
     val navigationRequestId: Long = 0,
@@ -97,6 +98,7 @@ class KinicAppViewModel(
     private val historyStore: SourceCaptureHistoryStore,
     private val icClient: KinicIcClient,
 ) : ViewModel(), AskAiKnowledgeProvider {
+    private val captureSubmission = CaptureSubmissionCoordinator(submitter::submitNextPendingUrl)
     private val _uiState = MutableStateFlow(
         KinicAppUiState(
             session = authService.restore(),
@@ -275,6 +277,9 @@ class KinicAppViewModel(
                 loadBrowsePath("/")
             }
             refreshSourceCaptureHistory()
+            if (session != null && _uiState.value.pendingUrls.isNotEmpty()) {
+                submitNextPending()
+            }
         }
     }
 
@@ -304,6 +309,7 @@ class KinicAppViewModel(
         settingsStore.selectedDatabaseId = databaseId
         _uiState.update { it.copy(selectedCaptureDatabaseId = databaseId) }
         refreshSourceCaptureHistory()
+        if (_uiState.value.pendingUrls.isNotEmpty()) submitNextPending()
     }
 
     fun selectBrowseDatabase(databaseId: String) {
@@ -462,18 +468,26 @@ class KinicAppViewModel(
         }
     }
 
-    fun enqueueUrl(url: String) {
-        runCatching {
-            inbox.enqueue(
-                url = URI(url.trim()),
-                databaseId = _uiState.value.selectedCaptureDatabaseId,
-                outputLanguage = _uiState.value.generationLanguage,
-            )
-        }.onSuccess {
-            _uiState.update { state ->
-                state.copy(pendingUrls = inbox.loadPendingUrls(), message = "Queued.")
-            }
-        }.onFailure(::showError)
+    fun enqueueUrl(url: String): Boolean {
+        val state = _uiState.value
+        return enqueueManualCapture(
+            inbox = inbox,
+            url = url,
+            databaseId = state.selectedCaptureDatabaseId,
+            outputLanguage = state.generationLanguage,
+        ).fold(
+            onSuccess = {
+                _uiState.update { current ->
+                    current.copy(pendingUrls = inbox.loadPendingUrls(), message = "Queued.")
+                }
+                submitNextPending()
+                true
+            },
+            onFailure = { error ->
+                showError(error)
+                false
+            },
+        )
     }
 
     fun removePending(item: PendingSharedUrl) {
@@ -483,6 +497,7 @@ class KinicAppViewModel(
 
     fun submitNextPending() {
         val state = _uiState.value
+        if (state.pendingUrls.isEmpty() || state.isSubmittingCapture) return
         val session = state.session ?: run {
             _uiState.update { it.copy(message = "Sign in before submitting.") }
             return
@@ -490,11 +505,15 @@ class KinicAppViewModel(
         val database = state.memberDatabases.firstOrNull {
             it.databaseId == state.selectedCaptureDatabaseId
         }
+        _uiState.update { it.copy(isSubmittingCapture = true, message = "Submitting...") }
         viewModelScope.launch {
-            _uiState.update { it.copy(message = "Submitting...") }
-            val message = submitter.submitNextPendingUrl(session, database)
-            _uiState.update {
-                it.copy(pendingUrls = inbox.loadPendingUrls(), message = message)
+            val result = runCatching { captureSubmission.submitNext(session, database) }
+            _uiState.update { current ->
+                current.copy(
+                    pendingUrls = inbox.loadPendingUrls(),
+                    message = result.getOrNull() ?: result.exceptionOrNull()?.let(::errorMessage) ?: current.message,
+                    isSubmittingCapture = false,
+                )
             }
             refreshSourceCaptureHistory()
         }
