@@ -130,6 +130,36 @@ test("renders the Clipper guide, requirements, and docs navigation", async ({ pa
   await followInternalLink(page, mobileNavigation.getByRole("link", { name: "iOS App" }), "/docs/ios", /\/docs\/ios$/);
 });
 
+test("renders the skills overview and each workflow detail", async ({ page }) => {
+  await page.goto("/docs/skills");
+
+  await expect(page).toHaveTitle("Kinic Wiki Skills Docs");
+  await expect(page.getByRole("heading", { level: 1, name: "Agent workflow skills" })).toBeVisible();
+  const skillLinks = page.getByRole("region", { name: "Skill workflow docs" });
+  await expect(skillLinks.getByRole("link")).toHaveCount(6);
+  await followInternalLink(page, skillLinks.getByRole("link", { name: /Query/ }), "/docs/skills/query", /\/docs\/skills\/query$/);
+
+  await expect(page).toHaveTitle("Kinic Wiki Query Skill");
+  await expect(page.getByRole("heading", { level: 1, name: "Query" })).toBeVisible();
+  for (const section of ["Common commands", "Safety", "Responsibilities"]) {
+    await expect(page.getByRole("heading", { name: section })).toBeVisible();
+  }
+  await followInternalLink(page, page.locator("#admin-main").getByRole("link", { name: "Skills", exact: true }), "/docs/skills", /\/docs\/skills$/);
+
+  for (const skill of [
+    { slug: "query", title: "Query" },
+    { slug: "edit", title: "Edit" },
+    { slug: "ingest", title: "Ingest" },
+    { slug: "lint", title: "Lint" },
+    { slug: "context-pack", title: "Context Pack" },
+    { slug: "registry", title: "Skill Registry" }
+  ]) {
+    await page.goto(`/docs/skills/${skill.slug}`);
+    await expect(page).toHaveTitle(`Kinic Wiki ${skill.title} Skill`);
+    await expect(page.getByRole("heading", { level: 1, name: skill.title })).toBeVisible();
+  }
+});
+
 for (const viewport of MOBILE_VIEWPORTS) {
   test(`keeps public calls to action visible at ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
