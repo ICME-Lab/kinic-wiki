@@ -44,7 +44,21 @@ test("publishes all public routes in the sitemap", async ({ request }) => {
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.ok()).toBe(true);
   const body = await sitemap.text();
-  for (const path of ["/", "/ios", "/docs/ios", "/docs/clipper", "/privacy-policy", "/support"]) {
+  for (const path of [
+    "/",
+    "/ios",
+    "/docs/ios",
+    "/docs/clipper",
+    "/docs/skills/query",
+    "/docs/skills/edit",
+    "/docs/skills/mcp",
+    "/docs/skills/ingest",
+    "/docs/skills/lint",
+    "/docs/skills/context-pack",
+    "/docs/skills/registry",
+    "/privacy-policy",
+    "/support"
+  ]) {
     expect(body).toContain(`<loc>https://wiki.kinic.xyz${path}</loc>`);
   }
 });

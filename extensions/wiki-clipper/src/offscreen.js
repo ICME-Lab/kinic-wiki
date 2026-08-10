@@ -2,6 +2,7 @@
 // What: DOM-backed authenticated source write worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot, resetAuthClient as defaultResetAuthClient } from "./auth-client.js";
+import { normalizedHttpUrl } from "./source-capture-request.js";
 import {
   createVfsActor as defaultCreateVfsActor,
   getCyclesBillingConfigOrNull,
@@ -37,7 +38,7 @@ export function handleOffscreenMessage(message) {
       : message?.type === "trigger-source-generation"
         ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
         : message?.type === "web-source-exists"
-          ? webSourceExists(message.sourcePath, message.config)
+          ? webSourceExists(message.sourcePath, message.expectedUrl, message.config)
           : message?.type === "auth-status"
             ? authStatus()
             : message?.type === "list-writable-databases"
@@ -76,7 +77,8 @@ async function runSourceCaptureTask(task) {
         generationQueued,
         generationSkipped: !task.queueGeneration,
         generationError: generationQueued ? null : triggerResult?.triggerError || "generation queue failed"
-      }
+      },
+      databaseId: task.config.databaseId
     });
   } catch (error) {
     await notifySourceCaptureTaskResult({
@@ -86,6 +88,7 @@ async function runSourceCaptureTask(task) {
       tabId: task.tabId,
       ok: false,
       url: task.url,
+      databaseId: task.config.databaseId,
       error: error instanceof Error ? error.message : String(error)
     });
   }
@@ -107,7 +110,12 @@ export async function saveEvidenceSource(evidenceSource, config) {
   await requireDatabaseWriteCyclesAvailable(actor, config.databaseId);
   const existing = await actor.read_node(config.databaseId, evidenceSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
-  const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];
+  const existingNode = existing.Ok[0] || null;
+  const expectedWebSourceUrl = webSourceUrlFromMetadata(evidenceSource.metadataJson);
+  if (existingNode && expectedWebSourceUrl) {
+    requireMatchingWebSourceUrl(existingNode, expectedWebSourceUrl);
+  }
+  const expected = existingNode?.etag ? [existingNode.etag] : [];
   await ensureParentFolders(actor, config.databaseId, evidenceSource.path);
   const sessionNonce = crypto.randomUUID();
   const result = await actor.write_source_for_generation({
@@ -164,8 +172,9 @@ function validateSourceCaptureTask(message) {
   };
 }
 
-export async function webSourceExists(sourcePath, config) {
+export async function webSourceExists(sourcePath, expectedUrl, config) {
   if (typeof sourcePath !== "string" || !sourcePath) throw new Error("source path is required");
+  const normalizedExpectedUrl = normalizedHttpUrl(expectedUrl);
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
@@ -173,11 +182,47 @@ export async function webSourceExists(sourcePath, config) {
   const result = await actor.read_node(config.databaseId, sourcePath);
   if ("Err" in result) throw new Error(result.Err);
   const node = result.Ok[0] || null;
+  if (node) {
+    requireMatchingWebSourceUrl(node, normalizedExpectedUrl);
+  }
   return {
     exists: Boolean(node),
     path: sourcePath,
     etag: node?.etag || null
   };
+}
+
+function requireMatchingWebSourceUrl(node, expectedUrl) {
+  let metadata;
+  try {
+    metadata = JSON.parse(node.metadata_json);
+  } catch {
+    throw new Error("WEB_SOURCE_PATH_CONFLICT");
+  }
+  const storedUrl = metadata?.final_url || metadata?.url;
+  if (typeof storedUrl !== "string") {
+    throw new Error("WEB_SOURCE_PATH_CONFLICT");
+  }
+  let normalizedStoredUrl;
+  try {
+    normalizedStoredUrl = normalizedHttpUrl(storedUrl);
+  } catch {
+    throw new Error("WEB_SOURCE_PATH_CONFLICT");
+  }
+  if (normalizedStoredUrl !== expectedUrl) {
+    throw new Error("WEB_SOURCE_PATH_CONFLICT");
+  }
+}
+
+function webSourceUrlFromMetadata(metadataJson) {
+  let metadata;
+  try {
+    metadata = JSON.parse(metadataJson);
+  } catch {
+    return null;
+  }
+  if (metadata?.source_type !== "url") return null;
+  return normalizedHttpUrl(metadata.final_url || metadata.url);
 }
 
 async function ensureParentFolders(actor, databaseId, path) {

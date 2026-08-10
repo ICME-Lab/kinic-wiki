@@ -8,12 +8,15 @@ import { CliGuideBlock } from "@/app/docs/cli/cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
 import { findSkillDoc } from "../../docs-data";
+import { findSkillMarkdown } from "../../skill-markdown";
+import { SkillMarkdownBlock } from "./skill-markdown-block";
 
 type SkillDocPageProps = { slug: string };
 
 export default function SkillDocPage({ slug }: SkillDocPageProps) {
   const doc = findSkillDoc(slug);
-  if (!doc) throw notFound();
+  const skillMarkdown = findSkillMarkdown(slug);
+  if (!doc || !skillMarkdown) throw notFound();
 
   return (
     <AdminContent>
@@ -59,6 +62,8 @@ export default function SkillDocPage({ slug }: SkillDocPageProps) {
             ))}
           </ul>
         </AdminPanel>
+
+        <SkillMarkdownBlock markdown={skillMarkdown} />
       </div>
     </AdminContent>
   );
