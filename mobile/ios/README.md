@@ -10,14 +10,15 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Uses `humandebri/ICNativeClient` through Swift Package Manager.
 - Includes AppIcon assets generated from the existing Kinic mark.
 - Includes `PrivacyInfo.xcprivacy` for app group `UserDefaults` usage.
-- Opens Internet Identity through the `/native-auth` bridge model.
+- Opens Internet Identity directly through the ICRC-167 URL transport.
 - Receives Safari/browser Share Sheet URLs through `KinicShareExtension`.
 - Submits shared URLs directly from `KinicShareExtension` when a shared Keychain session and selected database are available.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
 - Adds a database-scoped Ask AI tab that retrieves relevant wiki documents, shows its search and evidence-checking activity, and refuses to answer when no supporting document is available.
-- Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Each question uses `https://api.kinic.io/chat` once to generate bounded search queries and, when verified notes are found, once more to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
+- Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Database searches use `https://api.kinic.io/chat` once to route the request and generate up to three diversified queries (literal, paraphrased, and anchor-only), then once more when verified notes are found to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
+- Lets signed-in users delete their Kinic account data from Settings. Sole-owned databases are deleted; shared-database membership, purchased access, and account-scoped local history are removed; Internet Identity and retained transaction records remain.
 - Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
@@ -49,13 +50,15 @@ Enable these capabilities:
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
   - Debug device builds also include `?mode=developer` variants so iOS can refresh the AASA from the origin while Apple CDN caches are stale.
 
-Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/apple-app-site-association` serving the JSON `applinks` / `webcredentials` document for `AKN976G7AK.xyz.kinic.ios.KinicWiki` and the `/ios-auth-callback` route.
+Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/ii-auth-callbacks`, `https://wiki.kinic.xyz/.well-known/apple-app-site-association`, and the terminating `/ios-auth-callback` route.
+
+During the ICRC-167 rollout, the web deployment keeps `/native-auth` for already released app versions. Remove that bridge only after the direct-transport iOS release has reached users.
 
 The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
 
 ## Runtime target
 
-iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
+iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
 
 ## Verification
 
@@ -89,7 +92,7 @@ For a clean browser-session authentication check in a Debug build, launch the ap
 
 ## TestFlight
 
-TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/#authorize`, and callback domain `wiki.kinic.xyz`.
+TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, and callback domain `wiki.kinic.xyz`.
 The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
 The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
 The default upload mode is external-TestFlight-capable. Use `--internal-only` only when the build must not be assigned to external tester groups.

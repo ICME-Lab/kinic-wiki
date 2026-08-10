@@ -6,13 +6,8 @@ import SwiftUI
 
 struct AskAIView: View {
     @Bindable var appModel: AppModel
-    @State private var model: AskAIModel
+    @Bindable var model: AskAIModel
     @State private var isShowingHistory = false
-
-    init(appModel: AppModel) {
-        self.appModel = appModel
-        _model = State(initialValue: AskAIModel(appModel: appModel))
-    }
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
@@ -44,7 +39,7 @@ struct AskAIView: View {
                 Button("Start with \(model.pendingDatabaseTitle ?? "database")", action: model.confirmDatabaseChange)
                 Button("Cancel", role: .cancel, action: model.cancelDatabaseChange)
             } message: {
-                Text("A conversation uses evidence from one database only.")
+                Text("A conversation can use one database only.")
             }
             .confirmationDialog(
                 "Reset local history?",
@@ -86,7 +81,8 @@ struct AskAIView: View {
 }
 
 #Preview {
+    let appModel = AppModel.preview()
     NavigationStack {
-        AskAIView(appModel: .preview())
+        AskAIView(appModel: appModel, model: AskAIModel(appModel: appModel))
     }
 }

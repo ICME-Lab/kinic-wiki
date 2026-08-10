@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/AskAIComposerView.swift
-// What: Multiline grounded-question composer and privacy notice.
-// Why: Sending scope must remain clear at the moment DB text leaves the device.
+// What: Multiline conversational composer.
+// Why: Keep message entry and generation controls compact and accessible.
 
 import SwiftUI
 
@@ -10,7 +10,7 @@ struct AskAIComposerView: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Ask about this database", text: $model.draft, axis: .vertical)
+                TextField("Message Kinic AI", text: $model.draft, axis: .vertical)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
                     .padding(.horizontal, 14)
@@ -43,14 +43,6 @@ struct AskAIComposerView: View {
                 .accessibilityLabel(
                     "\(model.remainingQuestionCharacters) characters remaining"
                 )
-
-            Label(
-                "Your question, recent conversation, and relevant notes are sent to Kinic AI, then deleted after processing.",
-                systemImage: "lock.shield"
-            )
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)

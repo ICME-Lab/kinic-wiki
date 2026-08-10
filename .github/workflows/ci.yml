@@ -83,11 +83,11 @@ jobs:
           set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
-          set_output wikibrowser "($js_workspace|^wikibrowser/)"
+          set_output wikibrowser "($js_workspace|^packages/vfs-candid/|^wikibrowser/)"
           set_output extension "($js_workspace|^extensions/wiki-clipper/)"
           set_output wiki_generator "($js_workspace|^workers/wiki-generator/)"
           set_output wiki_mcp "($js_workspace|^workers/wiki-mcp/)"
-          set_output skill_registry_web "($js_workspace|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
+          set_output skill_registry_web "($js_workspace|^packages/vfs-candid/|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
           set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
           set_output android '^(mobile/android/|\.github/workflows/ci\.yml)'
 
@@ -101,6 +101,8 @@ jobs:
           package-manager-cache: false
       - name: Test Candid tools
         run: npm --prefix tools/candid test
+      - name: Check generated shared VFS Candid IDL
+        run: npm --prefix packages/vfs-candid test
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
       - name: Check docs links
@@ -195,8 +197,8 @@ jobs:
         run: pnpm build:worker
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
-      - name: Run support route smoke
-        run: pnpm e2e:support
+      - name: Run public route browser tests
+        run: pnpm e2e:public
 
   wiki-generator-check:
     needs: changes
@@ -221,10 +223,16 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Run audit
         run: pnpm audit --audit-level moderate
-      - name: Run typecheck
-        run: pnpm typecheck
       - name: Run tests
         run: pnpm test
+      - name: Run typecheck
+        run: pnpm typecheck
+      - name: Check Cloudflare types
+        run: pnpm cf-typecheck
+      - name: Run Workers runtime tests
+        run: pnpm test:worker
+      - name: Build Cloudflare Worker
+        run: pnpm build
 
   wiki-mcp-check:
     needs: changes

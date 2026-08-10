@@ -4,10 +4,12 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { NodePublicationControls } from "@/components/node-publication-controls";
+import { LocalImportDialog, type LocalImportDialogState } from "@/components/local-import-dialog";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
 import { GraphPanel } from "@/components/graph-panel";
@@ -23,8 +25,10 @@ import { parseSearchOptions } from "@/lib/search-options";
 import { databaseRouteBase } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import { buildLocalImportWrites, loadExistingLocalImportNodes, prepareLocalImport, reconcileLocalImport, type LocalImportFile, type LocalImportMode } from "@/lib/local-import";
 import { folderIndexPath, isReservedFolderIndexName } from "@/lib/folder-index";
 import { wikiSeoTitle } from "@/lib/wiki-seo";
+import { DEFAULT_EXPLORER_SORT_ORDER, parseExplorerSortOrder, type ExplorerSortOrder } from "@/lib/child-sort";
 import {
   errorHint,
   errorMessage,
@@ -43,6 +47,7 @@ import {
 import { ExplorerActionError, ExplorerCreateForm, ExplorerHeaderActions, ExplorerMoveForm, LeftPane, childPath, createDirectoryForExplorerNode, explorerNodeFromSelection, isDeletableExplorerNode, isMutableExplorerNode, loadedWikiFolders, normalizeMarkdownFileName, normalizePathSegment, sameStringList, wikiChildPath, wikiMarkdownChildPath, writeDisabledReason } from "@/components/wiki-browser/explorer-pane";
 import { TopBar, databaseListWarning, mergeDatabaseSummaries, withCurrentDatabase } from "@/components/wiki-browser/top-bar";
 const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
+const EXPLORER_SORT_STORAGE_KEY = "kinicWikiExplorerSortOrder";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const EMPTY_DATABASE_SUMMARIES: DatabaseSummary[] = [];
 const EMPTY_PUBLIC_DATABASE_IDS: ReadonlySet<string> = new Set<string>();
@@ -122,6 +127,7 @@ function WikiBrowserContent() {
   const [folderIndexNode, setFolderIndexNode] = useState<BrowserLoadState<WikiNode>>(browserLoadingState(canisterId, databaseId, folderIndexPath(selectedPath)));
   const [editState, setEditState] = useState<DocumentEditState>({ dirty: false, saveState: "idle" });
   const [explorerRevision, setExplorerRevision] = useState(0);
+  const [explorerSortOrder, setExplorerSortOrder] = useState<ExplorerSortOrder>(DEFAULT_EXPLORER_SORT_ORDER);
   const [selectedExplorerState, setSelectedExplorerState] = useState<{ key: string; node: ChildNode } | null>(null);
   const [explorerActionMode, setExplorerActionMode] = useState<"file" | "folder" | "rename" | null>(null);
   const [explorerMoveOpen, setExplorerMoveOpen] = useState(false);
@@ -130,11 +136,24 @@ function WikiBrowserContent() {
   const [explorerDraftName, setExplorerDraftName] = useState("");
   const [explorerActionError, setExplorerActionError] = useState<string | null>(null);
   const [explorerBusyAction, setExplorerBusyAction] = useState<"file" | "folder" | "rename" | "move" | "delete" | null>(null);
+  const [localImportDialog, setLocalImportDialog] = useState<LocalImportDialogState | null>(null);
+  const fileImportInputRef = useRef<HTMLInputElement | null>(null);
+  const folderImportInputRef = useRef<HTMLInputElement | null>(null);
+  const localImportSequence = useRef(0);
+  const localImportAbortController = useRef<AbortController | null>(null);
   const nodeContextCache = useRef(new Map<string, NodeContext>());
   const childNodesCache = useRef(new Map<string, ChildNode[]>());
   const folderIndexNodeCache = useRef(new Map<string, WikiNode | null>());
   const invalidCanister = validateCanisterText(canisterId);
   const canonicalRouteHref = useMemo(() => hrefForCanonicalDatabaseRoute(pathname, searchParams.toString()), [pathname, searchParams]);
+
+  useEffect(() => {
+    try {
+      setExplorerSortOrder(parseExplorerSortOrder(window.localStorage.getItem(EXPLORER_SORT_STORAGE_KEY)));
+    } catch {
+      setExplorerSortOrder(DEFAULT_EXPLORER_SORT_ORDER);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +171,15 @@ function WikiBrowserContent() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const updateExplorerSortOrder = useCallback((order: ExplorerSortOrder) => {
+    setExplorerSortOrder(order);
+    try {
+      window.localStorage.setItem(EXPLORER_SORT_STORAGE_KEY, order);
+    } catch {
+      // The in-memory preference remains usable when browser storage is unavailable.
+    }
   }, []);
 
   useEffect(() => {
@@ -475,6 +503,87 @@ function WikiBrowserContent() {
     ? currentChildren.data ?? undefined
     : undefined;
   const explorerDeleteTarget = explorerMutationTarget && isDeletableExplorerNode(explorerMutationTarget, selectedExplorerChildren) ? explorerMutationTarget : null;
+
+  function openLocalImportPicker(mode: LocalImportMode) {
+    if (!canLeaveDirtyEdit() || !explorerCreateDirectory) return;
+    setExplorerActionError(null);
+    setExplorerActionMode(null);
+    setExplorerMoveOpen(false);
+    const input = mode === "folder" ? folderImportInputRef.current : fileImportInputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }
+
+  async function prepareSelectedLocalImport(files: LocalImportFile[], mode: LocalImportMode) {
+    if (!explorerCreateDirectory || files.length === 0) return;
+    localImportAbortController.current?.abort();
+    const abortController = new AbortController();
+    localImportAbortController.current = abortController;
+    const sequence = ++localImportSequence.current;
+    const destinationDirectory = explorerCreateDirectory;
+    setLocalImportDialog({ phase: "preparing", mode, destinationDirectory });
+    try {
+      const prepared = await prepareLocalImport(files, destinationDirectory, mode, { signal: abortController.signal });
+      const existing = await loadExistingLocalImportNodes(prepared, async (path) => {
+        const { listChildren } = await import("@/lib/vfs-client");
+        return listChildren(canisterId, databaseId, path, readIdentity ?? undefined);
+      }, abortController.signal);
+      if (sequence !== localImportSequence.current) return;
+      setLocalImportDialog({ phase: "ready", plan: reconcileLocalImport(prepared, existing) });
+    } catch (cause) {
+      if (sequence !== localImportSequence.current || abortController.signal.aborted || isAbortError(cause)) return;
+      setLocalImportDialog({ phase: "error", mode, destinationDirectory, message: errorMessage(cause) });
+    } finally {
+      if (localImportAbortController.current === abortController) localImportAbortController.current = null;
+    }
+  }
+
+  function cancelLocalImport() {
+    localImportAbortController.current?.abort();
+    localImportAbortController.current = null;
+    localImportSequence.current += 1;
+    setLocalImportDialog(null);
+  }
+
+  useEffect(() => {
+    localImportAbortController.current?.abort();
+    localImportAbortController.current = null;
+    localImportSequence.current += 1;
+    setLocalImportDialog(null);
+  }, [canisterId, databaseId]);
+
+  useEffect(() => () => {
+    localImportAbortController.current?.abort();
+  }, []);
+
+  async function runLocalImport(replacements: Set<string>) {
+    if (!localImportDialog || localImportDialog.phase !== "ready") return;
+    const plan = localImportDialog.plan;
+    const selectedReplacements = new Set(replacements);
+    try {
+      if (!readIdentity) throw new Error("Login with Internet Identity to import local content.");
+      if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+      if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
+      const nodes = buildLocalImportWrites(plan, selectedReplacements);
+      if (plan.limitError || nodes.length === 0) return;
+      setLocalImportDialog({ phase: "writing", plan });
+      const { writeNodesAuthenticated } = await import("@/lib/vfs-client");
+      const results = await writeNodesAuthenticated(canisterId, readIdentity, { databaseId, nodes });
+      const created = results.filter((result) => result.created).length;
+      const replaced = results.length - created;
+      const skipped = plan.excluded.length
+        + plan.entries.filter((entry) => entry.status === "blocked").length
+        + plan.entries.filter((entry) => entry.status === "conflict" && !selectedReplacements.has(entry.path)).length;
+      invalidateBrowserCaches();
+      setLocalImportDialog(null);
+      toast.success(`Imported ${created} new, replaced ${replaced}, skipped ${skipped}.`);
+      navigate(hrefForPath(canisterId, databaseId, plan.navigationPath, undefined, tab), { guard: false, replace: true });
+    } catch (cause) {
+      setLocalImportDialog({ phase: "ready", plan });
+      toast.error(errorMessage(cause));
+    }
+  }
   useEffect(() => {
     const nextTargets = loadedWikiFolders(childNodesCache.current, explorerMutationTarget);
     setExplorerMoveTargets((currentTargets) => sameStringList(currentTargets, nextTargets) ? currentTargets : nextTargets);
@@ -719,16 +828,21 @@ function WikiBrowserContent() {
             title={tabTitle(tab)}
             actions={tab === "explorer" ? (
               <ExplorerHeaderActions
+                sortOrder={explorerSortOrder}
                 fileDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
                 folderDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null}
                 renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
                 moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
+                importDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null || localImportDialog !== null}
                 fileTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New file in ${explorerCreateDirectory}`}
                 folderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
                 moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
                 deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file, source node, or folder without visible children to delete")}
+                importFilesTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import files into ${explorerCreateDirectory}`}
+                importFolderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `Import folder into ${explorerCreateDirectory}`}
+                onSortOrderChange={updateExplorerSortOrder}
                 onNewFile={() => {
                   setExplorerActionError(null);
                   setExplorerActionMode("file");
@@ -756,6 +870,8 @@ function WikiBrowserContent() {
                   setExplorerMoveOpen(true);
                 }}
                 onDelete={() => void runExplorerDelete()}
+                onImportFiles={() => openLocalImportPicker("files")}
+                onImportFolder={() => openLocalImportPicker("folder")}
               />
             ) : undefined}
           />
@@ -805,6 +921,7 @@ function WikiBrowserContent() {
             readIdentityMode={currentReadIdentityMode}
             databaseCyclesError={currentDatabaseCycleReason}
             explorerRevision={explorerRevision}
+            explorerSortOrder={explorerSortOrder}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
         </aside>
@@ -901,6 +1018,39 @@ function WikiBrowserContent() {
           </aside>
         ) : null}
       </section>
+      <input
+        ref={fileImportInputRef}
+        accept=".md,.pdf,text/markdown,application/pdf"
+        className="hidden"
+        type="file"
+        multiple
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []) as LocalImportFile[];
+          event.currentTarget.value = "";
+          void prepareSelectedLocalImport(files, "files");
+        }}
+      />
+      <input
+        ref={(node) => {
+          folderImportInputRef.current = node;
+          node?.setAttribute("webkitdirectory", "");
+        }}
+        className="hidden"
+        type="file"
+        multiple
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []) as LocalImportFile[];
+          event.currentTarget.value = "";
+          void prepareSelectedLocalImport(files, "folder");
+        }}
+      />
+      {localImportDialog ? (
+        <LocalImportDialog state={localImportDialog} onCancel={cancelLocalImport} onImport={(replacements) => void runLocalImport(replacements)} />
+      ) : null}
     </main>
   );
 }
@@ -1016,6 +1166,10 @@ function currentNodeState(
 
 function errorCode(error: unknown): string | null {
   return error instanceof ApiError ? error.code : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function currentNodeContextState(

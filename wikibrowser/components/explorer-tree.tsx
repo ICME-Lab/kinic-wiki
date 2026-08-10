@@ -9,6 +9,7 @@ import { hrefForPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
+import { sortExplorerChildNodes, type ExplorerSortOrder } from "@/lib/child-sort";
 import { ApiError, canExpandChildNode, DEFAULT_STORE_ROOT_PATHS, errorMessage, isDatabaseNotFoundErrorCode, isEmptyStoreRootPath, isStoreRootPath, rootChild, type LoadState } from "@/lib/wiki-helpers";
 
 const FALLBACK_STORE_ROOT_NODES = DEFAULT_STORE_ROOT_PATHS.map((path) => rootChild(path));
@@ -20,6 +21,7 @@ export function ExplorerTree({
   autoExpandSelected = true,
   readIdentity,
   childNodesCache,
+  sortOrder,
   onSelectedNode
 }: {
   canisterId: string;
@@ -28,6 +30,7 @@ export function ExplorerTree({
   autoExpandSelected?: boolean;
   readIdentity: Identity | null;
   childNodesCache: { current: Map<string, ChildNode[]> };
+  sortOrder: ExplorerSortOrder;
   onSelectedNode: (node: ChildNode) => void;
 }) {
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
@@ -42,6 +45,7 @@ export function ExplorerTree({
   const rootError = cachedRootNodes ? null : rootNodes.error;
   const rootDatabaseNotFound = !cachedRootNodes && isDatabaseNotFoundErrorCode(rootNodes.code);
   const visibleRootNodes = rootDatabaseNotFound ? [] : rootNodeData && rootNodeData.length > 0 ? rootNodeData : FALLBACK_STORE_ROOT_NODES;
+  const sortedRootNodes = sortExplorerChildNodes(visibleRootNodes, sortOrder);
 
   useEffect(() => {
     const cached = childNodesCache.current.get(rootRequestKey);
@@ -79,8 +83,8 @@ export function ExplorerTree({
 
   return (
     <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-      {visibleRootNodes.map((node) => (
-        <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
+      {sortedRootNodes.map((node) => (
+        <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} sortOrder={sortOrder} onSelectedNode={onSelectedNode} />
       ))}
       {rootError ? <TreeStatus depth={0} label={rootError} /> : null}
     </div>
@@ -96,6 +100,7 @@ function TreeNode({
   autoExpandSelected,
   readIdentity,
   childNodesCache,
+  sortOrder,
   onSelectedNode
 }: {
   canisterId: string;
@@ -106,6 +111,7 @@ function TreeNode({
   autoExpandSelected: boolean;
   readIdentity: Identity | null;
   childNodesCache: { current: Map<string, ChildNode[]> };
+  sortOrder: ExplorerSortOrder;
   onSelectedNode: (node: ChildNode) => void;
 }) {
   const {
@@ -244,6 +250,7 @@ function TreeNode({
           autoExpandSelected={autoExpandSelected}
           readIdentity={readIdentity}
           childNodesCache={childNodesCache}
+          sortOrder={sortOrder}
           onSelectedNode={onSelectedNode}
         />
       ) : null}
@@ -277,6 +284,7 @@ function ChildrenList({
   autoExpandSelected,
   readIdentity,
   childNodesCache,
+  sortOrder,
   onSelectedNode
 }: {
   canisterId: string;
@@ -287,9 +295,10 @@ function ChildrenList({
   autoExpandSelected: boolean;
   readIdentity: Identity | null;
   childNodesCache: { current: Map<string, ChildNode[]> };
+  sortOrder: ExplorerSortOrder;
   onSelectedNode: (node: ChildNode) => void;
 }) {
-  const children = childrenState.data ? visibleChildren(childrenState.data) : null;
+  const children = childrenState.data ? sortExplorerChildNodes(visibleChildren(childrenState.data), sortOrder) : null;
   return (
     <div>
       {!childrenState.data && !childrenState.error ? <TreeStatus depth={depth + 1} label="Loading" /> : null}
@@ -306,6 +315,7 @@ function ChildrenList({
           autoExpandSelected={autoExpandSelected}
           readIdentity={readIdentity}
           childNodesCache={childNodesCache}
+          sortOrder={sortOrder}
           onSelectedNode={onSelectedNode}
         />
       ))}

@@ -12,7 +12,7 @@ const vfsClientFiles = [
   "../lib/vfs-client/market.ts"
 ];
 const vfsClient = vfsClientFiles.map((p) => readProjectFile(p)).join("\n");
-const idl = readProjectFile("../lib/vfs-idl.ts");
+const idl = readProjectFile("../../packages/vfs-candid/index.ts");
 
 assert.match(client, /purchaseCyclesWithWallet/);
 assert.match(client, /listDatabasesAuthenticated/);

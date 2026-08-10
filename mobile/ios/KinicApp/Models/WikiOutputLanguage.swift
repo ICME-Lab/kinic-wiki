@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Models/WikiOutputLanguage.swift
-// What: Supported output languages for generated wiki pages.
-// Why: App, Share Extension, and worker requests must share a validated language code.
+// What: Supported output languages for generated wiki pages and Ask AI answers.
+// Why: Capture requests and Ask AI prompts must share one validated language setting.
 
 import Foundation
 

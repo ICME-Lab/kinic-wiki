@@ -1,0 +1,16 @@
+{
+  "name": "@kinic/vfs-candid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "generate": "node ../../tools/candid/generate-vfs-idl.mjs --out index.ts",
+    "test": "node ../../tools/candid/generate-vfs-idl.mjs --out index.ts --check"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "^5.4.0"
+  }
+}

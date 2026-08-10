@@ -53,6 +53,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Browse `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
 - Create databases and manage database access
 - Edit Markdown notes when the selected node is editable
+- Import individual Markdown/PDF files or a local folder into the selected wiki folder
 - Create web source captures under safe `/Sources/...` paths from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
@@ -65,6 +66,10 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Show route-level 404 and VFS not-found states
 
 No full lint workflow is included.
+
+## Local Import
+
+Use the Explorer action menu to import either selected `.md` / `.pdf` files or one local folder. Individual files are written directly into the selected wiki folder; folder imports preserve the selected folder name and its nested paths. PDF text is extracted locally and stored as Markdown, while the original PDF is not uploaded or retained. PDFs that require OCR or a password are not supported.
 
 ## Source Capture
 
@@ -151,8 +156,8 @@ pnpm smoke:errors -- --base-url http://127.0.0.1:3010 --database-id <database-id
 
 ## Candid Surface
 
-`lib/vfs-idl.ts` is a small generated subset of the checked-in VFS canister Candid at `crates/vfs_canister/vfs.did`.
-Run `pnpm test` after canister interface changes so the drift check verifies the generated subset.
+`@kinic/vfs-candid` exposes the shared browser IDL generated at `packages/vfs-candid/index.ts` from the checked-in VFS canister Candid at `crates/vfs_canister/vfs.did`.
+Run `pnpm --dir packages/vfs-candid generate` after canister interface changes, then run the browser tests so the drift check verifies the generated subset.
 
 Covered methods:
 
@@ -187,7 +192,7 @@ The `/db/<database-id>/...` and `/dashboard/project/<database-id>` URLs are TanS
 
 - Local canister not found: `VITE_KINIC_WIKI_CANISTER_ID` does not exist on `VITE_WIKI_IC_HOST`. For `http://127.0.0.1:8000`, start the local replica / icp local network and deploy the wiki canister into that state.
 - Mainnet canister not found: confirm that `VITE_KINIC_WIKI_CANISTER_ID` exists on `https://icp0.io`.
-- Method missing / wrong canister: use a Kinic Wiki canister that exposes the VFS, health, and Memory Recall methods covered by `lib/vfs-idl.ts`.
+- Method missing / wrong canister: use a Kinic Wiki canister that exposes the VFS, health, and Memory Recall methods covered by `@kinic/vfs-candid`.
 - Host unreachable: confirm `VITE_WIKI_IC_HOST` and network access to the local replica or IC gateway.
 
 ## Cloudflare Workers Deploy

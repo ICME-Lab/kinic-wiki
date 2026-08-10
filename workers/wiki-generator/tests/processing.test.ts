@@ -3,7 +3,8 @@
 // Why: Optional worker log writes must not decide source generation status.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessage, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
+import { bestEffortAppendWorkerLog, deepSeekRetryDelaySeconds, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessage, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
+import { DeepSeekRequestError } from "../src/openai.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, SourceJob, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
 import { testEnv, TestQueue, TestR2Bucket, TestVfsClient, withFetchedPage, workerConfig } from "./source-capture-fixtures.js";
@@ -166,6 +167,24 @@ test("context hits rank custom source prefix after database notes", () => {
     ], "/Evidence").map((hit) => hit.path),
     ["/Sources/raw/a.md", "/Knowledge/fact.md", "/Evidence/raw/a.md", "/Evidence/raw/b.md"]
   );
+});
+
+test("DeepSeek 503 without Retry-After uses equal-jitter overload backoff", () => {
+  const error = new DeepSeekRequestError("deepseek_http_503", "overloaded", true);
+  assert.equal(deepSeekRetryDelaySeconds(error, 1, 0), 30);
+  assert.equal(deepSeekRetryDelaySeconds(error, 1, 1), 60);
+  assert.equal(deepSeekRetryDelaySeconds(error, 2, 0), 60);
+  assert.equal(deepSeekRetryDelaySeconds(error, 2, 1), 120);
+  assert.equal(deepSeekRetryDelaySeconds(error, 3, 0), 120);
+  assert.equal(deepSeekRetryDelaySeconds(error, 3, 1), 240);
+  assert.equal(deepSeekRetryDelaySeconds(error, 4, 0), 150);
+  assert.equal(deepSeekRetryDelaySeconds(error, 4, 1), 300);
+});
+
+test("DeepSeek retry delay honors Retry-After and leaves other failures on generic backoff", () => {
+  assert.equal(deepSeekRetryDelaySeconds(new DeepSeekRequestError("deepseek_http_503", "overloaded", true, 240), 1, 0), 240);
+  assert.equal(deepSeekRetryDelaySeconds(new DeepSeekRequestError("deepseek_http_500", "server error", true), 1, 0), undefined);
+  assert.equal(deepSeekRetryDelaySeconds(null, 1, 0), undefined);
 });
 
 test("worker log append failure is non-fatal", async () => {
@@ -456,6 +475,29 @@ test("source queue uses source run session before DeepSeek", async () => {
     assert.ok(db.runs.some((run) => run.query.includes("generated_target_etag = ?4") && run.values[3] === "etag-existing-target"));
     assert.ok(db.runs.some((run) => run.query.includes("UPDATE source_jobs") && run.query.includes("SET status = 'completed'")));
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue applies overload backoff to DeepSeek 503 without Retry-After", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  globalThis.fetch = async (): Promise<Response> => new Response("overloaded", { status: 503, statusText: "Service Unavailable" });
+  console.warn = () => {};
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: new RecordingD1() },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs() },
+      { leaseOwner: "retry-owner", attempts: 1 }
+    );
+
+    assert.equal(disposition.kind, "retry");
+    if (disposition.kind !== "retry") throw new Error("retry disposition expected");
+    assert.equal(disposition.code, "deepseek_http_503");
+    assert.ok(disposition.delaySeconds >= 30 && disposition.delaySeconds <= 60);
+  } finally {
+    console.warn = originalWarn;
     globalThis.fetch = originalFetch;
   }
 });

@@ -225,7 +225,12 @@ async function processSourceQueueMessage(
       }
       await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
       const providerError = error instanceof DeepSeekRequestError ? error : null;
-      return retryDisposition(providerError?.code ?? "source_generation_transient", errorMessage(error), execution.attempts, providerError?.retryAfterSeconds);
+      return retryDisposition(
+        providerError?.code ?? "source_generation_transient",
+        errorMessage(error),
+        execution.attempts,
+        deepSeekRetryDelaySeconds(providerError, execution.attempts)
+      );
     }
   }
 
@@ -706,13 +711,32 @@ function retryDisposition(code: string, message: string, attempts: number, retry
   };
 }
 
+export function deepSeekRetryDelaySeconds(
+  error: DeepSeekRequestError | null,
+  attempts: number,
+  randomUnit = secureRandomUnit()
+): number | undefined {
+  if (!error) return undefined;
+  if (error.retryAfterSeconds !== undefined) return error.retryAfterSeconds;
+  if (error.code !== "deepseek_http_503") return undefined;
+
+  const ceiling = Math.min(300, 60 * 2 ** Math.max(0, attempts - 1));
+  const floor = Math.ceil(ceiling / 2);
+  const boundedRandom = Math.min(1, Math.max(0, randomUnit));
+  return Math.min(ceiling, floor + Math.floor(boundedRandom * (ceiling - floor + 1)));
+}
+
 function errorCode(error: unknown): string {
   return error instanceof DeepSeekRequestError ? error.code : "source_generation_transient";
 }
 
 function exponentialBackoff(attempts: number): number {
   const ceiling = Math.min(300, 15 * 2 ** Math.max(0, attempts - 1));
+  return Math.max(1, Math.floor(secureRandomUnit() * ceiling));
+}
+
+function secureRandomUnit(): number {
   const random = new Uint32Array(1);
   crypto.getRandomValues(random);
-  return Math.max(1, Math.floor((random[0]! / 0xffffffff) * ceiling));
+  return random[0]! / 0xffffffff;
 }

@@ -33,6 +33,8 @@ const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
     icon: BookOpen,
     children: [
       { href: "/docs", label: "Overview", icon: FileText },
+      { href: "/docs/ios", label: "iOS App", icon: FileText },
+      { href: "/docs/clipper", label: "Wiki Clipper", icon: FileText },
       { href: "/docs/cli", label: "CLI Guide", icon: FileText },
       { href: "/docs/canister-api", label: "Canister API", icon: FileText },
       { href: "/docs/skills", label: "Skills", icon: FileText }

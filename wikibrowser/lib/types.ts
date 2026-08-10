@@ -38,6 +38,13 @@ export type WriteNodeResult = {
   node: RecentNode;
 };
 
+export type WriteNodeItem = Omit<WriteNodeRequest, "databaseId">;
+
+export type WriteNodesRequest = {
+  databaseId: string;
+  nodes: WriteNodeItem[];
+};
+
 export type WriteSourceForGenerationRequest = {
   databaseId: string;
   path: string;

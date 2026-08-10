@@ -77,6 +77,29 @@ enum VFSCandidDecoder {
         )
     }
 
+    static func decodeNodePublicationResult(_ data: Data) throws -> NodePublication {
+        try nodePublication(from: decodeResult(data))
+    }
+
+    static func decodeOptionalNodePublicationResult(_ data: Data) throws -> NodePublication? {
+        let ok = try decodeResult(data)
+        guard case .opt(let value) = ok else {
+            throw VFSCandidError.invalidPayload("expected optional node publication")
+        }
+        guard let value else {
+            return nil
+        }
+        return try nodePublication(from: value)
+    }
+
+    static func decodeDeleteNodeResult(_ data: Data) throws -> String {
+        let ok = try decodeResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("expected delete_node result")
+        }
+        return try text(fields, "path")
+    }
+
     static func decodeChildNodesResult(_ data: Data) throws -> [ChildNode] {
         let ok = try decodeResult(data)
         guard case .vector(let values) = ok else {
@@ -305,6 +328,18 @@ enum VFSCandidDecoder {
             sizeBytes: try optionalNat64(fields, "size_bytes"),
             hasChildren: try bool(fields, "has_children"),
             isVirtual: try bool(fields, "is_virtual")
+        )
+    }
+
+    private static func nodePublication(from value: Value) throws -> NodePublication {
+        guard case .record(let fields) = value else {
+            throw VFSCandidError.invalidPayload("node publication is not a record")
+        }
+        return NodePublication(
+            publicId: try text(fields, "public_id"),
+            databaseId: try text(fields, "database_id"),
+            path: try text(fields, "path"),
+            publishedAtMs: try int64(fields, "published_at_ms")
         )
     }
 

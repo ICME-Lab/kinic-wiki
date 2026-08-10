@@ -1,6 +1,6 @@
 // Where: /docs index.
 // What: provides the top-level documentation landing page.
-// Why: CLI, Canister API, and Skills docs need one stable operator entrypoint.
+// Why: iOS, Clipper, CLI, Canister API, and Skills docs need one stable entrypoint.
 import { AppLink as Link } from "@/components/app-link";
 import { BookOpen, Boxes, ExternalLink, FileText } from "lucide-react";
 import { AdminContent } from "@/components/admin-shell";
@@ -9,14 +9,14 @@ import { primaryDocs, skillDocs } from "./docs-data";
 
 export const metadata: Record<string, unknown> = {
   title: "Kinic Wiki Docs",
-  description: "Documentation for Kinic Wiki CLI, Canister API, and agent skill workflows.",
+  description: "Documentation for KinicWiki iOS, Wiki Clipper, CLI, Canister API, and agent skill workflows.",
   openGraph: {
     title: "Kinic Wiki Docs",
-    description: "Documentation for Kinic Wiki CLI, Canister API, and agent skill workflows."
+    description: "Documentation for KinicWiki iOS, Wiki Clipper, CLI, Canister API, and agent skill workflows."
   },
   twitter: {
     title: "Kinic Wiki Docs",
-    description: "Documentation for Kinic Wiki CLI, Canister API, and agent skill workflows."
+    description: "Documentation for KinicWiki iOS, Wiki Clipper, CLI, Canister API, and agent skill workflows."
   }
 };
 
@@ -31,11 +31,11 @@ export default function DocsPage() {
           </div>
           <h1 className="mt-3 text-2xl font-semibold text-ink">Kinic Wiki documentation</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-            Operator references for the CLI, direct canister calls, and agent workflow skills. Use these pages when wiring automation or reviewing how wiki memory should be read, edited, and audited.
+            Guides for iOS and browser capture, CLI automation, direct canister calls, and agent workflow skills. Use these pages to move evidence into Kinic Wiki and maintain it safely.
           </p>
         </AdminPanel>
 
-        <section className="grid gap-4 md:grid-cols-3" aria-label="Primary docs">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Primary docs">
           {primaryDocs.map((doc) => (
             <Link className="group rounded-lg border border-line bg-paper p-4 text-ink no-underline shadow-sm hover:border-accent hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href={doc.href} key={doc.href}>
               <div className="flex items-center justify-between gap-3">

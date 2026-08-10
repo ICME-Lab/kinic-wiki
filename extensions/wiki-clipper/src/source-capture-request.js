@@ -16,6 +16,8 @@ export function normalizedHttpUrl(value) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("URL must use http or https.");
   }
-  url.hash = "";
+  if (!url.hash.startsWith("#/") && !url.hash.startsWith("#!/")) {
+    url.hash = "";
+  }
   return url.toString();
 }

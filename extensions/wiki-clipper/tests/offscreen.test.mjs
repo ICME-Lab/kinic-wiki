@@ -74,6 +74,47 @@ test("saveEvidenceSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("saveEvidenceSource refuses a different web URL that occupied the path after lookup", async () => {
+  let writeCalled = false;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return {
+          Ok: [{ etag: "etag-other", metadata_json: JSON.stringify({ final_url: "https://example.com/other" }) }]
+        };
+      },
+      async write_source_for_generation() {
+        writeCalled = true;
+        throw new Error("write should not be called");
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () =>
+        saveEvidenceSource(
+          {
+            path: "/Sources/web/abc.md",
+            sourceId: "web-abc",
+            content: "# Web source",
+            metadataJson: JSON.stringify({
+              source_type: "url",
+              url: "https://example.com/page",
+              final_url: "https://example.com/page"
+            })
+          },
+          config()
+        ),
+      /WEB_SOURCE_PATH_CONFLICT/
+    );
+    assert.equal(writeCalled, false);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("webSourceExists returns false when evidence source is missing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
@@ -93,6 +134,7 @@ test("webSourceExists returns false when evidence source is missing", async () =
       target: "offscreen",
       type: "web-source-exists",
       sourcePath: "/Sources/web/abc.md",
+      expectedUrl: "https://example.com/page",
       config: config()
     });
 
@@ -111,12 +153,14 @@ test("webSourceExists returns true when evidence source exists", async () => {
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
       async read_node() {
-        return { Ok: [{ etag: "etag-source" }] };
+        return {
+          Ok: [{ etag: "etag-source", metadata_json: JSON.stringify({ final_url: "https://example.com/page" }) }]
+        };
       }
     })
   });
   try {
-    const result = await webSourceExists("/Sources/web/abc.md", config());
+    const result = await webSourceExists("/Sources/web/abc.md", "https://example.com/page#section", config());
 
     assert.deepEqual(result, { exists: true, path: "/Sources/web/abc.md", etag: "etag-source" });
   } finally {
@@ -129,11 +173,36 @@ test("webSourceExists rejects unauthenticated sessions", async () => {
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => webSourceExists("/Sources/web/abc.md", config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => webSourceExists("/Sources/web/abc.md", "https://example.com/page", config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
 });
+
+for (const [label, metadataJson] of [
+  ["a different URL", JSON.stringify({ final_url: "https://example.com/other" })],
+  ["missing URL metadata", JSON.stringify({ source_type: "url" })],
+  ["invalid metadata JSON", "not-json"]
+]) {
+  test(`webSourceExists rejects ${label} at an occupied path`, async () => {
+    setOffscreenDepsForTest({
+      authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+      createVfsActor: async () => ({
+        async read_node() {
+          return { Ok: [{ etag: "etag-source", metadata_json: metadataJson }] };
+        }
+      })
+    });
+    try {
+      await assert.rejects(
+        () => webSourceExists("/Sources/web/abc.md", "https://example.com/page", config()),
+        /WEB_SOURCE_PATH_CONFLICT/
+      );
+    } finally {
+      setOffscreenDepsForTest();
+    }
+  });
+}
 
 test("saveEvidenceSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
   const calls = [];
@@ -321,6 +390,7 @@ test("run-source-capture-task accepts immediately and later sends success notifi
     assert.equal(runtimeMessages[0].ok, true);
     assert.equal(runtimeMessages[0].result.sourcePath, "/Sources/chatgpt/abc.md");
     assert.equal(runtimeMessages[0].result.generationQueued, true);
+    assert.equal(runtimeMessages[0].databaseId, "team-db");
     assert.equal(runtimeMessages[0].inFlightKey, "team-db:https://example.com/");
   } finally {
     setOffscreenDepsForTest();
@@ -347,6 +417,7 @@ test("run-source-capture-task sends error notification when source save fails", 
 
     assert.equal(runtimeMessages[0].ok, false);
     assert.equal(runtimeMessages[0].url, "https://example.com/");
+    assert.equal(runtimeMessages[0].databaseId, "team-db");
     assert.equal(runtimeMessages[0].error, "source lookup failed");
   } finally {
     setOffscreenDepsForTest();

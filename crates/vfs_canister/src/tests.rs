@@ -32,8 +32,8 @@ use super::{
     SERVICE, TransferFromError, append_node, check_cycles_top_up, check_database_write_cycles,
     clear_cycles_top_up_state_for_test, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database,
-    cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
-    fail_next_apply_database_cycles_purchase_apply_for_test,
+    cycles_top_up_launcher_call_count_for_test, delete_account, delete_node, edit_node,
+    export_snapshot, fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config,
     get_initial_free_database_grant_status, get_node_publication, glob_nodes,
     grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
@@ -2987,6 +2987,18 @@ fn revoke_database_access_validates_and_canonicalizes_principal() {
     .expect("valid principal should grant");
     revoke_database_access("default".to_string(), "aaaaa-aa".to_string())
         .expect("valid principal should revoke");
+}
+
+#[test]
+fn delete_account_requires_authentication_and_is_retryable() {
+    install_test_service();
+
+    let error = delete_account().expect_err("anonymous caller should be rejected");
+    assert!(error.contains("anonymous caller"));
+
+    let _caller = AuthenticatedCallerGuard::install();
+    delete_account().expect("authenticated empty account should delete");
+    delete_account().expect("repeated account deletion should succeed");
 }
 
 #[test]

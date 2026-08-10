@@ -66,6 +66,16 @@ struct SourceCaptureHistoryStore: @unchecked Sendable {
         prune(databaseId: record.databaseId, directory: directory)
     }
 
+    func removeAll() throws {
+        let entries = try fileManager.contentsOfDirectory(
+            at: historyDirectory,
+            includingPropertiesForKeys: nil
+        )
+        for entryURL in entries {
+            try fileManager.removeItem(at: entryURL)
+        }
+    }
+
     private func prune(databaseId: String, directory: URL) {
         let records = loadAll(databaseId: databaseId, directory: directory)
         for record in records.dropFirst(Self.maxRecordsPerDatabase) {

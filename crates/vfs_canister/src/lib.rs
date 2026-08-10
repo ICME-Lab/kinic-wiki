@@ -1152,6 +1152,18 @@ fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
 }
 
 #[update]
+fn delete_account() -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("delete_account", None, |service, caller, now| {
+        let outcome = service.delete_account(caller, now)?;
+        for db_file_name in outcome.deleted_database_file_names {
+            unmount_database_file(&db_file_name);
+        }
+        Ok(())
+    })
+}
+
+#[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(

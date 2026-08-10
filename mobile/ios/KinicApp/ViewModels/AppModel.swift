@@ -28,6 +28,10 @@ extension AppModel: AskAIKnowledgeProviding {
         selectedBrowseDatabase?.displayTitle ?? selectedAskAIDatabaseId
     }
 
+    var askAIOutputLanguage: WikiOutputLanguage {
+        wikiOutputLanguage
+    }
+
     var canAskAI: Bool {
         canBrowse
     }
@@ -51,7 +55,7 @@ extension AppModel: AskAIKnowledgeProviding {
 
         let queries = Array(queryPlan.queries.prefix(AskAIQueryPlanner.maximumQueries))
         guard !queries.isEmpty else {
-            return AskAIRetrievalResult(searchQueries: [], sources: [])
+            return AskAIRetrievalResult(searchQueries: [], candidateCount: 0, sources: [])
         }
         let session = browseSession(for: databaseId)
         let searchClient = client
@@ -113,7 +117,11 @@ extension AppModel: AskAIKnowledgeProviding {
                 )
             )
         }
-        return AskAIRetrievalResult(searchQueries: queries.map(\.text), sources: contexts)
+        return AskAIRetrievalResult(
+            searchQueries: queries.map(\.text),
+            candidateCount: rankedCandidates.count,
+            sources: contexts
+        )
     }
 
     func openAskAISource(databaseId: String, path: String) {
@@ -234,6 +242,10 @@ final class AppModel {
     private let sourceCaptureHistoryStore: SourceCaptureHistoryStore?
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
+    private let deleteAccountRemotely: @Sendable (ICAuthSession) async throws -> Void
+    private let deleteAskAIHistory: @Sendable (AskAIHistoryScope) async throws -> Void
+    private let removeAllSharedURLs: () throws -> Void
+    private let removeAllCaptureHistory: () throws -> Void
     private var session: ICAuthSession?
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
@@ -242,6 +254,7 @@ final class AppModel {
     private var deepLinkResolveRequestID: Int
     private var sourceCaptureHistoryRequestID: Int
     private var sourceCaptureRetryPaths: Set<String>
+    private var documentMutationCoordinator: BrowseDocumentMutationCoordinator
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
@@ -285,6 +298,11 @@ final class AppModel {
     var loadedBrowsePath: String?
     var selectedBrowseNodePath: String?
     var documentNode: VFSNode?
+    var documentPublicationState: BrowseDocumentPublicationState
+    var documentMutation: BrowseDocumentMutation? {
+        documentMutationCoordinator.mutation
+    }
+    var documentActionError: String?
     var cyclesBillingConfig: CyclesBillingConfig?
     var databaseMembers: [DatabaseMember]
     var databaseMembersDatabaseId: String?
@@ -308,6 +326,7 @@ final class AppModel {
     var databaseCyclesHistoryError: String?
     var databasePendingPurchasesError: String?
     var databaseDeleteError: String?
+    var accountDeletionError: String?
     var databaseListLastRefreshed: Date?
     var cyclesConfigLastRefreshed: Date?
     var isLoadingDatabases: Bool
@@ -320,6 +339,7 @@ final class AppModel {
     var isSearching: Bool
     var isSigningIn: Bool
     var isCreatingDatabase: Bool
+    var isDeletingAccount: Bool
     var isUpdatingDatabaseMetadata: Bool
     var databaseAccessBusyAction: DatabaseAccessBusyAction?
     var isSubmitting: Bool
@@ -396,7 +416,12 @@ final class AppModel {
         client: KinicICClient,
         shareInbox: ShareInbox,
         settingsStore: SharedDefaultsStore,
-        sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil
+        sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil,
+        deleteAccountRemotely: (@Sendable (ICAuthSession) async throws -> Void)? = nil,
+        deleteAskAIHistory: (@Sendable (AskAIHistoryScope) async throws -> Void)? = nil,
+        removeAllSharedURLs: (() throws -> Void)? = nil,
+        removeAllCaptureHistory: (() throws -> Void)? = nil,
+        initialSession: ICAuthSession? = nil
     ) {
         self.configuration = configuration
         self.authService = authService
@@ -404,6 +429,18 @@ final class AppModel {
         self.shareInbox = shareInbox
         self.sourceCaptureHistoryStore = sourceCaptureHistoryStore
         self.settingsStore = settingsStore
+        self.deleteAccountRemotely = deleteAccountRemotely ?? { session in
+            try await client.deleteAccount(session: session)
+        }
+        self.deleteAskAIHistory = deleteAskAIHistory ?? { scope in
+            try await AskAIConversationStore.live(scope: scope).deleteAllStoredConversationData()
+        }
+        self.removeAllSharedURLs = removeAllSharedURLs ?? {
+            try shareInbox.removeAll()
+        }
+        self.removeAllCaptureHistory = removeAllCaptureHistory ?? {
+            try sourceCaptureHistoryStore?.removeAll()
+        }
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         selectedDatabaseId = settingsStore.databaseId
         selectedBrowseDatabaseId = ""
@@ -430,6 +467,9 @@ final class AppModel {
         loadedBrowsePath = nil
         selectedBrowseNodePath = nil
         documentNode = nil
+        documentPublicationState = .unavailable
+        documentMutationCoordinator = BrowseDocumentMutationCoordinator()
+        documentActionError = nil
         cyclesBillingConfig = nil
         databaseMembers = []
         databaseMembersDatabaseId = nil
@@ -444,7 +484,7 @@ final class AppModel {
         searchQuery = ""
         searchResults = []
         pendingDatabaseActivation = nil
-        session = authService.restore()
+        session = initialSession ?? authService.restore()
         browsePathLoadRequestID = 0
         documentLoadRequestID = 0
         searchRequestID = 0
@@ -460,6 +500,7 @@ final class AppModel {
         databaseCyclesHistoryError = nil
         databasePendingPurchasesError = nil
         databaseDeleteError = nil
+        accountDeletionError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
         isLoadingDatabases = false
@@ -472,6 +513,7 @@ final class AppModel {
         isSearching = false
         isSigningIn = false
         isCreatingDatabase = false
+        isDeletingAccount = false
         isUpdatingDatabaseMetadata = false
         databaseAccessBusyAction = nil
         isSubmitting = false
@@ -643,6 +685,138 @@ final class AppModel {
         startLoadBrowsePath(currentPath)
     }
 
+    func canPublishBrowseDocument(_ path: String) -> Bool {
+        session != nil
+            && selectedBrowseDatabase?.role == .owner
+            && isCurrentMarkdownDocument(path)
+    }
+
+    func canDeleteBrowseDocument(_ path: String) -> Bool {
+        session != nil
+            && selectedBrowseDatabase?.role.canWrite == true
+            && isCurrentMarkdownDocument(path)
+    }
+
+    func clearBrowseDocumentActionError() {
+        documentActionError = nil
+    }
+
+    func leaveBrowseDocument(_ path: String) {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        guard selectedBrowseNodePath == normalizedPath else { return }
+        documentLoadRequestID += 1
+        selectedBrowseNodePath = nil
+        documentPublicationState = .unavailable
+        documentMutationCoordinator.invalidate()
+        documentActionError = nil
+        isLoadingDocument = false
+        documentError = nil
+    }
+
+    func publishBrowseDocument(_ path: String) async -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canPublishBrowseDocument(normalizedPath),
+              let session,
+              let mutationContext = documentMutationCoordinator.begin(
+                  mutation: .publish,
+                  databaseId: databaseId,
+                  path: normalizedPath
+              ) else {
+            return false
+        }
+        documentActionError = nil
+        defer { documentMutationCoordinator.finish(mutationContext) }
+        do {
+            let publication = try await client.publishNode(databaseId: databaseId, path: normalizedPath, session: session)
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return true
+            }
+            documentPublicationState = .published(publication)
+            return true
+        } catch {
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return false
+            }
+            documentActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func unpublishBrowseDocument(_ path: String) async -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canPublishBrowseDocument(normalizedPath),
+              case .published = documentPublicationState,
+              let session,
+              let mutationContext = documentMutationCoordinator.begin(
+                  mutation: .unpublish,
+                  databaseId: databaseId,
+                  path: normalizedPath
+              ) else {
+            return false
+        }
+        documentActionError = nil
+        defer { documentMutationCoordinator.finish(mutationContext) }
+        do {
+            try await client.unpublishNode(databaseId: databaseId, path: normalizedPath, session: session)
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return true
+            }
+            documentPublicationState = .unpublished
+            return true
+        } catch {
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return false
+            }
+            documentActionError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteBrowseDocument(_ path: String) async -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canDeleteBrowseDocument(normalizedPath),
+              let node = documentNode,
+              node.path == normalizedPath,
+              let session,
+              let mutationContext = documentMutationCoordinator.begin(
+                  mutation: .delete,
+                  databaseId: databaseId,
+                  path: normalizedPath
+              ) else {
+            return false
+        }
+        documentActionError = nil
+        defer { documentMutationCoordinator.finish(mutationContext) }
+        do {
+            try await client.deleteNode(
+                databaseId: databaseId,
+                path: normalizedPath,
+                expectedEtag: node.etag,
+                session: session
+            )
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return true
+            }
+            let parentPath = Self.parentPath(normalizedPath)
+            documentNode = nil
+            selectedBrowseNodePath = nil
+            documentPublicationState = .unavailable
+            requestedBrowseTarget = .folder(parentPath)
+            browseNavigationRequestID += 1
+            await loadBrowsePath(parentPath)
+            return true
+        } catch {
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return false
+            }
+            documentActionError = error.localizedDescription
+            return false
+        }
+    }
+
     private func requestTab(_ tab: AppTab) {
         requestedTab = tab
         tabSelectionRequestID += 1
@@ -736,6 +910,9 @@ final class AppModel {
         loadedBrowsePath = nil
         selectedBrowseNodePath = nil
         documentNode = nil
+        documentPublicationState = .unavailable
+        documentMutationCoordinator.invalidate()
+        documentActionError = nil
         isLoadingBrowsePath = false
         isLoadingDocument = false
         isSearching = false
@@ -812,9 +989,63 @@ final class AppModel {
         sourceCaptureHistory = []
         isLoadingSourceCaptureHistory = false
         statusMessage = nil
+        accountDeletionError = nil
         if showPublicBrowseDatabases {
             startRefreshDatabases()
         }
+    }
+
+    func deleteAccount(
+        coordinatedHistoryDeletion: ((AskAIHistoryScope) async throws -> Void)? = nil
+    ) async -> Bool {
+        guard !isDeletingAccount else {
+            return false
+        }
+        guard let session else {
+            accountDeletionError = "Sign in before deleting your account."
+            return false
+        }
+        let historyScope = AskAIHistoryScope(principal: session.principal)
+        isDeletingAccount = true
+        accountDeletionError = nil
+        defer {
+            isDeletingAccount = false
+        }
+        do {
+            try await deleteAccountRemotely(session)
+        } catch {
+            accountDeletionError = error.localizedDescription
+            return false
+        }
+
+        var localCleanupFailureCount = 0
+        do {
+            if let coordinatedHistoryDeletion {
+                try await coordinatedHistoryDeletion(historyScope)
+            } else {
+                try await deleteAskAIHistory(historyScope)
+            }
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        do {
+            try removeAllSharedURLs()
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        do {
+            try removeAllCaptureHistory()
+        } catch {
+            localCleanupFailureCount += 1
+        }
+        pendingURLs = []
+        sourceCaptureHistory = []
+        signOut()
+        if localCleanupFailureCount > 0 {
+            logger.error("Account deleted with local cleanup failures count=\(localCleanupFailureCount, privacy: .public)")
+            statusMessage = "Your account was deleted and you were signed out, but some on-device data could not be removed. Delete the app to remove any remaining local data."
+        }
+        return true
     }
 
     func startSubmitNextPendingURL() {
@@ -1076,7 +1307,9 @@ final class AppModel {
             isSigningIn = false
         }
         do {
-            session = try await authService.signIn()
+            session = try await authService.signIn { [client] candidate in
+                _ = try await client.listReadableDatabases(session: candidate)
+            }
             statusMessage = nil
             logger.info("Kinic sign in succeeded principal=\(self.session?.principal ?? "", privacy: .public)")
             await refreshDatabases()
@@ -1499,9 +1732,15 @@ final class AppModel {
         }
         let session = browseSession(for: databaseId)
         let normalizedPath = Self.normalizedBrowsePath(path)
+        if let activeContext = documentMutationCoordinator.activeContext,
+           activeContext.databaseId != databaseId || activeContext.path != normalizedPath {
+            documentMutationCoordinator.invalidate()
+        }
         documentLoadRequestID += 1
         let requestID = documentLoadRequestID
         selectedBrowseNodePath = normalizedPath
+        documentPublicationState = .unavailable
+        documentActionError = nil
         isLoadingDocument = true
         documentError = nil
         defer {
@@ -1528,6 +1767,12 @@ final class AppModel {
                 documentNode = node
                 documentError = nil
             }
+            await loadDocumentPublication(
+                node: node,
+                databaseId: databaseId,
+                requestID: requestID,
+                session: session
+            )
         } catch {
             if isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: normalizedPath) {
                 documentError = error.localizedDescription
@@ -1539,6 +1784,57 @@ final class AppModel {
         documentLoadRequestID == requestID
             && selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines) == databaseId
             && selectedBrowseNodePath == path
+    }
+
+    private func loadDocumentPublication(
+        node: VFSNode,
+        databaseId: String,
+        requestID: Int,
+        session: ICAuthSession?
+    ) async {
+        guard node.kind == .file,
+              node.path.hasSuffix(".md"),
+              let session else {
+            if isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: node.path) {
+                documentPublicationState = .unavailable
+            }
+            return
+        }
+        guard isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: node.path) else {
+            return
+        }
+        documentPublicationState = .loading
+        do {
+            let publication = try await client.getNodePublication(databaseId: databaseId, path: node.path, session: session)
+            guard isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: node.path) else {
+                return
+            }
+            documentPublicationState = publication.map(BrowseDocumentPublicationState.published) ?? .unpublished
+        } catch {
+            guard isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: node.path) else {
+                return
+            }
+            documentPublicationState = .failed(error.localizedDescription)
+        }
+    }
+
+    private func isCurrentMarkdownDocument(_ path: String) -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        return documentNode?.kind == .file
+            && documentNode?.path == normalizedPath
+            && normalizedPath.hasSuffix(".md")
+    }
+
+    private func isCurrentDocument(databaseId: String, path: String) -> Bool {
+        selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines) == databaseId
+            && selectedBrowseNodePath == path
+    }
+
+    private func shouldApplyDocumentMutation(
+        _ context: BrowseDocumentMutationCoordinator.Context
+    ) -> Bool {
+        documentMutationCoordinator.owns(context)
+            && isCurrentDocument(databaseId: context.databaseId, path: context.path)
     }
 
     private func searchBrowseDatabase() async {

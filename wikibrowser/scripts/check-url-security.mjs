@@ -34,6 +34,7 @@ const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/ap
 const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
 const { normalizedAndroidAppLinkFingerprint } = await import("./android-app-links-config.mjs");
 const { verifyPublishedAndroidAppLinks } = await import("./smoke-android-app-links.mjs");
+const internetIdentityCallbacksRouteModule = await importTs("../app/.well-known/ii-auth-callbacks/route.ts");
 const nativeAuthRouteModule = await importNativeAuthRoute();
 const mockSourceCaptureWorkerModule = await import("./mock-source-capture-worker.mjs");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
@@ -227,6 +228,37 @@ assert.throws(
   });
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("cache-control"), "no-store");
+}
+
+{
+  const response = internetIdentityCallbacksRouteModule.GET();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("location"), null);
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("access-control-allow-origin"), "https://id.ai");
+  assert.deepEqual(await response.json(), {
+    callbacks: [
+      "https://wiki.kinic.xyz/ios-auth-callback",
+      "https://wiki.kinic.xyz/android-auth-callback"
+    ]
+  });
+}
+
+{
+  const response = internetIdentityCallbacksRouteModule.GET({
+    callbacks: [
+      "https://kinic-wiki-browser-staging.hude.workers.dev/ios-auth-callback",
+      "https://kinic-wiki-browser-staging.hude.workers.dev/android-auth-callback"
+    ]
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    callbacks: [
+      "https://kinic-wiki-browser-staging.hude.workers.dev/ios-auth-callback",
+      "https://kinic-wiki-browser-staging.hude.workers.dev/android-auth-callback"
+    ]
+  });
 }
 
 {

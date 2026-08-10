@@ -42,6 +42,8 @@ const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
+const activeBadgeRefreshes = new Map();
+let nextBadgeRefreshGeneration = 0;
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -111,6 +113,7 @@ export async function handleMessage(message, sender) {
   }
   if (message?.type === "save-config") {
     await saveConfig(message.config);
+    await invalidateAndClearTabBadges();
     return { ok: true };
   }
   if (message?.type === "auth-status") {
@@ -120,7 +123,11 @@ export async function handleMessage(message, sender) {
     return { ok: true, result: await listWritableDatabases() };
   }
   if (message?.type === "auth-session-changed") {
-    return { ok: true, reset: await resetExistingOffscreenAuthState() };
+    try {
+      return { ok: true, reset: await resetExistingOffscreenAuthState() };
+    } finally {
+      await invalidateAndClearTabBadges();
+    }
   }
   if (message?.type === "source-capture-task-result") {
     return { ok: true, result: await handleSourceCaptureTaskResult(message, sender) };
@@ -153,8 +160,10 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
   let reservedInFlight = false;
   let releaseInFinally = true;
   const tabId = tab?.id;
+  let url = "";
+  invalidateTabBadgeRefresh(tabId);
   try {
-    const url = normalizedHttpUrl(tab?.url);
+    url = normalizedHttpUrl(tab?.url);
     await deps.setBadge("...", "#444444", tabId);
     const config = await deps.loadConfig();
     if (!config.databaseId) {
@@ -174,12 +183,14 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     }
     const evidenceSource = await deps.captureTabSource(tab, url);
     const sourcePath = evidenceSource.path;
-    const existingSource = await deps.findWebSource(config, sourcePath);
+    const existingSource = await deps.findWebSource(config, sourcePath, url);
     const sourceAlreadyExists = existingSource.exists;
     if (sourceAlreadyExists && !queueGeneration) {
       const status = existingSourceStatus({ url, title: tab?.title || "", sourcePath: existingSource.path || sourcePath, etag: existingSource.etag });
       await deps.writeStatus(status);
-      await deps.setBadge("IN", "#137333", tabId);
+      if (await deps.tabMatchesUrl(tabId, url)) {
+        await deps.setBadge("IN", "#137333", tabId);
+      }
       return {
         ok: true,
         result: {
@@ -228,15 +239,21 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     const status = acceptedSourceCaptureStatus(accepted);
     await deps.writeStatus(status);
     if (accepted.generationSkipped) {
-      await deps.setBadge("SRC", "#5f6368", tabId);
+      if (await deps.tabMatchesUrl(tabId, url)) {
+        await deps.setBadge("SRC", "#5f6368", tabId);
+      }
       return { ok: true, accepted: true, taskId, result: accepted };
     }
-    await deps.setBadge("IN", "#137333", tabId);
+    if (await deps.tabMatchesUrl(tabId, url)) {
+      await deps.setBadge("IN", "#137333", tabId);
+    }
     return { ok: true, accepted: true, taskId, result: accepted };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await deps.writeStatus(errorStatus(message, tab?.url || ""));
-    await deps.setBadge("ERR", "#b42318", tabId);
+    if (!url || (await deps.tabMatchesUrl(tabId, url))) {
+      await deps.setBadge("ERR", "#b42318", tabId);
+    }
     if (shouldOpenSettingsForError(message)) {
       await deps.openSettings();
     }
@@ -261,19 +278,35 @@ async function handleSourceCaptureTaskResult(message, sender, deps = defaultTask
   try {
     if (message.ok) {
       await deps.writeStatus(sourceCaptureStatus(message.result || {}));
-      await deps.setBadge(message.result?.generationQueued === true ? "IN" : "SRC", message.result?.generationQueued === true ? "#137333" : "#5f6368", tabId);
+      if (await sourceCaptureTaskBadgeIsCurrent(message, tabId, deps)) {
+        await deps.setBadge(message.result?.generationQueued === true ? "IN" : "SRC", message.result?.generationQueued === true ? "#137333" : "#5f6368", tabId);
+      }
       return { accepted: true, status: "ok" };
     }
     const error = typeof message.error === "string" && message.error ? message.error : "source capture task failed";
     const url = typeof message.url === "string" ? message.url : "";
     await deps.writeStatus(errorStatus(error, url));
-    await deps.setBadge("ERR", "#b42318", tabId);
+    if (await sourceCaptureTaskBadgeIsCurrent(message, tabId, deps)) {
+      await deps.setBadge("ERR", "#b42318", tabId);
+    }
     if (shouldOpenSettingsForError(error)) {
       await deps.openSettings();
     }
     return { accepted: true, status: "error" };
   } finally {
     await deps.releaseSourceCapture(inFlightKey, taskId);
+  }
+}
+
+async function sourceCaptureTaskBadgeIsCurrent(message, tabId, deps) {
+  if (!Number.isInteger(tabId) || typeof message.databaseId !== "string" || !message.databaseId) return false;
+  const url = message.ok ? message.result?.url : message.url;
+  if (typeof url !== "string" || !url) return false;
+  try {
+    const [config, tabMatches] = await Promise.all([deps.loadConfig(), deps.tabMatchesUrl(tabId, url)]);
+    return tabMatches && config.databaseId === message.databaseId;
+  } catch {
+    return false;
   }
 }
 
@@ -518,7 +551,8 @@ function defaultActionDeps() {
     reserveSourceCapture,
     releaseSourceCapture,
     captureTabSource,
-    findWebSource
+    findWebSource,
+    tabMatchesUrl
   };
 }
 
@@ -528,7 +562,9 @@ function defaultTaskResultDeps() {
     setBadge: setActionBadge,
     openSettings: openSettingsOnce,
     releaseSourceCapture,
-    isActiveSourceCapture
+    isActiveSourceCapture,
+    loadConfig,
+    tabMatchesUrl
   };
 }
 
@@ -542,12 +578,13 @@ function newSourceCaptureTaskId() {
   return `source-capture-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function findWebSource(config, sourcePath) {
+async function findWebSource(config, sourcePath, expectedUrl) {
   await ensureOffscreen();
   const response = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "web-source-exists",
     sourcePath,
+    expectedUrl,
     config
   });
   if (!response?.ok) {
@@ -591,31 +628,77 @@ async function refreshTabBadgeById(tabId) {
 async function refreshTabBadge(tab, deps = defaultActionDeps()) {
   const tabId = tab?.id;
   if (!Number.isInteger(tabId)) return { ok: false, reason: "tab id unavailable" };
+  const generation = beginTabBadgeRefresh(tabId);
+  await deps.setBadge("", "#5f6368", tabId);
   let url;
   try {
     url = normalizedHttpUrl(tab?.url || tab?.pendingUrl || "");
   } catch {
-    await deps.setBadge("", "#5f6368", tabId);
     return { ok: true, state: "clear", reason: "unsupported url" };
   }
   try {
     const config = await deps.loadConfig();
     if (!config.databaseId) {
-      await deps.setBadge("", "#5f6368", tabId);
       return { ok: true, state: "clear", reason: "config required" };
     }
     const sourcePath = await webSourcePathForUrl(url, tab?.title || "");
-    const existingSource = await deps.findWebSource(config, sourcePath);
+    const existingSource = await deps.findWebSource(config, sourcePath, url);
     if (!existingSource.exists) {
-      await deps.setBadge("", "#5f6368", tabId);
       return { ok: true, state: "clear", reason: "source missing", sourcePath };
+    }
+    if (!(await badgeRefreshIsCurrent(tabId, generation, url, deps))) {
+      return { ok: true, state: "stale", reason: "tab changed", sourcePath };
     }
     await deps.setBadge("IN", "#137333", tabId);
     return { ok: true, state: "source_exists", sourcePath, etag: existingSource.etag };
   } catch (error) {
-    await deps.setBadge("", "#5f6368", tabId);
     return { ok: false, state: "clear", reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function beginTabBadgeRefresh(tabId) {
+  const generation = ++nextBadgeRefreshGeneration;
+  activeBadgeRefreshes.set(tabId, generation);
+  return generation;
+}
+
+function invalidateTabBadgeRefresh(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  activeBadgeRefreshes.set(tabId, ++nextBadgeRefreshGeneration);
+}
+
+function invalidateAllBadgeRefreshes() {
+  nextBadgeRefreshGeneration += 1;
+  activeBadgeRefreshes.clear();
+}
+
+async function badgeRefreshIsCurrent(tabId, generation, expectedUrl, deps) {
+  if (activeBadgeRefreshes.get(tabId) !== generation) return false;
+  return deps.tabMatchesUrl(tabId, expectedUrl);
+}
+
+async function tabMatchesUrl(tabId, expectedUrl) {
+  if (!Number.isInteger(tabId) || !globalThis.chrome?.tabs?.get) return false;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return normalizedHttpUrl(tab?.url || tab?.pendingUrl || "") === normalizedHttpUrl(expectedUrl);
+  } catch {
+    return false;
+  }
+}
+
+async function invalidateAndClearTabBadges() {
+  invalidateAllBadgeRefreshes();
+  if (!globalThis.chrome?.tabs?.query || !globalThis.chrome?.action?.setBadgeText) return;
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  await Promise.allSettled(
+    tabs.filter((tab) => Number.isInteger(tab?.id)).map((tab) => setActionBadge("", "#5f6368", tab.id))
+  );
 }
 
 async function createSettingsContextMenu() {
