@@ -26,7 +26,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:host="wiki.kinic.xyz"
-                    android:path="/android-auth-callback"
+                    android:path="/native-auth-callback"
                     android:scheme="https" />
             </intent-filter>
             <intent-filter android:autoVerify="true">

@@ -28,7 +28,7 @@ const triggerRouteModule = await importTs("../app/api/source-capture/trigger/rou
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 const iosAuthCallbackRouteModule = await importTs("../app/ios-auth-callback/route.ts");
-const androidAuthCallbackRouteModule = await importTs("../app/android-auth-callback/route.ts");
+const nativeAuthCallbackRouteModule = await importTs("../app/native-auth-callback/route.ts");
 const iosShareRouteModule = await importTs("../app/ios-share/route.ts");
 const appleAppSiteAssociationRouteModule = await importTs("../app/.well-known/apple-app-site-association/route.ts");
 const assetLinksRouteModule = await importTs("../app/.well-known/assetlinks.json/route.ts");
@@ -86,7 +86,7 @@ assert.match(nativeAuthRoute, /url\.protocol !== configured\.protocol/);
 assert.match(nativeAuthRoute, /url\.host !== configured\.host/);
 assert.match(nativeAuthRoute, /url\.pathname !== configured\.pathname/);
 assert.match(nativeAuthRoute, /url\.search !== configured\.search/);
-assert.match(nativeAuthRoute, /\["\/ios-auth-callback", "\/android-auth-callback"\]\.includes\(url\.pathname\)/);
+assert.match(nativeAuthRoute, /url\.pathname !== "\/ios-auth-callback"/);
 assert.match(nativeAuthRoute, /event\.source !== idpWindow/);
 assert.match(nativeAuthLogos.apple, /fill="#000"/);
 assert.match(nativeAuthLogos.google, /#4285F4/);
@@ -240,7 +240,7 @@ assert.throws(
   assert.deepEqual(await response.json(), {
     callbacks: [
       "https://wiki.kinic.xyz/ios-auth-callback",
-      "https://wiki.kinic.xyz/android-auth-callback"
+      "https://wiki.kinic.xyz/native-auth-callback"
     ]
   });
 }
@@ -249,14 +249,14 @@ assert.throws(
   const response = internetIdentityCallbacksRouteModule.GET({
     callbacks: [
       "https://kinic-wiki-browser-staging.hude.workers.dev/ios-auth-callback",
-      "https://kinic-wiki-browser-staging.hude.workers.dev/android-auth-callback"
+      "https://kinic-wiki-browser-staging.hude.workers.dev/native-auth-callback"
     ]
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     callbacks: [
       "https://kinic-wiki-browser-staging.hude.workers.dev/ios-auth-callback",
-      "https://kinic-wiki-browser-staging.hude.workers.dev/android-auth-callback"
+      "https://kinic-wiki-browser-staging.hude.workers.dev/native-auth-callback"
     ]
   });
 }
@@ -268,7 +268,7 @@ assert.throws(
 }
 
 {
-  const response = androidAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/android-auth-callback?state=s1&result=r1"));
+  const response = nativeAuthCallbackRouteModule.GET(new Request("https://wiki.kinic.xyz/native-auth-callback"));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
   assert.equal(response.headers.get("cache-control"), "no-store");
@@ -513,14 +513,6 @@ assert.throws(
 
   {
     const sandbox = runNativeAuthScript({
-      search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/android-auth-callback" })
-    });
-    sandbox.window.kinicNativeAuthStart("internet-identity");
-    assert.equal(sandbox.__postMessages.length, 1);
-  }
-
-  {
-    const sandbox = runNativeAuthScript({
       search: nativeAuthSearch({ callback: "https://wiki.kinic.xyz/native-auth-callback" })
     });
     sandbox.window.kinicNativeAuthStart("internet-identity");
@@ -536,6 +528,7 @@ assert.throws(
   for (const fields of [
     { callback: "https://evil.example/ios-auth-callback" },
     { callback: "https://wiki.kinic.xyz/not-ios-auth-callback" },
+    { callback: "https://wiki.kinic.xyz/android-auth-callback" },
     { identityProvider: "https://evil.example/" },
     { identityProvider: "https://id.ai/authorize" }
   ]) {

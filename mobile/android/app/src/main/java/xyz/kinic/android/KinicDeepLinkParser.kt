@@ -17,7 +17,7 @@ object KinicDeepLinkParser {
         if (uri.scheme != "https" || uri.host != HOST || uri.userInfo != null || uri.port != -1) return null
         val path = uri.path ?: return null
         return when {
-            path == "/android-auth-callback" -> KinicDestination.AuthCallback(uri)
+            path == "/native-auth-callback" -> KinicDestination.AuthCallback(uri)
             path == "/dashboard" -> KinicDestination.Dashboard
             path == "/profile" -> KinicDestination.Profile
             path == "/cycles" -> KinicDestination.Cycles(

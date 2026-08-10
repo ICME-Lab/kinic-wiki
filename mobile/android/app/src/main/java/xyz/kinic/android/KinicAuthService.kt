@@ -1,13 +1,13 @@
 // Where: mobile/android/app/src/main/java/xyz/kinic/android/KinicAuthService.kt
 // What: File-backed Android Internet Identity session orchestration.
-// Why: Browser native-auth callbacks must bind to the pending Ed25519 session key before IC calls.
+// Why: Direct ICRC-167 callbacks must bind to the pending Ed25519 session key before IC calls.
 
 package xyz.kinic.android
 
 import org.json.JSONObject
 import xyz.kinic.android.ic.IcAuthSession
 import xyz.kinic.android.ic.IcClientError
-import xyz.kinic.android.ic.IcIdentityBridge
+import xyz.kinic.android.ic.IcIdentitySession
 import xyz.kinic.android.ic.IcInternetIdentityAuthenticator
 import android.content.Context
 import java.io.File
@@ -31,15 +31,15 @@ class KinicAuthService internal constructor(
             return null
         } ?: return null
         val session = try {
-            IcIdentityBridge.decodeSession(stored.value)
+            IcIdentitySession.decodeSession(stored.value)
         } catch (_: Exception) {
             signOut()
             return null
         }
         return try {
-            IcIdentityBridge.validateSession(session, configuration.icClientConfiguration())
+            IcIdentitySession.validateSession(session, configuration.icClientConfiguration())
             if (stored.isLegacyPlaintext) {
-                sessionStore.write(IcIdentityBridge.encodeSession(session))
+                sessionStore.write(IcIdentitySession.encodeSession(session))
             }
             session
         } catch (_: Exception) {
@@ -50,13 +50,13 @@ class KinicAuthService internal constructor(
 
     fun startSignIn(): URI {
         val request = IcInternetIdentityAuthenticator.authorizationRequest(
-            authOrigin = configuration.authOrigin,
             callbackDomain = configuration.callbackDomain,
             configuration = configuration.icClientConfiguration(),
         )
         pendingStore.write(
             JSONObject()
                 .put("state", request.state)
+                .put("requestId", request.requestId)
                 .put("sessionPrivateKey", base64Url(request.sessionPrivateKey))
                 .toString(),
         )
@@ -64,18 +64,13 @@ class KinicAuthService internal constructor(
     }
 
     fun completeSignIn(callbackUri: URI): IcAuthSession {
-        val host = callbackUri.host ?: throw IcClientError.InvalidPayload
-        if (host.lowercase() != configuration.callbackDomain.lowercase()) {
-            throw IcClientError.InvalidPayload
-        }
-        if (callbackUri.path != IcInternetIdentityAuthenticator.callbackPath) {
-            throw IcClientError.InvalidPayload
-        }
         val pending = pendingAuth()
         val session = try {
             IcInternetIdentityAuthenticator.sessionFromCallback(
                 callbackUrl = callbackUri,
+                callbackDomain = configuration.callbackDomain,
                 expectedState = pending.state,
+                expectedRequestId = pending.requestId,
                 sessionPrivateKey = pending.sessionPrivateKey,
                 configuration = configuration.icClientConfiguration(),
             )
@@ -83,8 +78,8 @@ class KinicAuthService internal constructor(
             clearPending()
             throw error
         }
-        IcIdentityBridge.validateSession(session, configuration.icClientConfiguration())
-        sessionStore.write(IcIdentityBridge.encodeSession(session))
+        IcIdentitySession.validateSession(session, configuration.icClientConfiguration())
+        sessionStore.write(IcIdentitySession.encodeSession(session))
         clearPending()
         return session
     }
@@ -110,6 +105,7 @@ class KinicAuthService internal constructor(
         }
         val pending = PendingAuth(
             state = json.getString("state"),
+            requestId = json.getString("requestId"),
             sessionPrivateKey = base64UrlDecoded(json.getString("sessionPrivateKey")),
         )
         if (stored.isLegacyPlaintext) {
@@ -124,6 +120,7 @@ class KinicAuthService internal constructor(
 
     private data class PendingAuth(
         val state: String,
+        val requestId: String,
         val sessionPrivateKey: ByteArray,
     )
 }

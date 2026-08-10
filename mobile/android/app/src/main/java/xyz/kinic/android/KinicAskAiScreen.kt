@@ -1,10 +1,13 @@
 package xyz.kinic.android
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,16 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -32,7 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,29 +55,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
-    val askState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showHistory by remember { mutableStateOf(false) }
+internal fun AskAiScreen(
+    state: KinicAppUiState,
+    viewModel: AskAiViewModel,
+    showHistory: Boolean,
+    onShowHistoryChange: (Boolean) -> Unit,
+    uiStateOverride: AskAiUiState? = null,
+) {
+    val liveAskState by viewModel.uiState.collectAsStateWithLifecycle()
+    val askState = uiStateOverride ?: liveAskState
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = KinicDesign.ScreenPadding, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                DatabaseDropdown(
-                    entries = state.browseDatabases,
-                    selectedId = askState.currentConversation?.databaseId.orEmpty(),
-                    onSelect = viewModel::requestDatabaseChange,
-                    label = "Knowledge database",
-                )
-            }
-            IconButton(onClick = { showHistory = true }) {
-                Icon(Icons.Outlined.History, contentDescription = "History")
-            }
-            IconButton(onClick = viewModel::startNewConversation) {
-                Icon(Icons.Outlined.Add, contentDescription = "New conversation")
-            }
-        }
         askState.historyLoadError?.let { error ->
             Column(modifier = Modifier.padding(horizontal = KinicDesign.ScreenPadding)) {
                 Text(error, color = MaterialTheme.colorScheme.error)
@@ -85,6 +75,7 @@ internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
             if (askState.messages.isEmpty()) {
                 item {
                     AskAiEmptyState(
+                        hasConversation = askState.currentConversation != null,
                         databaseTitle = askState.currentConversation?.databaseTitle
                             ?: state.browseDatabases.firstOrNull {
                                 it.summary.databaseId == state.selectedBrowseDatabaseId
@@ -105,34 +96,12 @@ internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = KinicDesign.ScreenPadding, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = KinicDesign.ScreenPadding, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedTextField(
-                    value = askState.draft,
-                    onValueChange = viewModel::setDraft,
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Ask a question") },
-                    enabled = !askState.isGenerating,
-                    maxLines = 5,
-                    shape = KinicDesign.ControlShape,
-                    trailingIcon = {
-                        IconButton(
-                            onClick = if (askState.isGenerating) viewModel::cancel else viewModel::send,
-                            enabled = askState.isGenerating || (
-                                askState.draft.isNotBlank() && askState.currentConversation != null
-                                ),
-                        ) {
-                            Icon(
-                                if (askState.isGenerating) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.Send,
-                                contentDescription = if (askState.isGenerating) "Stop generating" else "Send",
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    },
-                )
+                AskAiComposerField(askState = askState, viewModel = viewModel)
                 Text(
                     "${askState.draft.length} / ${AskAiQueryPlanner.MAXIMUM_QUESTION_CHARACTERS} characters",
                     modifier = Modifier.fillMaxWidth(),
@@ -140,19 +109,11 @@ internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.End,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Text(
-                        "Your question and relevant notes are sent to Kinic AI, then deleted after processing.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }
     if (showHistory) {
-        ModalBottomSheet(onDismissRequest = { showHistory = false }) {
+        ModalBottomSheet(onDismissRequest = { onShowHistoryChange(false) }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = KinicDesign.ScreenPadding).padding(bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -169,7 +130,7 @@ internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable {
                             viewModel.selectConversation(conversation.id)
-                            showHistory = false
+                            onShowHistoryChange(false)
                         }.padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -202,7 +163,54 @@ internal fun AskAiScreen(state: KinicAppUiState, viewModel: AskAiViewModel) {
 }
 
 @Composable
-private fun AskAiEmptyState(databaseTitle: String, onSuggestion: (String) -> Unit) {
+private fun AskAiComposerField(askState: AskAiUiState, viewModel: AskAiViewModel) {
+    val canSend = askState.draft.isNotBlank() && askState.currentConversation != null
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = KinicDesign.PanelShape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                if (askState.draft.isEmpty()) {
+                    Text("Message Kinic AI", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                BasicTextField(
+                    value = askState.draft,
+                    onValueChange = viewModel::setDraft,
+                    enabled = !askState.isGenerating,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 5,
+                )
+            }
+            IconButton(
+                onClick = if (askState.isGenerating) viewModel::cancel else viewModel::send,
+                enabled = askState.isGenerating || canSend,
+                modifier = Modifier.size(KinicDesign.MinimumTouchTarget),
+            ) {
+                Icon(
+                    if (askState.isGenerating) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.Send,
+                    contentDescription = if (askState.isGenerating) "Stop generating" else "Send",
+                    tint = if (askState.isGenerating || canSend) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AskAiEmptyState(hasConversation: Boolean, databaseTitle: String, onSuggestion: (String) -> Unit) {
     val suggestions = listOf(
         "Summarize the main ideas in this database",
         "What decisions have been recorded recently?",
@@ -223,21 +231,31 @@ private fun AskAiEmptyState(databaseTitle: String, onSuggestion: (String) -> Uni
             Surface(modifier = Modifier.size(12.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary) {}
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Ask your memory", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Kinic AI searches $databaseTitle and answers only when it finds supporting notes.",
+                if (hasConversation) "Ask your memory" else "Select a database",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                if (hasConversation) {
+                    "Kinic AI can chat normally and searches $databaseTitle when your question needs supporting notes."
+                } else {
+                    "Choose a database with Select DB above to start chatting."
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        suggestions.forEach { suggestion ->
-            Surface(
-                modifier = Modifier.fillMaxWidth().clickable { onSuggestion(suggestion) },
-                shape = KinicDesign.ControlShape,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(suggestion, modifier = Modifier.weight(1f))
-                    Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+        if (hasConversation) {
+            suggestions.forEach { suggestion ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { onSuggestion(suggestion) },
+                    shape = KinicDesign.ControlShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(suggestion, modifier = Modifier.weight(1f))
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null)
+                    }
                 }
             }
         }
@@ -259,33 +277,121 @@ private fun AskAiMessageRow(message: AskAiMessage, viewModel: AskAiViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    if (message.role == AskAiMessageRole.USER) Icons.Outlined.Person else Icons.Outlined.AutoAwesome,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                if (message.role == AskAiMessageRole.USER) {
+                    Icon(
+                        Icons.Outlined.Person,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(R.drawable.kinic_mark),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
                 Text(
                     if (message.role == AskAiMessageRole.USER) "You" else "Kinic AI",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
             }
-            SelectionContainer { Text(message.text.ifBlank { "Working..." }) }
-            message.trace.forEach { trace ->
+            if (
+                message.role == AskAiMessageRole.ASSISTANT &&
+                message.trace.isNotEmpty() &&
+                (message.state == AskAiMessageState.GENERATING || message.trace.any { it.stage == AskAiTraceStage.FOUND })
+            ) {
+                AskAiTraceCard(message.trace)
+            }
+            if (message.role == AskAiMessageRole.ASSISTANT) {
+                when (message.state) {
+                    AskAiMessageState.COMPLETE,
+                    AskAiMessageState.GENERATING,
+                    -> KinicMarkdown(message.text.ifBlank { "Working..." })
+                    AskAiMessageState.INSUFFICIENT -> Text(
+                        message.text,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    AskAiMessageState.FAILED -> Text(message.text, color = MaterialTheme.colorScheme.error)
+                }
+            } else {
+                SelectionContainer { Text(message.text) }
+            }
+            if (message.sources.isNotEmpty()) {
+                AskAiSources(message, viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AskAiTraceCard(events: List<AskAiTraceEvent>) {
+    val active = events.lastOrNull { it.isActive }
+    if (active != null) {
+        Text(
+            active.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    var expanded by remember(events) { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+        shape = KinicDesign.ControlShape,
+        color = KinicDesign.PalePink.copy(alpha = 0.35f),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${if (trace.isActive) "• " else ""}${trace.title}" + trace.detail?.let { ": $it" }.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "✦  How this answer was found",
+                    modifier = Modifier.weight(1f),
+                    color = KinicDesign.ElectricIndigo,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Icon(
+                    Icons.Outlined.ArrowDropDown,
+                    contentDescription = if (expanded) "Hide search details" else "Show search details",
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
-            message.sources.forEach { source ->
-                TextButton(onClick = { viewModel.openSource(source) }) { Text("${source.id}  ${source.path}") }
-                if (source.excerpt.isNotBlank()) {
+            if (expanded) {
+                events.forEach { event ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(event.title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                        event.detail?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AskAiSources(message: AskAiMessage, viewModel: AskAiViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            if (message.state == AskAiMessageState.INSUFFICIENT) "Possible sources" else "Sources cited by Kinic AI",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            message.sources.forEachIndexed { index, source ->
+                Surface(
+                    modifier = Modifier.clickable { viewModel.openSource(source) },
+                    shape = RoundedCornerShape(50),
+                    color = KinicDesign.PalePink.copy(alpha = 0.28f),
+                ) {
                     Text(
-                        source.excerpt,
+                        "[${index + 1}] ${source.path.substringAfterLast('/')}",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                        color = KinicDesign.ElectricIndigo,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 3,
+                        maxLines = 2,
                     )
                 }
             }

@@ -1,5 +1,6 @@
 package xyz.kinic.android
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,10 +25,8 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,59 +46,120 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.commonmark.ext.autolink.AutolinkExtension
-import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
-import org.commonmark.ext.gfm.tables.TablesExtension
-import org.commonmark.node.AbstractVisitor
-import org.commonmark.node.Code
-import org.commonmark.node.FencedCodeBlock
-import org.commonmark.node.HardLineBreak
-import org.commonmark.node.Heading
-import org.commonmark.node.Link
-import org.commonmark.node.ListItem
-import org.commonmark.node.Paragraph
-import org.commonmark.node.SoftLineBreak
-import org.commonmark.node.Text as MarkdownTextNode
-import org.commonmark.parser.Parser
 
 @Composable
 internal fun BrowseScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) {
     var directDatabaseId by remember { mutableStateOf("") }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = KinicDesign.ScreenPadding),
+    var showsDatabaseList by remember { mutableStateOf(state.selectedBrowseDatabaseId.isBlank()) }
+    androidx.compose.runtime.LaunchedEffect(state.selectedBrowseDatabaseId) {
+        if (state.selectedBrowseDatabaseId.isNotBlank()) showsDatabaseList = false
+    }
+    androidx.compose.runtime.LaunchedEffect(state.browseDocument?.path) {
+        if (state.browseDocument != null) showsDatabaseList = false
+    }
+    BackHandler(enabled = !showsDatabaseList) {
+        if (state.browseDocument != null || state.browsePath != "/") viewModel.navigateBrowseBack()
+        else showsDatabaseList = true
+    }
+    if (showsDatabaseList) {
+        BrowseDatabaseStage(
+            state = state,
+            directDatabaseId = directDatabaseId,
+            onDirectDatabaseIdChange = { directDatabaseId = it },
+            onSelect = {
+                showsDatabaseList = false
+                viewModel.selectBrowseDatabase(it)
+            },
+            onOpenDirect = {
+                showsDatabaseList = false
+                viewModel.addDirectDatabase(directDatabaseId)
+            },
+        )
+    } else {
+        BrowseContentStage(state = state, viewModel = viewModel, onShowDatabases = { showsDatabaseList = true })
+    }
+}
+
+@Composable
+private fun BrowseDatabaseStage(
+    state: KinicAppUiState,
+    directDatabaseId: String,
+    onDirectDatabaseIdChange: (String) -> Unit,
+    onSelect: (String) -> Unit,
+    onOpenDirect: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(KinicDesign.ScreenPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = KinicDesign.ControlShape,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        ) {
-            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                DatabaseDropdown(
-                    entries = state.browseDatabases,
-                    selectedId = state.selectedBrowseDatabaseId,
-                    onSelect = viewModel::selectBrowseDatabase,
-                    label = "Database",
+        if (state.browseDatabases.isEmpty()) {
+            item {
+                KinicEmptyState(
+                    icon = Icons.Outlined.Folder,
+                    title = "No readable databases",
+                    detail = "Sign in or open a database by ID.",
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            }
+        }
+        items(state.browseDatabases, key = { it.summary.databaseId }) { entry ->
+            DatabaseSelectionRow(
+                database = entry.summary,
+                origins = entry.origins,
+                selected = entry.summary.databaseId == state.selectedBrowseDatabaseId,
+                onClick = { onSelect(entry.summary.databaseId) },
+            )
+        }
+        item {
+            Surface(shape = KinicDesign.ControlShape, color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     OutlinedTextField(
                         value = directDatabaseId,
-                        onValueChange = { directDatabaseId = it },
+                        onValueChange = onDirectDatabaseIdChange,
                         modifier = Modifier.weight(1f),
                         label = { Text("Database ID") },
                         singleLine = true,
                         shape = KinicDesign.ControlShape,
                     )
-                    IconButton(
-                        onClick = { viewModel.addDirectDatabase(directDatabaseId) },
-                        enabled = directDatabaseId.isNotBlank(),
-                    ) {
+                    IconButton(onClick = onOpenDirect, enabled = directDatabaseId.isNotBlank()) {
                         Icon(Icons.Outlined.OpenInBrowser, contentDescription = "Open database")
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowseContentStage(state: KinicAppUiState, viewModel: KinicAppViewModel, onShowDatabases: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = KinicDesign.ScreenPadding),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = {
+                if (state.browseDocument != null || state.browsePath != "/") viewModel.navigateBrowseBack() else onShowDatabases()
+            }) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    state.browseDatabases.firstOrNull { it.summary.databaseId == state.selectedBrowseDatabaseId }
+                        ?.summary?.displayTitle ?: "Database",
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    state.browseDocument?.path ?: state.browsePath,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                )
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -116,32 +176,21 @@ internal fun BrowseScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                 Icon(Icons.Outlined.Search, contentDescription = "Search")
             }
         }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            if (state.browsePath != "/" || state.browseDocument != null) {
-                IconButton(onClick = viewModel::navigateBrowseBack) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                }
+        if (state.browseDocument == null) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                FilterChip(
+                    selected = state.browseSort == BrowseSort.NAME,
+                    onClick = { viewModel.setBrowseSort(BrowseSort.NAME) },
+                    label = { Text("Name") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                )
+                Spacer(Modifier.width(6.dp))
+                FilterChip(
+                    selected = state.browseSort == BrowseSort.MODIFIED,
+                    onClick = { viewModel.setBrowseSort(BrowseSort.MODIFIED) },
+                    label = { Text("Date") },
+                )
             }
-            Text(
-                state.browseDocument?.path ?: state.browsePath,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
-            )
-            FilterChip(
-                selected = state.browseSort == BrowseSort.NAME,
-                onClick = { viewModel.setBrowseSort(BrowseSort.NAME) },
-                label = { Text("Name") },
-                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.size(16.dp)) },
-            )
-            Spacer(Modifier.width(6.dp))
-            FilterChip(
-                selected = state.browseSort == BrowseSort.MODIFIED,
-                onClick = { viewModel.setBrowseSort(BrowseSort.MODIFIED) },
-                label = { Text("Date") },
-            )
         }
         if (state.browseDocument != null) DocumentView(state, viewModel) else BrowseResults(state, viewModel)
     }
@@ -242,47 +291,8 @@ private fun DocumentView(state: KinicAppUiState, viewModel: KinicAppViewModel) {
             if (state.showRawDocument) {
                 SelectionContainer { Text(document.content, fontFamily = FontFamily.Monospace) }
             } else {
-                SafeMarkdown(document.content, viewModel::openExternalUrl)
+                KinicMarkdown(document.content, viewModel::openExternalUrl)
             }
         }
     }
-}
-
-@Composable
-private fun SafeMarkdown(markdown: String, onOpenLink: (String) -> Unit) {
-    val rendered = remember(markdown) { parseSafeMarkdown(markdown) }
-    SelectionContainer {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(rendered.text)
-            rendered.links.forEach { link ->
-                AssistChip(
-                    onClick = { onOpenLink(link) },
-                    label = { Text(link) },
-                    leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
-                )
-            }
-        }
-    }
-}
-
-private data class SafeMarkdownContent(val text: String, val links: List<String>)
-
-private fun parseSafeMarkdown(markdown: String): SafeMarkdownContent {
-    val parser = Parser.builder()
-        .extensions(listOf(TablesExtension.create(), StrikethroughExtension.create(), AutolinkExtension.create()))
-        .build()
-    val text = StringBuilder()
-    val links = mutableListOf<String>()
-    parser.parse(markdown).accept(object : AbstractVisitor() {
-        override fun visit(textNode: MarkdownTextNode) { text.append(textNode.literal) }
-        override fun visit(code: Code) { text.append(code.literal) }
-        override fun visit(codeBlock: FencedCodeBlock) { text.append(codeBlock.literal).append('\n') }
-        override fun visit(softLineBreak: SoftLineBreak) { text.append('\n') }
-        override fun visit(hardLineBreak: HardLineBreak) { text.append('\n') }
-        override fun visit(heading: Heading) { visitChildren(heading); text.append('\n') }
-        override fun visit(paragraph: Paragraph) { visitChildren(paragraph); text.append("\n\n") }
-        override fun visit(listItem: ListItem) { text.append("• "); visitChildren(listItem); text.append('\n') }
-        override fun visit(link: Link) { visitChildren(link); links += link.destination }
-    })
-    return SafeMarkdownContent(text.toString().trim(), links.distinct())
 }

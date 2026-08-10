@@ -3,7 +3,7 @@
 `mobile/android` is the Kotlin / Jetpack Compose KinicWiki app. It follows the iOS
 Home / Browse / Ask AI / Manage structure and supports:
 
-- Internet Identity login through `/android-auth-callback`, encrypted session restore, and signed IC query/call/read_state requests.
+- Direct ICRC-167 Internet Identity login through `/native-auth-callback`, encrypted session restore, and signed IC query/call/read_state requests.
 - Member, public, purchased, and direct-ID Browse with folder navigation, search, Markdown/raw display, and app links.
 - Source Capture from Android shares or manually entered URLs, retryable queue/history, and generated-document navigation.
 - Grounded Ask AI conversations with evidence and source-document navigation.
@@ -16,7 +16,7 @@ verified. This matches the current iOS implementation and remains a separate har
 
 - VFS canister: `6emaw-iyaaa-aaaay-aacka-cai`
 - IC gateway: `https://icp0.io`
-- Internet Identity: `https://id.ai/#authorize`
+- Internet Identity: `https://id.ai/authorize`
 - Auth origin: `https://wiki.kinic.xyz`
 - Derivation origin: `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`
 

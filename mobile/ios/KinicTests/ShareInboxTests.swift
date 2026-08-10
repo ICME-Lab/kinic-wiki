@@ -484,9 +484,13 @@ struct ShareInboxTests {
             callbackDomain: "wiki.kinic.xyz"
         ) == .shareHandoff)
         #expect(AppModel.openURLDestination(
-            for: URL(string: "https://wiki.kinic.xyz/ios-auth-callback?state=s1")!,
+            for: URL(string: "https://wiki.kinic.xyz/native-auth-callback#message=m1&state=s1")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .authCallback)
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/ios-auth-callback?state=s1")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) != .authCallback)
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/db/db_1")!,
             callbackDomain: "wiki.kinic.xyz"

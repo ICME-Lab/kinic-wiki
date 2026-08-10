@@ -1,6 +1,6 @@
-// Where: mobile/android/app/src/main/java/xyz/kinic/android/ic/IcIdentityBridge.kt
-// What: Internet Identity delegation payload parsing, session creation, and validation.
-// Why: Android must bind the web bridge delegation to the locally generated Ed25519 session key.
+// Where: mobile/android/app/src/main/java/xyz/kinic/android/ic/IcIdentitySession.kt
+// What: Internet Identity session construction, persistence, and delegation validation.
+// Why: Direct ICRC-167 results must bind to the locally generated Ed25519 session key.
 
 package xyz.kinic.android.ic
 
@@ -91,7 +91,7 @@ data class IcDelegationChain(
         31 * publicKey.contentHashCode() + delegations.hashCode()
 }
 
-object IcIdentityBridge {
+object IcIdentitySession {
     const val maxTimeToLiveNanos: String = "2592000000000000"
     private val ed25519DerPrefix = byteArrayOf(
         0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
@@ -106,23 +106,20 @@ object IcIdentityBridge {
     fun derPublicKey(rawPublicKey: ByteArray): ByteArray =
         ed25519DerPrefix + rawPublicKey
 
-    fun makeSession(payload: String, privateKey: ByteArray, configuration: IcClientConfiguration): IcAuthSession {
-        val response = try {
-            JSONObject(payload)
-        } catch (_: Exception) {
-            throw IcClientError.InvalidPayload
-        }
-        if (response.optString("kind") == "authorize-client-failure") {
-            val message = response.optString("text", response.optString("message", "Internet Identity authorization failed."))
-            throw IcClientError.AuthorizationFailed(message)
-        }
-        if (response.optString("kind") != "authorize-client-success") {
-            throw IcClientError.InvalidPayload
-        }
+    fun makeSession(
+        delegation: IcDelegationChain,
+        privateKey: ByteArray,
+        configuration: IcClientConfiguration,
+        createdAtEpochMs: Long = Instant.now().toEpochMilli(),
+    ): IcAuthSession {
         val sessionPublicKey = derPublicKey(rawPublicKey(privateKey))
-        val chain = delegationChain(response)
-        validate(chain, expectedSessionPublicKey = sessionPublicKey, canisterId = configuration.canisterId)
-        val principal = IcPrincipal.text(IcPrincipal.selfAuthenticatingPublicKey(chain.publicKey))
+        validate(
+            delegation,
+            expectedSessionPublicKey = sessionPublicKey,
+            canisterId = configuration.canisterId,
+            createdAtEpochMs = createdAtEpochMs,
+        )
+        val principal = IcPrincipal.text(IcPrincipal.selfAuthenticatingPublicKey(delegation.publicKey))
         return IcAuthSession(
             principal = principal,
             canisterId = configuration.canisterId,
@@ -130,7 +127,8 @@ object IcIdentityBridge {
             derivationOrigin = configuration.derivationOrigin,
             sessionPublicKey = sessionPublicKey,
             sessionPrivateKey = privateKey,
-            delegation = chain,
+            delegation = delegation,
+            createdAtEpochMs = createdAtEpochMs,
         )
     }
 
@@ -155,7 +153,12 @@ object IcIdentityBridge {
             throw IcClientError.InvalidPayload
         }
         try {
-            validate(session.delegation, expectedSessionPublicKey = session.sessionPublicKey, canisterId = requestCanisterId)
+            validate(
+                session.delegation,
+                expectedSessionPublicKey = session.sessionPublicKey,
+                canisterId = requestCanisterId,
+                createdAtEpochMs = session.createdAtEpochMs,
+            )
         } catch (error: IcClientError) {
             if (error == IcClientError.InvalidPayload) {
                 throw IcClientError.InvalidIdentity("Internet Identity session is not valid for this canister.")
@@ -164,13 +167,25 @@ object IcIdentityBridge {
         }
     }
 
-    fun validate(chain: IcDelegationChain, expectedSessionPublicKey: ByteArray?, canisterId: String) {
+    fun validate(
+        chain: IcDelegationChain,
+        expectedSessionPublicKey: ByteArray?,
+        canisterId: String,
+        createdAtEpochMs: Long = Instant.now().toEpochMilli(),
+    ) {
+        if (createdAtEpochMs < 0) throw IcClientError.InvalidPayload
         val canister = IcPrincipal.parse(canisterId) ?: throw IcClientError.InvalidPayload
         val lastPublicKey = chain.delegations.lastOrNull()?.delegation?.publicKey
         if (expectedSessionPublicKey == null || lastPublicKey == null || !lastPublicKey.contentEquals(expectedSessionPublicKey)) {
             throw IcClientError.InvalidPayload
         }
         val now = nowNanos()
+        val requestedTtl = maxTimeToLiveNanos.toULong()
+        val clockSkew = 5uL * 60uL * 1_000_000_000uL
+        val requestedAt = createdAtEpochMs.toULong() * 1_000_000uL
+        val earliestExpiration = chain.delegations.minOfOrNull { it.delegation.expiration }
+            ?: throw IcClientError.InvalidPayload
+        if (earliestExpiration > requestedAt + requestedTtl + clockSkew) throw IcClientError.InvalidPayload
         for (signed in chain.delegations) {
             if (signed.delegation.expiration <= now) {
                 throw IcClientError.ExpiredDelegation
@@ -210,36 +225,6 @@ object IcIdentityBridge {
             sessionPrivateKey = json.getString("sessionPrivateKey").base64UrlDecoded(),
             delegation = decodeDelegationChain(json.getJSONObject("delegation")),
             createdAtEpochMs = json.optLong("createdAtEpochMs", Instant.now().toEpochMilli()),
-        )
-    }
-
-    private fun delegationChain(response: JSONObject): IcDelegationChain {
-        val container = response.optJSONObject("delegation") ?: response
-        val publicKey = bytesValue(container.opt("userPublicKey") ?: container.opt("publicKey"))
-            ?: throw IcClientError.InvalidPayload
-        val rawDelegations = container.optJSONArray("delegations") ?: throw IcClientError.InvalidPayload
-        val signed = (0 until rawDelegations.length()).map { index ->
-            val item = rawDelegations.optJSONObject(index) ?: throw IcClientError.InvalidPayload
-            signedDelegation(item)
-        }
-        if (signed.isEmpty()) throw IcClientError.InvalidPayload
-        return IcDelegationChain(publicKey = publicKey, delegations = signed)
-    }
-
-    private fun signedDelegation(item: JSONObject): IcDelegationChain.SignedDelegation {
-        val delegation = item.optJSONObject("delegation") ?: throw IcClientError.InvalidPayload
-        val publicKey = bytesValue(delegation.opt("pubkey") ?: delegation.opt("publicKey"))
-            ?: throw IcClientError.InvalidPayload
-        val expiration = unsignedValue(delegation.opt("expiration")) ?: throw IcClientError.InvalidPayload
-        val targets = delegation.optJSONArray("targets")?.let { array ->
-            (0 until array.length()).map { index ->
-                bytesValue(array.opt(index)) ?: throw IcClientError.InvalidPayload
-            }
-        }
-        val signature = bytesValue(item.opt("signature")) ?: throw IcClientError.InvalidPayload
-        return IcDelegationChain.SignedDelegation(
-            delegation = IcDelegationChain.Delegation(publicKey = publicKey, expiration = expiration, targets = targets),
-            signature = signature,
         )
     }
 
@@ -285,33 +270,6 @@ object IcIdentityBridge {
             )
         }
         return IcDelegationChain(publicKey = publicKey, delegations = signed)
-    }
-
-    private fun bytesValue(raw: kotlin.Any?): ByteArray? {
-        return when (raw) {
-            is String -> raw.hexToBytesOrNull()
-            is JSONArray -> ByteArray(raw.length()) { index ->
-                val value = raw.optInt(index, -1)
-                if (value !in 0..255) throw IcClientError.InvalidPayload
-                value.toByte()
-            }
-            else -> null
-        }
-    }
-
-    private fun unsignedValue(raw: kotlin.Any?): ULong? {
-        return when (raw) {
-            is String -> {
-                val trimmed = raw.trim()
-                when {
-                    trimmed.startsWith("0x", ignoreCase = true) -> trimmed.drop(2).toULongOrNull(16)
-                    trimmed.all(Char::isDigit) -> trimmed.toULongOrNull()
-                    else -> null
-                }
-            }
-            is Number -> raw.toLong().takeIf { it >= 0 }?.toULong()
-            else -> null
-        }
     }
 
     private fun nowNanos(): ULong {

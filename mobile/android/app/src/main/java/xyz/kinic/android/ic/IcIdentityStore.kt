@@ -27,15 +27,15 @@ class IcIdentityStore(
             return null
         } ?: return null
         val session = try {
-            IcIdentityBridge.decodeSession(stored.value)
+            IcIdentitySession.decodeSession(stored.value)
         } catch (_: Exception) {
             clear()
             return null
         }
         return try {
-            IcIdentityBridge.validateSession(session, configuration)
+            IcIdentitySession.validateSession(session, configuration)
             if (stored.isLegacyPlaintext) {
-                store.write(IcIdentityBridge.encodeSession(session))
+                store.write(IcIdentitySession.encodeSession(session))
             }
             session
         } catch (_: Exception) {
@@ -45,8 +45,8 @@ class IcIdentityStore(
     }
 
     fun save(session: IcAuthSession) {
-        IcIdentityBridge.validateSession(session, configuration)
-        store.write(IcIdentityBridge.encodeSession(session))
+        IcIdentitySession.validateSession(session, configuration)
+        store.write(IcIdentitySession.encodeSession(session))
     }
 
     fun clear() {

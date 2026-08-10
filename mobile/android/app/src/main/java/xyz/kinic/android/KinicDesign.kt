@@ -5,11 +5,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -41,8 +44,10 @@ internal object KinicDesign {
 
     val PanelShape = RoundedCornerShape(20.dp)
     val ControlShape = RoundedCornerShape(16.dp)
+    val IconButtonShape = RoundedCornerShape(14.dp)
     val ScreenPadding = 16.dp
     val PanelPadding = 20.dp
+    val MinimumTouchTarget = 44.dp
 }
 
 private val kinicTypography = Typography().let { base ->
@@ -50,19 +55,78 @@ private val kinicTypography = Typography().let { base ->
         displayLarge = base.displayLarge.copy(letterSpacing = 0.sp),
         displayMedium = base.displayMedium.copy(letterSpacing = 0.sp),
         displaySmall = base.displaySmall.copy(letterSpacing = 0.sp),
-        headlineLarge = base.headlineLarge.copy(letterSpacing = 0.sp),
+        headlineLarge = base.headlineLarge.copy(fontSize = 34.sp, lineHeight = 41.sp, letterSpacing = 0.sp),
         headlineMedium = base.headlineMedium.copy(letterSpacing = 0.sp),
         headlineSmall = base.headlineSmall.copy(letterSpacing = 0.sp),
         titleLarge = base.titleLarge.copy(letterSpacing = 0.sp),
-        titleMedium = base.titleMedium.copy(letterSpacing = 0.sp),
+        titleMedium = base.titleMedium.copy(fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = 0.sp),
         titleSmall = base.titleSmall.copy(letterSpacing = 0.sp),
-        bodyLarge = base.bodyLarge.copy(letterSpacing = 0.sp),
-        bodyMedium = base.bodyMedium.copy(letterSpacing = 0.sp),
-        bodySmall = base.bodySmall.copy(letterSpacing = 0.sp),
+        bodyLarge = base.bodyLarge.copy(fontSize = 17.sp, lineHeight = 24.sp, letterSpacing = 0.sp),
+        bodyMedium = base.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp, letterSpacing = 0.sp),
+        bodySmall = base.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.sp),
         labelLarge = base.labelLarge.copy(letterSpacing = 0.sp),
         labelMedium = base.labelMedium.copy(letterSpacing = 0.sp),
         labelSmall = base.labelSmall.copy(letterSpacing = 0.sp),
     )
+}
+
+@Composable
+internal fun KinicIconButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.size(KinicDesign.MinimumTouchTarget),
+        colors = IconButtonDefaults.iconButtonColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary,
+            disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+        ),
+    ) {
+        Surface(
+            shape = KinicDesign.IconButtonShape,
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier.size(KinicDesign.MinimumTouchTarget),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(21.dp))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun KinicPrimaryButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
+        shape = KinicDesign.ControlShape,
+        color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+        contentColor = MaterialTheme.colorScheme.surface,
+        onClick = onClick,
+        enabled = enabled,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable

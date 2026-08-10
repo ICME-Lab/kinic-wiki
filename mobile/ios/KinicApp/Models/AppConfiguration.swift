@@ -7,6 +7,7 @@ import ICNativeClient
 
 struct AppConfiguration: Equatable, Sendable {
     static let privacyPolicyURL = URL(string: "https://wiki.kinic.xyz/privacy-policy")!
+    static let nativeAuthCallbackPath = "/native-auth-callback"
 
     let canisterId: String
     let apiBaseURL: URL

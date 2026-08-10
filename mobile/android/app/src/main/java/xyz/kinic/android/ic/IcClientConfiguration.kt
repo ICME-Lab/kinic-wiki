@@ -15,7 +15,7 @@ enum class IcClientApiVersion(val raw: String) {
 data class IcClientConfiguration(
     val canisterId: String,
     val apiBaseUrl: URI = URI("https://ic0.app"),
-    val identityProvider: URI = URI("https://id.ai/#authorize"),
+    val identityProvider: URI = URI("https://id.ai/authorize"),
     val derivationOrigin: String,
 ) {
     fun apiUrl(requestType: String, canisterId: String = this.canisterId, version: IcClientApiVersion? = null): URI {

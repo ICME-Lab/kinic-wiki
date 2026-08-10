@@ -10,7 +10,7 @@ class KinicDeepLinkParserTest {
     @Test
     fun parsesSupportedRoutes() {
         assertTrue(
-            KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz/android-auth-callback?state=s")) is
+            KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz/native-auth-callback#message=m&state=s")) is
                 KinicDestination.AuthCallback,
         )
         assertEquals(
@@ -37,6 +37,8 @@ class KinicDeepLinkParserTest {
         assertNull(KinicDeepLinkParser.parse(URI("https://evil.example/dashboard")))
         assertNull(KinicDeepLinkParser.parse(URI("https://user@wiki.kinic.xyz/dashboard")))
         assertNull(KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz:443/dashboard")))
+        assertNull(KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz/ios-auth-callback")))
+        assertNull(KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz/android-auth-callback")))
         assertNull(KinicDeepLinkParser.parse(URI("https://wiki.kinic.xyz/unknown")))
     }
 }

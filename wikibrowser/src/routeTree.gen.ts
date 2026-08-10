@@ -14,6 +14,7 @@ import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as NativeAuthCallbackRouteImport } from './routes/native-auth-callback'
 import { Route as NativeAuthRouteImport } from './routes/native-auth'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
@@ -24,7 +25,6 @@ import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CyclesRouteImport } from './routes/cycles'
-import { Route as AndroidAuthCallbackRouteImport } from './routes/android-auth-callback'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as MarketplaceIndexRouteImport } from './routes/marketplace.index'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
@@ -77,6 +77,11 @@ const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
   path: '/privacy-policy',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NativeAuthCallbackRoute = NativeAuthCallbackRouteImport.update({
+  id: '/native-auth-callback',
+  path: '/native-auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const NativeAuthRoute = NativeAuthRouteImport.update({
   id: '/native-auth',
   path: '/native-auth',
@@ -125,11 +130,6 @@ const DashboardRoute = DashboardRouteImport.update({
 const CyclesRoute = CyclesRouteImport.update({
   id: '/cycles',
   path: '/cycles',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AndroidAuthCallbackRoute = AndroidAuthCallbackRouteImport.update({
-  id: '/android-auth-callback',
-  path: '/android-auth-callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -271,7 +271,6 @@ const ApiQueryAnswerRoute = ApiQueryAnswerRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
@@ -282,6 +281,7 @@ export interface FileRoutesByFullPath {
   '/marketplace': typeof MarketplaceRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -315,7 +315,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/favicon.ico': typeof FaviconDoticoRoute
   '/ios': typeof IosRoute
@@ -323,6 +322,7 @@ export interface FileRoutesByTo {
   '/ios-share': typeof IosShareRoute
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -355,7 +355,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/android-auth-callback': typeof AndroidAuthCallbackRoute
   '/cycles': typeof CyclesRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
@@ -366,6 +365,7 @@ export interface FileRoutesById {
   '/marketplace': typeof MarketplaceRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/native-auth': typeof NativeAuthRoute
+  '/native-auth-callback': typeof NativeAuthCallbackRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/profile': typeof ProfileRoute
   '/robots.txt': typeof RobotsDottxtRoute
@@ -401,7 +401,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/android-auth-callback'
     | '/cycles'
     | '/dashboard'
     | '/docs'
@@ -412,6 +411,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -445,7 +445,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/android-auth-callback'
     | '/cycles'
     | '/favicon.ico'
     | '/ios'
@@ -453,6 +452,7 @@ export interface FileRouteTypes {
     | '/ios-share'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -484,7 +484,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/android-auth-callback'
     | '/cycles'
     | '/dashboard'
     | '/docs'
@@ -495,6 +494,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/metrics'
     | '/native-auth'
+    | '/native-auth-callback'
     | '/privacy-policy'
     | '/profile'
     | '/robots.txt'
@@ -529,7 +529,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AndroidAuthCallbackRoute: typeof AndroidAuthCallbackRoute
   CyclesRoute: typeof CyclesRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
@@ -540,6 +539,7 @@ export interface RootRouteChildren {
   MarketplaceRoute: typeof MarketplaceRouteWithChildren
   MetricsRoute: typeof MetricsRoute
   NativeAuthRoute: typeof NativeAuthRoute
+  NativeAuthCallbackRoute: typeof NativeAuthCallbackRoute
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
   ProfileRoute: typeof ProfileRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
@@ -590,6 +590,13 @@ declare module '@tanstack/react-router' {
       path: '/privacy-policy'
       fullPath: '/privacy-policy'
       preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/native-auth-callback': {
+      id: '/native-auth-callback'
+      path: '/native-auth-callback'
+      fullPath: '/native-auth-callback'
+      preLoaderRoute: typeof NativeAuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/native-auth': {
@@ -660,13 +667,6 @@ declare module '@tanstack/react-router' {
       path: '/cycles'
       fullPath: '/cycles'
       preLoaderRoute: typeof CyclesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/android-auth-callback': {
-      id: '/android-auth-callback'
-      path: '/android-auth-callback'
-      fullPath: '/android-auth-callback'
-      preLoaderRoute: typeof AndroidAuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -938,7 +938,6 @@ const DbDatabaseIdRouteWithChildren = DbDatabaseIdRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AndroidAuthCallbackRoute: AndroidAuthCallbackRoute,
   CyclesRoute: CyclesRoute,
   DashboardRoute: DashboardRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
@@ -949,6 +948,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarketplaceRoute: MarketplaceRouteWithChildren,
   MetricsRoute: MetricsRoute,
   NativeAuthRoute: NativeAuthRoute,
+  NativeAuthCallbackRoute: NativeAuthCallbackRoute,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
   ProfileRoute: ProfileRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,

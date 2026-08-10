@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -24,8 +23,6 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,29 +61,22 @@ internal fun HomeScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) {
                 icon = Icons.Outlined.Person,
                 trailing = if (state.session == null) null else {
                     {
-                        IconButton(onClick = viewModel::signOut) {
-                            Icon(Icons.AutoMirrored.Outlined.ExitToApp, contentDescription = "Sign out")
-                        }
+                        KinicIconButton(
+                            onClick = viewModel::signOut,
+                            icon = Icons.AutoMirrored.Outlined.ExitToApp,
+                            contentDescription = "Sign out",
+                        )
                     }
                 },
             ) {
                 if (state.session == null) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(
-                            "Internet Identity unlocks your writable databases.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Button(
+                        KinicPrimaryButton(
                             onClick = viewModel::startSignIn,
-                            modifier = Modifier.size(52.dp),
-                            shape = CircleShape,
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.onSurface,
-                                contentColor = MaterialTheme.colorScheme.surface,
-                            ),
                         ) {
-                            Icon(Icons.Outlined.Person, contentDescription = "Sign in with Internet Identity")
+                            Icon(Icons.Outlined.Person, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Sign in with Internet Identity", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 } else {
@@ -103,12 +93,19 @@ internal fun HomeScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) {
                 title = "Database",
                 icon = Icons.Outlined.Storage,
                 trailing = {
-                    IconButton(onClick = { createDialog = true }, enabled = state.session != null) {
-                        Icon(Icons.Outlined.Add, contentDescription = "Create database")
-                    }
-                    IconButton(onClick = viewModel::refreshDatabases, enabled = !state.isLoadingDatabases) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Refresh databases")
-                    }
+                    KinicIconButton(
+                        onClick = { createDialog = true },
+                        icon = Icons.Outlined.Add,
+                        contentDescription = "Create database",
+                        enabled = state.session != null,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    KinicIconButton(
+                        onClick = viewModel::refreshDatabases,
+                        icon = Icons.Outlined.Refresh,
+                        contentDescription = "Refresh databases",
+                        enabled = !state.isLoadingDatabases,
+                    )
                 },
             ) {
                 if (writableDatabases.isEmpty()) {
@@ -140,9 +137,11 @@ internal fun HomeScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) {
                 title = "Capture history",
                 icon = Icons.Outlined.History,
                 trailing = {
-                    IconButton(onClick = { viewModel.refreshSourceCaptureHistory(refreshAll = true) }) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Refresh history")
-                    }
+                    KinicIconButton(
+                        onClick = { viewModel.refreshSourceCaptureHistory(refreshAll = true) },
+                        icon = Icons.Outlined.Refresh,
+                        contentDescription = "Refresh history",
+                    )
                 },
             ) {
                 when {

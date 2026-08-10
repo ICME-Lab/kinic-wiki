@@ -24,10 +24,10 @@ class MainActivityTest {
         composeRule.onNode(hasText("Home") and hasClickAction()).assertIsDisplayed()
 
         composeRule.onNodeWithText("Browse").performClick()
-        composeRule.onNodeWithText("Database ID").assertIsDisplayed()
+        composeRule.onNodeWithText("Databases").assertIsDisplayed()
 
         composeRule.onNodeWithText("Ask AI").performClick()
-        composeRule.onNodeWithText("Ask a question").assertIsDisplayed()
+        composeRule.onNodeWithText("Message Kinic AI").assertIsDisplayed()
 
         composeRule.onNodeWithText("Manage").performClick()
         composeRule.onNodeWithContentDescription("Create").assertIsDisplayed()
@@ -63,7 +63,7 @@ class MainActivityTest {
         openDeepLink("https://wiki.kinic.xyz/db/direct-database/folder/Page.md")
 
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("Database ID").assertIsDisplayed()
+        composeRule.onNodeWithText("Databases").assertIsDisplayed()
     }
 
     @Test
@@ -86,7 +86,7 @@ class MainActivityTest {
 
     @Test
     fun authCallbackWithoutPendingRequestFailsWithoutLeavingHome() {
-        openDeepLink("https://wiki.kinic.xyz/android-auth-callback?state=unexpected&result=invalid")
+        openDeepLink("https://wiki.kinic.xyz/native-auth-callback#message=invalid&state=unexpected")
 
         composeRule.onNodeWithText("KinicWiki").assertIsDisplayed()
     }

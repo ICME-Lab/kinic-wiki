@@ -1,11 +1,9 @@
 // Where: mobile/android/app/src/test/java/xyz/kinic/android/ic/IcClientCoreTest.kt
-// What: JVM tests for Android IC principal, CBOR, request id, and identity bridge primitives.
+// What: JVM tests for Android IC principal, CBOR, request id, and delegated identity primitives.
 // Why: Signed envelopes must stay deterministic before mainnet smoke testing.
 
 package xyz.kinic.android.ic
 
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -63,61 +61,53 @@ class IcClientCoreTest {
     }
 
     @Test
-    fun identityPayloadBuildsValidatedSession() {
+    fun identityDelegationBuildsValidatedSession() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val payload = identityPayload(privateKey, configuration.canisterId)
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val delegation = identityDelegation(privateKey, configuration.canisterId)
 
-        val session = IcIdentityBridge.makeSession(payload, privateKey, configuration)
+        val session = IcIdentitySession.makeSession(delegation, privateKey, configuration)
 
         assertEquals(configuration.canisterId, session.canisterId)
         assertEquals(configuration.identityProvider.toString(), session.identityProvider)
         assertEquals(configuration.derivationOrigin, session.derivationOrigin)
-        assertArrayEquals(IcIdentityBridge.derPublicKey(IcIdentityBridge.rawPublicKey(privateKey)), session.sessionPublicKey)
+        assertArrayEquals(IcIdentitySession.derPublicKey(IcIdentitySession.rawPublicKey(privateKey)), session.sessionPublicKey)
         assertEquals(1, session.delegation.delegations.size)
     }
 
     @Test
-    fun identityPayloadRejectsMismatchedSessionKey() {
+    fun identityDelegationRejectsMismatchedSessionKey() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val otherKey = IcIdentityBridge.generateSessionPrivateKey()
-        val payload = identityPayload(otherKey, configuration.canisterId)
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val otherKey = IcIdentitySession.generateSessionPrivateKey()
+        val delegation = identityDelegation(otherKey, configuration.canisterId)
 
         val error = assertThrows(IcClientError::class.java) {
-            IcIdentityBridge.makeSession(payload, privateKey, configuration)
+            IcIdentitySession.makeSession(delegation, privateKey, configuration)
         }
         assertEquals(IcClientError.InvalidPayload, error)
     }
 
     @Test
-    fun identityPayloadRejectsMalformedJson() {
-        val error = assertThrows(IcClientError::class.java) {
-            IcIdentityBridge.makeSession("{", IcIdentityBridge.generateSessionPrivateKey(), testConfiguration())
-        }
-        assertEquals(IcClientError.InvalidPayload, error)
-    }
-
-    @Test
-    fun identityPayloadRejectsExpiredDelegation() {
+    fun identityDelegationRejectsExpiredDelegation() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val payload = identityPayload(privateKey, configuration.canisterId, expiration = 1uL)
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val delegation = identityDelegation(privateKey, configuration.canisterId, expiration = 1uL)
 
         val error = assertThrows(IcClientError::class.java) {
-            IcIdentityBridge.makeSession(payload, privateKey, configuration)
+            IcIdentitySession.makeSession(delegation, privateKey, configuration)
         }
         assertEquals(IcClientError.ExpiredDelegation, error)
     }
 
     @Test
-    fun identityPayloadRejectsTargetMismatch() {
+    fun identityDelegationRejectsTargetMismatch() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val payload = identityPayload(privateKey, "2vxsx-fae")
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val delegation = identityDelegation(privateKey, "2vxsx-fae")
 
         val error = assertThrows(IcClientError::class.java) {
-            IcIdentityBridge.makeSession(payload, privateKey, configuration)
+            IcIdentitySession.makeSession(delegation, privateKey, configuration)
         }
         assertEquals(IcClientError.InvalidPayload, error)
     }
@@ -125,12 +115,12 @@ class IcClientCoreTest {
     @Test
     fun validateSessionRejectsMismatchedStoredPrivateKey() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val session = IcIdentityBridge.makeSession(identityPayload(privateKey, configuration.canisterId), privateKey, configuration)
-        val corrupted = session.copy(sessionPrivateKey = IcIdentityBridge.generateSessionPrivateKey())
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val session = IcIdentitySession.makeSession(identityDelegation(privateKey, configuration.canisterId), privateKey, configuration)
+        val corrupted = session.copy(sessionPrivateKey = IcIdentitySession.generateSessionPrivateKey())
 
         val error = assertThrows(IcClientError::class.java) {
-            IcIdentityBridge.validateSession(corrupted, configuration)
+            IcIdentitySession.validateSession(corrupted, configuration)
         }
         assertEquals(IcClientError.InvalidPayload, error)
     }
@@ -150,8 +140,8 @@ class IcClientCoreTest {
     @Test
     fun signedEnvelopeContainsDelegationFields() {
         val configuration = testConfiguration()
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val session = IcIdentityBridge.makeSession(identityPayload(privateKey, configuration.canisterId), privateKey, configuration)
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        val session = IcIdentitySession.makeSession(identityDelegation(privateKey, configuration.canisterId), privateKey, configuration)
         val content = IcCbor.Value.MapValue(
             listOf(
                 IcCbor.Value.Text("request_type") to IcCbor.Value.Text("query"),
@@ -194,37 +184,32 @@ internal fun testConfiguration(): IcClientConfiguration =
     IcClientConfiguration(
         canisterId = "bkyz2-fmaaa-aaaaa-qaaaq-cai",
         apiBaseUrl = URI("https://ic0.app"),
-        identityProvider = URI("https://id.ai/#authorize"),
+        identityProvider = URI("https://id.ai/authorize"),
         derivationOrigin = "https://bkyz2-fmaaa-aaaaa-qaaaq-cai.icp0.io",
     )
 
-internal fun identityPayload(
+internal fun identityDelegation(
     sessionPrivateKey: ByteArray,
     targetCanisterId: String,
-    expiration: ULong = 4_102_444_800_000_000_000uL,
-): String {
-    val rootPrivateKey = IcIdentityBridge.generateSessionPrivateKey()
-    val rootPublicKey = IcIdentityBridge.derPublicKey(IcIdentityBridge.rawPublicKey(rootPrivateKey))
-    val sessionPublicKey = IcIdentityBridge.derPublicKey(IcIdentityBridge.rawPublicKey(sessionPrivateKey))
-    val target = IcPrincipal.parse(targetCanisterId)?.toHex() ?: "04"
-    return JSONObject()
-        .put("kind", "authorize-client-success")
-        .put("userPublicKey", rootPublicKey.toHex())
-        .put(
-            "delegations",
-            JSONArray().put(
-                JSONObject()
-                    .put(
-                        "delegation",
-                        JSONObject()
-                            .put("pubkey", sessionPublicKey.toHex())
-                            .put("expiration", expiration.toString())
-                            .put("targets", JSONArray().put(target)),
-                    )
-                    .put("signature", ByteArray(64) { 7 }.toHex()),
+    expiration: ULong = System.currentTimeMillis().toULong() * 1_000_000uL + 86_400_000_000_000uL,
+): IcDelegationChain {
+    val rootPrivateKey = IcIdentitySession.generateSessionPrivateKey()
+    val rootPublicKey = IcIdentitySession.derPublicKey(IcIdentitySession.rawPublicKey(rootPrivateKey))
+    val sessionPublicKey = IcIdentitySession.derPublicKey(IcIdentitySession.rawPublicKey(sessionPrivateKey))
+    val target = IcPrincipal.parse(targetCanisterId) ?: byteArrayOf(4)
+    return IcDelegationChain(
+        publicKey = rootPublicKey,
+        delegations = listOf(
+            IcDelegationChain.SignedDelegation(
+                delegation = IcDelegationChain.Delegation(
+                    publicKey = sessionPublicKey,
+                    expiration = expiration,
+                    targets = listOf(target),
+                ),
+                signature = ByteArray(64) { 7 },
             ),
         )
-        .toString()
+    )
 }
 
 private fun statusTree(requestId: ByteArray, status: ByteArray): IcCbor.Value =

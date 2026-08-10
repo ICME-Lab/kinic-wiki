@@ -13,7 +13,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import xyz.kinic.android.ic.IcIdentityBridge
+import xyz.kinic.android.ic.IcIdentitySession
+import xyz.kinic.android.ic.IcDelegationChain
 import xyz.kinic.android.ic.IcPrincipal
 import java.io.File
 import java.net.URI
@@ -66,7 +67,7 @@ class AuthSecretStoreInstrumentedTest {
         val sessionFile = File(directory, "session.json")
         val pendingFile = File(directory, "pending.json")
         val session = validSession(configuration)
-        sessionFile.writeText(IcIdentityBridge.encodeSession(session), Charsets.UTF_8)
+        sessionFile.writeText(IcIdentitySession.encodeSession(session), Charsets.UTF_8)
 
         val first = authService(configuration, sessionFile, pendingFile)
         assertEquals(session, first.restore())
@@ -90,9 +91,34 @@ class AuthSecretStoreInstrumentedTest {
             ).value,
         )
         val privateKey = Base64.getUrlDecoder().decode(pendingJson.getString("sessionPrivateKey"))
-        val payload = identityPayload(privateKey, configuration.canisterId)
-        val result = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.encodeToByteArray())
-        val callback = URI("https://wiki.kinic.xyz/android-auth-callback?state=$state&result=$result")
+        val requestId = pendingJson.getString("requestId")
+        val chain = identityDelegation(privateKey, configuration.canisterId)
+        val item = chain.delegations.single()
+        val response = JSONObject()
+            .put("jsonrpc", "2.0")
+            .put("id", requestId)
+            .put(
+                "result",
+                JSONObject()
+                    .put("publicKey", Base64.getEncoder().encodeToString(chain.publicKey))
+                    .put(
+                        "signerDelegation",
+                        JSONArray().put(
+                            JSONObject()
+                                .put(
+                                    "delegation",
+                                    JSONObject()
+                                        .put("pubkey", Base64.getEncoder().encodeToString(item.delegation.publicKey))
+                                        .put("expiration", item.delegation.expiration.toString())
+                                        .put("targets", JSONArray().put(IcPrincipal.text(item.delegation.targets!!.single()))),
+                                )
+                                .put("signature", Base64.getEncoder().encodeToString(item.signature)),
+                        ),
+                    ),
+            )
+        val callback = URI(
+            "https://wiki.kinic.xyz/native-auth-callback#message=${urlEncode(response.toString())}&state=${urlEncode(state)}",
+        )
 
         val recreated = authService(configuration, sessionFile, pendingFile)
         val session = recreated.completeSignIn(callback)
@@ -110,45 +136,40 @@ class AuthSecretStoreInstrumentedTest {
         )
 
     private fun validSession(configuration: AppConfiguration): xyz.kinic.android.ic.IcAuthSession {
-        val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-        return IcIdentityBridge.makeSession(
-            identityPayload(privateKey, configuration.canisterId),
+        val privateKey = IcIdentitySession.generateSessionPrivateKey()
+        return IcIdentitySession.makeSession(
+            identityDelegation(privateKey, configuration.canisterId),
             privateKey,
             configuration.icClientConfiguration(),
         )
     }
 
-    private fun identityPayload(
+    private fun identityDelegation(
         sessionPrivateKey: ByteArray,
         targetCanisterId: String,
-        expiration: ULong = 4_102_444_800_000_000_000uL,
-    ): String {
-        val rootPrivateKey = IcIdentityBridge.generateSessionPrivateKey()
-        val rootPublicKey = IcIdentityBridge.derPublicKey(IcIdentityBridge.rawPublicKey(rootPrivateKey))
-        val sessionPublicKey = IcIdentityBridge.derPublicKey(IcIdentityBridge.rawPublicKey(sessionPrivateKey))
-        val target = requireNotNull(IcPrincipal.parse(targetCanisterId)).toHexString()
-        return JSONObject()
-            .put("kind", "authorize-client-success")
-            .put("userPublicKey", rootPublicKey.toHexString())
-            .put(
-                "delegations",
-                JSONArray().put(
-                    JSONObject()
-                        .put(
-                            "delegation",
-                            JSONObject()
-                                .put("pubkey", sessionPublicKey.toHexString())
-                                .put("expiration", expiration.toString())
-                                .put("targets", JSONArray().put(target)),
-                        )
-                        .put("signature", ByteArray(64) { 7 }.toHexString()),
+        expiration: ULong = System.currentTimeMillis().toULong() * 1_000_000uL + 86_400_000_000_000uL,
+    ): IcDelegationChain {
+        val rootPrivateKey = IcIdentitySession.generateSessionPrivateKey()
+        val rootPublicKey = IcIdentitySession.derPublicKey(IcIdentitySession.rawPublicKey(rootPrivateKey))
+        val sessionPublicKey = IcIdentitySession.derPublicKey(IcIdentitySession.rawPublicKey(sessionPrivateKey))
+        val target = requireNotNull(IcPrincipal.parse(targetCanisterId))
+        return IcDelegationChain(
+            publicKey = rootPublicKey,
+            delegations = listOf(
+                IcDelegationChain.SignedDelegation(
+                    delegation = IcDelegationChain.Delegation(
+                        publicKey = sessionPublicKey,
+                        expiration = expiration,
+                        targets = listOf(target),
+                    ),
+                    signature = ByteArray(64) { 7 },
                 ),
-            )
-            .toString()
+            ),
+        )
     }
 
     private fun queryValues(url: URI): Map<String, String> {
-        val query = url.fragment?.substringAfter("?", missingDelimiterValue = "") ?: url.rawQuery.orEmpty()
+        val query = url.rawFragment.orEmpty()
         return query.split('&').filter(String::isNotBlank).associate { part ->
             val pieces = part.split("=", limit = 2)
             java.net.URLDecoder.decode(pieces[0], Charsets.UTF_8.name()) to
@@ -156,14 +177,13 @@ class AuthSecretStoreInstrumentedTest {
         }
     }
 
-    private fun ByteArray.toHexString(): String =
-        joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    private fun urlEncode(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
 
     private fun instrumentedConfiguration(): AppConfiguration =
         AppConfiguration(
             canisterId = "bkyz2-fmaaa-aaaaa-qaaaq-cai",
             apiBaseUrl = URI("https://ic0.app"),
-            identityProvider = URI("https://id.ai/#authorize"),
+            identityProvider = URI("https://id.ai/authorize"),
             derivationOrigin = "https://bkyz2-fmaaa-aaaaa-qaaaq-cai.icp0.io",
             authOrigin = URI("https://wiki.kinic.xyz"),
             callbackDomain = "wiki.kinic.xyz",

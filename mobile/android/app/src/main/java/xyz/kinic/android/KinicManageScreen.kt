@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,12 +56,12 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = KinicDesign.ScreenPadding, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        KinicPanel(
+        KinicFormSection(
             title = "Database",
             icon = Icons.Outlined.Storage,
             trailing = {
@@ -77,13 +76,9 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                     title = "Sign in to manage",
                     detail = "Internet Identity unlocks database settings and access controls.",
                 )
-                Button(
-                    onClick = viewModel::startSignIn,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.onSurface,
-                        contentColor = MaterialTheme.colorScheme.surface,
-                    ),
-                ) { Text("Sign in") }
+                KinicPrimaryButton(onClick = viewModel::startSignIn) {
+                    Text("Sign in", fontWeight = FontWeight.SemiBold)
+                }
             } else if (databases.isEmpty()) {
                 KinicEmptyState(
                     icon = Icons.Outlined.Storage,
@@ -100,7 +95,7 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
             }
         }
         state.manage.pendingFundingDatabaseId?.let { pendingDatabaseId ->
-            KinicPanel(title = "Pending activation", icon = Icons.Outlined.Info) {
+            KinicFormSection(title = "Pending activation", icon = Icons.Outlined.Info) {
                 Text("Database $pendingDatabaseId is waiting for funding.")
                 Button(onClick = { viewModel.openFunding(pendingDatabaseId) }, enabled = !isBusy) {
                     Icon(Icons.Outlined.OpenInBrowser, contentDescription = null)
@@ -110,8 +105,8 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
             }
         }
         if (database != null) {
-            KinicPanel(
-                title = database.displayTitle,
+            KinicFormSection(
+                title = "Database",
                 icon = Icons.Outlined.Dns,
                 trailing = {
                     IconButton(onClick = viewModel::refreshManageDetails) {
@@ -121,8 +116,6 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
             ) {
                 ManagementValue("Role", database.role.candidName)
                 ManagementValue("Status", database.status.candidName)
-                ManagementValue("Logical size", "${database.logicalSizeBytes} bytes")
-                ManagementValue("Cycles balance", database.cyclesBalance?.let { "$it cycles" } ?: "Unavailable")
                 ManagementValue("Database ID", database.databaseId)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { metadataDialog = true }, enabled = !isBusy) {
@@ -133,8 +126,8 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                     }
                 }
             }
-            KinicPanel(
-                title = "Members",
+            KinicFormSection(
+                title = "Access",
                 icon = Icons.Outlined.ManageAccounts,
                 trailing = if (database.role == DatabaseRole.OWNER) {
                     {
@@ -166,7 +159,12 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                     if (index != state.manage.members.lastIndex) HorizontalDivider()
                 }
             }
-            KinicPanel(title = "Cycle ledger", icon = Icons.Outlined.History) {
+            KinicFormSection(title = "Cycles", icon = Icons.Outlined.History) {
+                ManagementValue("Logical size", "${database.logicalSizeBytes} bytes")
+                ManagementValue("Cycles balance", database.cyclesBalance?.let { "$it cycles" } ?: "Unavailable")
+                ManagementValue("Suspended since", database.cyclesSuspendedAtMs?.toString() ?: "Not suspended")
+            }
+            KinicFormSection(title = "Cycle ledger", icon = Icons.Outlined.History) {
                 if (state.manage.cycleEntries.isEmpty()) {
                     Text("No cycle entries.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -185,24 +183,32 @@ internal fun ManageScreen(state: KinicAppUiState, viewModel: KinicAppViewModel) 
                 }
             }
             if (state.manage.pendingPurchases.isNotEmpty()) {
-                KinicPanel(title = "Pending purchases", icon = Icons.Outlined.Info) {
+                KinicFormSection(title = "Pending purchases", icon = Icons.Outlined.Info) {
                     state.manage.pendingPurchases.forEach { purchase ->
                         ManagementValue(purchase.status, purchase.requiredAction)
                     }
                 }
             }
             if (database.role == DatabaseRole.OWNER) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = KinicDesign.PanelShape,
-                    color = MaterialTheme.colorScheme.errorContainer,
-                ) {
-                    Row(modifier = Modifier.padding(KinicDesign.PanelPadding), verticalAlignment = Alignment.CenterVertically) {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(
+                        "Danger zone",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = KinicDesign.ControlShape,
+                        color = MaterialTheme.colorScheme.errorContainer,
+                    ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Danger zone", fontWeight = FontWeight.SemiBold)
+                            Text("Delete database", fontWeight = FontWeight.SemiBold)
                             Text("Deleting a database cannot be undone.", style = MaterialTheme.typography.bodySmall)
                         }
                         TextButton(onClick = { deleteDialog = true }, enabled = !isBusy) { Text("Delete") }
+                    }
                     }
                 }
             }

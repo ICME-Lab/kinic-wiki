@@ -9,8 +9,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import xyz.kinic.android.ic.IcAuthSession
-import xyz.kinic.android.ic.IcIdentityBridge
-import xyz.kinic.android.ic.identityPayload
+import xyz.kinic.android.ic.IcIdentitySession
+import xyz.kinic.android.ic.identityDelegation
 import java.net.URI
 import java.nio.file.Files
 import java.time.Instant
@@ -272,8 +272,8 @@ private fun sourceCaptureSubmitter(
 
 private fun testSession(): IcAuthSession {
     val configuration = testAppConfiguration().icClientConfiguration()
-    val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-    return IcIdentityBridge.makeSession(identityPayload(privateKey, configuration.canisterId), privateKey, configuration)
+    val privateKey = IcIdentitySession.generateSessionPrivateKey()
+    return IcIdentitySession.makeSession(identityDelegation(privateKey, configuration.canisterId), privateKey, configuration)
 }
 
 private fun testDatabase(

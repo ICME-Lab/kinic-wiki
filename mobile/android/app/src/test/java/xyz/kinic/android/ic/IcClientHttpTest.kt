@@ -111,6 +111,6 @@ private fun queryReply(arg: ByteArray): ByteArray =
     )
 
 private fun testSession(): IcAuthSession {
-    val privateKey = IcIdentityBridge.generateSessionPrivateKey()
-    return IcIdentityBridge.makeSession(identityPayload(privateKey, testConfiguration().canisterId), privateKey, testConfiguration())
+    val privateKey = IcIdentitySession.generateSessionPrivateKey()
+    return IcIdentitySession.makeSession(identityDelegation(privateKey, testConfiguration().canisterId), privateKey, testConfiguration())
 }

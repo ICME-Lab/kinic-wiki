@@ -620,7 +620,7 @@ final class AppModel {
         if firstSegment == "ios-share" {
             return .shareHandoff
         }
-        if firstSegment == "ios-auth-callback" {
+        if "/\(firstSegment)" == AppConfiguration.nativeAuthCallbackPath {
             return .authCallback
         }
         if firstSegment == "db",

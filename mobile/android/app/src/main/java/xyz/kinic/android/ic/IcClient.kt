@@ -152,7 +152,7 @@ class IcClient(
 
     fun validateIdentity(identity: IcAuthSession, requestCanisterId: String) {
         try {
-            IcIdentityBridge.validateSession(identity, configuration, requestCanisterId)
+            IcIdentitySession.validateSession(identity, configuration, requestCanisterId)
         } catch (error: IcClientError) {
             if (error == IcClientError.InvalidPayload) {
                 throw IcClientError.InvalidIdentity("Internet Identity session is not valid for this canister.")

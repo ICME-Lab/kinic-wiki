@@ -5,7 +5,7 @@
 export const internetIdentityCallbacks = {
   callbacks: [
     "https://wiki.kinic.xyz/ios-auth-callback",
-    "https://wiki.kinic.xyz/android-auth-callback"
+    "https://wiki.kinic.xyz/native-auth-callback"
   ]
 };
 

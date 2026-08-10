@@ -7,6 +7,7 @@ package xyz.kinic.android
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -57,8 +58,13 @@ class MainActivity : ComponentActivity() {
             ),
         )[AskAiViewModel::class.java]
         handleIntent(intent)
+        val referenceFixture = if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            kinicUiReferenceFixture(intent?.getStringExtra(EXTRA_UI_REFERENCE_MODE))
+        } else {
+            null
+        }
         setContent {
-            KinicAppShell(
+            KinicAppShellWithReference(
                 viewModel = viewModel,
                 askAiViewModel = askAiViewModel,
                 onOpenUri = { uri ->
@@ -68,6 +74,7 @@ class MainActivity : ComponentActivity() {
                     val clipboard = getSystemService(ClipboardManager::class.java)
                     clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
                 },
+                referenceFixture = referenceFixture,
             )
         }
     }

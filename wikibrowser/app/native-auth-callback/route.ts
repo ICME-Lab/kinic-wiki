@@ -1,6 +1,6 @@
-// Where: wikibrowser/app/android-auth-callback/route.ts
-// What: Stable HTTPS callback path for Android browser-based native auth.
-// Why: Android App Links need a production path even though the app consumes the URL.
+// Where: wikibrowser/app/native-auth-callback/route.ts
+// What: Stable HTTPS callback path for native ICRC-167 authentication.
+// Why: iOS and Android use one callback contract while their operating systems dispatch the link.
 
 export function GET(): Response {
   return new Response("<!doctype html><title>KinicWikiApp</title><p>Return to KinicWikiApp.</p>", {
