@@ -1702,7 +1702,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 fn pending_database_activation_retry_reuses_staged_mount_after_migration_failure() {
     let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database("Retry activation", "owner", 1)
+        .reserve_pending_generated_database("Retry activation", "owner", 1_701_234_567_890)
         .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
