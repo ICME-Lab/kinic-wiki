@@ -142,11 +142,14 @@ function parseIdlMethods(source, idlResultAliases) {
 function normalizeIdlResult(value, idlResultAliases) {
   const trimmed = value.trim();
   const inlineResult = trimmed.match(
-    /^idl\.Variant\(\{\s*Ok:\s*(.+?),\s*Err:\s*idl\.Text\s*\}\)$/s
+    /^idl\.Variant\(\{\s*Ok:\s*(.+?),\s*Err:\s*(.+?)\s*\}\)$/s
   );
   if (!inlineResult) return normalizeIdlShape(trimmed);
   const okShape = normalizeIdlShape(inlineResult[1]);
-  return idlResultAliases[okShape] ?? okShape;
+  const errShape = normalizeIdlShape(inlineResult[2]);
+  return idlResultAliases[`${okShape}|${errShape}`]
+    ?? (errShape === "text" ? idlResultAliases[okShape] : undefined)
+    ?? normalizeIdlShape(trimmed);
 }
 
 function findStatementEnd(source, start) {

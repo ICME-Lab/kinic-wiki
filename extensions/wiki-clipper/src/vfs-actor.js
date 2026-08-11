@@ -60,6 +60,19 @@ function idlFactory({ IDL: idl }) {
     initial_free_grant_applied: idl.Bool
   });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
+  const NodeMutationErrorCode = idl.Variant({
+    EtagConflict: idl.Null,
+    NotFound: idl.Null,
+    Forbidden: idl.Null,
+    WriteUnavailable: idl.Null,
+    InvalidOperation: idl.Null
+  });
+  const NodeMutationError = idl.Record({
+    code: NodeMutationErrorCode,
+    message: idl.Text,
+    failed_index: idl.Opt(idl.Nat32),
+    conflict_path: idl.Opt(idl.Text)
+  });
   const Node = idl.Record({
     path: idl.Text,
     kind: NodeKind,
@@ -94,9 +107,9 @@ function idlFactory({ IDL: idl }) {
     get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
-    mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
+    mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
-    write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text })], [])
+    write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: NodeMutationError })], [])
   });
 }
 

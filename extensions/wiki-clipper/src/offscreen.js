@@ -126,7 +126,7 @@ export async function saveEvidenceSource(evidenceSource, config) {
     expected_etag: expected,
     session_nonce: sessionNonce
   });
-  if ("Err" in result) throw new Error(result.Err);
+  if ("Err" in result) throw new Error(result.Err.message);
   return {
     path: evidenceSource.path,
     sourceId: evidenceSource.sourceId || "",
@@ -231,7 +231,7 @@ async function ensureParentFolders(actor, databaseId, path) {
   for (const segment of segments.slice(0, -1)) {
     current = `${current}/${segment}`;
     const result = await actor.mkdir_node({ database_id: databaseId, path: current });
-    if ("Err" in result) throw new Error(result.Err);
+    if ("Err" in result) throw new Error(result.Err.message);
   }
 }
 

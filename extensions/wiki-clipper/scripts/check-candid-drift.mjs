@@ -22,6 +22,8 @@ const expectedTypes = selectCandidShapes(sharedTypes, [
   "CreateDatabaseRequest",
   "CreateDatabaseResult",
   "NodeKind",
+  "NodeMutationErrorCode",
+  "NodeMutationError",
   "Node",
   "WriteSourceForGenerationRequest",
   "MkdirNodeRequest",
@@ -43,10 +45,10 @@ const idlResultAliases = {
   CyclesBillingConfig: "ResultCyclesBillingConfig",
   CreateDatabaseResult: "ResultCreateDatabase",
   "vec DatabaseSummary": "ResultDatabases",
-  MkdirNodeResult: "ResultMkdirNode",
+  "MkdirNodeResult|NodeMutationError": "ResultMkdirNode",
   "opt Node": "ResultNode",
   WriteNodeResult: "ResultWriteNode",
-  WriteSourceForGenerationResult: "ResultWriteSourceForGeneration"
+  "WriteSourceForGenerationResult|NodeMutationError": "ResultWriteSourceForGeneration"
 };
 
 const failures = checkCandidSubset({
