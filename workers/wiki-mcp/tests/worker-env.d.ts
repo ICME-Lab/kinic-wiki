@@ -1,9 +1,9 @@
-import type { McpAuthStateV3 } from "../src/auth/state.js";
+import type { McpAuthStateV4 } from "../src/auth/state.js";
 
 declare global {
   namespace Cloudflare {
     interface Env {
-      MCP_AUTH_STATE: DurableObjectNamespace<McpAuthStateV3>;
+      MCP_AUTH_STATE: DurableObjectNamespace<McpAuthStateV4>;
       MCP_REGISTRATION_RATE_LIMIT: RateLimit;
       MCP_KEY_ENCRYPTION_KEY: string;
       MCP_ACCESS_POLICY: string;

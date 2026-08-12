@@ -59,9 +59,9 @@ OAuth uses authorization code with mandatory S256 PKCE and DCR. The scopes are `
 
 DCR applies a best-effort limit of ten registration attempts per connecting IP per minute in each Cloudflare location. Cloudflare's rate limiter is eventually consistent, so concurrent requests can temporarily exceed that limit. A rejected request returns `429` with `Retry-After: 60`; a rate-limiter failure returns `503`. Registered clients expire after 180 days without use and extend that deadline when an unexpired client ID is referenced by an OAuth request.
 
-The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Production browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. Staging uses its isolated canister derivation origin `https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. Direct MCP backend calls pass the environment's configured bare `ic0.app` origin unchanged. A Questions-only grant removes `mcp:write` from the local OAuth session and remains read-only. An Actions & questions grant preserves `mcp:write` and enables content mutations. Delegations last at most five minutes and are never cached across requests.
+The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Production browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. Staging uses its isolated canister derivation origin `https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. Direct MCP backend calls pass the environment's configured bare `ic0.app` origin unchanged. A Questions-only grant removes `mcp:write` from the local OAuth session and remains read-only. An Actions & questions grant preserves `mcp:write` and enables content mutations. `initialize`, `tools/list`, and notification-only batches validate OAuth without minting a canister identity. The first `tools/call` mints a per-app delegation, encrypts its app key and chain in the session Durable Object, and reuses it until 30 seconds before its at-most-five-minute expiration. Concurrent cache misses share one mint.
 
-II revocation takes effect the next time staging tries to mint a per-app delegation. The local OAuth session is invalidated and the client receives `invalid_token`; reconnect through the client to restore access. Changing `MCP_KEY_ENCRYPTION_KEY` intentionally invalidates all existing sessions.
+Already-minted delegations remain usable for their remaining lifetime, so II revocation can take up to five minutes to reach a cached session. The next mint after expiry observes revocation, invalidates the local OAuth session, and returns `invalid_token`; reconnect through the client to restore access. Refresh-token rotation preserves a valid delegation cache. Changing `MCP_KEY_ENCRYPTION_KEY` intentionally invalidates all existing sessions.
 
 The II callback returns stable, non-sensitive errors:
 
@@ -114,6 +114,7 @@ Staging logs only a random trace id, the connection, per-app delegation, or auth
   - Preferred for the whole requested change set when any operation is `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete`, including a single operation
   - Atomically applies 1 to 100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations in one database
   - A `write` operation has the same required fields as `write_nodes`
+  - A `move` with `overwrite: true` must include `expected_target_etag` when the destination exists. If the destination does not exist, omit it. Supplying it with `overwrite: false` is invalid.
   - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
 Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: false`.
@@ -126,7 +127,7 @@ Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false
 4. Keep each 1–100 item batch in one database and preserve returned etags.
 5. On `etag_conflict`, treat `path` as the failed operation input and `conflict_path` as the actual stale node. Compare supplied `current_content` and `current_etag` with the intended change, noting `current_content_truncated` and `current_content_size`; the inline content is capped at 40,000 characters. Regenerate the batch and retry at most twice only if intent remains unambiguous. Otherwise return the current/desired difference instead of overwriting.
 
-The node mutation Candid methods return `NodeMutationError { code; message; failed_index; conflict_path }`, where `code` is one of `EtagConflict`, `NotFound`, `Forbidden`, `WriteUnavailable`, or `InvalidOperation`. This intentionally replaces `Err : text` for all node mutations. Canister and bundled clients must be released together; old mutation decoders are incompatible. No database migration is required.
+The node mutation Candid methods return `NodeMutationError { code; message; failed_index; conflict_path }`, where `code` is one of `EtagConflict`, `NotFound`, `Forbidden`, `WriteUnavailable`, or `InvalidOperation`. This intentionally replaces `Err : text` for all node mutations. Canister and bundled clients, including the Wiki Clipper and Rust CLI, must be released together when their target canister is upgraded; old mutation decoders are incompatible. Known external Candid clients must be notified separately because repository checks cannot discover them. The same release runs the versioned index `001→002→003` and filesystem `001→002` migrations used by native publication recovery; do not skip schema preflight.
 
 ## Agent Read Workflows
 
@@ -192,7 +193,7 @@ pnpm --dir workers/wiki-mcp smoke:staging -- \
   --write-smoke-path /Knowledge/mcp-staging-smoke.md
 ```
 
-The staging client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. OAuth begins at initial MCP connection. It verifies the exact 10-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths. This diagnostic client keeps OAuth credentials in memory only, so each process requires consent again.
+The staging client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens in `${XDG_STATE_HOME:-~/.local/state}/kinic-wiki/mcp-staging-smoke-oauth.json` with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to override the cache path. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 10-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
 
 ## Configuration
 
@@ -211,7 +212,7 @@ Production uses `wrangler.jsonc`; staging uses `wrangler.staging.jsonc` and a se
 
 `MCP_ACCESS_POLICY` accepts only `public` or `private_required`. `MCP_WRITE_POLICY` accepts only `disabled` or `private`. A missing or unknown value returns `503` instead of guessing another mode.
 
-Staging requires both the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. The V3 auth-state migration deletes V2 authorization state so permission and write scope cannot be inferred for old sessions. After deployment, every previously connected client must register and connect again. Production remains public and has neither binding.
+Staging requires both the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. The V4 auth-state migration deletes V3 authorization state instead of absorbing its unversioned delegation cache. After deployment, every previously connected client must register and connect once again. Production remains public and has neither binding.
 
 `KINIC_WIKI_IC_HOST` is the IC API gateway. `KINIC_WIKI_MCP_TARGET_ORIGIN` is the exact origin used by the II backend to derive the existing Kinic principal; it must be a bare HTTPS `ic0.app` origin for `KINIC_WIKI_CANISTER_ID`. The Worker does not rewrite, discover, or fall back between origins at runtime. The canister's `/.well-known/ii-alternative-origins` remains responsible only for allowing the controlled `wiki.kinic.xyz` frontend to request the public derivation origin.
 

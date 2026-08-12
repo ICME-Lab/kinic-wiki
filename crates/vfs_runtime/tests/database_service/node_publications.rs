@@ -3,10 +3,13 @@
 // Why: Publication lifecycle and isolation scenarios form a cohesive suite outside the main service test file.
 
 use super::*;
-use vfs_runtime::fail_next_publication_detach_for_test;
+use vfs_runtime::{
+    fail_next_publication_detach_for_test, fail_next_publication_resolution_for_test,
+    fail_next_publication_restore_for_test,
+};
 use vfs_types::{
     ListChildrenRequest, MkdirNodeRequest, MutateNodesBatchRequest, NodeMutation,
-    PublishNodeRequest, WriteNodeItem, WriteNodesRequest,
+    NodeMutationErrorCode, PublishNodeRequest, WriteNodeItem, WriteNodesRequest,
 };
 
 fn node_publication_count(root: &std::path::Path, database_id: &str) -> i64 {
@@ -17,6 +20,161 @@ fn node_publication_count(root: &std::path::Path, database_id: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("publication count should load")
+}
+
+fn publication_recovery_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM publication_mutation_recovery_batches WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("publication recovery count should load")
+}
+
+#[test]
+fn native_publication_journal_restores_after_failed_mutation_restore() {
+    let (service, root) = service_with_root();
+    let database_id = "publication-restore-journal";
+    service
+        .create_database(database_id, "owner", 1)
+        .expect("database should create");
+    let path = "/Knowledge/public.md";
+    let created = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::File,
+                content: "public body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("public node should write");
+    let publication = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+            },
+            "00112233445566778899aabbccddeeff",
+            3,
+        )
+        .expect("node should publish");
+
+    fail_next_publication_restore_for_test(database_id);
+    let error = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::Source,
+                content: "source body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some("stale-etag".to_string()),
+            },
+            4,
+        )
+        .expect_err("mutation and immediate restore should fail");
+    assert_eq!(error.code, NodeMutationErrorCode::WriteUnavailable);
+    assert_eq!(publication_recovery_count(&root, database_id), 1);
+
+    drop(service);
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("restarted service should validate index migrations");
+    let public = service
+        .read_public_node(&publication.public_id)
+        .expect("public read should replay the pending journal")
+        .expect("failed mutation should remain published");
+    assert_eq!(public.content, "public body");
+    assert_eq!(publication_recovery_count(&root, database_id), 0);
+    assert_eq!(
+        service
+            .read_node(database_id, "owner", path)
+            .expect("private node should read")
+            .expect("private node should remain")
+            .etag,
+        created.node.etag
+    );
+}
+
+#[test]
+fn native_publication_journal_does_not_restore_after_fs_commit() {
+    let (service, root) = service_with_root();
+    let database_id = "publication-commit-journal";
+    service
+        .create_database(database_id, "owner", 1)
+        .expect("database should create");
+    let path = "/Knowledge/public.md";
+    let created = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::File,
+                content: "public body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("public node should write");
+    let publication = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+            },
+            "ffeeddccbbaa99887766554433221100",
+            3,
+        )
+        .expect("node should publish");
+
+    fail_next_publication_resolution_for_test(database_id);
+    let updated = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::Source,
+                content: "source body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(created.node.etag),
+            },
+            4,
+        )
+        .expect("committed mutation should succeed while durable finalization remains pending");
+    assert_eq!(updated.node.kind, NodeKind::Source);
+    assert_eq!(publication_recovery_count(&root, database_id), 1);
+
+    drop(service);
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("restarted service should validate index migrations");
+    assert!(
+        service
+            .read_public_node(&publication.public_id)
+            .expect("public read should reconcile the committed marker")
+            .is_none()
+    );
+    assert_eq!(publication_recovery_count(&root, database_id), 0);
+    let node = service
+        .read_node(database_id, "owner", path)
+        .expect("private node should read")
+        .expect("committed node should remain");
+    assert_eq!(node.kind, NodeKind::Source);
+    assert_eq!(node.content, "source body");
 }
 
 #[test]
@@ -162,6 +320,7 @@ fn node_publication_exposes_only_the_selected_live_markdown_node() {
                 from_path: "/Knowledge/public.md".to_string(),
                 to_path: "/Knowledge/moved.md".to_string(),
                 expected_etag: Some(updated_public.node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             7,
@@ -254,7 +413,7 @@ fn write_node_unpublishes_when_file_becomes_source_without_resurrection() {
             .contains("injected publication detach failure")
     );
 
-    service
+    let error = service
         .write_node(
             "owner",
             WriteNodeRequest {
@@ -268,6 +427,7 @@ fn write_node_unpublishes_when_file_becomes_source_without_resurrection() {
             6,
         )
         .expect_err("stale source conversion should fail");
+    assert_eq!(error.code, NodeMutationErrorCode::EtagConflict);
     assert_eq!(
         service
             .get_node_publication("owner", request.clone())
@@ -716,6 +876,7 @@ fn list_children_marks_publications_only_for_database_members() {
                 from_path: "/Knowledge/public.md".to_string(),
                 to_path: "/Knowledge/moved.md".to_string(),
                 expected_etag: Some(public_node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             8,
@@ -995,7 +1156,7 @@ fn publication_detach_failure_aborts_overwrite_move() {
             2,
         )
         .expect("private node should write");
-    service
+    let target = service
         .write_node(
             "owner",
             WriteNodeRequest {
@@ -1030,6 +1191,7 @@ fn publication_detach_failure_aborts_overwrite_move() {
                 from_path: "/Knowledge/private.md".to_string(),
                 to_path: "/Knowledge/public.md".to_string(),
                 expected_etag: Some(source.node.etag),
+                expected_target_etag: Some(target.node.etag),
                 overwrite: true,
             },
             5,

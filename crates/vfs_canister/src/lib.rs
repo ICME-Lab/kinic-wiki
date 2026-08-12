@@ -1458,7 +1458,9 @@ fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result
     }
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
+        service.run_database_migrations(&meta.database_id)?;
     }
+    service.recover_pending_publication_mutations()?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }
@@ -1472,7 +1474,9 @@ fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result
     service.run_index_migrations_for_upgrade(config)?;
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
+        service.run_database_migrations(&meta.database_id)?;
     }
+    service.recover_pending_publication_mutations()?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }

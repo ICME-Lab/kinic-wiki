@@ -4,10 +4,13 @@ import {
   generateIiKey,
   IiDelegationError,
   IiRegistrationError,
+  IiSessionEndedError,
+  mintKinicDelegation,
   mintKinicIdentity,
   PER_APP_DELEGATION_TTL_NS,
   redeemRegistration,
   resolveKinicMcpTargetOrigin,
+  restoreKinicIdentity,
   restoreRegistrationIdentity,
   type InternetIdentityActor
 } from "../src/auth/internet-identity.js";
@@ -142,6 +145,49 @@ describe("Internet Identity MCP protocol", () => {
     });
     await expect(mintKinicIdentity(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, resultFailure)).rejects.toMatchObject(
       new IiDelegationError("accounts_result")
+    );
+  });
+
+  it("distinguishes II revocation from a temporary delegation failure", async () => {
+    const revoked = actorStub();
+    revoked.mcp_get_accounts = vi.fn().mockResolvedValue({
+      Err: { Unauthorized: generateIiKey().getPrincipal() }
+    });
+    await expect(mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, revoked)).rejects.toBeInstanceOf(
+      IiSessionEndedError
+    );
+
+    const temporary = actorStub();
+    temporary.mcp_prepare_delegation = vi.fn().mockRejectedValue(new Error("temporary upstream failure"));
+    await expect(mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, temporary)).rejects.toMatchObject(
+      new IiDelegationError("prepare_call")
+    );
+  });
+
+  it("serializes and restores one cached per-app delegation for its exact origin", async () => {
+    const actor = actorStub();
+    const rootKey = generateIiKey();
+    const expiration = BigInt(Date.now() + 5 * 60 * 1000) * 1_000_000n;
+    actor.mcp_prepare_delegation = vi.fn().mockResolvedValue({
+      Ok: { user_key: rootKey.getPublicKey().toDer(), expiration, account_number: [] }
+    });
+    actor.mcp_get_delegation = vi.fn().mockImplementation(async (_origin, _account, publicKey) => ({
+      Ok: {
+        delegation: { pubkey: publicKey, expiration, targets: [], permissions: [] },
+        signature: new Uint8Array(64)
+      }
+    }));
+
+    const minted = await mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, actor);
+    const restored = restoreKinicIdentity(minted.material, KINIC_MCP_TARGET_ORIGIN, Date.now());
+
+    expect(restored.getPrincipal().toText()).toBe(rootKey.getPrincipal().toText());
+    expect(minted.material.expiresAt).toBe(Number(expiration / 1_000_000n));
+    expect(() => restoreKinicIdentity(minted.material, STAGING_MCP_TARGET_ORIGIN, Date.now())).toThrowError(
+      new IiDelegationError("identity_assembly")
+    );
+    expect(() => restoreKinicIdentity(minted.material, KINIC_MCP_TARGET_ORIGIN, minted.material.expiresAt)).toThrowError(
+      new IiDelegationError("identity_assembly")
     );
   });
 

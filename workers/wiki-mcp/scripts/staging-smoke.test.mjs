@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
+  authorizationUrlWithScopes,
   assertPrivateRequiredToolSecurity,
   assertCallbackState,
   cleanupSmokeArtifacts,
   createOAuthState,
+  defaultAuthCachePath,
   FIND_DATABASE_LIMIT,
   isMutationNotFoundResult,
   isReadPathNotFoundResult,
+  oauthScopesForRun,
+  openOAuthCache,
   parseArgs,
   smokeCompletionError,
   smokeWriteBatchDelete,
@@ -19,6 +26,13 @@ import {
 const packageConfig = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const productionConfig = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
 const stagingConfig = JSON.parse(readFileSync(new URL("../wrangler.staging.jsonc", import.meta.url), "utf8"));
+const stagingV4UnbindConfig = JSON.parse(
+  readFileSync(new URL("../wrangler.staging-v4-unbind.jsonc", import.meta.url), "utf8")
+);
+const stagingV4UnbindEntrypoint = readFileSync(
+  new URL("../src/staging-v4-unbind.ts", import.meta.url),
+  "utf8"
+);
 
 function toolErrorResult(detail) {
   return {
@@ -58,7 +72,7 @@ test("keeps production public until promotion and isolates staging auth state", 
   assert.equal(productionConfig.durable_objects, undefined);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_required");
   assert.equal(stagingConfig.durable_objects.bindings[0].name, "MCP_AUTH_STATE");
-  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV3");
+  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV4");
   assert.deepEqual(stagingConfig.ratelimits, [
     {
       name: "MCP_REGISTRATION_RATE_LIMIT",
@@ -67,11 +81,37 @@ test("keeps production public until promotion and isolates staging auth state", 
     }
   ]);
   assert.deepEqual(stagingConfig.migrations.at(-1), {
-    tag: "v3",
-    new_sqlite_classes: ["McpAuthStateV3"],
-    deleted_classes: ["McpAuthStateV2"]
+    tag: "v4",
+    new_sqlite_classes: ["McpAuthStateV4"],
+    deleted_classes: ["McpAuthStateV3"]
   });
   assert.notEqual(productionConfig.name, stagingConfig.name);
+});
+
+test("keeps the V4 migration unbind configuration aligned with staging", () => {
+  for (const key of [
+    "name",
+    "compatibility_date",
+    "compatibility_flags",
+    "workers_dev",
+    "observability",
+    "routes",
+    "ratelimits",
+    "vars"
+  ]) {
+    assert.deepEqual(stagingV4UnbindConfig[key], stagingConfig[key], `${key} must stay aligned`);
+  }
+  assert.equal(stagingV4UnbindConfig.durable_objects, undefined);
+  assert.deepEqual(stagingV4UnbindConfig.migrations, stagingConfig.migrations.slice(0, -1));
+  assert.match(stagingV4UnbindEntrypoint, /McpAuthStateV4 as McpAuthStateV3/u);
+  assert.match(
+    packageConfig.scripts["deploy:staging"],
+    /check_worker_deploy_source\.mjs.*build:staging.*wrangler deploy/u
+  );
+  assert.equal(
+    packageConfig.scripts["deploy:staging:v4-migration"],
+    "node scripts/deploy-staging-v4-migration.mjs"
+  );
 });
 
 test("creates independent high-entropy OAuth states", () => {
@@ -88,6 +128,90 @@ test("requires an exact OAuth callback state", () => {
   assert.doesNotThrow(() => assertCallbackState(state, state));
   assert.throws(() => assertCallbackState(`${state.slice(0, -1)}x`, state), /does not match/u);
   assert.throws(() => assertCallbackState(null, state), /missing/u);
+});
+
+test("requests reusable read credentials and adds write only for write smoke", () => {
+  assert.deepEqual(oauthScopesForRun(undefined), ["mcp:read", "offline_access"]);
+  assert.deepEqual(oauthScopesForRun("/Knowledge/smoke.md"), [
+    "mcp:read",
+    "mcp:write",
+    "offline_access"
+  ]);
+
+  const authorizationUrl = authorizationUrlWithScopes(
+    new URL("https://auth.example/authorize?scope=mcp%3Aread&state=state"),
+    oauthScopesForRun("/Knowledge/smoke.md")
+  );
+  assert.equal(authorizationUrl.searchParams.get("scope"), "mcp:read mcp:write offline_access");
+  assert.equal(authorizationUrl.searchParams.get("state"), "state");
+});
+
+test("resolves the OAuth cache from an override or the user state directory", () => {
+  assert.equal(
+    defaultAuthCachePath({ MCP_STAGING_AUTH_CACHE: "/tmp/custom-oauth.json" }, "/home/test"),
+    "/tmp/custom-oauth.json"
+  );
+  assert.equal(
+    defaultAuthCachePath({ XDG_STATE_HOME: "/state" }, "/home/test"),
+    "/state/kinic-wiki/mcp-staging-smoke-oauth.json"
+  );
+  assert.equal(
+    defaultAuthCachePath({}, "/home/test"),
+    "/home/test/.local/state/kinic-wiki/mcp-staging-smoke-oauth.json"
+  );
+});
+
+test("persists and reopens OAuth credentials only for matching scopes", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "kinic-mcp-oauth-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cachePath = join(directory, "nested", "oauth.json");
+  const serverUrl = "https://wiki-mcp-staging.example/mcp";
+  const readScopes = oauthScopesForRun(undefined);
+  const cache = await openOAuthCache({ path: cachePath, serverUrl, requiredScopes: readScopes });
+  const clientInformation = { client_id: "client-id", token_endpoint_auth_method: "none" };
+  const tokens = {
+    access_token: "access-token",
+    refresh_token: "refresh-token",
+    token_type: "bearer",
+    scope: "mcp:read offline_access"
+  };
+
+  await cache.saveClientInformation(clientInformation);
+  await cache.saveTokens(tokens);
+
+  const reopened = await openOAuthCache({ path: cachePath, serverUrl, requiredScopes: readScopes });
+  assert.deepEqual(reopened.clientInformation(), clientInformation);
+  assert.deepEqual(reopened.tokens(), tokens);
+  const writeReopen = await openOAuthCache({
+    path: cachePath,
+    serverUrl,
+    requiredScopes: oauthScopesForRun("/Knowledge/smoke.md")
+  });
+  assert.equal(writeReopen.clientInformation(), undefined);
+  assert.equal(writeReopen.tokens(), undefined);
+  assert.equal(JSON.parse(await readFile(cachePath, "utf8")).version, 1);
+  if (process.platform !== "win32") {
+    assert.equal((await stat(cachePath)).mode & 0o777, 0o600);
+  }
+});
+
+test("reset-auth removes cached OAuth credentials", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "kinic-mcp-oauth-reset-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cachePath = join(directory, "oauth.json");
+  const options = {
+    path: cachePath,
+    serverUrl: "https://wiki-mcp-staging.example/mcp",
+    requiredScopes: oauthScopesForRun(undefined)
+  };
+  const cache = await openOAuthCache(options);
+  await cache.saveClientInformation({ client_id: "client-id" });
+  await cache.saveTokens({ access_token: "access-token", token_type: "bearer" });
+
+  const reset = await openOAuthCache({ ...options, reset: true });
+  assert.equal(reset.clientInformation(), undefined);
+  assert.equal(reset.tokens(), undefined);
+  await assert.rejects(readFile(cachePath, "utf8"), { code: "ENOENT" });
 });
 
 test("summarizes tool results without exposing their text", () => {
@@ -388,6 +512,11 @@ test("rejects the removed cleanup paths argument", () => {
     () => parseArgs(["--cleanup-paths", "/Knowledge/existing.md"]),
     /Invalid argument: --cleanup-paths/u
   );
+});
+
+test("accepts an explicit OAuth cache reset", () => {
+  assert.equal(parseArgs(["--reset-auth"]).resetAuth, true);
+  assert.equal(parseArgs([]).resetAuth, false);
 });
 
 test("keeps find_databases within the published schema limit", () => {

@@ -5,10 +5,10 @@ import {
   handleAuthRoute,
   mcpUnauthorizedResponse
 } from "../src/auth/oauth.js";
-import { McpAuthStateV3 } from "../src/auth/state.js";
+import { McpAuthStateV4 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
-export { McpAuthStateV3 };
+export { McpAuthStateV4 };
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -38,7 +38,7 @@ export default {
       if (!request.headers.has("authorization")) {
         return mcpUnauthorizedResponse(env);
       }
-      const authenticated = await authenticateMcpRequest(request, env);
+      const authenticated = await authenticateMcpRequest(request, env, true);
       return "response" in authenticated
         ? authenticated.response
         : Response.json({ ok: true, mode: "private" });

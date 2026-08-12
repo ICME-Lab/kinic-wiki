@@ -370,6 +370,7 @@ export type RawMoveNodeRequest = {
   from_path: string;
   to_path: string;
   expected_etag: [] | [string];
+  expected_target_etag: [] | [string];
   overwrite: boolean;
 };
 

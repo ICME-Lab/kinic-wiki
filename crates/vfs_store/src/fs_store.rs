@@ -246,6 +246,15 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, NodeMutationError> {
+        self.write_node_with_publication_commit(request, now, None)
+    }
+
+    pub fn write_node_with_publication_commit(
+        &self,
+        request: WriteNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
         let WriteNodeRequest {
             database_id,
             path,
@@ -254,7 +263,7 @@ impl FsStore {
             metadata_json,
             expected_etag,
         } = request;
-        self.write_mutation_conn(|tx| {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
             write_node_item_in_tx(
                 tx,
                 &database_id,
@@ -275,9 +284,18 @@ impl FsStore {
         request: WriteNodesRequest,
         now: i64,
     ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
+        self.write_nodes_with_publication_commit(request, now, None)
+    }
+
+    pub fn write_nodes_with_publication_commit(
+        &self,
+        request: WriteNodesRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
         validate_write_nodes_count(request.nodes.len())
             .map_err(NodeMutationError::invalid_operation)?;
-        self.write_mutation_conn(|tx| {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
             let mut results = Vec::with_capacity(request.nodes.len());
             for (index, item) in request.nodes.into_iter().enumerate() {
                 results.push(
@@ -318,7 +336,18 @@ impl FsStore {
         request: MoveNodeRequest,
         now: i64,
     ) -> Result<MoveNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| move_node_in_tx(tx, request, now))
+        self.move_node_with_publication_commit(request, now, None)
+    }
+
+    pub fn move_node_with_publication_commit(
+        &self,
+        request: MoveNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<MoveNodeResult, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            move_node_in_tx(tx, request, now)
+        })
     }
 
     pub fn mutate_nodes_batch(
@@ -326,9 +355,18 @@ impl FsStore {
         request: MutateNodesBatchRequest,
         now: i64,
     ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+        self.mutate_nodes_batch_with_publication_commit(request, now, None)
+    }
+
+    pub fn mutate_nodes_batch_with_publication_commit(
+        &self,
+        request: MutateNodesBatchRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
         validate_mutate_nodes_batch_count(request.operations.len())
             .map_err(NodeMutationError::invalid_operation)?;
-        self.write_mutation_conn(|tx| {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
             request
                 .operations
                 .into_iter()
@@ -389,7 +427,41 @@ impl FsStore {
         request: DeleteNodeRequest,
         _now: i64,
     ) -> Result<DeleteNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| delete_node_in_tx(tx, request))
+        self.delete_node_with_publication_commit(request, None)
+    }
+
+    pub fn delete_node_with_publication_commit(
+        &self,
+        request: DeleteNodeRequest,
+        publication_operation_id: Option<i64>,
+    ) -> Result<DeleteNodeResult, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            delete_node_in_tx(tx, request)
+        })
+    }
+
+    pub fn publication_mutation_committed(&self, operation_id: i64) -> Result<bool, String> {
+        self.read_conn(|conn| {
+            conn.query_row(
+                "SELECT 1 FROM publication_mutation_commits WHERE operation_id = ?1",
+                params![operation_id],
+                |row| crate::sqlite::row_get::<i64>(row, 0),
+            )
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    pub fn clear_publication_mutation_commit(&self, operation_id: i64) -> Result<(), String> {
+        self.write_conn(|tx| {
+            tx.execute(
+                "DELETE FROM publication_mutation_commits WHERE operation_id = ?1",
+                params![operation_id],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
     }
 
     pub fn incoming_links(&self, request: IncomingLinksRequest) -> Result<Vec<LinkEdge>, String> {
@@ -557,18 +629,36 @@ impl FsStore {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     fn write_conn<T>(
         &self,
         f: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
     ) -> Result<T, String> {
-        self.handle
-            .update(|tx| f(tx).map_err(|error| DbError::Sqlite(1, error)))
-            .map_err(|error| error.to_string())
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut conn = self.open()?;
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            let value = f(&tx)?;
+            tx.commit().map_err(|error| error.to_string())?;
+            Ok(value)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.handle
+                .update(|tx| f(tx).map_err(|error| DbError::Sqlite(1, error)))
+                .map_err(|error| error.to_string())
+        }
     }
 
     fn write_mutation_conn<T>(
         &self,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(None, f)
+    }
+
+    fn write_mutation_conn_with_publication_commit<T>(
+        &self,
+        publication_operation_id: Option<i64>,
         f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
     ) -> Result<T, NodeMutationError> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -578,6 +668,10 @@ impl FsStore {
                 .transaction()
                 .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
             let value = f(&tx)?;
+            if let Some(operation_id) = publication_operation_id {
+                record_publication_mutation_commit(&tx, operation_id)
+                    .map_err(NodeMutationError::write_unavailable)?;
+            }
             tx.commit()
                 .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
             Ok(value)
@@ -585,11 +679,19 @@ impl FsStore {
         #[cfg(target_arch = "wasm32")]
         {
             let mut mutation_error = None;
-            let result = self.handle.update(|tx| match f(tx) {
-                Ok(value) => Ok(value),
-                Err(error) => {
-                    mutation_error = Some(error);
-                    Err(DbError::Sqlite(1, "node mutation aborted".to_string()))
+            let result = self.handle.update(|tx| {
+                match f(tx).and_then(|value| {
+                    if let Some(operation_id) = publication_operation_id {
+                        record_publication_mutation_commit(tx, operation_id)
+                            .map_err(NodeMutationError::write_unavailable)?;
+                    }
+                    Ok(value)
+                }) {
+                    Ok(value) => Ok(value),
+                    Err(error) => {
+                        mutation_error = Some(error);
+                        Err(DbError::Sqlite(1, "node mutation aborted".to_string()))
+                    }
                 }
             });
             if let Some(error) = mutation_error {
@@ -630,11 +732,12 @@ fn append_node_in_tx(
         None => create_appended_node(path, request, now)
             .map_err(NodeMutationError::invalid_operation)?,
     };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
     let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)
         .map_err(NodeMutationError::write_unavailable)?;
     sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))
@@ -731,11 +834,12 @@ fn mkdir_node_in_tx(
         etag: String::new(),
         metadata_json: "{}".to_string(),
     };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
     save_node(tx, None, &node).map_err(NodeMutationError::write_unavailable)?;
     Ok(MkdirNodeResult {
         path,
@@ -888,8 +992,17 @@ fn move_node_in_tx(
             ));
         }
     }
+    ensure_missing_store_root_for_path(tx, &to_path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &to_path)?;
     let target = load_stored_node(tx, &to_path).map_err(NodeMutationError::write_unavailable)?;
     let overwrote = target.is_some();
+    if !request.overwrite && request.expected_target_etag.is_some() {
+        return Err(NodeMutationError::invalid_operation_with_path(
+            "expected_target_etag requires overwrite=true",
+            to_path,
+        ));
+    }
     if current.node.kind == NodeKind::Folder && overwrote {
         return Err(NodeMutationError::invalid_operation(format!(
             "target node already exists: {to_path}"
@@ -899,6 +1012,29 @@ fn move_node_in_tx(
         return Err(NodeMutationError::invalid_operation(format!(
             "target node already exists: {to_path}"
         )));
+    }
+    match (target.as_ref(), request.expected_target_etag.as_deref()) {
+        (Some(target), Some(expected_target_etag))
+            if request.overwrite && target.node.etag != expected_target_etag =>
+        {
+            return Err(NodeMutationError::etag_conflict(
+                format!("expected_target_etag does not match current etag: {to_path}"),
+                to_path,
+            ));
+        }
+        (Some(_), None) if request.overwrite => {
+            return Err(NodeMutationError::invalid_operation_with_path(
+                format!("expected_target_etag is required to overwrite target: {to_path}"),
+                to_path,
+            ));
+        }
+        (None, Some(_)) if request.overwrite => {
+            return Err(NodeMutationError::not_found_with_path(
+                format!("target node does not exist: {to_path}"),
+                to_path,
+            ));
+        }
+        _ => {}
     }
     if target
         .as_ref()
@@ -930,8 +1066,6 @@ fn move_node_in_tx(
             moved.path = rebase_path(&old_path, &from_path, &to_path)
                 .map_err(NodeMutationError::invalid_operation)?;
             moved.updated_at = now;
-            ensure_missing_store_root_for_path(tx, &moved.path, now)
-                .map_err(NodeMutationError::write_unavailable)?;
             let from_revision =
                 record_path_removal(tx, &old_path).map_err(NodeMutationError::write_unavailable)?;
             update_path_state(tx, &old_path, from_revision)
@@ -968,8 +1102,6 @@ fn move_node_in_tx(
     let mut moved = current.node.clone();
     moved.path = to_path.clone();
     moved.updated_at = now;
-    ensure_missing_store_root_for_path(tx, &moved.path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
     let from_revision =
         record_path_removal(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &from_path, from_revision)
@@ -1053,6 +1185,7 @@ fn mutate_node_in_tx(
                 from_path: item.from_path,
                 to_path: item.to_path,
                 expected_etag: item.expected_etag,
+                expected_target_etag: item.expected_target_etag,
                 overwrite: item.overwrite,
             },
             now,
@@ -1078,6 +1211,18 @@ fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
     )
     .map_err(|error| error.to_string())?;
     crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
+}
+
+fn record_publication_mutation_commit(
+    tx: &Transaction<'_>,
+    operation_id: i64,
+) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO publication_mutation_commits (operation_id) VALUES (?1)",
+        params![operation_id],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 fn write_node_in_tx(
@@ -1116,11 +1261,12 @@ fn write_node_in_tx(
             create_new_node(path, request, now).map_err(NodeMutationError::invalid_operation)?
         }
     };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
     let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)
         .map_err(NodeMutationError::write_unavailable)?;
     sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))
@@ -1209,11 +1355,12 @@ fn write_folder_in_tx(
         etag: String::new(),
         metadata_json: "{}".to_string(),
     };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
     save_node(tx, None, &node).map_err(NodeMutationError::write_unavailable)?;
     Ok(WriteNodeResult {
         node: node_ack(&node),
@@ -1916,6 +2063,32 @@ fn parent_fields_for_path(
         return Err(format!("parent path is not a folder: {parent_path}"));
     }
     Ok((Some(parent.0), name))
+}
+
+fn require_parent_folder_for_mutation(
+    tx: &Transaction<'_>,
+    path: &str,
+) -> Result<(), NodeMutationError> {
+    let (parent_path, _) =
+        split_parent_path_and_name(path).map_err(NodeMutationError::invalid_operation)?;
+    let Some(parent_path) = parent_path else {
+        return Ok(());
+    };
+    let parent = load_parent_folder_candidate(tx, &parent_path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| {
+            NodeMutationError::not_found_with_path(
+                format!("parent folder does not exist: {parent_path}"),
+                parent_path.clone(),
+            )
+        })?;
+    if parent.1 != NodeKind::Folder {
+        return Err(NodeMutationError::invalid_operation_with_path(
+            format!("parent path is not a folder: {parent_path}"),
+            parent_path,
+        ));
+    }
+    Ok(())
 }
 
 fn load_parent_folder_candidate(

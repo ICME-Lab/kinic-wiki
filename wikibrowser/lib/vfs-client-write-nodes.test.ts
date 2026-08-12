@@ -12,6 +12,7 @@ vi.mock("@/lib/vfs-client/actor", async (importOriginal) => {
 });
 
 import { writeNodesAuthenticated } from "@/lib/vfs-client";
+import { ApiError } from "@/lib/wiki-helpers";
 
 describe("writeNodesAuthenticated", () => {
   beforeEach(() => mocks.writeNodes.mockReset());
@@ -45,16 +46,32 @@ describe("writeNodesAuthenticated", () => {
     ]);
   });
 
-  it("surfaces canister errors", async () => {
+  it.each([
+    ["EtagConflict", 409, "etag_conflict"],
+    ["NotFound", 404, "node_not_found"],
+    ["Forbidden", 403, "forbidden"],
+    ["WriteUnavailable", 503, "write_unavailable"],
+    ["InvalidOperation", 400, "invalid_operation"]
+  ] as const)("preserves the %s mutation error", async (mutationCode, status, code) => {
     mocks.writeNodes.mockResolvedValue({
       Err: {
-        code: { EtagConflict: null },
-        message: "expected_etag does not match current etag",
+        code: { [mutationCode]: null },
+        message: "structured mutation failure",
         failed_index: [0],
         conflict_path: ["/Knowledge/notes/a.md"]
       }
     });
-    await expect(writeNodesAuthenticated("aaaaa-aa", {} as Identity, { databaseId: "db-1", nodes: [] }))
-      .rejects.toThrow("expected_etag does not match current etag");
+    const error = await writeNodesAuthenticated("aaaaa-aa", {} as Identity, { databaseId: "db-1", nodes: [] }).catch(
+      (caught: unknown) => caught
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      message: "structured mutation failure",
+      status,
+      code,
+      mutationCode,
+      failedIndex: 0,
+      conflictPath: "/Knowledge/notes/a.md"
+    });
   });
 });

@@ -60,6 +60,19 @@ const groups = {
     ["docs/DB_LIFECYCLE.md", "repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented"],
     ["docs/DB_LIFECYCLE.md", "If ledger transfer succeeds but local DB activation or cycle application fails"],
     ["docs/DB_LIFECYCLE.md", "Remaining DB cycles are discarded"]
+  ],
+  node_mutation_release: [
+    ["crates/vfs_client/src/lib.rs", "NodeMutationError"],
+    ["packages/vfs-candid/index.ts", "NodeMutationError"],
+    ["wikibrowser/lib/vfs-client/raw-types.ts", "RawNodeMutationError"],
+    ["workers/wiki-mcp/src/vfs.ts", "RawNodeMutationError"],
+    ["skill-registry-web/lib/vfs-client.ts", "RawNodeMutationError"],
+    ["workers/wiki-generator/src/vfs.ts", "RawNodeMutationError"],
+    ["extensions/wiki-clipper/src/vfs-actor.js", "NodeMutationError"],
+    ["mobile/ios/KinicApp/Services/VFSCandidDecoder.swift", "nodeMutationError"],
+    ["docs/STAGING.md", "staging Wiki Browser and staging MCP Worker"],
+    ["docs/RELEASE.md", "Wiki Clipper Chrome extension"],
+    ["docs/RELEASE.md", "known externally maintained Candid clients"]
   ]
 };
 

@@ -1,12 +1,17 @@
 import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const DEFAULT_SERVER_URL = "https://wiki-mcp-staging.kinic.xyz/mcp";
+const AUTH_CACHE_VERSION = 1;
+const AUTH_CACHE_ENV = "MCP_STAGING_AUTH_CACHE";
 export const FIND_DATABASE_LIMIT = 50;
 const EXPECTED_TOOLS = [
   "context",
@@ -29,6 +34,120 @@ const VALUE_ARGUMENTS = new Set([
   "--query",
   "--task"
 ]);
+
+export function oauthScopesForRun(writeSmokePath) {
+  return writeSmokePath
+    ? ["mcp:read", "mcp:write", "offline_access"]
+    : ["mcp:read", "offline_access"];
+}
+
+export function authorizationUrlWithScopes(authorizationUrl, scopes) {
+  const scopedUrl = new URL(authorizationUrl);
+  scopedUrl.searchParams.set("scope", scopes.join(" "));
+  return scopedUrl;
+}
+
+export function defaultAuthCachePath(env = process.env, home = homedir()) {
+  if (env[AUTH_CACHE_ENV]) return env[AUTH_CACHE_ENV];
+  const stateRoot = env.XDG_STATE_HOME || join(home, ".local", "state");
+  return join(stateRoot, "kinic-wiki", "mcp-staging-smoke-oauth.json");
+}
+
+export async function openOAuthCache({ path, serverUrl, requiredScopes, reset = false }) {
+  if (reset) await unlink(path).catch((error) => ignoreMissing(error));
+  let state = {};
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    if (
+      parsed?.version === AUTH_CACHE_VERSION &&
+      parsed?.server_url === serverUrl &&
+      requiredScopes.every((scope) => parsed?.scopes?.includes(scope))
+    ) {
+      state = parsed;
+    }
+  } catch (error) {
+    ignoreMissingOrInvalidCache(error);
+  }
+  return new OAuthFileCache(path, serverUrl, requiredScopes, state);
+}
+
+class OAuthFileCache {
+  constructor(path, serverUrl, requiredScopes, state) {
+    this.path = path;
+    this.serverUrl = serverUrl;
+    this.requiredScopes = requiredScopes;
+    this.state = state;
+  }
+
+  clientInformation() {
+    return this.state.client_information;
+  }
+
+  tokens() {
+    return this.state.tokens;
+  }
+
+  discoveryState() {
+    return this.state.discovery_state;
+  }
+
+  async saveClientInformation(clientInformation) {
+    this.state.client_information = clientInformation;
+    await this.persist();
+  }
+
+  async saveTokens(tokens) {
+    const tokenScopes = typeof tokens.scope === "string" ? tokens.scope.split(/\s+/u).filter(Boolean) : [];
+    this.state.tokens = tokens;
+    this.state.scopes = tokenScopes.length > 0 ? tokenScopes : this.requiredScopes;
+    await this.persist();
+  }
+
+  async saveDiscoveryState(discoveryState) {
+    this.state.discovery_state = discoveryState;
+    await this.persist();
+  }
+
+  async invalidateCredentials(scope) {
+    if (scope === "all" || scope === "client" || scope === "tokens") {
+      delete this.state.tokens;
+      delete this.state.client_information;
+      delete this.state.scopes;
+    }
+    if (scope === "all" || scope === "discovery") delete this.state.discovery_state;
+    await this.persist();
+  }
+
+  async persist() {
+    const directory = dirname(this.path);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const tempPath = `${this.path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+    const payload = `${JSON.stringify({
+      version: AUTH_CACHE_VERSION,
+      server_url: this.serverUrl,
+      scopes: this.state.scopes ?? [],
+      client_information: this.state.client_information,
+      tokens: this.state.tokens,
+      discovery_state: this.state.discovery_state
+    })}\n`;
+    try {
+      await writeFile(tempPath, payload, { encoding: "utf8", mode: 0o600 });
+      await chmod(tempPath, 0o600);
+      await rename(tempPath, this.path);
+    } finally {
+      await unlink(tempPath).catch((error) => ignoreMissing(error));
+    }
+  }
+}
+
+function ignoreMissing(error) {
+  if (error?.code !== "ENOENT") throw error;
+}
+
+function ignoreMissingOrInvalidCache(error) {
+  if (error?.code === "ENOENT" || error instanceof SyntaxError) return;
+  throw error;
+}
 
 export function createOAuthState() {
   return randomBytes(32).toString("base64url");
@@ -135,16 +254,19 @@ class SmokeOAuthProvider {
   #tokens;
   #codeVerifier;
 
-  constructor(redirectUrl, oauthState, onRedirect) {
+  constructor(redirectUrl, oauthState, onRedirect, cache, requiredScopes) {
     this.redirectUrl = redirectUrl;
     this.oauthState = oauthState;
     this.onRedirect = onRedirect;
+    this.cache = cache;
+    this.requiredScopes = requiredScopes;
     this.clientMetadata = {
       client_name: "Kinic Wiki staging smoke",
       redirect_uris: [redirectUrl.toString()],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none"
+      token_endpoint_auth_method: "none",
+      scope: requiredScopes.join(" ")
     };
   }
 
@@ -153,23 +275,25 @@ class SmokeOAuthProvider {
   }
 
   clientInformation() {
-    return this.#clientInformation;
+    return this.#clientInformation ?? this.cache.clientInformation();
   }
 
-  saveClientInformation(value) {
+  async saveClientInformation(value) {
     this.#clientInformation = value;
+    await this.cache.saveClientInformation(value);
   }
 
   tokens() {
-    return this.#tokens;
+    return this.#tokens ?? this.cache.tokens();
   }
 
-  saveTokens(value) {
+  async saveTokens(value) {
     this.#tokens = value;
+    await this.cache.saveTokens(value);
   }
 
   redirectToAuthorization(url) {
-    this.onRedirect(url);
+    this.onRedirect(authorizationUrlWithScopes(url, this.requiredScopes));
   }
 
   saveCodeVerifier(value) {
@@ -182,17 +306,45 @@ class SmokeOAuthProvider {
     }
     return this.#codeVerifier;
   }
+
+  discoveryState() {
+    return this.cache.discoveryState();
+  }
+
+  saveDiscoveryState(value) {
+    return this.cache.saveDiscoveryState(value);
+  }
+
+  async invalidateCredentials(scope) {
+    if (scope === "all" || scope === "client" || scope === "tokens") {
+      this.#clientInformation = undefined;
+      this.#tokens = undefined;
+    }
+    if (scope === "all" || scope === "verifier") this.#codeVerifier = undefined;
+    await this.cache.invalidateCredentials(scope);
+  }
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const callback = await startCallbackServer(createOAuthState());
-  const provider = new SmokeOAuthProvider(callback.redirectUrl, callback.oauthState, (authorizationUrl) => {
-    console.log(`Authorize in your browser:\n${authorizationUrl.toString()}`);
-    if (options.openBrowser) {
-      openBrowser(authorizationUrl);
-    }
+  const requiredScopes = oauthScopesForRun(options.writeSmokePath);
+  const cache = await openOAuthCache({
+    path: options.authCachePath,
+    serverUrl: options.serverUrl,
+    requiredScopes,
+    reset: options.resetAuth
   });
+  const callback = await startCallbackServer(createOAuthState());
+  const provider = new SmokeOAuthProvider(
+    callback.redirectUrl,
+    callback.oauthState,
+    (authorizationUrl) => {
+      console.log(`Authorize in your browser:\n${authorizationUrl.toString()}`);
+      if (options.openBrowser) openBrowser(authorizationUrl);
+    },
+    cache,
+    requiredScopes
+  );
   const client = new Client({ name: "kinic-wiki-staging-smoke", version: "1.0.0" }, { capabilities: {} });
   let transport;
   try {
@@ -575,6 +727,7 @@ function openBrowser(url) {
 export function parseArgs(args) {
   const values = new Map();
   let openBrowserRequested = false;
+  let resetAuthRequested = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") {
@@ -582,6 +735,10 @@ export function parseArgs(args) {
     }
     if (arg === "--open") {
       openBrowserRequested = true;
+      continue;
+    }
+    if (arg === "--reset-auth") {
+      resetAuthRequested = true;
       continue;
     }
     if (!VALUE_ARGUMENTS.has(arg) || !args[index + 1] || args[index + 1].startsWith("--")) {
@@ -597,7 +754,9 @@ export function parseArgs(args) {
     writeSmokePath: values.get("--write-smoke-path") ?? process.env.MCP_TEST_WRITE_PATH,
     query: values.get("--query") ?? "",
     task: values.get("--task") ?? "Verify delegated access to the configured private Kinic Wiki database.",
-    openBrowser: openBrowserRequested
+    openBrowser: openBrowserRequested,
+    resetAuth: resetAuthRequested,
+    authCachePath: defaultAuthCachePath()
   };
 }
 

@@ -536,6 +536,21 @@ impl NodeMutationError {
         )
     }
 
+    pub fn not_found_with_path(message: impl Into<String>, path: impl Into<String>) -> Self {
+        let mut error = Self::new(NodeMutationErrorCode::NotFound, message);
+        error.conflict_path = Some(path.into());
+        error
+    }
+
+    pub fn invalid_operation_with_path(
+        message: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
+        let mut error = Self::new(NodeMutationErrorCode::InvalidOperation, message);
+        error.conflict_path = Some(path.into());
+        error
+    }
+
     pub fn etag_conflict(message: impl Into<String>, path: impl Into<String>) -> Self {
         let mut error = Self::new(NodeMutationErrorCode::EtagConflict, message);
         error.conflict_path = Some(path.into());
@@ -691,6 +706,7 @@ pub struct MoveNodeRequest {
     pub from_path: String,
     pub to_path: String,
     pub expected_etag: Option<String>,
+    pub expected_target_etag: Option<String>,
     pub overwrite: bool,
 }
 
@@ -844,6 +860,7 @@ pub struct MoveNodeItem {
     pub from_path: String,
     pub to_path: String,
     pub expected_etag: Option<String>,
+    pub expected_target_etag: Option<String>,
     pub overwrite: bool,
 }
 

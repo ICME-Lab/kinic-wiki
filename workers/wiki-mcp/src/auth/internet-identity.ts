@@ -4,6 +4,8 @@ import {
   DelegationChain,
   DelegationIdentity,
   Ed25519KeyIdentity,
+  isDelegationValid,
+  type JsonnableDelegationChain,
   type JsonnableEd25519KeyIdentity
 } from "@icp-sdk/core/identity";
 import { Principal } from "@icp-sdk/core/principal";
@@ -105,6 +107,14 @@ export class IiRegistrationError extends Error {
 
 export type IiKeyJson = JsonnableEd25519KeyIdentity;
 
+export type KinicDelegationMaterialV1 = {
+  version: 1;
+  targetOrigin: string;
+  expiresAt: number;
+  appKey: JsonnableEd25519KeyIdentity;
+  delegation: JsonnableDelegationChain;
+};
+
 export function generateIiKey(): Ed25519KeyIdentity {
   return Ed25519KeyIdentity.generate();
 }
@@ -162,6 +172,14 @@ export async function mintKinicIdentity(
   targetOrigin: string,
   actorOverride?: InternetIdentityActor
 ): Promise<DelegationIdentity> {
+  return (await mintKinicDelegation(sessionKey, targetOrigin, actorOverride)).identity;
+}
+
+export async function mintKinicDelegation(
+  sessionKey: Ed25519KeyIdentity,
+  targetOrigin: string,
+  actorOverride?: InternetIdentityActor
+): Promise<{ identity: DelegationIdentity; material: KinicDelegationMaterialV1 }> {
   const actor = actorOverride ?? createIiActor(sessionKey);
   let accounts: Result<AccountInfo[], AccountDelegationError>;
   try {
@@ -201,10 +219,47 @@ export async function mintKinicIdentity(
       [{ delegation, signature: signed.signature as Signature }],
       prepared.user_key as DerEncodedPublicKey
     );
-    return DelegationIdentity.fromDelegation(appKey, chain);
+    return {
+      identity: DelegationIdentity.fromDelegation(appKey, chain),
+      material: {
+        version: 1,
+        targetOrigin,
+        expiresAt: nanosecondsToMilliseconds(signed.delegation.expiration),
+        appKey: appKey.toJSON(),
+        delegation: chain.toJSON()
+      }
+    };
   } catch {
     throw new IiDelegationError("identity_assembly");
   }
+}
+
+export function restoreKinicIdentity(
+  material: KinicDelegationMaterialV1,
+  targetOrigin: string,
+  now: number
+): DelegationIdentity {
+  try {
+    if (
+      material.version !== 1 ||
+      material.targetOrigin !== targetOrigin ||
+      !Number.isSafeInteger(material.expiresAt) ||
+      material.expiresAt <= now
+    ) {
+      throw new Error("cached delegation metadata is invalid");
+    }
+    const chain = DelegationChain.fromJSON(material.delegation);
+    if (!isDelegationValid(chain) || delegationExpiresAt(chain) !== material.expiresAt) {
+      throw new Error("cached delegation is invalid");
+    }
+    return DelegationIdentity.fromDelegation(restoreIiKey(material.appKey), chain);
+  } catch {
+    throw new IiDelegationError("identity_assembly");
+  }
+}
+
+function delegationExpiresAt(chain: DelegationChain): number {
+  return Math.min(...chain.delegations.map(({ delegation }) => nanosecondsToMilliseconds(delegation.expiration)));
 }
 
 export function resolveKinicMcpTargetOrigin(value: string | undefined, canisterId: string | undefined): string {

@@ -56,3 +56,7 @@ ON fs_links (target_path, source_path);
 
 CREATE INDEX fs_links_source_path_idx
 ON fs_links (source_path, target_path);
+
+CREATE TABLE publication_mutation_commits (
+    operation_id INTEGER PRIMARY KEY
+);

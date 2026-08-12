@@ -9,6 +9,30 @@ Primary distribution is npm. The npm package downloads GitHub Release assets and
 - Archive/restore APIs and CLI commands remain removed.
 - Source nodes no longer require canonical `/Sources/<provider>/<id>.md` paths. Safe `/Sources/...` paths are accepted, and URL capture writes immutable suffixed paths on collision.
 
+### Structured node-mutation errors
+
+The node-mutation methods replace `Err : text` with `Err : NodeMutationError`, and move requests add optional `expected_target_etag`. This is a Candid-breaking change: an old decoder can fail even when the caller only expects to handle an error response. A live overwrite requires the current destination etag, preventing a concurrent destination update from being silently discarded.
+
+Do not upgrade the production canister until all production consumers below have compatible code and an identified release artifact or deployment:
+
+- Wiki Browser production Worker
+- MCP production Worker
+- Skill Registry Worker
+- Wiki Generator Worker
+- Wiki Clipper Chrome extension
+- `kinic-vfs-cli` GitHub Release and matching npm package
+- Kinic iOS TestFlight/App Store build
+- shared `@kinic/vfs-candid` consumers in this repository
+- known externally maintained Candid clients
+
+For the Wiki Clipper, increment the extension version, run its release checks, and prepare the Chrome Web Store package. For the CLI, increment the aligned Cargo and npm versions, create the GitHub Release assets, and publish the matching npm package. For iOS, verify the mutation decoder tests, increment the build number, and prepare the TestFlight build. Record or notify owners of external Candid clients before the canister upgrade; repository checks cannot prove those clients are compatible.
+
+Prepare and validate every artifact before changing the production canister. During the promotion window, stop mutation smoke traffic, upgrade the canister, deploy the production Wiki Browser and MCP Workers, promote the remaining pinned consumers and CLI/iOS/extension artifacts, then run Candid drift and mutation smoke checks before resuming normal writes. Do not intentionally leave an old decoder pointed at the upgraded canister.
+
+This release also adds native publication recovery state. The index database migrates exactly `001→002→003` (or `002→003`), and each filesystem database migrates exactly `001→002`. The canister upgrade applies versioned migrations once; it does not infer or absorb unknown schemas and does not use `IF NOT EXISTS` as migration state. After a native node mutation commits, publication-finalization failures remain in the durable journal and do not turn the mutation response into an ambiguous failure; the next publication operation or restart reconciles them. The canister instead traps on the same finalization failure so the IC message rolls back atomically. Keep the pre-upgrade backup until publication reads and mutations pass after restart.
+
+The isolated staging rollout is narrower because the Skill Registry, Wiki Generator, iOS app, and Wiki Clipper are pinned to the production canister. Follow [`STAGING.md`](STAGING.md) and use a CLI binary built from the same branch for staging smoke tests.
+
 ## npm
 
 Install:

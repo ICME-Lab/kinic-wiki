@@ -415,6 +415,7 @@ pub(super) fn run_move(case: BenchCase) -> BenchResult {
                 from_path: from_path.clone(),
                 to_path: to_path.clone(),
                 expected_etag: expected_etag.clone(),
+                expected_target_etag: None,
                 overwrite: false,
             })
             .expect("bench move should succeed"),

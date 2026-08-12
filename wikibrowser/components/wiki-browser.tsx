@@ -659,6 +659,7 @@ function WikiBrowserContent() {
       fromPath: target.path,
       toPath: nextPath,
       expectedEtag: target.etag,
+      expectedTargetEtag: null,
       overwrite: false
     });
     invalidateBrowserCaches();
@@ -681,6 +682,7 @@ function WikiBrowserContent() {
       fromPath: target.path,
       toPath: nextPath,
       expectedEtag: target.etag,
+      expectedTargetEtag: null,
       overwrite: false
     });
     invalidateBrowserCaches();

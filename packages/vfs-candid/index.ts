@@ -413,6 +413,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     from_path: idl.Text,
     to_path: idl.Text,
     expected_etag: idl.Opt(idl.Text),
+    expected_target_etag: idl.Opt(idl.Text),
     overwrite: idl.Bool,
     database_id: idl.Text
   });

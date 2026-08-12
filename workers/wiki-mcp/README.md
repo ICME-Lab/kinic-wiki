@@ -21,7 +21,9 @@ Staging additionally exposes:
 
 Initial connection requires only OAuth `mcp:read`. Both mutation tools require OAuth `mcp:read mcp:write` and II `Actions & questions`, with step-up authorization when a read-only token attempts a mutation. Questions-only sessions can read but cannot mutate. There is no connection tool or single-mutation MCP tool.
 
-Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
+OAuth is validated for every staging MCP POST, while an II per-app delegation is minted only for `tools/call`. Its encrypted app key and delegation chain are reused per OAuth session until 30 seconds before the five-minute II cap; concurrent cache misses share one mint. Revocation can therefore take up to five minutes to affect an already-minted delegation.
+
+Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. A batch `move` with `overwrite: true` must include `expected_target_etag` when its destination exists and omit it when the destination is absent; the field is invalid with `overwrite: false`. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
 
 ## Local
 
@@ -33,6 +35,6 @@ pnpm dev
 pnpm smoke:staging -- --open
 ```
 
-The staging smoke command authenticates at connection, checks the exact 10-tool contract, and runs private reads. With `--database-id <id> --path <known-path>` it verifies a known private path. Adding `--write-smoke-path <new-temporary-path>` verifies single and multiple `write_nodes`, etag conflict rereads, atomic rollback, `mutate_nodes_batch`, and batch cleanup; select `Actions & questions` in II. It reports only success flags and response sizes, never tokens, principals, or private node text.
+The staging smoke command authenticates at connection, checks the exact 10-tool contract, and runs private reads. It securely caches OAuth credentials under the user state directory and reuses or refreshes them, so browser consent is normally needed only on the first run. A first write-enabled run needs one additional consent for write scope; `--reset-auth` forces a fresh login, and `MCP_STAGING_AUTH_CACHE` overrides the cache path. Do not run concurrent smoke processes against one cache because refresh tokens rotate. With `--database-id <id> --path <known-path>` it verifies a known private path. Adding `--write-smoke-path <new-temporary-path>` verifies single and multiple `write_nodes`, etag conflict rereads, atomic rollback, `mutate_nodes_batch`, and batch cleanup; select `Actions & questions` in II. It reports only success flags and response sizes, never tokens, principals, or private node text.
 
 Staging uses canister `3ryrw-kyaaa-aaaaf-qgxpq-cai` and requires `KINIC_WIKI_MCP_TARGET_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. This derivation origin is distinct from the `https://icp0.io` API gateway. Browser URLs use `https://kinic-wiki-browser-staging.hude.workers.dev`.

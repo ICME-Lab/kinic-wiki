@@ -1,15 +1,24 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
+import { DelegationChain } from "@icp-sdk/core/identity";
 import { describe, expect, it } from "vitest";
-import { sha256 } from "../src/auth/crypto.js";
+import { encryptJson, sha256 } from "../src/auth/crypto.js";
+import { generateIiKey, type KinicDelegationMaterialV1 } from "../src/auth/internet-identity.js";
 import {
+  DELEGATION_REFRESH_MARGIN_MS,
   OAUTH_CLIENT_IDLE_TTL_MS,
+  SingleFlight,
+  delegationContext,
+  delegationNeedsRefresh,
+  sessionKeyContext,
   type AuthorizationSessionInput,
-  type McpAuthStateV3,
+  type AuthStateRecordV4,
+  type McpAuthStateV4,
   type OAuthClientRecordV2
 } from "../src/auth/state.js";
 
 const origin = "https://wiki-mcp-staging.kinic.xyz";
 const resource = `${origin}/mcp`;
+const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const encryptedValue = {
   version: 1 as const,
   algorithm: "AES-GCM" as const,
@@ -264,7 +273,162 @@ describe("staging OAuth discovery and registration", () => {
   });
 });
 
-describe("McpAuthStateV3 single-use records", () => {
+describe("McpAuthStateV4 single-use records", () => {
+  it("refreshes cached delegations at the 30-second margin or on origin change", () => {
+    const now = Date.now();
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + DELEGATION_REFRESH_MARGIN_MS + 1 },
+        targetOrigin,
+        now
+      )
+    ).toBe(false);
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + DELEGATION_REFRESH_MARGIN_MS },
+        targetOrigin,
+        now
+      )
+    ).toBe(true);
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + 5 * 60_000 },
+        "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app",
+        now
+      )
+    ).toBe(true);
+  });
+
+  it("shares one in-flight delegation mint and starts a new one after completion", async () => {
+    const singleFlight = new SingleFlight<string>();
+    let resolve!: (value: string) => void;
+    let calls = 0;
+    const factory = () => {
+      calls += 1;
+      return new Promise<string>((complete) => {
+        resolve = complete;
+      });
+    };
+
+    const first = singleFlight.run(factory);
+    const second = singleFlight.run(factory);
+    expect(first).toBe(second);
+    expect(calls).toBe(1);
+    resolve("delegation");
+    await expect(Promise.all([first, second])).resolves.toEqual(["delegation", "delegation"]);
+    await Promise.resolve();
+
+    const third = singleFlight.run(async () => {
+      calls += 1;
+      return "renewed";
+    });
+    await expect(third).resolves.toBe("renewed");
+    expect(calls).toBe(2);
+  });
+
+  it("reuses an encrypted delegation across token validation and refresh rotation", async () => {
+    const now = Date.now();
+    const sessionId = "delegation-cache";
+    const verifier = "d".repeat(43);
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${sessionId}`);
+    const input = await session(sessionId, verifier, now, now + 10 * 60_000, now + 60_000);
+    input.sessionKey = await encryptJson(
+      generateIiKey().toJSON(),
+      encryptionKey,
+      sessionKeyContext(sessionId)
+    );
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${sessionId}.cookie`, now);
+    const completed = await stub.completeConnect(now + 10 * 60_000, "all", now, sessionId);
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+
+    const appKey = generateIiKey();
+    const rootKey = generateIiKey();
+    const expiresAt = now + 5 * 60_000;
+    const chain = await DelegationChain.create(rootKey, appKey.getPublicKey(), new Date(expiresAt));
+    const material: KinicDelegationMaterialV1 = {
+      version: 1,
+      targetOrigin,
+      expiresAt,
+      appKey: appKey.toJSON(),
+      delegation: chain.toJSON()
+    };
+    const encryptedDelegation = await encryptJson(
+      material,
+      encryptionKey,
+      delegationContext(sessionId, targetOrigin)
+    );
+    await runInDurableObject(stub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV4>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.cachedDelegation = encryptedDelegation;
+      record.cachedDelegationTargetOrigin = targetOrigin;
+      record.cachedDelegationExpiresAt = expiresAt;
+      await state.storage.put("record", record);
+    });
+
+    await expect(stub.authenticateAccessToken(issued!.accessToken, resource, now, false)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: null
+    });
+    await expect(stub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: { targetOrigin, expiresAt }
+    });
+    const rotated = await stub.rotateRefreshToken({
+      refreshToken: issued!.refreshToken!,
+      clientId: "client",
+      resource,
+      now: now + 1
+    });
+    await expect(stub.authenticateAccessToken(rotated!.accessToken, resource, now + 1, true)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: { targetOrigin, expiresAt }
+    });
+  });
+
+  it("clears a corrupt encrypted delegation without invalidating the OAuth session", async () => {
+    const now = Date.now();
+    const sessionId = "corrupt-delegation";
+    const verifier = "c".repeat(43);
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${sessionId}`);
+    const input = await session(sessionId, verifier, now, now + 10 * 60_000, now + 60_000);
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${sessionId}.cookie`, now);
+    const completed = await stub.completeConnect(now + 10 * 60_000, "all", now, sessionId);
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+    await runInDurableObject(stub, async (instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV4>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.cachedDelegation = encryptedValue;
+      record.cachedDelegationTargetOrigin = targetOrigin;
+      record.cachedDelegationExpiresAt = now + 5 * 60_000;
+      await state.storage.put("record", record);
+      await expect(
+        (instance as unknown as { readCachedDelegation(origin: string, now: number): Promise<unknown> })
+          .readCachedDelegation(targetOrigin, now)
+      ).resolves.toBeNull();
+    });
+    await expect(stub.validateAccessToken(issued!.accessToken, resource, now)).resolves.not.toBeNull();
+  });
+
   it("removes write scope from Questions-only II sessions", async () => {
     const verifier = "q".repeat(43);
     const stub = env.MCP_AUTH_STATE.getByName("session:questions-scope");
@@ -641,7 +805,7 @@ async function session(
   };
 }
 
-function alarmTime(stub: DurableObjectStub<McpAuthStateV3>) {
+function alarmTime(stub: DurableObjectStub<McpAuthStateV4>) {
   return runInDurableObject(stub, async (_instance, state) => state.storage.getAlarm());
 }
 

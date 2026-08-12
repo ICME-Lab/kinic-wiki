@@ -289,6 +289,7 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
       from_path: request.fromPath,
       to_path: request.toPath,
       expected_etag: request.expectedEtag ? [request.expectedEtag] : [],
+      expected_target_etag: request.expectedTargetEtag ? [request.expectedTargetEtag] : [],
       overwrite: request.overwrite
     });
     if ("Err" in result) {

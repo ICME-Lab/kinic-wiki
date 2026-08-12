@@ -4,9 +4,9 @@ use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeItem, AppendNodeRequest, DeleteNodeRequest, EditNodeItem, EditNodeRequest,
     GlobNodeType, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    NodeMutation, NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest,
+    IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeItem, MoveNodeRequest,
+    MultiEdit, MultiEditNodeRequest, MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind,
+    NodeKind, NodeMutation, NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest,
     QueryContextRequest, SearchNodePathsRequest, SearchPreviewMode, SourceEvidenceRequest,
     WriteNodeItem, WriteNodeRequest,
 };
@@ -174,6 +174,11 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         write_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
+    assert_eq!(write_error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(
+        write_error.conflict_path.as_deref(),
+        Some("/Knowledge/missing")
+    );
 
     let append_error = store
         .append_node(
@@ -193,6 +198,11 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
         append_error.message,
         "parent folder does not exist: /Knowledge/missing"
     );
+    assert_eq!(append_error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(
+        append_error.conflict_path.as_deref(),
+        Some("/Knowledge/missing")
+    );
 
     let mkdir_error = store
         .mkdir_node(
@@ -206,6 +216,11 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
     assert_eq!(
         mkdir_error.message,
         "parent folder does not exist: /Knowledge/missing"
+    );
+    assert_eq!(mkdir_error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(
+        mkdir_error.conflict_path.as_deref(),
+        Some("/Knowledge/missing")
     );
 
     let source = store
@@ -229,6 +244,7 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
                 from_path: "/Knowledge/a.md".to_string(),
                 to_path: "/Knowledge/missing/a.md".to_string(),
                 expected_etag: Some(source.node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             13,
@@ -237,6 +253,11 @@ fn write_mkdir_and_move_require_existing_folder_parent() {
     assert_eq!(
         move_error.message,
         "parent folder does not exist: /Knowledge/missing"
+    );
+    assert_eq!(move_error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(
+        move_error.conflict_path.as_deref(),
+        Some("/Knowledge/missing")
     );
 }
 
@@ -274,6 +295,37 @@ fn file_and_source_parents_cannot_contain_children() {
         file_child_error.message,
         "parent path is not a folder: /Knowledge/file"
     );
+    assert_eq!(
+        file_child_error.code,
+        NodeMutationErrorCode::InvalidOperation
+    );
+    assert_eq!(
+        file_child_error.conflict_path.as_deref(),
+        Some("/Knowledge/file")
+    );
+    let append_error = store
+        .append_node(
+            AppendNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/file/appended.md".to_string(),
+                content: "child".to_string(),
+                expected_etag: None,
+                separator: None,
+                metadata_json: None,
+                kind: None,
+            },
+            11,
+        )
+        .expect_err("append below file should fail");
+    assert_eq!(append_error.code, NodeMutationErrorCode::InvalidOperation);
+    assert_eq!(
+        append_error.conflict_path.as_deref(),
+        Some("/Knowledge/file")
+    );
+    assert_eq!(
+        append_error.message,
+        "parent path is not a folder: /Knowledge/file"
+    );
 
     ensure_parent_folders(&store, "/Sources/source/source.md", 12);
     store
@@ -303,6 +355,11 @@ fn file_and_source_parents_cannot_contain_children() {
         mkdir_error.message,
         "parent path is not a folder: /Sources/source/source.md"
     );
+    assert_eq!(mkdir_error.code, NodeMutationErrorCode::InvalidOperation);
+    assert_eq!(
+        mkdir_error.conflict_path.as_deref(),
+        Some("/Sources/source/source.md")
+    );
     let move_error = store
         .move_node(
             MoveNodeRequest {
@@ -310,6 +367,7 @@ fn file_and_source_parents_cannot_contain_children() {
                 from_path: "/Knowledge/file".to_string(),
                 to_path: "/Sources/source/source.md/file".to_string(),
                 expected_etag: Some(file_parent.node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             15,
@@ -318,6 +376,11 @@ fn file_and_source_parents_cannot_contain_children() {
     assert_eq!(
         move_error.message,
         "parent path is not a folder: /Sources/source/source.md"
+    );
+    assert_eq!(move_error.code, NodeMutationErrorCode::InvalidOperation);
+    assert_eq!(
+        move_error.conflict_path.as_deref(),
+        Some("/Sources/source/source.md")
     );
 }
 
@@ -602,6 +665,7 @@ fn link_index_tracks_write_edit_append_delete_and_move() {
                 from_path: "/Knowledge/topic/source.md".to_string(),
                 to_path: "/Knowledge/moved/source.md".to_string(),
                 expected_etag: Some(appended.node.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             13,
@@ -1248,6 +1312,7 @@ fn move_node_renames_and_updates_search() {
                 from_path: "/Knowledge/from.md".to_string(),
                 to_path: "/Knowledge/to.md".to_string(),
                 expected_etag: Some(created.node.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             11,
@@ -1327,6 +1392,7 @@ fn move_node_rejects_protected_root_folders() {
                     from_path: path.to_string(),
                     to_path: format!("{path}-renamed"),
                     expected_etag: Some(node.etag),
+                    expected_target_etag: None,
                     overwrite: false,
                 },
                 11,
@@ -1398,6 +1464,7 @@ fn move_node_moves_non_root_folder_subtree() {
                 from_path: "/Knowledge/work".to_string(),
                 to_path: "/Knowledge/archive/work".to_string(),
                 expected_etag: Some(folder.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             11,
@@ -1466,6 +1533,7 @@ fn folder_move_collision_fails_without_partial_updates() {
                 from_path: "/Knowledge/work".to_string(),
                 to_path: "/Knowledge/archive/work".to_string(),
                 expected_etag: Some(folder.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             12,
@@ -1508,7 +1576,7 @@ fn move_node_overwrite_replaces_live_target() {
             10,
         )
         .expect("source create should succeed");
-    store
+    let target = store
         .append_node(
             AppendNodeRequest {
                 database_id: "default".to_string(),
@@ -1530,6 +1598,7 @@ fn move_node_overwrite_replaces_live_target() {
                 from_path: "/Knowledge/from.md".to_string(),
                 to_path: "/Knowledge/to.md".to_string(),
                 expected_etag: Some(source.node.etag),
+                expected_target_etag: Some(target.node.etag),
                 overwrite: true,
             },
             12,
@@ -1549,6 +1618,182 @@ fn move_node_overwrite_replaces_live_target() {
             .read_node("/Knowledge/to.md")
             .expect("read should succeed")
             .expect("node should exist")
+            .content,
+        "source"
+    );
+}
+
+#[test]
+fn move_node_overwrite_requires_current_target_etag_and_batch_rolls_back() {
+    let (_dir, store) = new_store();
+    let source = store
+        .append_node(
+            AppendNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/from.md".to_string(),
+                content: "source".to_string(),
+                expected_etag: None,
+                separator: None,
+                metadata_json: None,
+                kind: None,
+            },
+            10,
+        )
+        .expect("source should create");
+    let target = store
+        .append_node(
+            AppendNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/to.md".to_string(),
+                content: "target".to_string(),
+                expected_etag: None,
+                separator: None,
+                metadata_json: None,
+                kind: None,
+            },
+            11,
+        )
+        .expect("target should create");
+    let updated_target = store
+        .append_node(
+            AppendNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/to.md".to_string(),
+                content: " updated".to_string(),
+                expected_etag: Some(target.node.etag.clone()),
+                separator: None,
+                metadata_json: None,
+                kind: None,
+            },
+            12,
+        )
+        .expect("target concurrent update should succeed");
+
+    let missing_etag = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/from.md".to_string(),
+                to_path: "/Knowledge/to.md".to_string(),
+                expected_etag: Some(source.node.etag.clone()),
+                expected_target_etag: None,
+                overwrite: true,
+            },
+            13,
+        )
+        .expect_err("live overwrite without target etag should fail");
+    assert_eq!(missing_etag.code, NodeMutationErrorCode::InvalidOperation);
+    assert_eq!(
+        missing_etag.conflict_path.as_deref(),
+        Some("/Knowledge/to.md")
+    );
+
+    let stale_etag = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/from.md".to_string(),
+                to_path: "/Knowledge/to.md".to_string(),
+                expected_etag: Some(source.node.etag.clone()),
+                expected_target_etag: Some(target.node.etag.clone()),
+                overwrite: true,
+            },
+            14,
+        )
+        .expect_err("stale target etag should fail");
+    assert_eq!(stale_etag.code, NodeMutationErrorCode::EtagConflict);
+    assert_eq!(
+        stale_etag.conflict_path.as_deref(),
+        Some("/Knowledge/to.md")
+    );
+
+    let ambiguous = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/from.md".to_string(),
+                to_path: "/Knowledge/to.md".to_string(),
+                expected_etag: Some(source.node.etag.clone()),
+                expected_target_etag: Some(updated_target.node.etag.clone()),
+                overwrite: false,
+            },
+            15,
+        )
+        .expect_err("target etag without overwrite should fail");
+    assert_eq!(ambiguous.code, NodeMutationErrorCode::InvalidOperation);
+    assert_eq!(ambiguous.conflict_path.as_deref(), Some("/Knowledge/to.md"));
+
+    let batch_error = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Write(WriteNodeItem {
+                        path: "/Knowledge/rolled-back.md".to_string(),
+                        kind: NodeKind::File,
+                        content: "must roll back".to_string(),
+                        metadata_json: "{}".to_string(),
+                        expected_etag: None,
+                    }),
+                    NodeMutation::Move(MoveNodeItem {
+                        from_path: "/Knowledge/from.md".to_string(),
+                        to_path: "/Knowledge/to.md".to_string(),
+                        expected_etag: Some(source.node.etag.clone()),
+                        expected_target_etag: Some(target.node.etag),
+                        overwrite: true,
+                    }),
+                ],
+            },
+            16,
+        )
+        .expect_err("stale target etag should roll back the batch");
+    assert_eq!(batch_error.code, NodeMutationErrorCode::EtagConflict);
+    assert_eq!(batch_error.failed_index, Some(1));
+    assert_eq!(
+        batch_error.conflict_path.as_deref(),
+        Some("/Knowledge/to.md")
+    );
+    assert!(
+        store
+            .read_node("/Knowledge/rolled-back.md")
+            .expect("rollback node read should succeed")
+            .is_none()
+    );
+
+    store
+        .delete_node(
+            DeleteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/to.md".to_string(),
+                expected_etag: Some(updated_target.node.etag),
+                expected_folder_index_etag: None,
+            },
+            17,
+        )
+        .expect("target should delete");
+    let vanished_target = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/from.md".to_string(),
+                to_path: "/Knowledge/to.md".to_string(),
+                expected_etag: Some(source.node.etag),
+                expected_target_etag: Some("last-seen-target-etag".to_string()),
+                overwrite: true,
+            },
+            18,
+        )
+        .expect_err("vanished target with supplied etag should fail");
+    assert_eq!(vanished_target.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(
+        vanished_target.conflict_path.as_deref(),
+        Some("/Knowledge/to.md")
+    );
+    assert_eq!(
+        store
+            .read_node("/Knowledge/from.md")
+            .expect("source read should succeed")
+            .expect("source should remain")
             .content,
         "source"
     );
@@ -1604,6 +1849,7 @@ fn move_node_overwrite_reuses_deleted_target_path() {
                 from_path: "/Knowledge/from.md".to_string(),
                 to_path: "/Knowledge/to.md".to_string(),
                 expected_etag: Some(source.node.etag),
+                expected_target_etag: None,
                 overwrite: true,
             },
             13,

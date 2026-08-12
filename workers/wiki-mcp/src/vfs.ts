@@ -11,7 +11,7 @@ import {
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
 import type { IiPermission } from "./auth/internet-identity.js";
-import type { McpAuthStateV3 } from "./auth/state.js";
+import type { McpAuthStateV4 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, unknown>;
@@ -34,7 +34,7 @@ export type RuntimeEnv = {
   MCP_WRITE_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
   MCP_KEY_ENCRYPTION_KEY?: string;
-  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV3>;
+  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV4>;
   MCP_REGISTRATION_RATE_LIMIT?: RateLimit;
   KINIC_WIKI_IDENTITY?: Identity;
   KINIC_WIKI_AUTHORIZATION?: {
@@ -115,6 +115,7 @@ export type MoveNodeInput = {
   fromPath: string;
   toPath: string;
   expectedEtag: string;
+  expectedTargetEtag: string | null;
   overwrite: boolean;
 };
 
@@ -920,6 +921,7 @@ function rawMoveNodeRequest(databaseId: string, input: MoveNodeInput) {
     from_path: input.fromPath,
     to_path: input.toPath,
     expected_etag: candidOptional(input.expectedEtag),
+    expected_target_etag: candidOptional(input.expectedTargetEtag),
     overwrite: input.overwrite
   };
 }
@@ -1112,6 +1114,7 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     from_path: idl.Text,
     to_path: idl.Text,
     expected_etag: idl.Opt(idl.Text),
+    expected_target_etag: idl.Opt(idl.Text),
     overwrite: idl.Bool
   });
   const MoveNodeRequest = idl.Record({
@@ -1119,6 +1122,7 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     from_path: idl.Text,
     to_path: idl.Text,
     expected_etag: idl.Opt(idl.Text),
+    expected_target_etag: idl.Opt(idl.Text),
     overwrite: idl.Bool
   });
   const DeleteNodeItem = idl.Record({

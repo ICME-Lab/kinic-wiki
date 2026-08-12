@@ -146,7 +146,13 @@ fn fs_migrations_create_tables() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+        ]
+    );
 
     {
         let table = "fs_links";
@@ -1259,7 +1265,13 @@ fn fs_migrations_are_idempotent() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+        ]
+    );
 
     let tracked_paths = conn
         .query_row("SELECT COUNT(*) FROM fs_path_state", [], |row| {
@@ -1267,6 +1279,45 @@ fn fs_migrations_are_idempotent() {
         })
         .expect("path state count should succeed");
     assert_eq!(tracked_paths, 10);
+}
+
+#[test]
+fn fs_migrations_apply_publication_commit_marker_once() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute("DROP TABLE publication_mutation_commits", [])
+        .expect("publication commit table should drop");
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE version = ?1",
+        ["vfs_store:002_publication_mutation_commits"],
+    )
+    .expect("publication commit migration marker should delete");
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("001 to 002 migration should apply");
+    store
+        .run_fs_migrations()
+        .expect("002 migration should apply only once");
+
+    let conn = Connection::open(store.database_path()).expect("db should reopen");
+    let table_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'publication_mutation_commits'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("publication commit table should exist");
+    assert_eq!(table_count, 1);
+    let marker_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+            ["vfs_store:002_publication_mutation_commits"],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("publication commit marker should exist");
+    assert_eq!(marker_count, 1);
 }
 
 #[test]
@@ -1365,6 +1416,7 @@ fn move_node_creates_missing_store_root_on_current_schema() {
                 from_path: "/Memory/move-source.md".to_string(),
                 to_path: "/Knowledge/moved.md".to_string(),
                 expected_etag: Some(source_etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             41,

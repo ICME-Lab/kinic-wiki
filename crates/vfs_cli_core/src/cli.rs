@@ -202,6 +202,8 @@ pub enum VfsCommand {
         #[arg(long)]
         expected_etag: Option<String>,
         #[arg(long)]
+        expected_target_etag: Option<String>,
+        #[arg(long)]
         overwrite: bool,
         #[arg(long)]
         json: bool,

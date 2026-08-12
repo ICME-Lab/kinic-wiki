@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { McpAuthStateV3 } from "../src/auth/state.js";
+import type { McpAuthStateV4 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
 const mocks = vi.hoisted(() => ({
@@ -52,6 +52,7 @@ import worker, {
   fetchManySearchResults,
   findDatabases,
   listDatabaseNodes,
+  mcpBodyCallsTool,
   queryTaskContext,
   readMemoryManifest,
   readPath,
@@ -68,11 +69,25 @@ const env = {
   OPENAI_APPS_CHALLENGE_TOKEN: "test-openai-apps-challenge"
 };
 
+describe("MCP delegation demand", () => {
+  it("mints only for tools/call, including JSON-RPC batches", () => {
+    expect(mcpBodyCallsTool({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })).toBe(false);
+    expect(mcpBodyCallsTool({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })).toBe(false);
+    expect(mcpBodyCallsTool([{ jsonrpc: "2.0", method: "notifications/initialized" }])).toBe(false);
+    expect(
+      mcpBodyCallsTool([
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "find_databases" } }
+      ])
+    ).toBe(true);
+  });
+});
+
 function unavailableAuthBinding(): never {
   throw new Error("auth binding must not be used by this test");
 }
 
-const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV3> = {
+const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV4> = {
   newUniqueId: unavailableAuthBinding,
   idFromName: unavailableAuthBinding,
   idFromString: unavailableAuthBinding,
@@ -539,7 +554,7 @@ describe("wiki mcp worker", () => {
       { type: "edit", value: { path: "/a.md", oldText: "a", newText: "A", expectedEtag: "e2", replaceAll: false } },
       { type: "multi_edit", value: { path: "/a.md", edits: [{ oldText: "A", newText: "B" }], expectedEtag: "e3" } },
       { type: "mkdir", value: { path: "/folder" } },
-      { type: "move", value: { fromPath: "/a.md", toPath: "/folder/a.md", expectedEtag: "e4", overwrite: false } },
+      { type: "move", value: { fromPath: "/a.md", toPath: "/folder/a.md", expectedEtag: "e4", expectedTargetEtag: null, overwrite: false } },
       { type: "delete", value: { path: "/folder/a.md", expectedEtag: "e5", expectedFolderIndexEtag: "f1" } }
     ]);
   });

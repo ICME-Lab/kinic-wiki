@@ -490,6 +490,7 @@ export const expectedTypes = {
       from_path: "text",
       to_path: "text",
       expected_etag: "opt text",
+      expected_target_etag: "opt text",
       overwrite: "bool",
       database_id: "text"
     }

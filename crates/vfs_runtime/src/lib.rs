@@ -14,7 +14,10 @@ mod market;
 mod metrics;
 mod publications;
 #[cfg(any(test, debug_assertions))]
-pub use publications::fail_next_publication_detach_for_test;
+pub use publications::{
+    fail_next_publication_detach_for_test, fail_next_publication_resolution_for_test,
+    fail_next_publication_restore_for_test,
+};
 mod sessions;
 pub(crate) use cycles::PendingCyclesLedgerDetails;
 mod sqlite;
@@ -60,9 +63,13 @@ use vfs_types::{
 };
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:001_initial";
-const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:002_node_publications";
-const INDEX_SCHEMA_VERSIONS: &[&str] =
-    &[INDEX_SCHEMA_VERSION_INITIAL, INDEX_SCHEMA_VERSION_CURRENT];
+const INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS: &str = "database_index:002_node_publications";
+const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutation_recovery";
+const INDEX_SCHEMA_VERSIONS: &[&str] = &[
+    INDEX_SCHEMA_VERSION_INITIAL,
+    INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+    INDEX_SCHEMA_VERSION_CURRENT,
+];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -449,7 +456,9 @@ impl VfsService {
             &database_id,
             caller,
             &publication_path_refs,
-            |store| store.write_node(request, now),
+            |store, operation_id| {
+                store.write_node_with_publication_commit(request, now, operation_id)
+            },
         );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -496,7 +505,9 @@ impl VfsService {
             &database_id,
             caller,
             &[path.as_str()],
-            |store| store.write_node(write_request, now),
+            |store, operation_id| {
+                store.write_node_with_publication_commit(write_request, now, operation_id)
+            },
         )?;
         let _ = self.write_source_run_session(
             &database_id,
@@ -534,7 +545,9 @@ impl VfsService {
             &database_id,
             caller,
             &publication_path_refs,
-            |store| store.write_nodes(request, now),
+            |store, operation_id| {
+                store.write_nodes_with_publication_commit(request, now, operation_id)
+            },
         );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -558,7 +571,9 @@ impl VfsService {
             &database_id,
             caller,
             &publication_path_refs,
-            |store| store.mutate_nodes_batch(request, now),
+            |store, operation_id| {
+                store.mutate_nodes_batch_with_publication_commit(request, now, operation_id)
+            },
         );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -570,14 +585,16 @@ impl VfsService {
         &self,
         caller: &str,
         request: DeleteNodeRequest,
-        now: i64,
+        _now: i64,
     ) -> Result<DeleteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let path = request.path.clone();
-        let result =
-            self.with_detached_node_publications(&database_id, caller, &[path.as_str()], |store| {
-                store.delete_node(request, now)
-            });
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &[path.as_str()],
+            |store, operation_id| store.delete_node_with_publication_commit(request, operation_id),
+        );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -643,7 +660,9 @@ impl VfsService {
             &database_id,
             caller,
             &[from_path.as_str(), to_path.as_str()],
-            |store| store.move_node(request, now),
+            |store, operation_id| {
+                store.move_node_with_publication_commit(request, now, operation_id)
+            },
         );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -838,7 +857,7 @@ impl VfsService {
         database_id: &str,
         caller: &str,
         paths: &[&str],
-        f: impl FnOnce(&FsStore) -> Result<T, NodeMutationError>,
+        f: impl FnOnce(&FsStore, Option<i64>) -> Result<T, NodeMutationError>,
     ) -> Result<T, NodeMutationError> {
         self.require_role(database_id, caller, RequiredRole::Writer)
             .map_err(NodeMutationError::forbidden)?;
@@ -848,25 +867,48 @@ impl VfsService {
         let store = self
             .database_store(&meta)
             .map_err(NodeMutationError::write_unavailable)?;
+        self.recover_pending_publication_mutations()
+            .map_err(NodeMutationError::write_unavailable)?;
         if paths.is_empty() {
-            return f(&store);
+            return f(&store, None);
         }
         let detached = self
             .detach_node_publications_for_paths(database_id, paths)
             .map_err(NodeMutationError::write_unavailable)?;
-        match f(&store) {
-            Ok(value) => Ok(value),
-            Err(mutation_error) => match self.restore_node_publications(&detached) {
-                Ok(()) => Err(mutation_error),
-                Err(restore_error) => {
-                    let mut error = NodeMutationError::write_unavailable(format!(
-                        "{mutation_error}; published pages remain unpublished because publication restore failed: {restore_error}"
-                    ));
-                    error.failed_index = mutation_error.failed_index;
-                    error.conflict_path = mutation_error.conflict_path;
-                    Err(error)
+        match f(&store, detached.operation_id) {
+            Ok(value) => {
+                if let Err(_error) = self.resolve_detached_node_publications(&detached, false) {
+                    #[cfg(target_arch = "wasm32")]
+                    panic!(
+                        "node mutation committed but publication recovery finalization failed: {_error}"
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    return Ok(value);
                 }
-            },
+                if let Some(operation_id) = detached.operation_id {
+                    let _ = store.clear_publication_mutation_commit(operation_id);
+                }
+                Ok(value)
+            }
+            Err(mutation_error) => {
+                if let Err(restore_error) = self.resolve_detached_node_publications(&detached, true)
+                {
+                    #[cfg(target_arch = "wasm32")]
+                    panic!(
+                        "node mutation failed and publication restore failed: {mutation_error}; {restore_error}"
+                    );
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let mut error = NodeMutationError::write_unavailable(format!(
+                            "{mutation_error}; publication restore is pending durable recovery: {restore_error}"
+                        ));
+                        error.failed_index = mutation_error.failed_index;
+                        error.conflict_path = mutation_error.conflict_path;
+                        return Err(error);
+                    }
+                }
+                Err(mutation_error)
+            }
         }
     }
 
@@ -1190,6 +1232,8 @@ const INDEX_SCHEMA_TABLES: &[&str] = &[
     "market_purchase_pending_operations",
     "market_entitlements",
     "node_publications",
+    "publication_mutation_recovery_batches",
+    "publication_mutation_recovery_items",
 ];
 
 fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, String> {

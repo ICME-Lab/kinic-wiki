@@ -13,18 +13,19 @@ import {
   generateIiKey,
   IiDelegationError,
   IiRegistrationError,
-  IiSessionEndedError,
   INTERNET_IDENTITY_ORIGIN,
-  mintKinicIdentity,
   redeemRegistration,
   resolveKinicMcpTargetOrigin,
-  restoreIiKey
+  restoreIiKey,
+  restoreKinicIdentity,
+  type KinicDelegationMaterialV1
 } from "./internet-identity.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,
+  sessionKeyContext,
   type AuthorizationSessionInput,
   type ClientAuthMethod,
-  type McpAuthStateV3,
+  type McpAuthStateV4,
   type OAuthClientRecordV2,
   type TokenIssueResult
 } from "./state.js";
@@ -131,8 +132,9 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
 
 export async function authenticateMcpRequest(
   request: Request,
-  env: RuntimeEnv
-): Promise<{ identity: Identity; scopes: string[]; iiPermission: "queries" | "all" } | { response: Response }> {
+  env: RuntimeEnv,
+  requireDelegation: boolean
+): Promise<{ identity?: Identity; scopes: string[]; iiPermission: "queries" | "all" } | { response: Response }> {
   const resource = mcpResource(env);
   const unauthorized = () =>
     json(
@@ -156,40 +158,32 @@ export async function authenticateMcpRequest(
     return { response: unauthorized() };
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
-  const validated = await stub.validateAccessToken(tokenValue, resource, Date.now());
-  if (!validated) {
+  const authenticated = await stub.authenticateAccessToken(tokenValue, resource, Date.now(), requireDelegation);
+  if (authenticated.kind === "invalid") {
     return { response: unauthorized() };
   }
-  let keyJson: JsonnableEd25519KeyIdentity;
-  try {
-    keyJson = await decryptJson<JsonnableEd25519KeyIdentity>(
-      validated.encryptedSessionKey,
-      encryptionKey(env),
-      sessionKeyContext(sessionId)
-    );
-  } catch {
-    await stub.invalidate();
-    return { response: unauthorized() };
-  }
-  try {
-    const targetOrigin = resolveKinicMcpTargetOrigin(
-      env.KINIC_WIKI_MCP_TARGET_ORIGIN,
-      env.KINIC_WIKI_CANISTER_ID
-    );
-    const identity = await mintKinicIdentity(restoreIiKey(keyJson), targetOrigin);
-    return {
-      identity,
-      scopes: validated.scope.split(/\s+/u).filter(Boolean),
-      iiPermission: validated.iiPermission
-    };
-  } catch (error) {
-    if (error instanceof IiSessionEndedError) {
-      await stub.invalidate();
-      return { response: unauthorized() };
-    }
-    logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_unknown");
+  if (authenticated.kind === "temporarily_unavailable") {
+    logMcpAuth(authenticated.stage);
     return { response: json({ error: "temporarily_unavailable" }, 503) };
   }
+  let identity: Identity | undefined;
+  if (authenticated.delegation) {
+    try {
+      identity = restoreKinicIdentity(
+        authenticated.delegation as KinicDelegationMaterialV1,
+        resolveKinicMcpTargetOrigin(env.KINIC_WIKI_MCP_TARGET_ORIGIN, env.KINIC_WIKI_CANISTER_ID),
+        Date.now()
+      );
+    } catch (error) {
+      logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_cache");
+      return { response: json({ error: "temporarily_unavailable" }, 503) };
+    }
+  }
+  return {
+    ...(identity ? { identity } : {}),
+    scopes: authenticated.scope.split(/\s+/u).filter(Boolean),
+    iiPermission: authenticated.iiPermission
+  };
 }
 
 export function mcpUnauthorizedResponse(env: RuntimeEnv, scope = "mcp:read"): Response {
@@ -747,7 +741,7 @@ function mcpResource(env: RuntimeEnv): string {
   return `${requiredOauthOrigin(env)}/mcp`;
 }
 
-function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV3> {
+function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV4> {
   if (!env.MCP_AUTH_STATE) {
     throw new Error("MCP_AUTH_STATE binding is required");
   }
@@ -778,10 +772,6 @@ function sessionName(sessionId: string): string {
 
 function registrationKeyContext(sessionId: string): string {
   return `session:${sessionId}:registration-key:v1`;
-}
-
-function sessionKeyContext(sessionId: string): string {
-  return `session:${sessionId}:session-key:v1`;
 }
 
 function parseRoutedToken(token: string, prefix: string): string | null {

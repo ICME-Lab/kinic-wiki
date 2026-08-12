@@ -16,7 +16,7 @@ import {
   type AuthenticationMode,
   type McpAccessPolicy
 } from "./auth/oauth.js";
-export { McpAuthStateV3 } from "./auth/state.js";
+export { McpAuthStateV4 } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
@@ -308,6 +308,7 @@ const batchOperationSchema = z.discriminatedUnion("type", [
     from_path: z.string().min(1),
     to_path: z.string().min(1),
     expected_etag: z.string().min(1),
+    expected_target_etag: z.string().min(1).optional(),
     overwrite: z.boolean().optional()
   }),
   z.object({
@@ -376,13 +377,13 @@ export default {
           mcpUnauthorizedResponse(env, "mcp:read")
         );
       }
-      const authenticated = await authenticateMcpRequest(request, env);
+      const authenticated = await authenticateMcpRequest(request, env, mcpBodyCallsTool(parsedBody));
       if ("response" in authenticated) {
         return withCors(authenticated.response);
       }
       requestEnv = {
         ...env,
-        KINIC_WIKI_IDENTITY: authenticated.identity,
+        ...(authenticated.identity ? { KINIC_WIKI_IDENTITY: authenticated.identity } : {}),
         KINIC_WIKI_AUTHORIZATION: {
           scopes: authenticated.scopes,
           iiPermission: authenticated.iiPermission
@@ -780,6 +781,7 @@ function toNodeMutationInput(operation: z.infer<typeof batchOperationSchema>): N
           fromPath: operation.from_path,
           toPath: operation.to_path,
           expectedEtag: operation.expected_etag,
+          expectedTargetEtag: operation.expected_target_etag ?? null,
           overwrite: operation.overwrite ?? false
         }
       };
@@ -1596,6 +1598,17 @@ async function parseJsonBody(request: Request): Promise<JsonBodyResult> {
 
 function mcpRequestRequiresAuthentication(mode: AuthenticationMode): boolean {
   return mode === "private_required";
+}
+
+export function mcpBodyCallsTool(body: unknown): boolean {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some(
+    (message) =>
+      typeof message === "object" &&
+      message !== null &&
+      "method" in message &&
+      message.method === "tools/call"
+  );
 }
 
 function resolveWritePolicy(value: string | undefined): "disabled" | "private" | null {
