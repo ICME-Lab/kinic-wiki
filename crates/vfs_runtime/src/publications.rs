@@ -9,12 +9,39 @@ const PUBLIC_NODE_ID_HEX_CHARS: usize = 32;
 #[cfg(any(test, debug_assertions))]
 static TEST_PUBLICATION_DETACH_FAIL_ONCE: LazyLock<Mutex<BTreeSet<String>>> =
     LazyLock::new(|| Mutex::new(BTreeSet::new()));
+#[cfg(any(test, debug_assertions))]
+static TEST_PUBLICATION_RESTORE_FAIL_ONCE: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+#[cfg(any(test, debug_assertions))]
+static TEST_PUBLICATION_RESOLUTION_FAIL_ONCE: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+pub(crate) struct DetachedNodePublications {
+    pub(crate) publications: Vec<NodePublication>,
+    pub(crate) operation_id: Option<i64>,
+}
 
 #[cfg(any(test, debug_assertions))]
 pub fn fail_next_publication_detach_for_test(database_id: &str) {
     TEST_PUBLICATION_DETACH_FAIL_ONCE
         .lock()
         .expect("test publication detach failure lock should not poison")
+        .insert(database_id.to_string());
+}
+
+#[cfg(any(test, debug_assertions))]
+pub fn fail_next_publication_restore_for_test(database_id: &str) {
+    TEST_PUBLICATION_RESTORE_FAIL_ONCE
+        .lock()
+        .expect("test publication restore failure lock should not poison")
+        .insert(database_id.to_string());
+}
+
+#[cfg(any(test, debug_assertions))]
+pub fn fail_next_publication_resolution_for_test(database_id: &str) {
+    TEST_PUBLICATION_RESOLUTION_FAIL_ONCE
+        .lock()
+        .expect("test publication resolution failure lock should not poison")
         .insert(database_id.to_string());
 }
 
@@ -25,6 +52,7 @@ impl VfsService {
         caller: &str,
         parent_path: &str,
     ) -> Result<BTreeSet<String>, String> {
+        self.recover_pending_publication_mutations()?;
         self.read_index(|conn| {
             if caller == ANONYMOUS_PRINCIPAL
                 || load_member_role(conn, database_id, caller)?.is_none()
@@ -60,6 +88,7 @@ impl VfsService {
         public_id: &str,
         now: i64,
     ) -> Result<NodePublication, String> {
+        self.recover_pending_publication_mutations()?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
         validate_public_node_id(public_id)?;
         self.require_publishable_node(&request)?;
@@ -83,6 +112,7 @@ impl VfsService {
     }
 
     pub fn unpublish_node(&self, caller: &str, request: PublishNodeRequest) -> Result<(), String> {
+        self.recover_pending_publication_mutations()?;
         self.require_role(&request.database_id, caller, RequiredRole::Owner)?;
         self.require_publishable_node(&request)?;
         self.write_index(|conn| {
@@ -101,6 +131,7 @@ impl VfsService {
         caller: &str,
         request: PublishNodeRequest,
     ) -> Result<Option<NodePublication>, String> {
+        self.recover_pending_publication_mutations()?;
         if caller == ANONYMOUS_PRINCIPAL {
             return Err("anonymous caller not allowed".to_string());
         }
@@ -109,6 +140,7 @@ impl VfsService {
     }
 
     pub fn read_public_node(&self, public_id: &str) -> Result<Option<PublicNode>, String> {
+        self.recover_pending_publication_mutations()?;
         validate_public_node_id(public_id)?;
         let publication =
             self.read_index(|conn| load_active_node_publication_by_id(conn, public_id))?;
@@ -145,7 +177,7 @@ impl VfsService {
         &self,
         database_id: &str,
         paths: &[&str],
-    ) -> Result<Vec<NodePublication>, String> {
+    ) -> Result<DetachedNodePublications, String> {
         #[cfg(any(test, debug_assertions))]
         if TEST_PUBLICATION_DETACH_FAIL_ONCE
             .lock()
@@ -179,42 +211,189 @@ impl VfsService {
                     detached.insert(publication.public_id.clone(), publication);
                 }
             }
-            for public_id in detached.keys() {
+            let publications = detached.into_values().collect::<Vec<_>>();
+            #[cfg(not(target_arch = "wasm32"))]
+            let operation_id = if publications.is_empty() {
+                None
+            } else {
+                conn.execute(
+                    "INSERT INTO publication_mutation_recovery_batches (database_id) VALUES (?1)",
+                    params![database_id],
+                )
+                .map_err(|error| error.to_string())?;
+                let operation_id =
+                    crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())?;
+                for publication in &publications {
+                    conn.execute(
+                        "INSERT INTO publication_mutation_recovery_items
+                           (operation_id, public_id, database_id, path, published_at_ms)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            operation_id,
+                            publication.public_id,
+                            publication.database_id,
+                            publication.path,
+                            publication.published_at_ms
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                Some(operation_id)
+            };
+            #[cfg(target_arch = "wasm32")]
+            let operation_id = None;
+            for publication in &publications {
                 conn.execute(
                     "DELETE FROM node_publications WHERE public_id = ?1",
-                    params![public_id.as_str()],
+                    params![publication.public_id.as_str()],
                 )
                 .map_err(|error| error.to_string())?;
             }
-            Ok(detached.into_values().collect())
+            Ok(DetachedNodePublications {
+                publications,
+                operation_id,
+            })
         })
     }
 
-    pub(crate) fn restore_node_publications(
+    pub(crate) fn resolve_detached_node_publications(
         &self,
-        publications: &[NodePublication],
+        detached: &DetachedNodePublications,
+        restore: bool,
     ) -> Result<(), String> {
-        if publications.is_empty() {
-            return Ok(());
+        #[cfg(any(test, debug_assertions))]
+        if detached.publications.first().is_some_and(|publication| {
+            TEST_PUBLICATION_RESOLUTION_FAIL_ONCE
+                .lock()
+                .expect("test publication resolution failure lock should not poison")
+                .remove(&publication.database_id)
+        }) {
+            return Err("injected publication resolution failure".to_string());
+        }
+        #[cfg(any(test, debug_assertions))]
+        if restore
+            && detached.publications.first().is_some_and(|publication| {
+                TEST_PUBLICATION_RESTORE_FAIL_ONCE
+                    .lock()
+                    .expect("test publication restore failure lock should not poison")
+                    .remove(&publication.database_id)
+            })
+        {
+            return Err("injected publication restore failure".to_string());
         }
         self.write_index(|conn| {
-            for publication in publications {
-                conn.execute(
-                    "INSERT INTO node_publications
-                       (public_id, database_id, path, published_at_ms)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![
-                        publication.public_id,
-                        publication.database_id,
-                        publication.path,
-                        publication.published_at_ms
-                    ],
-                )
-                .map_err(|error| error.to_string())?;
+            if restore {
+                insert_node_publications(conn, &detached.publications)?;
+            }
+            if let Some(operation_id) = detached.operation_id {
+                delete_publication_mutation_recovery(conn, operation_id)?;
             }
             Ok(())
         })
     }
+
+    pub fn recover_pending_publication_mutations(&self) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            Ok(())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let pending = self.read_index(load_publication_mutation_recovery_batches)?;
+            for (operation_id, database_id) in pending {
+                let meta = self.database_meta(&database_id)?;
+                let store = self.database_store(&meta)?;
+                let committed = store.publication_mutation_committed(operation_id)?;
+                let publications = self.read_index(|conn| {
+                    load_publication_mutation_recovery_items(conn, operation_id)
+                })?;
+                let detached = DetachedNodePublications {
+                    publications,
+                    operation_id: Some(operation_id),
+                };
+                self.resolve_detached_node_publications(&detached, !committed)?;
+                if committed {
+                    let _ = store.clear_publication_mutation_commit(operation_id);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn insert_node_publications(
+    conn: &Transaction<'_>,
+    publications: &[NodePublication],
+) -> Result<(), String> {
+    for publication in publications {
+        conn.execute(
+            "INSERT INTO node_publications
+               (public_id, database_id, path, published_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                publication.public_id,
+                publication.database_id,
+                publication.path,
+                publication.published_at_ms
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn delete_publication_mutation_recovery(
+    conn: &Transaction<'_>,
+    operation_id: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM publication_mutation_recovery_items WHERE operation_id = ?1",
+        params![operation_id],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "DELETE FROM publication_mutation_recovery_batches WHERE operation_id = ?1",
+        params![operation_id],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_publication_mutation_recovery_batches(
+    conn: &Connection,
+) -> Result<Vec<(i64, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT operation_id, database_id
+             FROM publication_mutation_recovery_batches
+             ORDER BY operation_id ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get(row, 0)?,
+            crate::sqlite::row_get(row, 1)?,
+        ))
+    })
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_publication_mutation_recovery_items(
+    conn: &Connection,
+    operation_id: i64,
+) -> Result<Vec<NodePublication>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT public_id, database_id, path, published_at_ms
+             FROM publication_mutation_recovery_items
+             WHERE operation_id = ?1
+             ORDER BY public_id ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![operation_id], publication_from_row)
+        .map_err(|error| error.to_string())
 }
 
 fn load_node_publication(

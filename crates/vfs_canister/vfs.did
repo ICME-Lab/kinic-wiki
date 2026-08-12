@@ -1,3 +1,11 @@
+type AppendNodeItem = record {
+  content : text;
+  separator : opt text;
+  kind : opt NodeKind;
+  path : text;
+  expected_etag : opt text;
+  metadata_json : opt text;
+};
 type AppendNodeRequest = record {
   content : text;
   separator : opt text;
@@ -135,6 +143,11 @@ type DatabaseSummary = record {
   database_id : text;
   deleted_at_ms : opt int64;
 };
+type DeleteNodeItem = record {
+  path : text;
+  expected_etag : opt text;
+  expected_folder_index_etag : opt text;
+};
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -142,6 +155,13 @@ type DeleteNodeRequest = record {
   expected_folder_index_etag : opt text;
 };
 type DeleteNodeResult = record { path : text };
+type EditNodeItem = record {
+  path : text;
+  old_text : text;
+  replace_all : bool;
+  expected_etag : opt text;
+  new_text : text;
+};
 type EditNodeRequest = record {
   path : text;
   old_text : text;
@@ -410,9 +430,17 @@ type MemoryManifest = record {
 type MemoryRoot = record { kind : text; path : text };
 type MkdirNodeRequest = record { path : text; database_id : text };
 type MkdirNodeResult = record { created : bool; path : text };
+type MoveNodeItem = record {
+  from_path : text;
+  to_path : text;
+  expected_target_etag : opt text;
+  expected_etag : opt text;
+  overwrite : bool;
+};
 type MoveNodeRequest = record {
   from_path : text;
   to_path : text;
+  expected_target_etag : opt text;
   expected_etag : opt text;
   overwrite : bool;
   database_id : text;
@@ -423,10 +451,19 @@ type MoveNodeResult = record {
   overwrote : bool;
 };
 type MultiEdit = record { old_text : text; new_text : text };
+type MultiEditNodeItem = record {
+  path : text;
+  edits : vec MultiEdit;
+  expected_etag : opt text;
+};
 type MultiEditNodeRequest = record {
   path : text;
   edits : vec MultiEdit;
   expected_etag : opt text;
+  database_id : text;
+};
+type MutateNodesBatchRequest = record {
+  operations : vec NodeMutation;
   database_id : text;
 };
 type Node = record {
@@ -457,11 +494,42 @@ type NodeEntry = record {
 };
 type NodeEntryKind = variant { Folder; File; Source; Directory };
 type NodeKind = variant { Folder; File; Source };
+type NodeMutation = variant {
+  MultiEdit : MultiEditNodeItem;
+  Edit : EditNodeItem;
+  Move : MoveNodeItem;
+  Write : WriteNodeItem;
+  Mkdir : text;
+  Delete : DeleteNodeItem;
+  Append : AppendNodeItem;
+};
 type NodeMutationAck = record {
   updated_at : int64;
   etag : text;
   kind : NodeKind;
   path : text;
+};
+type NodeMutationError = record {
+  code : NodeMutationErrorCode;
+  conflict_path : opt text;
+  failed_index : opt nat32;
+  message : text;
+};
+type NodeMutationErrorCode = variant {
+  WriteUnavailable;
+  NotFound;
+  EtagConflict;
+  Forbidden;
+  InvalidOperation;
+};
+type NodeMutationResult = variant {
+  MultiEdit : EditNodeResult;
+  Edit : EditNodeResult;
+  Move : MoveNodeResult;
+  Write : WriteNodeResult;
+  Mkdir : MkdirNodeResult;
+  Delete : DeleteNodeResult;
+  Append : WriteNodeResult;
 };
 type NodePublication = record {
   public_id : text;
@@ -499,7 +567,7 @@ type QueryContextRequest = record {
   namespace : opt text;
 };
 type RenameDatabaseRequest = record { name : text; database_id : text };
-type Result = variant { Ok : WriteNodeResult; Err : text };
+type Result = variant { Ok : WriteNodeResult; Err : NodeMutationError };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : InitialFreeDatabaseGrantStatus; Err : text };
 type Result_11 = variant { Ok : opt NodePublication; Err : text };
@@ -523,26 +591,33 @@ type Result_27 = variant { Ok : MarketPurchasePreview; Err : text };
 type Result_28 = variant { Ok : MarketOrder; Err : text };
 type Result_29 = variant { Ok : MemoryManifest; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_30 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_31 = variant { Ok : MoveNodeResult; Err : text };
-type Result_32 = variant { Ok : NodePublication; Err : text };
-type Result_33 = variant { Ok : CyclesPurchaseResult; Err : text };
-type Result_34 = variant { Ok : QueryContext; Err : text };
-type Result_35 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
-type Result_36 = variant { Ok : opt Node; Err : text };
-type Result_37 = variant { Ok : opt NodeContext; Err : text };
-type Result_38 = variant { Ok : opt PublicNode; Err : text };
-type Result_39 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_30 = variant { Ok : MkdirNodeResult; Err : NodeMutationError };
+type Result_31 = variant { Ok : MoveNodeResult; Err : NodeMutationError };
+type Result_32 = variant {
+  Ok : vec NodeMutationResult;
+  Err : NodeMutationError;
+};
+type Result_33 = variant { Ok : NodePublication; Err : text };
+type Result_34 = variant { Ok : CyclesPurchaseResult; Err : text };
+type Result_35 = variant { Ok : QueryContext; Err : text };
+type Result_36 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
+type Result_37 = variant { Ok : opt Node; Err : text };
+type Result_38 = variant { Ok : opt NodeContext; Err : text };
+type Result_39 = variant { Ok : opt PublicNode; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
-type Result_40 = variant { Ok : StorageBillingBatchResult; Err : text };
-type Result_41 = variant { Ok : SourceEvidence; Err : text };
-type Result_42 = variant { Ok : DatabaseMetadata; Err : text };
-type Result_43 = variant { Ok : WikiMetrics; Err : text };
-type Result_44 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_45 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_46 = variant { Ok : WriteSourceForGenerationResult; Err : text };
-type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
-type Result_6 = variant { Ok : EditNodeResult; Err : text };
+type Result_40 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_41 = variant { Ok : StorageBillingBatchResult; Err : text };
+type Result_42 = variant { Ok : SourceEvidence; Err : text };
+type Result_43 = variant { Ok : DatabaseMetadata; Err : text };
+type Result_44 = variant { Ok : WikiMetrics; Err : text };
+type Result_45 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_46 = variant { Ok : vec WriteNodeResult; Err : NodeMutationError };
+type Result_47 = variant {
+  Ok : WriteSourceForGenerationResult;
+  Err : NodeMutationError;
+};
+type Result_5 = variant { Ok : DeleteNodeResult; Err : NodeMutationError };
+type Result_6 = variant { Ok : EditNodeResult; Err : NodeMutationError };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
 type Result_8 = variant { Ok : FetchUpdatesResponse; Err : text };
 type Result_9 = variant { Ok : CyclesBillingConfig; Err : text };
@@ -729,32 +804,33 @@ service : (CyclesBillingConfig) -> {
   mkdir_node : (MkdirNodeRequest) -> (Result_30);
   move_node : (MoveNodeRequest) -> (Result_31);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_6);
+  mutate_nodes_batch : (MutateNodesBatchRequest) -> (Result_32);
   outgoing_links : (OutgoingLinksRequest) -> (Result_13) query;
-  publish_node : (PublishNodeRequest) -> (Result_32);
-  purchase_database_cycles : (DatabaseCyclesPurchaseRequest) -> (Result_33);
-  query_context : (QueryContextRequest) -> (Result_34) query;
-  query_database_sql_json : (text, text, nat32) -> (Result_35) query;
-  query_index_sql_json : (text, nat32) -> (Result_35) query;
-  read_node : (text, text) -> (Result_36) query;
-  read_node_context : (NodeContextRequest) -> (Result_37) query;
-  read_public_node : (text) -> (Result_38) query;
+  publish_node : (PublishNodeRequest) -> (Result_33);
+  purchase_database_cycles : (DatabaseCyclesPurchaseRequest) -> (Result_34);
+  query_context : (QueryContextRequest) -> (Result_35) query;
+  query_database_sql_json : (text, text, nat32) -> (Result_36) query;
+  query_index_sql_json : (text, nat32) -> (Result_36) query;
+  read_node : (text, text) -> (Result_37) query;
+  read_node_context : (NodeContextRequest) -> (Result_38) query;
+  read_public_node : (text) -> (Result_39) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_39) query;
-  search_nodes : (SearchNodesRequest) -> (Result_39) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_40) query;
+  search_nodes : (SearchNodesRequest) -> (Result_40) query;
   settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
-      Result_40,
+      Result_41,
     );
-  source_evidence : (SourceEvidenceRequest) -> (Result_41) query;
+  source_evidence : (SourceEvidenceRequest) -> (Result_42) query;
   status : (text) -> (Status) query;
   unpublish_node : (PublishNodeRequest) -> (Result_1);
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
-  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_42);
-  wiki_metrics : () -> (Result_43) query;
-  wiki_metrics_series : (nat32) -> (Result_44) query;
+  update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_43);
+  wiki_metrics : () -> (Result_44) query;
+  wiki_metrics_series : (nat32) -> (Result_45) query;
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_45);
+  write_nodes : (WriteNodesRequest) -> (Result_46);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_46,
+      Result_47,
     );
 }

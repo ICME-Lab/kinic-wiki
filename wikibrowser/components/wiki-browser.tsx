@@ -25,7 +25,7 @@ import { parseSearchOptions } from "@/lib/search-options";
 import { databaseRouteBase } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
-import { buildLocalImportWrites, loadExistingLocalImportNodes, prepareLocalImport, reconcileLocalImport, type LocalImportFile, type LocalImportMode } from "@/lib/local-import";
+import { buildLocalImportWrites, loadExistingLocalImportNodes, prepareLocalImport, reconcileLocalImport, summarizeLocalImportWrites, type LocalImportFile, type LocalImportMode } from "@/lib/local-import";
 import { folderIndexPath, isReservedFolderIndexName } from "@/lib/folder-index";
 import { wikiSeoTitle } from "@/lib/wiki-seo";
 import { DEFAULT_EXPLORER_SORT_ORDER, parseExplorerSortOrder, type ExplorerSortOrder } from "@/lib/child-sort";
@@ -566,7 +566,9 @@ function WikiBrowserContent() {
       if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
       if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
       const nodes = buildLocalImportWrites(plan, selectedReplacements);
-      if (plan.limitError || nodes.length === 0) return;
+      if (nodes.length === 0) return;
+      const { limitError } = summarizeLocalImportWrites(nodes);
+      if (limitError) throw new Error(limitError);
       setLocalImportDialog({ phase: "writing", plan });
       const { writeNodesAuthenticated } = await import("@/lib/vfs-client");
       const results = await writeNodesAuthenticated(canisterId, readIdentity, { databaseId, nodes });
@@ -657,6 +659,7 @@ function WikiBrowserContent() {
       fromPath: target.path,
       toPath: nextPath,
       expectedEtag: target.etag,
+      expectedTargetEtag: null,
       overwrite: false
     });
     invalidateBrowserCaches();
@@ -679,6 +682,7 @@ function WikiBrowserContent() {
       fromPath: target.path,
       toPath: nextPath,
       expectedEtag: target.etag,
+      expectedTargetEtag: null,
       overwrite: false
     });
     invalidateBrowserCaches();

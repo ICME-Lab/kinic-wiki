@@ -111,6 +111,7 @@ fn index_migrations_create_current_schema_once() {
         index_versions(&index_path),
         vec![
             INDEX_SCHEMA_VERSION_INITIAL.to_string(),
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
             INDEX_SCHEMA_VERSION_CURRENT.to_string()
         ]
     );
@@ -129,11 +130,21 @@ fn index_migrations_apply_node_publications_once() {
         .run_index_migrations()
         .expect("fresh index schema should create");
     let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute("DROP TABLE publication_mutation_recovery_items", params![])
+        .expect("recovery items table should drop");
+    conn.execute(
+        "DROP TABLE publication_mutation_recovery_batches",
+        params![],
+    )
+    .expect("recovery batches table should drop");
     conn.execute("DROP TABLE node_publications", params![])
         .expect("new table should drop");
     conn.execute(
-        "DELETE FROM schema_migrations WHERE version = ?1",
-        params![INDEX_SCHEMA_VERSION_CURRENT],
+        "DELETE FROM schema_migrations WHERE version IN (?1, ?2)",
+        params![
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+            INDEX_SCHEMA_VERSION_CURRENT
+        ],
     )
     .expect("new migration marker should delete");
     drop(conn);
@@ -149,6 +160,47 @@ fn index_migrations_apply_node_publications_once() {
         index_versions(&index_path),
         vec![
             INDEX_SCHEMA_VERSION_INITIAL.to_string(),
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
+            INDEX_SCHEMA_VERSION_CURRENT.to_string()
+        ]
+    );
+}
+
+#[test]
+fn index_migrations_apply_publication_recovery_from_002_once() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service
+        .run_index_migrations()
+        .expect("fresh index schema should create");
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute("DROP TABLE publication_mutation_recovery_items", params![])
+        .expect("recovery items table should drop");
+    conn.execute(
+        "DROP TABLE publication_mutation_recovery_batches",
+        params![],
+    )
+    .expect("recovery batches table should drop");
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE version = ?1",
+        params![INDEX_SCHEMA_VERSION_CURRENT],
+    )
+    .expect("recovery migration marker should delete");
+    drop(conn);
+
+    service
+        .run_index_migrations()
+        .expect("002 to 003 migration should apply");
+    service
+        .run_index_migrations()
+        .expect("003 migration should apply only once");
+
+    assert_eq!(
+        index_versions(&index_path),
+        vec![
+            INDEX_SCHEMA_VERSION_INITIAL.to_string(),
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
             INDEX_SCHEMA_VERSION_CURRENT.to_string()
         ]
     );

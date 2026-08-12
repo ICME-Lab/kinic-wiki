@@ -17,9 +17,18 @@ export type LoadState<T> = {
   loading: boolean;
 };
 export type PathLoadState<T> = LoadState<T> & { path: string };
+export type MutationCode = "EtagConflict" | "NotFound" | "Forbidden" | "WriteUnavailable" | "InvalidOperation";
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly hint: string | null = null, readonly code: string | null = null) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly hint: string | null = null,
+    readonly code: string | null = null,
+    readonly mutationCode: MutationCode | null = null,
+    readonly failedIndex: number | null = null,
+    readonly conflictPath: string | null = null
+  ) {
     super(message);
     this.name = "ApiError";
   }

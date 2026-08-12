@@ -28,7 +28,7 @@ lqfvd-m7ihy-e5dvc-gngvr-blzbt-pupeq-6t7ua-r7v4p-bvqjw-ea7gl-4qe
 
 The authoritative canister mapping is `.icp/data/mappings/staging.ids.json`. The Worker configuration is `wikibrowser/wrangler.jsonc`, and the canister initialization and deploy guard are in `scripts/staging/deploy_wiki.sh`.
 
-The staging Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`. That command fetches `origin/main`, refuses a HEAD that does not contain the fetched commit, rejects unresolved conflicts, and verifies the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
+The staging Browser Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`. The staging MCP Worker must be deployed only through `pnpm deploy:staging` from `workers/wiki-mcp/`; use its separate `pnpm deploy:staging:v4-migration` command only for the one-time V3-to-V4 Durable Object migration. These commands fetch `origin/main`, refuse a HEAD that does not contain the fetched commit, reject unresolved conflicts, and verify the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
 
 ## Isolation and Safety
 
@@ -68,7 +68,13 @@ KINIC_VFS_STAGING_II_ORIGIN=https://kinic-wiki-browser-staging.hude.workers.dev 
 
 ## Deploy
 
-For routine updates, deploy the canister before the Worker. This order lets the existing Worker continue to use the older response shape while ensuring that a new Worker never expects a Candid field that the deployed canister does not yet return.
+For routine backward-compatible updates, deploy the canister before the Worker. The structured node-mutation error release is an explicit exception: it replaces mutation `Err : text` with `Err : NodeMutationError`. Old mutation decoders are incompatible with the new Candid result type.
+
+The staging canister is used directly by the staging Wiki Browser and staging MCP Worker. Deploy those three runtimes together. Do not deploy the production-only Skill Registry, Wiki Generator, iOS app, or Wiki Clipper as part of this staging rollout; they remain pinned to the production canister. A Rust CLI or another Candid client can target staging explicitly, so use a binary built from this branch and confirm that no known operator is using an older build against the staging canister.
+
+For this breaking rollout, first build the canister and both staging Workers from the same revision and stop mutation smoke traffic. Upgrade the staging canister, deploy the staging Wiki Browser, deploy the staging MCP Worker, then run the exact 10-tool contract and write smoke checks with the matching CLI/client build. Resume staging writes only after those checks pass.
+
+Before promoting the same Candid change to the production canister, complete the coordinated production checklist in [`RELEASE.md`](RELEASE.md). That checklist includes the Wiki Clipper, which also decodes node-mutation results, plus externally maintained Candid clients that cannot be discovered from this repository.
 
 Upgrade the existing canister:
 
@@ -117,6 +123,22 @@ KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
 ```
 
 The dirty-worktree acknowledgement does not bypass the fetched `origin/main` ancestry check, unresolved-conflict check, or public-node regression check.
+
+Deploy the staging MCP Worker from `workers/wiki-mcp/`. For an environment still bound to `McpAuthStateV3`, run the migration command exactly once:
+
+```bash
+cd workers/wiki-mcp
+KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging:v4-migration
+```
+
+The command dry-runs both configurations, deploys a transitional version without the `MCP_AUTH_STATE` binding, and immediately deploys V4. Authenticated MCP requests can return `503` during that short interval, and all V3 OAuth sessions become invalid. If the final phase fails, do not roll back to V3; fix forward with the retry command printed by the script.
+
+After V4 exists, use only the normal one-phase command:
+
+```bash
+cd workers/wiki-mcp
+KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
+```
 
 ## Post-deploy Verification
 

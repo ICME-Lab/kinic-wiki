@@ -337,6 +337,7 @@ Common read and write commands:
 - `delete-node --path /Knowledge/file.md`
 - `delete-tree --path /Knowledge/obsolete-scope --json`
 - `move-node --from-path /Knowledge/a.md --to-path /Knowledge/b.md`
+- `move-node --from-path /Knowledge/a.md --to-path /Knowledge/b.md --overwrite --expected-target-etag <etag>`
 - `glob-nodes "**/*.md" --path /Knowledge --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
@@ -356,6 +357,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ```
 
 `kind` is `file`, `source`, or `folder`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required. Folder writes are create-only and idempotent; use empty `content`, `metadata_json: "{}"`, and omit `expected_etag`.
+For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

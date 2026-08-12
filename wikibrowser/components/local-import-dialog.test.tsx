@@ -53,6 +53,26 @@ describe("LocalImportDialog", () => {
     expect([...onImport.mock.calls[0][0]]).toEqual(["/Knowledge/notes/a.md"]);
   });
 
+  it("updates the write limit after replacement selection", async () => {
+    const prepared = await prepareLocalImport([
+      source("small.md", "small"),
+      source("large.md", "x".repeat(1_500_000))
+    ], "/Knowledge", "files");
+    const plan = reconcileLocalImport(prepared, new Map<string, ChildNode>([
+      ["/Knowledge/large.md", child("/Knowledge/large.md", "file", "etag-large")]
+    ]));
+
+    render(<LocalImportDialog state={{ phase: "ready", plan }} onCancel={vi.fn()} onImport={vi.fn()} />);
+
+    expect(screen.queryByText(/encoded write bytes/)).toBeNull();
+    expect((screen.getByRole("button", { name: "Import 1" }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("checkbox"));
+
+    expect(screen.getByText(/encoded write bytes/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Import 2" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("shows file-specific copy for a file selection", async () => {
     const prepared = await prepareLocalImport([source("guide.md", "# Guide")], "/Knowledge", "files");
     const plan = reconcileLocalImport(prepared, new Map());

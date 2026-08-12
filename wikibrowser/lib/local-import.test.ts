@@ -7,6 +7,7 @@ import {
   loadExistingLocalImportNodes,
   prepareLocalImport,
   reconcileLocalImport,
+  summarizeLocalImportWrites,
   type LocalImportFile
 } from "@/lib/local-import";
 import type { ChildNode } from "@/lib/types";
@@ -139,17 +140,44 @@ describe("local import", () => {
     ]);
   });
 
-  it("rejects the maximum node count before reading files", async () => {
+  it("allows 100 writes when the selected root already exists", async () => {
     const many = Array.from({ length: 100 }, (_, index) => source(`notes/${index}.md`, "x"));
-    const readers = many.map((file) => vi.spyOn(file, "text"));
+    const prepared = await prepareLocalImport(many, "/Knowledge", "folder");
+    const plan = reconcileLocalImport(prepared, new Map([
+      ["/Knowledge/notes", child("/Knowledge/notes", "directory")]
+    ]));
+    const writes = buildLocalImportWrites(plan, new Set());
 
-    await expect(prepareLocalImport(many, "/Knowledge", "folder")).rejects.toThrow("can produce 101 nodes; the limit is 100");
-    expect(readers.every((reader) => reader.mock.calls.length === 0)).toBe(true);
+    expect(writes).toHaveLength(100);
+    expect(summarizeLocalImportWrites(writes)).toMatchObject({ nodeCount: 100, limitError: null });
+
+    const allNewWrites = buildLocalImportWrites(reconcileLocalImport(prepared, new Map()), new Set());
+    expect(allNewWrites).toHaveLength(101);
+    expect(summarizeLocalImportWrites(allNewWrites).limitError).toContain("limit is 100");
   });
 
   it("reports the encoded write limit after reading files", async () => {
-    const tooLarge = await prepareLocalImport([source("notes/large.md", "x".repeat(1_500_000))], "/Knowledge", "folder");
-    expect(tooLarge.limitError).toContain("encoded write bytes");
+    const prepared = await prepareLocalImport([source("notes/large.md", "x".repeat(1_500_000))], "/Knowledge", "folder");
+    const plan = reconcileLocalImport(prepared, new Map());
+    const summary = summarizeLocalImportWrites(buildLocalImportWrites(plan, new Set()));
+
+    expect(summary.limitError).toContain("encoded write bytes");
+  });
+
+  it("applies the byte limit after replacement selection", async () => {
+    const prepared = await prepareLocalImport([
+      source("small.md", "small"),
+      source("large.md", "x".repeat(1_500_000))
+    ], "/Knowledge", "files");
+    const plan = reconcileLocalImport(prepared, new Map([
+      ["/Knowledge/large.md", child("/Knowledge/large.md", "file", "etag-large")]
+    ]));
+
+    const withoutReplacement = buildLocalImportWrites(plan, new Set());
+    expect(summarizeLocalImportWrites(withoutReplacement).limitError).toBeNull();
+
+    const withReplacement = buildLocalImportWrites(plan, new Set(["/Knowledge/large.md"]));
+    expect(summarizeLocalImportWrites(withReplacement).limitError).toContain("encoded write bytes");
   });
 
   it("enforces aggregate source limits before reading any candidate", async () => {

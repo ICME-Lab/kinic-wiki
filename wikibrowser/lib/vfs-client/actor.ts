@@ -16,7 +16,7 @@ import type {
 } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
-import type { RawDatabaseMetadata, RawDatabaseSummary, RawIndexSqlJsonQueryResult, RawLinkEdge, RawWikiMetrics, RawWikiMetricsPoint, Variant, VfsActor } from "./raw-types";
+import type { RawDatabaseMetadata, RawDatabaseSummary, RawIndexSqlJsonQueryResult, RawLinkEdge, RawNodeMutationError, RawWikiMetrics, RawWikiMetricsPoint, Variant, VfsActor } from "./raw-types";
 
 const DEFAULT_WIKI_IC_HOST = "https://icp0.io";
 
@@ -101,6 +101,32 @@ export async function callVfs<T>(operation: () => Promise<T>): Promise<T> {
 export function throwCanisterError(message: string): never {
   const error = classifyCanisterError(message);
   throw new ApiError(error.error, error.status ?? 400, error.hint, error.code);
+}
+
+export function throwNodeMutationError(error: RawNodeMutationError): never {
+  const mutation = mutationErrorMetadata(error.code);
+  throw new ApiError(
+    error.message,
+    mutation.status,
+    "The wiki canister rejected this mutation.",
+    mutation.code,
+    mutation.mutationCode,
+    error.failed_index[0] ?? null,
+    error.conflict_path[0] ?? null
+  );
+}
+
+function mutationErrorMetadata(code: Variant): {
+  mutationCode: "EtagConflict" | "NotFound" | "Forbidden" | "WriteUnavailable" | "InvalidOperation";
+  status: number;
+  code: "etag_conflict" | "node_not_found" | "forbidden" | "write_unavailable" | "invalid_operation";
+} {
+  if ("EtagConflict" in code) return { mutationCode: "EtagConflict", status: 409, code: "etag_conflict" };
+  if ("NotFound" in code) return { mutationCode: "NotFound", status: 404, code: "node_not_found" };
+  if ("Forbidden" in code) return { mutationCode: "Forbidden", status: 403, code: "forbidden" };
+  if ("WriteUnavailable" in code) return { mutationCode: "WriteUnavailable", status: 503, code: "write_unavailable" };
+  if ("InvalidOperation" in code) return { mutationCode: "InvalidOperation", status: 400, code: "invalid_operation" };
+  throw new ApiError("Unknown node mutation error code.", 502, "The browser and canister mutation contracts may be out of sync.", "wiki_api_version_mismatch");
 }
 
 

@@ -4,10 +4,13 @@ import {
   generateIiKey,
   IiDelegationError,
   IiRegistrationError,
+  IiSessionEndedError,
+  mintKinicDelegation,
   mintKinicIdentity,
   PER_APP_DELEGATION_TTL_NS,
   redeemRegistration,
   resolveKinicMcpTargetOrigin,
+  restoreKinicIdentity,
   restoreRegistrationIdentity,
   type InternetIdentityActor
 } from "../src/auth/internet-identity.js";
@@ -21,6 +24,8 @@ import type { RuntimeEnv } from "../src/vfs.js";
 
 const KINIC_CANISTER_ID = "6emaw-iyaaa-aaaay-aacka-cai";
 const KINIC_MCP_TARGET_ORIGIN = `https://${KINIC_CANISTER_ID}.ic0.app`;
+const STAGING_CANISTER_ID = "3ryrw-kyaaa-aaaaf-qgxpq-cai";
+const STAGING_MCP_TARGET_ORIGIN = `https://${STAGING_CANISTER_ID}.ic0.app`;
 
 describe("Internet Identity MCP protocol", () => {
   it("restores an actual serialized two-hop registration delegation", async () => {
@@ -93,7 +98,7 @@ describe("Internet Identity MCP protocol", () => {
       const actor = actorStub();
       const appKey = generateIiKey();
       actor.mcp_prepare_delegation = vi.fn().mockImplementation(
-        async (_origin, _account, publicKey) => ({
+        async (_origin, _account, _publicKey) => ({
           Ok: { user_key: appKey.getPublicKey().toDer(), expiration: 20_000_000_000n, account_number: [] }
         })
       );
@@ -140,6 +145,49 @@ describe("Internet Identity MCP protocol", () => {
     });
     await expect(mintKinicIdentity(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, resultFailure)).rejects.toMatchObject(
       new IiDelegationError("accounts_result")
+    );
+  });
+
+  it("distinguishes II revocation from a temporary delegation failure", async () => {
+    const revoked = actorStub();
+    revoked.mcp_get_accounts = vi.fn().mockResolvedValue({
+      Err: { Unauthorized: generateIiKey().getPrincipal() }
+    });
+    await expect(mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, revoked)).rejects.toBeInstanceOf(
+      IiSessionEndedError
+    );
+
+    const temporary = actorStub();
+    temporary.mcp_prepare_delegation = vi.fn().mockRejectedValue(new Error("temporary upstream failure"));
+    await expect(mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, temporary)).rejects.toMatchObject(
+      new IiDelegationError("prepare_call")
+    );
+  });
+
+  it("serializes and restores one cached per-app delegation for its exact origin", async () => {
+    const actor = actorStub();
+    const rootKey = generateIiKey();
+    const expiration = BigInt(Date.now() + 5 * 60 * 1000) * 1_000_000n;
+    actor.mcp_prepare_delegation = vi.fn().mockResolvedValue({
+      Ok: { user_key: rootKey.getPublicKey().toDer(), expiration, account_number: [] }
+    });
+    actor.mcp_get_delegation = vi.fn().mockImplementation(async (_origin, _account, publicKey) => ({
+      Ok: {
+        delegation: { pubkey: publicKey, expiration, targets: [], permissions: [] },
+        signature: new Uint8Array(64)
+      }
+    }));
+
+    const minted = await mintKinicDelegation(generateIiKey(), KINIC_MCP_TARGET_ORIGIN, actor);
+    const restored = restoreKinicIdentity(minted.material, KINIC_MCP_TARGET_ORIGIN, Date.now());
+
+    expect(restored.getPrincipal().toText()).toBe(rootKey.getPrincipal().toText());
+    expect(minted.material.expiresAt).toBe(Number(expiration / 1_000_000n));
+    expect(() => restoreKinicIdentity(minted.material, STAGING_MCP_TARGET_ORIGIN, Date.now())).toThrowError(
+      new IiDelegationError("identity_assembly")
+    );
+    expect(() => restoreKinicIdentity(minted.material, KINIC_MCP_TARGET_ORIGIN, minted.material.expiresAt)).toThrowError(
+      new IiDelegationError("identity_assembly")
     );
   });
 
@@ -199,18 +247,18 @@ describe("Internet Identity MCP protocol", () => {
 
 describe("staging authentication boundary", () => {
   const stagingEnv = {
-    KINIC_WIKI_CANISTER_ID: KINIC_CANISTER_ID,
-    KINIC_WIKI_MCP_TARGET_ORIGIN: KINIC_MCP_TARGET_ORIGIN,
-    MCP_ACCESS_POLICY: "private_opt_in",
+    KINIC_WIKI_CANISTER_ID: STAGING_CANISTER_ID,
+    KINIC_WIKI_MCP_TARGET_ORIGIN: STAGING_MCP_TARGET_ORIGIN,
+    MCP_ACCESS_POLICY: "private_required",
     MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
     MCP_KEY_ENCRYPTION_KEY: "test-key",
     MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],
     MCP_REGISTRATION_RATE_LIMIT: {} as RuntimeEnv["MCP_REGISTRATION_RATE_LIMIT"]
   } satisfies RuntimeEnv;
 
-  it("enables private opt-in only on the canonical staging origin", async () => {
+  it("enables required private access only on the canonical staging origin", async () => {
     expect(authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), stagingEnv)).toBe(
-      "private_opt_in"
+      "private_required"
     );
 
     const mismatchedMode = authenticationMode(
@@ -244,7 +292,7 @@ describe("staging authentication boundary", () => {
     const invalidTargetMode = authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
       KINIC_WIKI_CANISTER_ID: KINIC_CANISTER_ID,
       KINIC_WIKI_MCP_TARGET_ORIGIN: `https://${KINIC_CANISTER_ID}.icp0.io`,
-      MCP_ACCESS_POLICY: "private_opt_in",
+      MCP_ACCESS_POLICY: "private_required",
       MCP_PUBLIC_ORIGIN: "https://wiki-mcp-staging.kinic.xyz",
       MCP_KEY_ENCRYPTION_KEY: "test-key",
       MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],

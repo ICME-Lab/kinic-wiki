@@ -202,6 +202,7 @@ async fn dispatch_tool_call_impl(
                         from_path: args.from_path,
                         to_path: args.to_path,
                         expected_etag: args.expected_etag,
+                        expected_target_etag: args.expected_target_etag,
                         overwrite: args.overwrite.unwrap_or(false)
                     })
                     .await?
@@ -520,7 +521,7 @@ fn mkdir_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"}},"required":["database_id","path"],"additionalProperties":false})
 }
 fn move_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"from_path":{"type":"string"},"to_path":{"type":"string"},"expected_etag":{"type":"string"},"overwrite":{"type":"boolean"}},"required":["database_id","from_path","to_path"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"from_path":{"type":"string"},"to_path":{"type":"string"},"expected_etag":{"type":"string"},"expected_target_etag":{"type":"string"},"overwrite":{"type":"boolean"}},"required":["database_id","from_path","to_path"],"additionalProperties":false})
 }
 fn glob_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"pattern":{"type":"string"},"path":{"type":"string"},"node_type":{"type":"string","enum":["file","directory","any"]}},"required":["database_id","pattern"],"additionalProperties":false})
@@ -618,6 +619,7 @@ struct MoveArgs {
     from_path: String,
     to_path: String,
     expected_etag: Option<String>,
+    expected_target_etag: Option<String>,
     overwrite: Option<bool>,
 }
 #[derive(Deserialize)]

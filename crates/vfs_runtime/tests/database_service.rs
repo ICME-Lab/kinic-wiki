@@ -1117,7 +1117,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
             100,
         )
         .expect_err("reader should not write source for generation");
-    assert!(reader.contains("lacks required database role"));
+    assert!(reader.message.contains("lacks required database role"));
 
     let written = service
         .write_source_for_generation(
@@ -1251,7 +1251,11 @@ fn source_for_generation_requires_default_llm_writer() {
             102,
         )
         .expect_err("revoked LLM writer should fail source write authorization");
-    assert!(write.contains("LLM writer principal lacks writer access"));
+    assert!(
+        write
+            .message
+            .contains("LLM writer principal lacks writer access")
+    );
 }
 
 #[test]
@@ -1698,7 +1702,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 fn pending_database_activation_retry_reuses_staged_mount_after_migration_failure() {
     let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database("Retry activation", "owner", 1)
+        .reserve_pending_generated_database("Retry activation", "owner", 1_701_234_567_890)
         .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
@@ -1796,12 +1800,13 @@ fn pending_database_activation_seeds_all_store_roots() {
                 from_path: "/Sources/source-capture-requests".to_string(),
                 to_path: "/Sources/source-capture-requests-renamed".to_string(),
                 expected_etag: Some(request_root.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             10,
         )
         .expect_err("source capture request root move should fail");
-    assert!(move_error.contains("cannot move protected folder"));
+    assert!(move_error.message.contains("cannot move protected folder"));
     let delete_error = service
         .delete_node(
             "owner",
@@ -1814,7 +1819,11 @@ fn pending_database_activation_seeds_all_store_roots() {
             11,
         )
         .expect_err("source capture request root delete should fail");
-    assert!(delete_error.contains("cannot delete protected folder"));
+    assert!(
+        delete_error
+            .message
+            .contains("cannot delete protected folder")
+    );
 }
 
 #[test]
@@ -3100,6 +3109,7 @@ fn write_node_preserves_metadata_json() {
                 from_path: "/Wiki/project/manual.md".to_string(),
                 to_path: "/Wiki/project/moved.md".to_string(),
                 expected_etag: Some(manual.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             12,
@@ -3229,6 +3239,7 @@ fn logical_size_refreshes_after_node_mutations() {
                 from_path: "/Knowledge/a.md".to_string(),
                 to_path: "/Knowledge/b.md".to_string(),
                 expected_etag: Some(edited.node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             5,
@@ -3516,6 +3527,7 @@ fn move_node_keeps_source_kind_without_schema_validation() {
                 from_path: "/Sources/web/abc.md".to_string(),
                 to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some(source.node.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             4,

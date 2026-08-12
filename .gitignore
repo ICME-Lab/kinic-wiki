@@ -21,6 +21,10 @@ AGENTS.md
 **/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 **/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/
 
+# Android local state
+/mobile/android/.gradle/
+/mobile/android/.kotlin/
+
 # Rust build artifacts
 /target/
 **/target/

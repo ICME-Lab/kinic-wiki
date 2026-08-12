@@ -582,13 +582,15 @@ impl VfsService {
                 }
                 continue;
             }
-            store.mkdir_node(
-                MkdirNodeRequest {
-                    database_id: meta.database_id.clone(),
-                    path: seed.path.to_string(),
-                },
-                now,
-            )?;
+            store
+                .mkdir_node(
+                    MkdirNodeRequest {
+                        database_id: meta.database_id.clone(),
+                        path: seed.path.to_string(),
+                    },
+                    now,
+                )
+                .map_err(|error| error.to_string())?;
         }
         Ok(())
     }

@@ -3,6 +3,7 @@
 // Why: source capture state tests need VFS, D1, Queue, and fetch fixtures without bloating the spec file.
 import type { RuntimeEnv } from "../src/env.js";
 import { parseSourceCaptureRequest } from "../src/source-capture.js";
+import { NodeMutationError } from "../src/vfs.js";
 import type {
   ExportSnapshotPage,
   FetchUpdatesPage,
@@ -121,7 +122,12 @@ export class TestVfsClient implements VfsClient {
     const etag = request.kind === "source" ? (this.sourceWriteEtags.shift() ?? "etag-source-write") : `etag-file-${request.path}-${request.content.length}`;
     if (this.failExpectedEtagOnce && request.kind === "file") {
       this.failExpectedEtagOnce = false;
-      throw new Error(`expected_etag does not match current etag: ${request.path}`);
+      throw new NodeMutationError(
+        "etag_conflict",
+        null,
+        request.path,
+        `expected_etag does not match current etag: ${request.path}`
+      );
     }
     if (request.kind === "source") {
       this.sourceWrites += 1;

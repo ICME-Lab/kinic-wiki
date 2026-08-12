@@ -74,6 +74,61 @@ test("saveEvidenceSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("saveEvidenceSource surfaces structured folder mutation errors", async () => {
+  let writeCalled = false;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return { Ok: [] };
+      },
+      async mkdir_node() {
+        return { Err: nodeMutationError("A file already occupies /Sources") };
+      },
+      async write_source_for_generation() {
+        writeCalled = true;
+        throw new Error("write should not be called");
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => saveEvidenceSource(evidenceSource(), config()),
+      /A file already occupies \/Sources/
+    );
+    assert.equal(writeCalled, false);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveEvidenceSource surfaces structured source mutation errors", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return { Ok: [] };
+      },
+      async mkdir_node(request) {
+        return { Ok: { created: true, path: request.path } };
+      },
+      async write_source_for_generation() {
+        return { Err: nodeMutationError("expected_etag does not match current etag") };
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => saveEvidenceSource(evidenceSource(), config()),
+      /expected_etag does not match current etag/
+    );
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("saveEvidenceSource refuses a different web URL that occupied the path after lookup", async () => {
   let writeCalled = false;
   setOffscreenDepsForTest({
@@ -654,6 +709,15 @@ function sourceWriteActor({ write = null } = {}) {
         }
       };
     }
+  };
+}
+
+function nodeMutationError(message) {
+  return {
+    code: { InvalidOperation: null },
+    message,
+    failed_index: [],
+    conflict_path: []
   };
 }
 

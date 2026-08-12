@@ -30,14 +30,14 @@ enum VFSCandidDecoder {
     }
 
     static func decodeWriteNodeResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .record = ok else {
             throw VFSCandidError.invalidPayload("expected write_node result")
         }
     }
 
     static func decodeWriteNodesResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .vector(let values) = ok else {
             throw VFSCandidError.invalidPayload("expected write_nodes result")
         }
@@ -49,7 +49,7 @@ enum VFSCandidDecoder {
     }
 
     static func decodeMkdirNodeResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .record = ok else {
             throw VFSCandidError.invalidPayload("expected mkdir_node result")
         }
@@ -93,7 +93,7 @@ enum VFSCandidDecoder {
     }
 
     static func decodeDeleteNodeResult(_ data: Data) throws -> String {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .record(let fields) = ok else {
             throw VFSCandidError.invalidPayload("expected delete_node result")
         }
@@ -264,6 +264,51 @@ enum VFSCandidDecoder {
             throw VFSCandidError.invalidPayload("unknown result variant")
         }
         return value
+    }
+
+    private static func decodeMutationResult(_ data: Data) throws -> Value {
+        var parser = Parser(data: data)
+        let values = try parser.parse()
+        guard values.count == 1,
+              case .variant(let variantLabel, let value) = values[0] else {
+            throw VFSCandidError.invalidPayload("expected mutation result variant")
+        }
+        if variantLabel == label("Err") {
+            guard case .record(let fields) = value else {
+                throw VFSCandidError.invalidPayload("expected mutation Err record")
+            }
+            guard let codeValue = fields[label("code")],
+                  case .variant(let codeLabel, _) = codeValue else {
+                throw VFSCandidError.invalidPayload("missing mutation error code")
+            }
+            throw VFSCandidError.nodeMutationRejected(VFSNodeMutationFailure(
+                code: try nodeMutationErrorCode(from: codeLabel),
+                message: try text(fields, "message"),
+                failedIndex: try optionalNat32(fields, "failed_index"),
+                conflictPath: try optionalText(fields, "conflict_path")
+            ))
+        }
+        guard variantLabel == label("Ok") else {
+            throw VFSCandidError.invalidPayload("unknown mutation result variant")
+        }
+        return value
+    }
+
+    private static func nodeMutationErrorCode(from value: UInt32) throws -> VFSNodeMutationErrorCode {
+        switch value {
+        case label("EtagConflict"):
+            .etagConflict
+        case label("NotFound"):
+            .notFound
+        case label("Forbidden"):
+            .forbidden
+        case label("WriteUnavailable"):
+            .writeUnavailable
+        case label("InvalidOperation"):
+            .invalidOperation
+        default:
+            throw VFSCandidError.invalidPayload("unknown mutation error code")
+        }
     }
 
     private static func databaseSummary(from value: Value) throws -> DatabaseSummary {
@@ -532,6 +577,20 @@ enum VFSCandidDecoder {
             throw VFSCandidError.invalidPayload("optional field \(name) is not nat64")
         }
         return nat64
+    }
+
+    private static func optionalNat32(_ fields: [UInt32: Value], _ name: String) throws -> UInt32? {
+        guard let value = fields[label(name)],
+              case .opt(let child) = value else {
+            throw VFSCandidError.invalidPayload("missing optional nat32 field \(name)")
+        }
+        guard let child else {
+            return nil
+        }
+        guard case .nat32(let nat32) = child else {
+            throw VFSCandidError.invalidPayload("optional field \(name) is not nat32")
+        }
+        return nat32
     }
 
     private static func textVector(_ fields: [UInt32: Value], _ name: String) throws -> [String] {

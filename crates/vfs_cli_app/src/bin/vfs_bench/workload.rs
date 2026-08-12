@@ -566,6 +566,7 @@ where
                 from_path: state.current_path.clone(),
                 to_path,
                 expected_etag: Some(state.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             };
             let started_at = Instant::now();
@@ -777,6 +778,7 @@ where
                 from_path: state.current_path.clone(),
                 to_path,
                 expected_etag: Some(state.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             };
             let started_at = Instant::now();

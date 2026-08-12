@@ -10,6 +10,7 @@ import {
   LOCAL_IMPORT_PDF_TOTAL_BYTE_LIMIT,
   LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT,
   LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT,
+  summarizeLocalImportWrites,
   type LocalImportMode,
   type ReconciledLocalImport
 } from "@/lib/local-import";
@@ -36,6 +37,7 @@ export function LocalImportDialog({
   useEffect(() => setReplacements(new Set()), [plan?.mode, plan?.navigationPath]);
 
   const writes = useMemo(() => plan ? buildLocalImportWrites(plan, replacements) : [], [plan, replacements]);
+  const writeSummary = useMemo(() => summarizeLocalImportWrites(writes), [writes]);
   const conflictCount = plan?.entries.filter((entry) => entry.status === "conflict").length ?? 0;
   const blockedCount = plan?.entries.filter((entry) => entry.status === "blocked").length ?? 0;
   const newFolderCount = plan?.entries.filter((entry) => entry.kind === "folder" && entry.status === "new").length ?? 0;
@@ -44,7 +46,7 @@ export function LocalImportDialog({
   const destination = plan?.destinationDirectory ?? ("destinationDirectory" in state ? state.destinationDirectory : "");
   const mode = plan?.mode ?? ("mode" in state ? state.mode : "folder");
   const title = mode === "folder" ? "Import folder" : "Import files";
-  const cannotImport = !plan || Boolean(plan.limitError) || writes.length === 0 || state.phase === "writing";
+  const cannotImport = !plan || Boolean(writeSummary.limitError) || writes.length === 0 || state.phase === "writing";
 
   return (
     <dialog
@@ -85,10 +87,10 @@ export function LocalImportDialog({
                 <Metric label="Markdown" value={plan.markdownCount} />
                 <Metric label="PDF converted" value={plan.pdfCount} />
                 <Metric label="New folders" value={newFolderCount} />
-                <Metric label="Encoded write" value={formatBytes(plan.inputBytes)} />
+                <Metric label="Encoded write" value={formatBytes(writeSummary.inputBytes)} />
               </div>
 
-              {plan.limitError ? <Notice tone="error">{plan.limitError}</Notice> : null}
+              {writeSummary.limitError ? <Notice tone="error">{writeSummary.limitError}</Notice> : null}
               {conflictCount > 0 ? <Notice tone="warning">{conflictCount} existing file{conflictCount === 1 ? "" : "s"} will be kept unless replacement is selected.</Notice> : null}
               {blockedCount > 0 ? <Notice tone="error">{blockedCount} path{blockedCount === 1 ? " is" : "s are"} blocked by an incompatible existing node.</Notice> : null}
 

@@ -342,6 +342,7 @@ pub async fn run_vfs_command(
             from_path,
             to_path,
             expected_etag,
+            expected_target_etag,
             overwrite,
             json,
         } => {
@@ -351,6 +352,7 @@ pub async fn run_vfs_command(
                     from_path,
                     to_path,
                     expected_etag,
+                    expected_target_etag,
                     overwrite,
                 })
                 .await?;

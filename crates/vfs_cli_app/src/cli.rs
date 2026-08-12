@@ -442,6 +442,8 @@ pub enum Command {
         to_path: String,
         #[arg(long, help = "Reject the move if the current node etag differs")]
         expected_etag: Option<String>,
+        #[arg(long, help = "Required to overwrite an existing target node")]
+        expected_target_etag: Option<String>,
         #[arg(long)]
         overwrite: bool,
         #[arg(long)]
@@ -1198,12 +1200,14 @@ impl Command {
                 from_path,
                 to_path,
                 expected_etag,
+                expected_target_etag,
                 overwrite,
                 json,
             } => Some(VfsCommand::MoveNode {
                 from_path: from_path.clone(),
                 to_path: to_path.clone(),
                 expected_etag: expected_etag.clone(),
+                expected_target_etag: expected_target_etag.clone(),
                 overwrite: *overwrite,
                 json: *json,
             }),

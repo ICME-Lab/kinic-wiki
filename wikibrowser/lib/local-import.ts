@@ -37,6 +37,9 @@ export type PreparedLocalImport = {
   excluded: LocalImportExclusion[];
   markdownCount: number;
   pdfCount: number;
+};
+
+export type LocalImportWriteSummary = {
   nodeCount: number;
   inputBytes: number;
   limitError: string | null;
@@ -113,7 +116,7 @@ export async function prepareLocalImport(
     candidates.push({ file, sourcePath, targetPath, extension });
   }
 
-  validateLocalImportPreflight(mode, rootPath, candidates);
+  validateLocalImportSourceTotals(candidates);
 
   const candidateGroups = new Map<string, typeof candidates>();
   for (const candidate of candidates) {
@@ -154,8 +157,6 @@ export async function prepareLocalImport(
   const folders = mode === "folder" && rootPath
     ? importedFolderPaths(rootPath, prepared.map((file) => file.targetPath))
     : [];
-  const nodeCount = folders.length + prepared.length;
-  const inputBytes = estimateImportInputBytes(folders, prepared);
   const navigationPath = mode === "folder"
     ? rootPath ?? destinationDirectory
     : prepared.length === 1 ? prepared[0].targetPath : destinationDirectory;
@@ -168,12 +169,7 @@ export async function prepareLocalImport(
     files: prepared.sort((left, right) => left.targetPath.localeCompare(right.targetPath)),
     excluded: excluded.sort((left, right) => left.sourcePath.localeCompare(right.sourcePath)),
     markdownCount: prepared.filter((file) => file.format === "markdown").length,
-    pdfCount: prepared.filter((file) => file.format === "pdf").length,
-    nodeCount,
-    inputBytes,
-    limitError: inputBytes > LOCAL_IMPORT_BYTE_LIMIT
-      ? `This import needs ${inputBytes.toLocaleString()} encoded write bytes; the limit is ${LOCAL_IMPORT_BYTE_LIMIT.toLocaleString()}.`
-      : null
+    pdfCount: prepared.filter((file) => file.format === "pdf").length
   };
 }
 
@@ -228,6 +224,20 @@ export function buildLocalImportWrites(importPlan: ReconciledLocalImport, replac
         });
 }
 
+export function summarizeLocalImportWrites(writes: WriteNodeItem[]): LocalImportWriteSummary {
+  const nodeCount = writes.length;
+  const inputBytes = estimateImportInputBytes(writes);
+  return {
+    nodeCount,
+    inputBytes,
+    limitError: nodeCount > LOCAL_IMPORT_NODE_LIMIT
+      ? `This import needs ${nodeCount} nodes; the limit is ${LOCAL_IMPORT_NODE_LIMIT}.`
+      : inputBytes > LOCAL_IMPORT_BYTE_LIMIT
+        ? `This import needs ${inputBytes.toLocaleString()} encoded write bytes; the limit is ${LOCAL_IMPORT_BYTE_LIMIT.toLocaleString()}.`
+        : null
+  };
+}
+
 export async function loadExistingLocalImportNodes(
   prepared: PreparedLocalImport,
   listChildrenAt: (path: string) => Promise<ChildNode[]>,
@@ -253,18 +263,9 @@ export async function loadExistingLocalImportNodes(
   return existing;
 }
 
-function validateLocalImportPreflight(
-  mode: LocalImportMode,
-  rootPath: string | null,
+function validateLocalImportSourceTotals(
   candidates: Array<{ file: LocalImportFile; sourcePath: string; targetPath: string; extension: "md" | "pdf" }>
 ): void {
-  const targetPaths = [...new Set(candidates.map((candidate) => candidate.targetPath))];
-  const folderCount = mode === "folder" && rootPath ? importedFolderPaths(rootPath, targetPaths).length : 0;
-  const maximumNodeCount = folderCount + targetPaths.length;
-  if (maximumNodeCount > LOCAL_IMPORT_NODE_LIMIT) {
-    throw new Error(`This import can produce ${maximumNodeCount} nodes; the limit is ${LOCAL_IMPORT_NODE_LIMIT}.`);
-  }
-
   const sourceBytes = candidates.reduce((total, candidate) => total + candidate.file.size, 0);
   if (sourceBytes > LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT) {
     throw new Error(`Selected source files total ${sourceBytes.toLocaleString()} bytes; the limit is ${LOCAL_IMPORT_SOURCE_TOTAL_BYTE_LIMIT.toLocaleString()}.`);
@@ -323,14 +324,13 @@ function importedFolderPaths(rootPath: string, filePaths: string[]): string[] {
   return [...folders].sort((left, right) => pathDepth(left) - pathDepth(right) || left.localeCompare(right));
 }
 
-function estimateImportInputBytes(folders: string[], files: PreparedImportFile[]): number {
+function estimateImportInputBytes(writes: WriteNodeItem[]): number {
   const encoder = new TextEncoder();
-  return folders.reduce((total, path) => total + encoder.encode(path).byteLength + 2, 0)
-    + files.reduce((total, file) => total
-      + encoder.encode(file.targetPath).byteLength
-      + encoder.encode(file.content).byteLength
-      + encoder.encode(file.metadataJson).byteLength
-      + 2, 0);
+  return writes.reduce((total, write) => total
+    + encoder.encode(write.path).byteLength
+    + (write.kind === "folder"
+      ? 2
+      : encoder.encode(write.content).byteLength + encoder.encode(write.metadataJson).byteLength + 2), 0);
 }
 
 function blockedAncestor(path: string, blockedFolders: Set<string>): string | null {

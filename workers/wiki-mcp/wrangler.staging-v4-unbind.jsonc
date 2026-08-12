@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-mcp-staging",
-  "main": "src/index.ts",
+  "main": "src/staging-v4-unbind.ts",
   "compatibility_date": "2026-05-12",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
@@ -14,14 +14,6 @@
       "custom_domain": true
     }
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "MCP_AUTH_STATE",
-        "class_name": "McpAuthStateV4"
-      }
-    ]
-  },
   "ratelimits": [
     {
       "name": "MCP_REGISTRATION_RATE_LIMIT",
@@ -46,11 +38,6 @@
       "tag": "v3",
       "new_sqlite_classes": ["McpAuthStateV3"],
       "deleted_classes": ["McpAuthStateV2"]
-    },
-    {
-      "tag": "v4",
-      "new_sqlite_classes": ["McpAuthStateV4"],
-      "deleted_classes": ["McpAuthStateV3"]
     }
   ],
   "vars": {

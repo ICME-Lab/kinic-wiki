@@ -1814,7 +1814,7 @@ dependencies = [
 
 [[package]]
 name = "kinic-vfs-cli"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "anyhow",
  "async-trait",

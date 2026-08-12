@@ -421,6 +421,7 @@ async fn move_node_allows_non_canonical_source_target() {
                 from_path: "/Sources/web/abc.md".to_string(),
                 to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some("etag-source".to_string()),
+                expected_target_etag: None,
                 overwrite: false,
                 json: false,
             },

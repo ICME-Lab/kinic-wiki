@@ -15,7 +15,7 @@ import { parseOutputLanguage } from "./output-language.js";
 import { validateSourceRootPath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
 import type { SourceCaptureRequest, SourceCaptureTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
-import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
+import { createVfsClient, ensureParentFolders, NodeMutationError, type VfsClient } from "./vfs.js";
 
 const FETCHING_STALE_MS = 15 * 60 * 1000;
 
@@ -496,7 +496,7 @@ function errorMessage(error: unknown): string {
 }
 
 function isEtagMismatch(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("expected_etag does not match current etag");
+  return error instanceof NodeMutationError && error.code === "etag_conflict";
 }
 
 function validateSourceCaptureRequestPath(path: string): void {

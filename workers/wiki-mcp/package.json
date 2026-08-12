@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --config wrangler.jsonc",
+    "build:private": "wrangler deploy --dry-run --config wrangler.private.jsonc",
     "build:staging": "wrangler deploy --dry-run --config wrangler.staging.jsonc",
+    "build:staging:v4-unbind": "wrangler deploy --dry-run --config wrangler.staging-v4-unbind.jsonc",
+    "deploy:private": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:private && wrangler deploy --config wrangler.private.jsonc",
+    "deploy:staging": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:staging && wrangler deploy --config wrangler.staging.jsonc",
+    "deploy:staging:v4-migration": "node scripts/deploy-staging-v4-migration.mjs",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
     "review:smoke": "node scripts/check-submission-cases.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
@@ -19,15 +24,15 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.12.21",
-    "@cloudflare/workers-types": "^4.20260408.0",
+    "@cloudflare/vitest-pool-workers": "0.20.2",
+    "@cloudflare/workers-types": "5.20260804.1",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
     "ajv": "^8.20.0",
     "js-yaml": "^4.3.0",
     "typescript": "7.0.2",
-    "vitest": "^3.2.4",
-    "wrangler": "^4.103.0"
+    "vitest": "4.1.10",
+    "wrangler": "4.119.0"
   },
   "packageManager": "pnpm@11.0.8"
 }

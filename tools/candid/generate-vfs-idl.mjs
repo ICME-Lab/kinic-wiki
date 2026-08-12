@@ -64,6 +64,8 @@ const typeOrder = [
   "DatabaseCycleEntry",
   "DatabaseCycleEntryPage",
   "NodeKind",
+  "NodeMutationErrorCode",
+  "NodeMutationError",
   "NodeEntryKind",
   "Node",
   "ChildNode",

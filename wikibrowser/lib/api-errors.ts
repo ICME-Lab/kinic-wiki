@@ -5,6 +5,10 @@ export type ApiErrorCode =
   | "wiki_api_version_mismatch"
   | "wiki_api_missing"
   | "invalid_canister_id"
+  | "etag_conflict"
+  | "forbidden"
+  | "write_unavailable"
+  | "invalid_operation"
   | "node_not_found"
   | "path_not_found"
   | "wiki_request_failed";

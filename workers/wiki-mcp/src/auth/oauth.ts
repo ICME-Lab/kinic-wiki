@@ -13,18 +13,19 @@ import {
   generateIiKey,
   IiDelegationError,
   IiRegistrationError,
-  IiSessionEndedError,
   INTERNET_IDENTITY_ORIGIN,
-  mintKinicIdentity,
   redeemRegistration,
   resolveKinicMcpTargetOrigin,
-  restoreIiKey
+  restoreIiKey,
+  restoreKinicIdentity,
+  type KinicDelegationMaterialV1
 } from "./internet-identity.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,
+  sessionKeyContext,
   type AuthorizationSessionInput,
   type ClientAuthMethod,
-  type McpAuthStateV2,
+  type McpAuthStateV4,
   type OAuthClientRecordV2,
   type TokenIssueResult
 } from "./state.js";
@@ -36,7 +37,7 @@ const SESSION_CAP_MS = 8 * 60 * 60 * 1000;
 const CONNECT_TTL_MS = 10 * 60 * 1000;
 const CLIENT_SECRET_TTL_SECONDS = 0;
 const MAX_AUTH_BODY_BYTES = 16_384;
-const ALLOWED_SCOPES = new Set(["mcp:read", "offline_access"]);
+const ALLOWED_SCOPES = new Set(["mcp:read", "mcp:write", "offline_access"]);
 
 type OAuthClientRegistrationRequest = {
   redirect_uris?: unknown;
@@ -45,7 +46,7 @@ type OAuthClientRegistrationRequest = {
   client_name?: unknown;
 };
 
-export type McpAccessPolicy = "public" | "private_required" | "private_opt_in";
+export type McpAccessPolicy = "public" | "private_required";
 
 export type AuthenticationMode =
   | McpAccessPolicy
@@ -55,7 +56,7 @@ export type AuthenticationMode =
 
 export function authenticationMode(request: Request, env: RuntimeEnv): AuthenticationMode {
   const policy = env.MCP_ACCESS_POLICY?.trim();
-  if (policy !== "public" && policy !== "private_required" && policy !== "private_opt_in") {
+  if (policy !== "public" && policy !== "private_required") {
     return "misconfigured";
   }
   if (policy === "public") {
@@ -93,7 +94,7 @@ export function authenticationBoundaryResponse(mode: AuthenticationMode): Respon
 
 export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promise<Response | null> {
   const mode = authenticationMode(request, env);
-  if (mode !== "private_required" && mode !== "private_opt_in") {
+  if (mode !== "private_required") {
     return null;
   }
   const url = new URL(request.url);
@@ -131,8 +132,9 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
 
 export async function authenticateMcpRequest(
   request: Request,
-  env: RuntimeEnv
-): Promise<{ identity: Identity } | { response: Response }> {
+  env: RuntimeEnv,
+  requireDelegation: boolean
+): Promise<{ identity?: Identity; scopes: string[]; iiPermission: "queries" | "all" } | { response: Response }> {
   const resource = mcpResource(env);
   const unauthorized = () =>
     json(
@@ -156,39 +158,35 @@ export async function authenticateMcpRequest(
     return { response: unauthorized() };
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
-  const validated = await stub.validateAccessToken(tokenValue, resource, Date.now());
-  if (!validated) {
+  const authenticated = await stub.authenticateAccessToken(tokenValue, resource, Date.now(), requireDelegation);
+  if (authenticated.kind === "invalid") {
     return { response: unauthorized() };
   }
-  let keyJson: JsonnableEd25519KeyIdentity;
-  try {
-    keyJson = await decryptJson<JsonnableEd25519KeyIdentity>(
-      validated.encryptedSessionKey,
-      encryptionKey(env),
-      sessionKeyContext(sessionId)
-    );
-  } catch {
-    await stub.invalidate();
-    return { response: unauthorized() };
-  }
-  try {
-    const targetOrigin = resolveKinicMcpTargetOrigin(
-      env.KINIC_WIKI_MCP_TARGET_ORIGIN,
-      env.KINIC_WIKI_CANISTER_ID
-    );
-    const identity = await mintKinicIdentity(restoreIiKey(keyJson), targetOrigin);
-    return { identity };
-  } catch (error) {
-    if (error instanceof IiSessionEndedError) {
-      await stub.invalidate();
-      return { response: unauthorized() };
-    }
-    logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_unknown");
+  if (authenticated.kind === "temporarily_unavailable") {
+    logMcpAuth(authenticated.stage);
     return { response: json({ error: "temporarily_unavailable" }, 503) };
   }
+  let identity: Identity | undefined;
+  if (authenticated.delegation) {
+    try {
+      identity = restoreKinicIdentity(
+        authenticated.delegation as KinicDelegationMaterialV1,
+        resolveKinicMcpTargetOrigin(env.KINIC_WIKI_MCP_TARGET_ORIGIN, env.KINIC_WIKI_CANISTER_ID),
+        Date.now()
+      );
+    } catch (error) {
+      logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_cache");
+      return { response: json({ error: "temporarily_unavailable" }, 503) };
+    }
+  }
+  return {
+    ...(identity ? { identity } : {}),
+    scopes: authenticated.scope.split(/\s+/u).filter(Boolean),
+    iiPermission: authenticated.iiPermission
+  };
 }
 
-export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
+export function mcpUnauthorizedResponse(env: RuntimeEnv, scope = "mcp:read"): Response {
   return json(
     { error: "unauthorized" },
     401,
@@ -196,7 +194,8 @@ export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
       "www-authenticate": mcpWwwAuthenticateChallenge(
         env,
         "insufficient_scope",
-        "Private connection is required"
+        "Private connection is required",
+        scope
       )
     }
   );
@@ -205,13 +204,15 @@ export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
 export function mcpWwwAuthenticateChallenge(
   env: RuntimeEnv,
   error: "insufficient_scope" | "invalid_token",
-  errorDescription: string
+  errorDescription: string,
+  scope?: string
 ): string {
   const origin = requiredOauthOrigin(env);
   return [
     `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
     `error="${error}"`,
-    `error_description="${errorDescription}"`
+    `error_description="${errorDescription}"`,
+    ...(scope ? [`scope="${scope}"`] : [])
   ].join(", ");
 }
 
@@ -220,7 +221,7 @@ function protectedResourceMetadata(env: RuntimeEnv) {
   return {
     resource: mcpResource(env),
     authorization_servers: [origin],
-    scopes_supported: ["mcp:read", "offline_access"],
+    scopes_supported: ["mcp:read", "mcp:write", "offline_access"],
     bearer_methods_supported: ["header"]
   };
 }
@@ -236,7 +237,7 @@ function authorizationServerMetadata(env: RuntimeEnv) {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
-    scopes_supported: ["mcp:read", "offline_access"]
+    scopes_supported: ["mcp:read", "mcp:write", "offline_access"]
   };
 }
 
@@ -486,7 +487,12 @@ async function completeConnect(request: Request, env: RuntimeEnv): Promise<Respo
     await stub.invalidate();
     return registrationFailureResponse(traceId, error);
   }
-  const completed = await stub.completeConnect(registered.grantExpiresAt, Date.now(), sessionId);
+  const completed = await stub.completeConnect(
+    registered.grantExpiresAt,
+    registered.permissions,
+    Date.now(),
+    sessionId
+  );
   if (!completed) {
     await stub.invalidate();
     return connectFailureResponse(traceId, "authorization_completion", "invalid_connection", 400);
@@ -735,7 +741,7 @@ function mcpResource(env: RuntimeEnv): string {
   return `${requiredOauthOrigin(env)}/mcp`;
 }
 
-function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV2> {
+function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV4> {
   if (!env.MCP_AUTH_STATE) {
     throw new Error("MCP_AUTH_STATE binding is required");
   }
@@ -766,10 +772,6 @@ function sessionName(sessionId: string): string {
 
 function registrationKeyContext(sessionId: string): string {
   return `session:${sessionId}:registration-key:v1`;
-}
-
-function sessionKeyContext(sessionId: string): string {
-  return `session:${sessionId}:session-key:v1`;
 }
 
 function parseRoutedToken(token: string, prefix: string): string | null {

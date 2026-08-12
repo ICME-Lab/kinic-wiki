@@ -350,6 +350,7 @@ fn fs_entrypoints_allow_source_paths_without_schema_validation() {
         from_path: "/Sources/keep/keep.md".to_string(),
         to_path: "/Sources/renamed-/wrong.md".to_string(),
         expected_etag: Some(created.node.etag),
+        expected_target_etag: None,
         overwrite: false,
     })
     .expect("source move should not enforce source path schema");
@@ -502,6 +503,7 @@ fn fs_entrypoints_cover_move_glob_and_multi_edit() {
         from_path: "/Knowledge/work/item.md".to_string(),
         to_path: "/Knowledge/archive/item.md".to_string(),
         expected_etag: Some(created.node.etag.clone()),
+        expected_target_etag: None,
         overwrite: false,
     })
     .expect("move should succeed");
