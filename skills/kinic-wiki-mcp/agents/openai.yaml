@@ -6,8 +6,8 @@ dependencies:
   tools:
     - type: "mcp"
       value: "kinic-wiki-mcp"
-      description: "OAuth-protected Kinic Wiki staging MCP for private reads and explicit batch writes"
+      description: "OAuth-protected Kinic Wiki Private MCP for private reads and explicit batch writes"
       transport: "streamable_http"
-      url: "https://wiki-mcp-staging.kinic.xyz/mcp"
+      url: "https://wiki-private-mcp.kinic.xyz/mcp"
 policy:
   allow_implicit_invocation: true

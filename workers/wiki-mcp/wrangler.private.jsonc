@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-wiki-mcp-private",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "wiki-private-mcp.kinic.xyz",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MCP_AUTH_STATE",
+        "class_name": "McpAuthStateV4"
+      }
+    ]
+  },
+  "ratelimits": [
+    {
+      "name": "MCP_REGISTRATION_RATE_LIMIT",
+      "namespace_id": "7802027",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ],
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["McpAuthStateV4"]
+    }
+  ],
+  "vars": {
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_IC_HOST": "https://icp0.io",
+    "KINIC_WIKI_MCP_TARGET_ORIGIN": "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app",
+    "KINIC_WIKI_PUBLIC_ORIGIN": "https://wiki.kinic.xyz",
+    "MCP_ACCESS_POLICY": "private_required",
+    "MCP_WRITE_POLICY": "private",
+    "MCP_PUBLIC_ORIGIN": "https://wiki-private-mcp.kinic.xyz",
+    "OPENAI_APPS_CHALLENGE_TOKEN": "U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"
+  }
+}

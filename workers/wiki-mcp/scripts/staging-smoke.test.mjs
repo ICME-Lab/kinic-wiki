@@ -25,6 +25,7 @@ import {
 
 const packageConfig = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const productionConfig = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+const privateConfig = JSON.parse(readFileSync(new URL("../wrangler.private.jsonc", import.meta.url), "utf8"));
 const stagingConfig = JSON.parse(readFileSync(new URL("../wrangler.staging.jsonc", import.meta.url), "utf8"));
 const stagingV4UnbindConfig = JSON.parse(
   readFileSync(new URL("../wrangler.staging-v4-unbind.jsonc", import.meta.url), "utf8")
@@ -67,7 +68,7 @@ test("keeps staging on its canonical custom domain and permission-aware SDK", ()
   assert.equal(packageConfig.scripts["dev:staging"], undefined);
 });
 
-test("keeps production public until promotion and isolates staging auth state", () => {
+test("keeps public production anonymous and isolates staging auth state", () => {
   assert.equal(productionConfig.vars.MCP_ACCESS_POLICY, "public");
   assert.equal(productionConfig.durable_objects, undefined);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_required");
@@ -86,6 +87,39 @@ test("keeps production public until promotion and isolates staging auth state", 
     deleted_classes: ["McpAuthStateV3"]
   });
   assert.notEqual(productionConfig.name, stagingConfig.name);
+});
+
+test("adds an isolated private production worker without changing the public worker", () => {
+  assert.equal(productionConfig.name, "kinic-wiki-mcp");
+  assert.deepEqual(productionConfig.routes, [
+    { pattern: "wiki-mcp.kinic.xyz", custom_domain: true }
+  ]);
+  assert.equal(productionConfig.vars.MCP_ACCESS_POLICY, "public");
+  assert.equal(productionConfig.vars.MCP_WRITE_POLICY, "disabled");
+  assert.equal(productionConfig.durable_objects, undefined);
+
+  assert.equal(privateConfig.name, "kinic-wiki-mcp-private");
+  assert.equal(privateConfig.workers_dev, false);
+  assert.deepEqual(privateConfig.routes, [
+    { pattern: "wiki-private-mcp.kinic.xyz", custom_domain: true }
+  ]);
+  assert.equal(privateConfig.vars.KINIC_WIKI_CANISTER_ID, productionConfig.vars.KINIC_WIKI_CANISTER_ID);
+  assert.equal(privateConfig.vars.KINIC_WIKI_PUBLIC_ORIGIN, productionConfig.vars.KINIC_WIKI_PUBLIC_ORIGIN);
+  assert.equal(privateConfig.vars.KINIC_WIKI_MCP_TARGET_ORIGIN, "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app");
+  assert.equal(privateConfig.vars.MCP_ACCESS_POLICY, "private_required");
+  assert.equal(privateConfig.vars.MCP_WRITE_POLICY, "private");
+  assert.equal(privateConfig.vars.MCP_PUBLIC_ORIGIN, "https://wiki-private-mcp.kinic.xyz");
+  assert.deepEqual(privateConfig.durable_objects.bindings, [
+    { name: "MCP_AUTH_STATE", class_name: "McpAuthStateV4" }
+  ]);
+  assert.deepEqual(privateConfig.migrations, [
+    { tag: "v1", new_sqlite_classes: ["McpAuthStateV4"] }
+  ]);
+  assert.notEqual(privateConfig.ratelimits[0].namespace_id, stagingConfig.ratelimits[0].namespace_id);
+  assert.notEqual(privateConfig.name, productionConfig.name);
+  assert.notEqual(privateConfig.name, stagingConfig.name);
+  assert.match(packageConfig.scripts["build:private"], /wrangler\.private\.jsonc/u);
+  assert.match(packageConfig.scripts["deploy:private"], /build:private.*wrangler\.private\.jsonc/u);
 });
 
 test("keeps the V4 migration unbind configuration aligned with staging", () => {

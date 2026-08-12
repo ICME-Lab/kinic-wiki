@@ -1,11 +1,11 @@
 ---
 name: kinic-wiki-mcp
-description: Use the OAuth-protected Kinic Wiki staging MCP to discover and read private databases and, only when explicitly requested by the user, apply atomic batch writes. Use for Kinic Wiki MCP recall, private wiki evidence, or user-requested VFS content changes without the local CLI.
+description: Use the OAuth-protected Kinic Wiki Private MCP to discover and read private databases and, only when explicitly requested by the user, apply atomic batch writes. Use for Kinic Wiki MCP recall, private wiki evidence, or user-requested VFS content changes without the local CLI.
 ---
 
 # Kinic Wiki MCP
 
-Use the configured staging MCP for private reads and explicit content changes. The host owns OAuth and Internet Identity consent. Never ask the user for an access token, delegation, private key, cookie, or other secret, and never process those values in the skill workflow.
+Use the configured Private MCP for private reads and explicit content changes. The host owns OAuth and Internet Identity consent. Never ask the user for an access token, delegation, private key, cookie, or other secret, and never process those values in the skill workflow.
 
 Read [references/tools.md](references/tools.md) before substantive MCP work.
 

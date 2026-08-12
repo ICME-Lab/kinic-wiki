@@ -56,9 +56,9 @@ const invalidSkillContracts = [
     )
   ],
   [
-    "staging endpoint",
+    "private production endpoint",
     validSkill,
-    validToolReference.replace("https://wiki-mcp-staging.kinic.xyz/mcp", "https://wrong.example/mcp")
+    validToolReference.replace("https://wiki-private-mcp.kinic.xyz/mcp", "https://wrong.example/mcp")
   ],
   [
     "batch-only tool table",

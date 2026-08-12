@@ -112,7 +112,7 @@ export function validateOpenAiConfigYaml(source) {
   assert(isRecord(dependency), "dependencies.tools must contain kinic-wiki-mcp");
   assert(dependency.type === "mcp", "kinic-wiki-mcp dependency type must be mcp");
   assert(dependency.transport === "streamable_http", "kinic-wiki-mcp transport must be streamable_http");
-  assert(dependency.url === "https://wiki-mcp-staging.kinic.xyz/mcp", "kinic-wiki-mcp must use the transitional staging endpoint");
+  assert(dependency.url === "https://wiki-private-mcp.kinic.xyz/mcp", "kinic-wiki-mcp must use the private production endpoint");
   assert(isRecord(config.policy), "skill OpenAI configuration must contain policy");
   assert(config.policy.allow_implicit_invocation === true, "policy.allow_implicit_invocation must be true");
   return config;
@@ -146,8 +146,8 @@ export function validateSkillFiles(skill, toolReference, openAiConfig) {
     "skill must restrict deletion to explicitly identified paths"
   );
   assert(
-    toolReference.includes("https://wiki-mcp-staging.kinic.xyz/mcp"),
-    "skill reference must use the transitional staging endpoint"
+    toolReference.includes("https://wiki-private-mcp.kinic.xyz/mcp"),
+    "skill reference must use the private production endpoint"
   );
   assert(
     toolReference.includes("There is no `connect_private` tool and no single-mutation tool."),

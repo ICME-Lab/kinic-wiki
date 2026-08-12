@@ -2,13 +2,13 @@
 
 ## Active endpoint and boundary
 
-- Skill endpoint: `https://wiki-mcp-staging.kinic.xyz/mcp`
+- Skill endpoint: `https://wiki-private-mcp.kinic.xyz/mcp`
 - Access: OAuth required from MCP initialization onward
 - Identity: every data call uses the Internet Identity delegated identity
 - Contract: eight read tools plus two batch mutation tools
 - OAuth credentials are managed by the host. Do not request, display, store, or transform them.
 
-Production at `https://wiki-mcp.kinic.xyz/mcp` remains anonymous and read-only with eight tools. This skill temporarily targets staging and must not be repackaged into the public Production plugin during migration.
+The public search endpoint at `https://wiki-mcp.kinic.xyz/mcp` remains anonymous and read-only with eight tools. It is a separate Worker and is not used by this skill.
 
 ## Tool selection
 
