@@ -219,6 +219,11 @@ pub enum Command {
         #[command(subcommand)]
         command: IdentityCommand,
     },
+    #[command(about = "Scan, validate, and apply reviewed wiki maintenance proposals")]
+    Curator {
+        #[command(subcommand)]
+        command: CuratorCommand,
+    },
     #[command(about = "Manage skill store packages, discovery, status, and run evidence")]
     Skill {
         #[command(subcommand)]
@@ -653,6 +658,41 @@ pub enum Command {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum CuratorCommand {
+    #[command(about = "Export a private four-store maintenance scan artifact")]
+    Scan {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 90)]
+        stale_after_days: u32,
+        #[arg(long)]
+        overwrite: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Validate a Curator proposal artifact without writing to the wiki")]
+    Validate {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Preview or atomically apply selected Curator proposals")]
+    Apply {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long = "proposal", action = clap::ArgAction::Append, conflicts_with = "all", required_unless_present = "all")]
+        proposals: Vec<String>,
+        #[arg(long, conflicts_with = "proposals")]
+        all: bool,
+        #[arg(long)]
+        confirm: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
 pub enum SkillCommand {
     #[command(about = "Store or update a skill store package from a local directory")]
     Upsert {
@@ -957,6 +997,9 @@ impl Command {
             ),
             Self::Codex { .. } | Self::Claude { .. } => false,
             Self::Identity { .. } => true,
+            Self::Curator { command } => {
+                matches!(command, CuratorCommand::Apply { confirm: true, .. })
+            }
             Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -1009,6 +1052,9 @@ impl Command {
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
             Self::ReadNode { .. }
+            | Self::Curator {
+                command: CuratorCommand::Scan { .. } | CuratorCommand::Apply { confirm: false, .. },
+            }
             | Self::ContextPack {
                 command: ContextPackCommand::Export(_),
             }
@@ -1033,6 +1079,10 @@ impl Command {
             | Self::Market { .. }
             | Self::Cycles { .. }
             | Self::Identity { .. }
+            | Self::Curator {
+                command:
+                    CuratorCommand::Validate { .. } | CuratorCommand::Apply { confirm: true, .. },
+            }
             | Self::Hermes { .. }
             | Self::Codex { .. }
             | Self::Claude { .. }

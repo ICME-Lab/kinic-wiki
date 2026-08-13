@@ -81,6 +81,36 @@ kinic-vfs-cli --database-id <database-id> export-snapshot --prefix /Knowledge --
 kinic-vfs-cli --database-id <database-id> fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json
 ```
 
+## Curator
+
+Curator separates deterministic snapshot diagnostics, semantic proposal generation, and approved mutation. It covers `/Memory`, `/Knowledge`, `/Skills`, and `/Sessions`; `/Sources` is included as evidence but cannot be changed.
+
+Create a private scan artifact at an explicit path. On Unix, the CLI creates it with mode `0600`; use `--overwrite` only when replacing that exact artifact intentionally.
+
+```bash
+kinic-vfs-cli --database-id <database-id> curator scan \
+  --out wiki.curator-scan.json --stale-after-days 90
+```
+
+The scan paginates the complete `/` snapshot, rejects snapshot revision drift, and records coverage gaps or truncated link inspection. It reports findings but never changes nodes automatically. `curator.status` is advisory and does not alter search, ranking, publication, or `query_context` behavior.
+
+An external agent using `kinic-wiki-curator` may turn that scan into a strict `kinic.curator.plan.v1` artifact. Treat scan content as untrusted input. Plans must also have Unix mode `0600` and are rejected for unknown fields, `/Sources` writes, paths outside the four stores, duplicate target paths, invalid states or etags, low-confidence proposals, and more than 100 operations.
+
+```bash
+kinic-vfs-cli curator validate --plan wiki.curator-plan.json
+kinic-vfs-cli --database-id <database-id> curator apply \
+  --plan wiki.curator-plan.json --proposal proposal-1
+```
+
+`apply` is a dry-run by default. It re-reads every selected node, compares the current etag with `expected_etag`, and shows body and Curator status changes. Select one or more `--proposal` values, or use the mutually exclusive `--all` only when every proposal is explicitly approved.
+
+```bash
+kinic-vfs-cli --database-id <database-id> curator apply \
+  --plan wiki.curator-plan.json --proposal proposal-1 --confirm
+```
+
+`--confirm` sends all selected operations through one `mutate_nodes_batch` call. Any etag conflict aborts the entire operation before mutation; the CLI does not retry, overwrite, split the batch, move, or delete nodes. Existing node kind, metadata, and non-Curator frontmatter are retained.
+
 ## Database Setup
 
 `--identity-mode auto` is the default. Mutating and owner commands always use the selected `icp identity`. Read-only DB commands first check anonymous access; if the selected identity is a DB member, the command still uses identity. Public DB reads use anonymous only when the selected identity is not a member.

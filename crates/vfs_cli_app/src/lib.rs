@@ -11,6 +11,9 @@ mod commands_fs_tests;
 mod commands_maintenance_tests;
 pub mod context_pack;
 pub mod conversation_wiki;
+pub mod curator;
+#[cfg(test)]
+mod curator_tests;
 pub mod github_ingest;
 pub mod github_source;
 pub mod hermes;

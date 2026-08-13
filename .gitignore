@@ -44,6 +44,8 @@ AGENTS.md
 node_modules/
 **/.next/
 *.tmp
+*.curator-scan.json
+*.curator-plan.json
 *.tsbuildinfo
 .playwright-cli/
 .pnpm-store/

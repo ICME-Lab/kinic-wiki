@@ -2,7 +2,7 @@ use crate::cli::{Cli, Command, ConnectionArgs, IdentityModeArg, NodeKindArg};
 use crate::commands::run_command;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
@@ -10,10 +10,12 @@ use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseMetadata, DatabaseRole,
     DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeEntry, NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, LinkEdge, ListNodesRequest,
+    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeEntry, NodeKind,
+    NodeMutationAck, NodeMutationError, NodeMutationResult, OutgoingLinksRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -21,6 +23,10 @@ pub(crate) struct MockClient {
     pub(crate) nodes: Vec<Node>,
     pub(crate) fetch_nodes: Vec<Node>,
     pub(crate) search_hits: Vec<SearchNodeHit>,
+    pub(crate) outgoing: BTreeMap<String, Vec<LinkEdge>>,
+    pub(crate) evidence: BTreeMap<String, SourceEvidence>,
+    pub(crate) snapshot_pages: Vec<ExportSnapshotResponse>,
+    pub(crate) mutation_error: Option<NodeMutationError>,
     pub(crate) delete_fail_paths: HashSet<String>,
     pub(crate) lists: std::sync::Mutex<Vec<ListNodesRequest>>,
     pub(crate) child_lists: std::sync::Mutex<Vec<vfs_types::ListChildrenRequest>>,
@@ -34,6 +40,8 @@ pub(crate) struct MockClient {
     pub(crate) multi_edits: std::sync::Mutex<Vec<MultiEditNodeRequest>>,
     pub(crate) searches: std::sync::Mutex<Vec<SearchNodesRequest>>,
     pub(crate) path_searches: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
+    pub(crate) snapshot_calls: std::sync::Mutex<usize>,
+    pub(crate) mutation_batches: std::sync::Mutex<Vec<MutateNodesBatchRequest>>,
 }
 
 fn test_connection() -> ResolvedConnection {
@@ -59,6 +67,39 @@ fn test_cycles_top_up_config() -> CyclesTopUpConfig {
 
 #[async_trait]
 impl VfsApi for MockClient {
+    async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
+        Ok(MemoryManifest {
+            api_version: "kinic-stores-v1".to_string(),
+            purpose: "test".to_string(),
+            enabled_stores: vec![
+                "memory".into(),
+                "knowledge".into(),
+                "skill".into(),
+                "session".into(),
+            ],
+            roots: Vec::new(),
+            entry_roots: [
+                ("/Memory", "memory"),
+                ("/Knowledge", "knowledge"),
+                ("/Skills", "skill"),
+                ("/Sessions", "session"),
+            ]
+            .into_iter()
+            .map(|(path, kind)| MemoryRoot {
+                path: path.into(),
+                kind: kind.into(),
+            })
+            .collect(),
+            capabilities: Vec::new(),
+            canonical_roles: Vec::new(),
+            write_policy: "stores_read_only".into(),
+            recommended_entrypoint: "query_context".into(),
+            max_depth: 2,
+            max_query_limit: 100,
+            budget_unit: "approx_chars_from_tokens".into(),
+        })
+    }
+
     async fn status(&self, _database_id: &str) -> Result<Status> {
         Ok(Status {
             file_count: 0,
@@ -164,6 +205,20 @@ impl VfsApi for MockClient {
                 etag: "etag-write".to_string(),
             },
         })
+    }
+
+    async fn mutate_nodes_batch(
+        &self,
+        request: MutateNodesBatchRequest,
+    ) -> Result<Vec<NodeMutationResult>> {
+        self.mutation_batches
+            .lock()
+            .expect("mutation batches should lock")
+            .push(request);
+        if let Some(error) = &self.mutation_error {
+            return Err(anyhow!(error.clone()));
+        }
+        Ok(Vec::new())
     }
 
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult> {
@@ -277,10 +332,42 @@ impl VfsApi for MockClient {
         Ok(Vec::new())
     }
 
+    async fn outgoing_links(&self, request: OutgoingLinksRequest) -> Result<Vec<LinkEdge>> {
+        Ok(self
+            .outgoing
+            .get(&request.path)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+        Ok(self
+            .evidence
+            .get(&request.node_path)
+            .cloned()
+            .unwrap_or(SourceEvidence {
+                node_path: request.node_path,
+                refs: Vec::new(),
+            }))
+    }
+
     async fn export_snapshot(
         &self,
         _request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse> {
+        if !self.snapshot_pages.is_empty() {
+            let mut call = self
+                .snapshot_calls
+                .lock()
+                .expect("snapshot calls should lock");
+            let page = self
+                .snapshot_pages
+                .get(*call)
+                .cloned()
+                .ok_or_else(|| anyhow!("unexpected snapshot page request"))?;
+            *call += 1;
+            return Ok(page);
+        }
         Ok(ExportSnapshotResponse {
             snapshot_revision: SNAPSHOT_REVISION_1.to_string(),
             snapshot_session_id: None,

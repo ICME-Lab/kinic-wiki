@@ -9,6 +9,7 @@ use crate::context_pack::{
     run_context_pack_export, run_context_pack_inspect, run_context_pack_verify,
 };
 use crate::conversation_wiki::generate_conversation_wiki;
+use crate::curator::run_curator_command;
 use crate::github_ingest::run_github_command;
 use crate::hermes::run_hermes_command;
 use crate::maintenance::{rebuild_index, rebuild_scope_index};
@@ -50,6 +51,15 @@ pub async fn run_command(
                 }
             }
         },
+        Command::Curator { command } => {
+            run_curator_command(
+                client,
+                require_database_id(database_id)?,
+                &connection.canister_id,
+                command,
+            )
+            .await?;
+        }
         Command::Skill { command } => {
             run_skill_command(client, require_database_id(database_id)?, command).await?;
         }

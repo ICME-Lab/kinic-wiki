@@ -28,7 +28,7 @@ For many medium-sized agent workflows, structured file-system search is often mo
 - `session`: agent session state under `/Sessions/...` and session transcript evidence under `/Sources/sessions/...`; resumable summaries are a later workflow.
 
 Context Pack is not a fifth store. It is an OKF handoff artifact generated from store content.
-Curator is not a store. It is a future maintenance workflow for skill and knowledge stale/archive/promote decisions.
+Curator is not a store. It is the CLI-governed maintenance workflow for deterministic four-store diagnostics, agent-authored proposals, and explicitly approved atomic updates. `/Sources` remains read-only evidence.
 
 The public browser entry point is:
 
@@ -88,6 +88,17 @@ kinic-vfs-cli skill record-run legal-review --task "review contract" --outcome s
 ```
 
 Agents should discover relevant skills, inspect the package, use the instructions, then record run evidence when the workflow produces useful feedback.
+
+## Curator
+
+Curator scans a consistent snapshot, stores private diagnostic JSON, validates an external agent's strict proposal plan, and dry-runs selected proposals before any write. Only `--confirm` performs one etag-guarded atomic batch.
+
+```bash
+kinic-vfs-cli --database-id <database-id> curator scan --out wiki.curator-scan.json
+kinic-vfs-cli curator validate --plan wiki.curator-plan.json
+kinic-vfs-cli --database-id <database-id> curator apply --plan wiki.curator-plan.json --proposal <id>
+kinic-vfs-cli --database-id <database-id> curator apply --plan wiki.curator-plan.json --proposal <id> --confirm
+```
 
 ## Main Surfaces
 

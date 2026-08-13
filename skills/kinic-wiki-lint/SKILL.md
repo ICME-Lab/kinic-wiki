@@ -19,6 +19,7 @@ Do not use this skill for:
 - primary source ingestion
 - ordinary question answering
 - hidden repair runs
+- maintenance that changes node content or Curator status; use `kinic-wiki-curator`
 - OKF bundle structure verification; use `kinic-context-pack` and `context-pack verify`
 - skill store package lifecycle work; use `kinic-skill-registry`
 
@@ -29,6 +30,7 @@ Core rules:
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Default to report-only behavior.
 - Do not silently fix pages.
+- Hand off any proposed repair or status transition to `kinic-wiki-curator`.
 - Prefer concrete findings over vague style commentary.
 - Keep local lint and remote inspection conceptually separate.
 - Check note-role boundary violations as well as missing pages.

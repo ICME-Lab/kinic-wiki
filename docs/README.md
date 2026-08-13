@@ -34,6 +34,7 @@
 - [VFS_VALIDATION_PLAN.md](validation/VFS_VALIDATION_PLAN.md) — VFS validation plan
 - [VFS_CORRECTNESS_CHECKLIST.md](validation/VFS_CORRECTNESS_CHECKLIST.md) — Correctness checklist
 - [VFS_DEPLOYED_CANISTER_BENCHMARKS.md](validation/VFS_DEPLOYED_CANISTER_BENCHMARKS.md) — Deployed canister benchmark results
+- [CURATOR_ACCURACY.md](validation/CURATOR_ACCURACY.md) — Curator deterministic finding accuracy contract and current result
 
 ## Archive (archive/)
 

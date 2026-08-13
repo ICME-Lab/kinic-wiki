@@ -8,7 +8,9 @@ use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
 use vfs_cli_app::claude::run_claude_command;
-use vfs_cli_app::cli::{Cli, Command, ContextPackCommand, DatabaseCommand, IdentityModeArg};
+use vfs_cli_app::cli::{
+    Cli, Command, ContextPackCommand, CuratorCommand, DatabaseCommand, IdentityModeArg,
+};
 use vfs_cli_app::codex::run_codex_command;
 use vfs_cli_app::commands::run_command;
 use vfs_cli_app::context_pack::{
@@ -79,6 +81,13 @@ async fn main() -> Result<()> {
             }
             ContextPackCommand::Export(_) => {}
         }
+    }
+    if let Command::Curator {
+        command: CuratorCommand::Validate { plan, json },
+    } = cli.command.clone()
+    {
+        vfs_cli_app::curator::validate_plan_file(&plan, json)?;
+        return Ok(());
     }
     if let Command::Hermes {
         command: vfs_cli_app::cli::HermesCommand::Status { json },

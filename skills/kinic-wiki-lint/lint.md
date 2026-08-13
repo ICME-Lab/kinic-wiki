@@ -36,5 +36,5 @@ Report concrete findings with paths, evidence, severity, and suggested next acti
 
 - Do not mutate remote wiki nodes in this skill.
 - Do not use `delete-node`, `delete-tree`, write, append, edit, rebuild, or proposal/status mutation commands.
-- If a repair is needed, hand off to `kinic-wiki-edit` or `kinic-wiki-ingest`.
+- If maintenance needs a content repair or Curator status transition, hand off to `kinic-wiki-curator` so validation, dry-run, and proposal approval remain mandatory. Use `kinic-wiki-edit` or `kinic-wiki-ingest` only for their narrower direct-edit and ingestion workflows.
 - For OKF bundle validation, use `kinic-context-pack`.
