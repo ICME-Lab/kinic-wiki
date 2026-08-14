@@ -1,66 +1,3 @@
-CREATE TABLE fs_nodes (
-    id INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    etag TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-    parent_id INTEGER,
-    name TEXT
-);
-
-CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
-    path,
-    title,
-    content
-);
-
-CREATE TABLE fs_change_log (
-    revision INTEGER PRIMARY KEY AUTOINCREMENT,
-    path TEXT NOT NULL,
-    change_kind TEXT NOT NULL
-        CHECK (change_kind IN ('upsert', 'path_removal'))
-);
-
-CREATE TABLE fs_path_state (
-    path TEXT PRIMARY KEY,
-    last_change_revision INTEGER NOT NULL
-);
-
-CREATE TABLE fs_links (
-    source_path TEXT NOT NULL,
-    target_path TEXT NOT NULL,
-    raw_href TEXT NOT NULL,
-    link_text TEXT NOT NULL,
-    link_kind TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (source_path, target_path, raw_href)
-);
-
-CREATE INDEX fs_nodes_path_covering_idx
-ON fs_nodes (path, kind, updated_at, etag);
-
-CREATE INDEX fs_nodes_recent_covering_idx
-ON fs_nodes (updated_at DESC, path ASC, kind, etag);
-
-CREATE UNIQUE INDEX fs_nodes_parent_name_idx
-ON fs_nodes (COALESCE(parent_id, 0), name);
-
-CREATE INDEX fs_nodes_parent_idx
-ON fs_nodes(parent_id);
-
-CREATE INDEX fs_links_target_path_idx
-ON fs_links (target_path, source_path);
-
-CREATE INDEX fs_links_source_path_idx
-ON fs_links (source_path, target_path);
-
-CREATE TABLE publication_mutation_commits (
-    operation_id INTEGER PRIMARY KEY
-);
-
 CREATE TABLE fs_history_pages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     current_node_id INTEGER UNIQUE,
@@ -153,10 +90,12 @@ BEGIN
       );
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
     VALUES (NEW.etag, NEW.kind, NEW.content, NEW.metadata_json);
-    INSERT INTO fs_history_versions (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
+    INSERT INTO fs_history_versions
+        (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
     SELECT id, NEW.etag, NEW.path, NEW.etag, NEW.created_at, NEW.updated_at
     FROM fs_history_pages WHERE current_node_id = NEW.id;
-    INSERT INTO fs_history_items (change_id, page_id, change_kind, before_version_id, after_version_id)
+    INSERT INTO fs_history_items
+        (change_id, page_id, change_kind, before_version_id, after_version_id)
     SELECT active.change_id, page.id, COALESCE(active.forced_kind, 'create'),
            CASE WHEN active.forced_kind = 'restore' THEN page.current_version_id ELSE NULL END,
            (SELECT MAX(id) FROM fs_history_versions WHERE page_id = page.id)
@@ -177,19 +116,24 @@ WHEN EXISTS (SELECT 1 FROM fs_history_active_change WHERE singleton = 1)
 BEGIN
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
     VALUES (OLD.etag, OLD.kind, OLD.content, OLD.metadata_json);
-    INSERT INTO fs_history_versions (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
+    INSERT INTO fs_history_versions
+        (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
     SELECT id, OLD.etag, OLD.path, OLD.etag, OLD.created_at, OLD.updated_at
-    FROM fs_history_pages WHERE current_node_id = OLD.id AND current_version_id IS NULL;
+    FROM fs_history_pages
+    WHERE current_node_id = OLD.id AND current_version_id IS NULL;
     UPDATE fs_history_pages
     SET current_version_id = (SELECT MAX(id) FROM fs_history_versions WHERE page_id = fs_history_pages.id)
     WHERE current_node_id = OLD.id AND current_version_id IS NULL;
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
     VALUES (NEW.etag, NEW.kind, NEW.content, NEW.metadata_json);
-    INSERT INTO fs_history_versions (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
+    INSERT INTO fs_history_versions
+        (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
     SELECT id, NEW.etag, NEW.path, NEW.etag, NEW.created_at, NEW.updated_at
     FROM fs_history_pages WHERE current_node_id = NEW.id;
-    INSERT INTO fs_history_items (change_id, page_id, change_kind, before_version_id, after_version_id)
-    SELECT active.change_id, page.id,
+    INSERT INTO fs_history_items
+        (change_id, page_id, change_kind, before_version_id, after_version_id)
+    SELECT active.change_id,
+           page.id,
            COALESCE(active.forced_kind, CASE WHEN OLD.path <> NEW.path THEN 'move' ELSE 'update' END),
            page.current_version_id,
            (SELECT MAX(id) FROM fs_history_versions WHERE page_id = page.id)
@@ -210,13 +154,16 @@ WHEN EXISTS (SELECT 1 FROM fs_history_active_change WHERE singleton = 1)
 BEGIN
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
     VALUES (OLD.etag, OLD.kind, OLD.content, OLD.metadata_json);
-    INSERT INTO fs_history_versions (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
+    INSERT INTO fs_history_versions
+        (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
     SELECT id, OLD.etag, OLD.path, OLD.etag, OLD.created_at, OLD.updated_at
-    FROM fs_history_pages WHERE current_node_id = OLD.id AND current_version_id IS NULL;
+    FROM fs_history_pages
+    WHERE current_node_id = OLD.id AND current_version_id IS NULL;
     UPDATE fs_history_pages
     SET current_version_id = (SELECT MAX(id) FROM fs_history_versions WHERE page_id = fs_history_pages.id)
     WHERE current_node_id = OLD.id AND current_version_id IS NULL;
-    INSERT INTO fs_history_items (change_id, page_id, change_kind, before_version_id, after_version_id)
+    INSERT INTO fs_history_items
+        (change_id, page_id, change_kind, before_version_id, after_version_id)
     SELECT active.change_id, page.id, COALESCE(active.forced_kind, 'delete'), page.current_version_id, NULL
     FROM fs_history_active_change active, fs_history_pages page
     WHERE active.singleton = 1 AND page.current_node_id = OLD.id;
@@ -228,3 +175,6 @@ BEGIN
         last_item_id = (SELECT MAX(id) FROM fs_history_items WHERE page_id = fs_history_pages.id)
     WHERE current_node_id = OLD.id;
 END;
+
+INSERT INTO fs_history_pages (current_node_id, current_path)
+SELECT id, path FROM fs_nodes ORDER BY id ASC;

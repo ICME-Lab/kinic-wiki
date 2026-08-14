@@ -280,6 +280,66 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     created_at: idl.Int64,
     metadata_json: idl.Text
   });
+  const NodeHistoryTarget = idl.Variant({ PageId: idl.Nat64, CurrentPath: idl.Text });
+  const NodeHistoryChangeKind = idl.Variant({
+    Move: idl.Null,
+    Restore: idl.Null,
+    Delete: idl.Null,
+    Create: idl.Null,
+    Update: idl.Null
+  });
+  const NodeVersionSummary = idl.Record({
+    version_id: idl.Nat64,
+    page_id: idl.Nat64,
+    path: idl.Text,
+    kind: NodeKind,
+    etag: idl.Text,
+    node_created_at: idl.Int64,
+    node_updated_at: idl.Int64
+  });
+  const NodeHistoryEntry = idl.Record({
+    item_id: idl.Nat64,
+    change_id: idl.Nat64,
+    page_id: idl.Nat64,
+    operation: idl.Text,
+    change_kind: NodeHistoryChangeKind,
+    author_principal: idl.Text,
+    changed_at: idl.Int64,
+    before_version: idl.Opt(NodeVersionSummary),
+    after_version: idl.Opt(NodeVersionSummary)
+  });
+  const ListNodeHistoryRequest = idl.Record({
+    database_id: idl.Text,
+    target: NodeHistoryTarget,
+    cursor: idl.Opt(idl.Nat64),
+    limit: idl.Nat32
+  });
+  const ListNodeHistoryResponse = idl.Record({
+    page_id: idl.Nat64,
+    entries: idl.Vec(NodeHistoryEntry),
+    next_cursor: idl.Opt(idl.Nat64)
+  });
+  const ReadNodeVersionRequest = idl.Record({ database_id: idl.Text, page_id: idl.Nat64, version_id: idl.Nat64 });
+  const NodeVersion = idl.Record({ summary: NodeVersionSummary, content: idl.Text, metadata_json: idl.Text });
+  const DeletedNodeSummary = idl.Record({
+    page_id: idl.Nat64,
+    version_id: idl.Nat64,
+    path: idl.Text,
+    kind: NodeKind,
+    etag: idl.Text,
+    node_created_at: idl.Int64,
+    node_updated_at: idl.Int64,
+    deleted_at: idl.Int64,
+    deleted_by: idl.Text
+  });
+  const ListDeletedNodesRequest = idl.Record({ database_id: idl.Text, cursor: idl.Opt(idl.Nat64), limit: idl.Nat32 });
+  const ListDeletedNodesResponse = idl.Record({ nodes: idl.Vec(DeletedNodeSummary), next_cursor: idl.Opt(idl.Nat64) });
+  const RestoreNodeVersionRequest = idl.Record({
+    database_id: idl.Text,
+    page_id: idl.Nat64,
+    version_id: idl.Nat64,
+    expected_current_etag: idl.Opt(idl.Text)
+  });
   const ChildNode = idl.Record({
     updated_at: idl.Opt(idl.Int64),
     etag: idl.Opt(idl.Text),
@@ -498,6 +558,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
+  const ResultDeletedNodes = idl.Variant({ Ok: ListDeletedNodesResponse, Err: idl.Text });
+  const ResultNodeHistory = idl.Variant({ Ok: ListNodeHistoryResponse, Err: idl.Text });
+  const ResultNodeVersion = idl.Variant({ Ok: idl.Opt(NodeVersion), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
   const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
@@ -538,6 +601,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_database_cycles_pending_purchases: idl.Func([idl.Text], [ResultCyclesPendingPurchases], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
+    list_deleted_nodes: idl.Func([ListDeletedNodesRequest], [ResultDeletedNodes], ["query"]),
+    list_node_history: idl.Func([ListNodeHistoryRequest], [ResultNodeHistory], ["query"]),
     market_count_active_entitlements: idl.Func([idl.Text], [ResultNat64], ["query"]),
     market_create_listing: idl.Func([MarketCreateListingRequest], [ResultMarketListing], []),
     market_get_listing: idl.Func([idl.Text], [ResultMarketListingDetail], ["query"]),
@@ -560,12 +625,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     query_index_sql_json: idl.Func([idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
+    read_node_version: idl.Func([ReadNodeVersionRequest], [ResultNodeVersion], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
     publish_node: idl.Func([PublishNodeRequest], [ResultNodePublication], []),
     read_public_node: idl.Func([idl.Text], [ResultPublicNode], ["query"]),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
+    restore_node_version: idl.Func([RestoreNodeVersionRequest], [ResultWriteNode], []),
     update_database_metadata: idl.Func([UpdateDatabaseMetadataRequest], [ResultDatabaseMetadata], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),

@@ -45,20 +45,22 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
+    ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse, ListNodeHistoryRequest,
+    ListNodeHistoryResponse, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
     MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
     MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
     MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
     MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    NodeMutation, NodeMutationError, NodeMutationResult, NodePublication,
+    NodeMutation, NodeMutationError, NodeMutationResult, NodePublication, NodeVersion,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    ReadNodeVersionRequest, RestoreNodeVersionRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
@@ -436,6 +438,84 @@ impl VfsService {
         Ok(children)
     }
 
+    pub fn list_node_history(
+        &self,
+        caller: &str,
+        request: ListNodeHistoryRequest,
+    ) -> Result<ListNodeHistoryResponse, String> {
+        let database_id = request.database_id.clone();
+        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
+            store.list_node_history(request)
+        })
+    }
+
+    pub fn read_node_version(
+        &self,
+        caller: &str,
+        request: ReadNodeVersionRequest,
+    ) -> Result<Option<NodeVersion>, String> {
+        let database_id = request.database_id.clone();
+        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
+            store.read_node_version(request)
+        })
+    }
+
+    pub fn list_deleted_nodes(
+        &self,
+        caller: &str,
+        request: ListDeletedNodesRequest,
+    ) -> Result<ListDeletedNodesResponse, String> {
+        let database_id = request.database_id.clone();
+        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
+            store.list_deleted_nodes(request)
+        })
+    }
+
+    pub fn restore_node_version(
+        &self,
+        caller: &str,
+        request: RestoreNodeVersionRequest,
+        now: i64,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        let database_id = request.database_id.clone();
+        self.require_role(&database_id, caller, RequiredRole::Writer)
+            .map_err(NodeMutationError::forbidden)?;
+        let meta = self
+            .database_meta(&database_id)
+            .map_err(NodeMutationError::write_unavailable)?;
+        let store = self
+            .database_store(&meta)
+            .map_err(NodeMutationError::write_unavailable)?;
+        let selected_path = store
+            .read_node_version(ReadNodeVersionRequest {
+                database_id: database_id.clone(),
+                page_id: request.page_id,
+                version_id: request.version_id,
+            })
+            .map_err(NodeMutationError::write_unavailable)?
+            .map(|value| value.summary.path);
+        let live_path = store
+            .node_history_live_path(request.page_id)
+            .map_err(NodeMutationError::write_unavailable)?;
+        let selected_path = selected_path.ok_or_else(|| {
+            NodeMutationError::not_found_with_path(
+                format!("history version does not exist: {}", request.version_id),
+                request.page_id.to_string(),
+            )
+        })?;
+        let mutation_path = live_path.unwrap_or(selected_path);
+        let result = self.with_detached_node_publications(
+            &database_id,
+            caller,
+            &[mutation_path.as_str()],
+            |store, operation_id| store.restore_node_version_as(request, now, operation_id, caller),
+        );
+        if result.is_ok() {
+            let _ = self.refresh_logical_size(&database_id);
+        }
+        result
+    }
+
     pub fn write_node(
         &self,
         caller: &str,
@@ -457,7 +537,7 @@ impl VfsService {
             caller,
             &publication_path_refs,
             |store, operation_id| {
-                store.write_node_with_publication_commit(request, now, operation_id)
+                store.write_node_with_publication_commit_as(request, now, operation_id, caller)
             },
         );
         if result.is_ok() {
@@ -506,7 +586,12 @@ impl VfsService {
             caller,
             &[path.as_str()],
             |store, operation_id| {
-                store.write_node_with_publication_commit(write_request, now, operation_id)
+                store.write_node_with_publication_commit_as(
+                    write_request,
+                    now,
+                    operation_id,
+                    caller,
+                )
             },
         )?;
         let _ = self.write_source_run_session(
@@ -546,7 +631,7 @@ impl VfsService {
             caller,
             &publication_path_refs,
             |store, operation_id| {
-                store.write_nodes_with_publication_commit(request, now, operation_id)
+                store.write_nodes_with_publication_commit_as(request, now, operation_id, caller)
             },
         );
         if result.is_ok() {
@@ -572,7 +657,12 @@ impl VfsService {
             caller,
             &publication_path_refs,
             |store, operation_id| {
-                store.mutate_nodes_batch_with_publication_commit(request, now, operation_id)
+                store.mutate_nodes_batch_with_publication_commit_as(
+                    request,
+                    now,
+                    operation_id,
+                    caller,
+                )
             },
         );
         if result.is_ok() {
@@ -585,7 +675,7 @@ impl VfsService {
         &self,
         caller: &str,
         request: DeleteNodeRequest,
-        _now: i64,
+        now: i64,
     ) -> Result<DeleteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let path = request.path.clone();
@@ -593,7 +683,9 @@ impl VfsService {
             &database_id,
             caller,
             &[path.as_str()],
-            |store, operation_id| store.delete_node_with_publication_commit(request, operation_id),
+            |store, operation_id| {
+                store.delete_node_with_publication_commit_as(request, now, operation_id, caller)
+            },
         );
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -609,7 +701,7 @@ impl VfsService {
     ) -> Result<WriteNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let result = self.with_node_mutation_store(&database_id, caller, |store| {
-            store.append_node(request, now)
+            store.append_node_as(request, now, caller)
         });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -624,8 +716,9 @@ impl VfsService {
         now: i64,
     ) -> Result<EditNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result = self
-            .with_node_mutation_store(&database_id, caller, |store| store.edit_node(request, now));
+        let result = self.with_node_mutation_store(&database_id, caller, |store| {
+            store.edit_node_as(request, now, caller)
+        });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -639,8 +732,9 @@ impl VfsService {
         now: i64,
     ) -> Result<MkdirNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
-        let result = self
-            .with_node_mutation_store(&database_id, caller, |store| store.mkdir_node(request, now));
+        let result = self.with_node_mutation_store(&database_id, caller, |store| {
+            store.mkdir_node_as(request, now, caller)
+        });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
         }
@@ -661,7 +755,7 @@ impl VfsService {
             caller,
             &[from_path.as_str(), to_path.as_str()],
             |store, operation_id| {
-                store.move_node_with_publication_commit(request, now, operation_id)
+                store.move_node_with_publication_commit_as(request, now, operation_id, caller)
             },
         );
         if result.is_ok() {
@@ -770,7 +864,7 @@ impl VfsService {
     ) -> Result<MultiEditNodeResult, NodeMutationError> {
         let database_id = request.database_id.clone();
         let result = self.with_node_mutation_store(&database_id, caller, |store| {
-            store.multi_edit_node(request, now)
+            store.multi_edit_node_as(request, now, caller)
         });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);

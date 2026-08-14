@@ -33,6 +33,210 @@ fn publication_recovery_count(root: &std::path::Path, database_id: &str) -> i64 
 }
 
 #[test]
+fn restoring_history_detaches_publication_without_republishing() {
+    let service = service();
+    let database_id = "history-publication";
+    let path = "/Knowledge/public.md";
+    service
+        .create_database(database_id, "owner", 1)
+        .expect("database should create");
+    let first = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::File,
+                content: "first".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("first version should write");
+    let current = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+                kind: NodeKind::File,
+                content: "current".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(first.node.etag),
+            },
+            3,
+        )
+        .expect("current version should write");
+    let publication = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: database_id.to_string(),
+                path: path.to_string(),
+            },
+            "00112233445566778899aabbccddeeff",
+            4,
+        )
+        .expect("node should publish");
+    let history = service
+        .list_node_history(
+            "owner",
+            ListNodeHistoryRequest {
+                database_id: database_id.to_string(),
+                target: NodeHistoryTarget::CurrentPath(path.to_string()),
+                cursor: None,
+                limit: 20,
+            },
+        )
+        .expect("history should load");
+    let first_version_id = history.entries[1]
+        .after_version
+        .as_ref()
+        .expect("first version should exist")
+        .version_id;
+    service
+        .restore_node_version(
+            "owner",
+            RestoreNodeVersionRequest {
+                database_id: database_id.to_string(),
+                page_id: history.page_id,
+                version_id: first_version_id,
+                expected_current_etag: Some(current.node.etag),
+            },
+            5,
+        )
+        .expect("history restore should succeed");
+    assert!(
+        service
+            .read_public_node(&publication.public_id)
+            .expect("public lookup should succeed")
+            .is_none(),
+        "restoring a version must not republish the page"
+    );
+}
+
+#[test]
+fn restoring_moved_history_preserves_publication_at_the_old_path() {
+    let service = service();
+    let database_id = "moved-history-publication";
+    let old_path = "/Knowledge/original.md";
+    let current_path = "/Knowledge/moved.md";
+    service
+        .create_database(database_id, "owner", 1)
+        .expect("database should create");
+    let original = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: old_path.to_string(),
+                kind: NodeKind::File,
+                content: "original".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("original page should write");
+    let moved = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: database_id.to_string(),
+                from_path: old_path.to_string(),
+                to_path: current_path.to_string(),
+                expected_etag: Some(original.node.etag),
+                expected_target_etag: None,
+                overwrite: false,
+            },
+            3,
+        )
+        .expect("page should move");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: old_path.to_string(),
+                kind: NodeKind::File,
+                content: "replacement".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            4,
+        )
+        .expect("replacement page should write");
+    let old_path_publication = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: database_id.to_string(),
+                path: old_path.to_string(),
+            },
+            "11112222333344445555666677778888",
+            5,
+        )
+        .expect("replacement page should publish");
+    let current_path_publication = service
+        .publish_node(
+            "owner",
+            PublishNodeRequest {
+                database_id: database_id.to_string(),
+                path: current_path.to_string(),
+            },
+            "9999aaaabbbbccccddddeeeeffff0000",
+            6,
+        )
+        .expect("moved page should publish");
+    let history = service
+        .list_node_history(
+            "owner",
+            ListNodeHistoryRequest {
+                database_id: database_id.to_string(),
+                target: NodeHistoryTarget::CurrentPath(current_path.to_string()),
+                cursor: None,
+                limit: 20,
+            },
+        )
+        .expect("moved page history should load");
+    let original_version_id = history
+        .entries
+        .last()
+        .and_then(|entry| entry.after_version.as_ref())
+        .expect("original version should exist")
+        .version_id;
+
+    service
+        .restore_node_version(
+            "owner",
+            RestoreNodeVersionRequest {
+                database_id: database_id.to_string(),
+                page_id: history.page_id,
+                version_id: original_version_id,
+                expected_current_etag: Some(moved.node.etag),
+            },
+            7,
+        )
+        .expect("moved page history should restore");
+
+    assert!(
+        service
+            .read_public_node(&old_path_publication.public_id)
+            .expect("old path publication lookup should succeed")
+            .is_some(),
+        "restoring a moved page must preserve the replacement page publication"
+    );
+    assert!(
+        service
+            .read_public_node(&current_path_publication.public_id)
+            .expect("current path publication lookup should succeed")
+            .is_none(),
+        "restoring a moved page must detach its current publication"
+    );
+}
+
+#[test]
 fn native_publication_journal_restores_after_failed_mutation_restore() {
     let (service, root) = service_with_root();
     let database_id = "publication-restore-journal";

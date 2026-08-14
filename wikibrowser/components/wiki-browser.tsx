@@ -44,7 +44,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-import { ExplorerActionError, ExplorerCreateForm, ExplorerHeaderActions, ExplorerMoveForm, LeftPane, childPath, createDirectoryForExplorerNode, explorerNodeFromSelection, isDeletableExplorerNode, isMutableExplorerNode, loadedWikiFolders, normalizeMarkdownFileName, normalizePathSegment, sameStringList, wikiChildPath, wikiMarkdownChildPath, writeDisabledReason } from "@/components/wiki-browser/explorer-pane";
+import { DeletedNodesPanel, ExplorerActionError, ExplorerCreateForm, ExplorerHeaderActions, ExplorerMoveForm, LeftPane, childPath, createDirectoryForExplorerNode, explorerNodeFromSelection, isDeletableExplorerNode, isMutableExplorerNode, loadedWikiFolders, normalizeMarkdownFileName, normalizePathSegment, sameStringList, wikiChildPath, wikiMarkdownChildPath, writeDisabledReason } from "@/components/wiki-browser/explorer-pane";
 import { TopBar, databaseListWarning, mergeDatabaseSummaries, withCurrentDatabase } from "@/components/wiki-browser/top-bar";
 const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "source-capture"];
 const EXPLORER_SORT_STORAGE_KEY = "kinicWikiExplorerSortOrder";
@@ -131,6 +131,7 @@ function WikiBrowserContent() {
   const [selectedExplorerState, setSelectedExplorerState] = useState<{ key: string; node: ChildNode } | null>(null);
   const [explorerActionMode, setExplorerActionMode] = useState<"file" | "folder" | "rename" | null>(null);
   const [explorerMoveOpen, setExplorerMoveOpen] = useState(false);
+  const [deletedNodesOpen, setDeletedNodesOpen] = useState(false);
   const [explorerMoveTarget, setExplorerMoveTarget] = useState("/Knowledge");
   const [explorerMoveTargets, setExplorerMoveTargets] = useState<string[]>(["/Knowledge"]);
   const [explorerDraftName, setExplorerDraftName] = useState("");
@@ -839,6 +840,7 @@ function WikiBrowserContent() {
                 moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
                 importDisabled={Boolean(explorerWriteDisabledReason ?? explorerCreateDisabledReason) || explorerBusyAction !== null || localImportDialog !== null}
+                deletedDisabled={!readIdentity || !currentDatabaseRole}
                 fileTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New file in ${explorerCreateDirectory}`}
                 folderTitle={explorerWriteDisabledReason ?? explorerCreateDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
                 renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
@@ -876,6 +878,7 @@ function WikiBrowserContent() {
                 onDelete={() => void runExplorerDelete()}
                 onImportFiles={() => openLocalImportPicker("files")}
                 onImportFolder={() => openLocalImportPicker("folder")}
+                onDeleted={() => setDeletedNodesOpen(true)}
               />
             ) : undefined}
           />
@@ -912,7 +915,18 @@ function WikiBrowserContent() {
           ) : tab === "explorer" && explorerActionError ? (
             <ExplorerActionError message={explorerActionError} />
           ) : null}
-          <LeftPane
+          {deletedNodesOpen && tab === "explorer" ? <DeletedNodesPanel
+            canisterId={canisterId}
+            databaseId={databaseId}
+            identity={readIdentity}
+            databaseRole={currentDatabaseRole}
+            onClose={() => setDeletedNodesOpen(false)}
+            onRestored={(path) => {
+              setDeletedNodesOpen(false);
+              setExplorerRevision((revision) => revision + 1);
+              navigate(hrefForPath(canisterId, databaseId, path));
+            }}
+          /> : <LeftPane
             tab={tab}
             canisterId={canisterId}
             databaseId={databaseId}
@@ -927,7 +941,7 @@ function WikiBrowserContent() {
             explorerRevision={explorerRevision}
             explorerSortOrder={explorerSortOrder}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
-          />
+          />}
         </aside>
         <section data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
           {isHelpPage ? (
@@ -963,6 +977,7 @@ function WikiBrowserContent() {
                 }}
                 isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
                 canEditDirectory={currentNode.data?.kind === "folder"}
+                historyAvailable={Boolean(currentNode.data)}
               />
               <DocumentPane
                 node={currentNode}
@@ -1143,6 +1158,7 @@ function parseTab(value: string | null): ModeTab {
 
 function parseView(value: string | null): ViewMode {
   if (value === "edit") return "edit";
+  if (value === "history") return "history";
   return value === "raw" ? "raw" : "preview";
 }
 

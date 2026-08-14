@@ -6,6 +6,7 @@
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
 mod context;
+mod history;
 mod marketplace;
 mod sql_json;
 mod sync;
@@ -24,12 +25,14 @@ use vfs_types::{
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
+    ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse, ListNodeHistoryRequest,
+    ListNodeHistoryResponse, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
     MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
     MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node,
-    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind, NodeMutation,
-    NodeMutationError, NodeMutationResult, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeHistoryTarget, NodeKind,
+    NodeMutation, NodeMutationError, NodeMutationResult, NodeVersion, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, ReadNodeVersionRequest, RestoreNodeVersionRequest,
     SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
     SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest,
@@ -110,6 +113,10 @@ SELECT child.path,
 FROM fs_nodes child
 WHERE child.parent_id = ?1
 ORDER BY child.name ASC";
+
+fn history_id(value: u64, label: &str) -> Result<i64, String> {
+    i64::try_from(value).map_err(|_| format!("{label} is out of range: {value}"))
+}
 
 struct ChildRow {
     path: String,
@@ -241,6 +248,182 @@ impl FsStore {
         })
     }
 
+    pub fn list_node_history(
+        &self,
+        request: ListNodeHistoryRequest,
+    ) -> Result<ListNodeHistoryResponse, String> {
+        let limit = request.limit.min(history::HISTORY_PAGE_LIMIT_MAX);
+        if limit == 0 {
+            return Err("limit must be greater than zero".to_string());
+        }
+        self.read_conn(|conn| {
+            let page_id = match request.target {
+                NodeHistoryTarget::CurrentPath(path) => {
+                    let path = normalize_node_path(&path, false)?;
+                    history::resolve_page_id_by_path(conn, &path)?
+                        .ok_or_else(|| format!("history page does not exist: {path}"))?
+                }
+                NodeHistoryTarget::PageId(page_id) => {
+                    let page_id = history_id(page_id, "page id")?;
+                    if !history::page_exists(conn, page_id)? {
+                        return Err(format!("history page does not exist: {page_id}"));
+                    }
+                    page_id
+                }
+            };
+            history::list_history(
+                conn,
+                page_id,
+                request
+                    .cursor
+                    .map(|cursor| history_id(cursor, "cursor"))
+                    .transpose()?,
+                limit,
+            )
+        })
+    }
+
+    pub fn read_node_version(
+        &self,
+        request: ReadNodeVersionRequest,
+    ) -> Result<Option<NodeVersion>, String> {
+        let page_id = history_id(request.page_id, "page id")?;
+        let version_id = history_id(request.version_id, "version id")?;
+        self.read_conn(|conn| history::read_version(conn, page_id, version_id))
+    }
+
+    pub fn node_history_live_path(&self, page_id: u64) -> Result<Option<String>, String> {
+        let page_id = history_id(page_id, "page id")?;
+        self.read_conn(|conn| history::live_path(conn, page_id))
+    }
+
+    pub fn list_deleted_nodes(
+        &self,
+        request: ListDeletedNodesRequest,
+    ) -> Result<ListDeletedNodesResponse, String> {
+        let limit = request.limit.min(history::HISTORY_PAGE_LIMIT_MAX);
+        if limit == 0 {
+            return Err("limit must be greater than zero".to_string());
+        }
+        let cursor = request
+            .cursor
+            .map(|cursor| history_id(cursor, "cursor"))
+            .transpose()?;
+        self.read_conn(|conn| history::list_deleted(conn, cursor, limit))
+    }
+
+    pub fn restore_node_version_as(
+        &self,
+        request: RestoreNodeVersionRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        let page_id =
+            history_id(request.page_id, "page id").map_err(NodeMutationError::invalid_operation)?;
+        let version_id = history_id(request.version_id, "version id")
+            .map_err(NodeMutationError::invalid_operation)?;
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            let selected = history::read_version(tx, page_id, version_id)
+                .map_err(NodeMutationError::write_unavailable)?
+                .ok_or_else(|| {
+                    NodeMutationError::not_found_with_path(
+                        format!("history version does not exist: {version_id}"),
+                        request.page_id.to_string(),
+                    )
+                })?;
+            let (current_node_id, current_path): (Option<i64>, String) = tx
+                .query_row(
+                    "SELECT current_node_id, current_path FROM fs_history_pages WHERE id = ?1",
+                    params![page_id],
+                    |row| {
+                        Ok((
+                            crate::sqlite::row_get(row, 0)?,
+                            crate::sqlite::row_get(row, 1)?,
+                        ))
+                    },
+                )
+                .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
+            let existing = match current_node_id {
+                Some(current_node_id) => load_stored_node(tx, &current_path)
+                    .map_err(NodeMutationError::write_unavailable)?
+                    .filter(|stored| stored.row_id == current_node_id),
+                None => None,
+            };
+            match (&existing, request.expected_current_etag.as_deref()) {
+                (Some(current), Some(expected)) if current.node.etag == expected => {}
+                (Some(current), _) => {
+                    return Err(NodeMutationError::etag_conflict(
+                        format!(
+                            "expected_current_etag does not match current etag: {}",
+                            current.node.path
+                        ),
+                        current.node.path.clone(),
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(NodeMutationError::invalid_operation(
+                        "expected_current_etag must be None when restoring a deleted node",
+                    ));
+                }
+                (None, None) => {}
+            }
+            let path = existing
+                .as_ref()
+                .map(|stored| stored.node.path.clone())
+                .unwrap_or_else(|| selected.summary.path.clone());
+            if existing.is_none()
+                && load_stored_node(tx, &path)
+                    .map_err(NodeMutationError::write_unavailable)?
+                    .is_some()
+            {
+                return Err(NodeMutationError::invalid_operation_with_path(
+                    format!("restore path already exists: {path}"),
+                    path,
+                ));
+            }
+            ensure_missing_store_root_for_path(tx, &path, now)
+                .map_err(NodeMutationError::write_unavailable)?;
+            require_parent_folder_for_mutation(tx, &path)?;
+            let change_id = history::begin_change(
+                tx,
+                author_principal,
+                "restore",
+                now,
+                Some("restore"),
+                existing.is_none().then_some(page_id),
+            )
+            .map_err(NodeMutationError::write_unavailable)?;
+            let mut node = Node {
+                path,
+                kind: selected.summary.kind,
+                content: selected.content,
+                created_at: existing
+                    .as_ref()
+                    .map(|stored| stored.node.created_at)
+                    .unwrap_or(selected.summary.node_created_at),
+                updated_at: now,
+                etag: String::new(),
+                metadata_json: selected.metadata_json,
+            };
+            let revision =
+                record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+            update_path_state(tx, &node.path, revision)
+                .map_err(NodeMutationError::write_unavailable)?;
+            node.etag = compute_node_etag(&node);
+            let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)
+                .map_err(NodeMutationError::write_unavailable)?;
+            sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))
+                .map_err(NodeMutationError::write_unavailable)?;
+            sync_node_links(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+            history::finish_change(tx, change_id).map_err(NodeMutationError::write_unavailable)?;
+            Ok(WriteNodeResult {
+                node: node_ack(&node),
+                created: existing.is_none(),
+            })
+        })
+    }
+
     pub fn write_node(
         &self,
         request: WriteNodeRequest,
@@ -255,6 +438,16 @@ impl FsStore {
         now: i64,
         publication_operation_id: Option<i64>,
     ) -> Result<WriteNodeResult, NodeMutationError> {
+        self.write_node_with_publication_commit_as(request, now, publication_operation_id, "system")
+    }
+
+    pub fn write_node_with_publication_commit_as(
+        &self,
+        request: WriteNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
         let WriteNodeRequest {
             database_id,
             path,
@@ -263,20 +456,27 @@ impl FsStore {
             metadata_json,
             expected_etag,
         } = request;
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
-            write_node_item_in_tx(
-                tx,
-                &database_id,
-                WriteNodeItem {
-                    path,
-                    kind,
-                    content,
-                    metadata_json,
-                    expected_etag,
-                },
-                now,
-            )
-        })
+        self.write_history_mutation_conn(
+            publication_operation_id,
+            author_principal,
+            "write",
+            now,
+            None,
+            |tx| {
+                write_node_item_in_tx(
+                    tx,
+                    &database_id,
+                    WriteNodeItem {
+                        path,
+                        kind,
+                        content,
+                        metadata_json,
+                        expected_etag,
+                    },
+                    now,
+                )
+            },
+        )
     }
 
     pub fn write_nodes(
@@ -293,18 +493,40 @@ impl FsStore {
         now: i64,
         publication_operation_id: Option<i64>,
     ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
+        self.write_nodes_with_publication_commit_as(
+            request,
+            now,
+            publication_operation_id,
+            "system",
+        )
+    }
+
+    pub fn write_nodes_with_publication_commit_as(
+        &self,
+        request: WriteNodesRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+    ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
         validate_write_nodes_count(request.nodes.len())
             .map_err(NodeMutationError::invalid_operation)?;
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
-            let mut results = Vec::with_capacity(request.nodes.len());
-            for (index, item) in request.nodes.into_iter().enumerate() {
-                results.push(
-                    write_node_item_in_tx(tx, &request.database_id, item, now)
-                        .map_err(|error| error.with_failed_index(index))?,
-                );
-            }
-            Ok(results)
-        })
+        self.write_history_mutation_conn(
+            publication_operation_id,
+            author_principal,
+            "write_nodes",
+            now,
+            None,
+            |tx| {
+                let mut results = Vec::with_capacity(request.nodes.len());
+                for (index, item) in request.nodes.into_iter().enumerate() {
+                    results.push(
+                        write_node_item_in_tx(tx, &request.database_id, item, now)
+                            .map_err(|error| error.with_failed_index(index))?,
+                    );
+                }
+                Ok(results)
+            },
+        )
     }
 
     pub fn append_node(
@@ -312,7 +534,18 @@ impl FsStore {
         request: AppendNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| append_node_in_tx(tx, request, now))
+        self.append_node_as(request, now, "system")
+    }
+
+    pub fn append_node_as(
+        &self,
+        request: AppendNodeRequest,
+        now: i64,
+        author_principal: &str,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        self.write_history_mutation_conn(None, author_principal, "append", now, None, |tx| {
+            append_node_in_tx(tx, request, now)
+        })
     }
 
     pub fn edit_node(
@@ -320,7 +553,18 @@ impl FsStore {
         request: EditNodeRequest,
         now: i64,
     ) -> Result<EditNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| edit_node_in_tx(tx, request, now))
+        self.edit_node_as(request, now, "system")
+    }
+
+    pub fn edit_node_as(
+        &self,
+        request: EditNodeRequest,
+        now: i64,
+        author_principal: &str,
+    ) -> Result<EditNodeResult, NodeMutationError> {
+        self.write_history_mutation_conn(None, author_principal, "edit", now, None, |tx| {
+            edit_node_in_tx(tx, request, now)
+        })
     }
 
     pub fn mkdir_node(
@@ -328,7 +572,18 @@ impl FsStore {
         request: MkdirNodeRequest,
         now: i64,
     ) -> Result<MkdirNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| mkdir_node_in_tx(tx, request, now))
+        self.mkdir_node_as(request, now, "system")
+    }
+
+    pub fn mkdir_node_as(
+        &self,
+        request: MkdirNodeRequest,
+        now: i64,
+        author_principal: &str,
+    ) -> Result<MkdirNodeResult, NodeMutationError> {
+        self.write_history_mutation_conn(None, author_principal, "mkdir", now, None, |tx| {
+            mkdir_node_in_tx(tx, request, now)
+        })
     }
 
     pub fn move_node(
@@ -345,9 +600,24 @@ impl FsStore {
         now: i64,
         publication_operation_id: Option<i64>,
     ) -> Result<MoveNodeResult, NodeMutationError> {
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
-            move_node_in_tx(tx, request, now)
-        })
+        self.move_node_with_publication_commit_as(request, now, publication_operation_id, "system")
+    }
+
+    pub fn move_node_with_publication_commit_as(
+        &self,
+        request: MoveNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+    ) -> Result<MoveNodeResult, NodeMutationError> {
+        self.write_history_mutation_conn(
+            publication_operation_id,
+            author_principal,
+            "move",
+            now,
+            None,
+            |tx| move_node_in_tx(tx, request, now),
+        )
     }
 
     pub fn mutate_nodes_batch(
@@ -364,19 +634,41 @@ impl FsStore {
         now: i64,
         publication_operation_id: Option<i64>,
     ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+        self.mutate_nodes_batch_with_publication_commit_as(
+            request,
+            now,
+            publication_operation_id,
+            "system",
+        )
+    }
+
+    pub fn mutate_nodes_batch_with_publication_commit_as(
+        &self,
+        request: MutateNodesBatchRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+    ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
         validate_mutate_nodes_batch_count(request.operations.len())
             .map_err(NodeMutationError::invalid_operation)?;
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
-            request
-                .operations
-                .into_iter()
-                .enumerate()
-                .map(|(index, operation)| {
-                    mutate_node_in_tx(tx, &request.database_id, operation, now)
-                        .map_err(|error| error.with_failed_index(index))
-                })
-                .collect()
-        })
+        self.write_history_mutation_conn(
+            publication_operation_id,
+            author_principal,
+            "batch",
+            now,
+            None,
+            |tx| {
+                request
+                    .operations
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, operation)| {
+                        mutate_node_in_tx(tx, &request.database_id, operation, now)
+                            .map_err(|error| error.with_failed_index(index))
+                    })
+                    .collect()
+            },
+        )
     }
 
     pub fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>, String> {
@@ -419,25 +711,43 @@ impl FsStore {
         request: MultiEditNodeRequest,
         now: i64,
     ) -> Result<MultiEditNodeResult, NodeMutationError> {
-        self.write_mutation_conn(|tx| multi_edit_node_in_tx(tx, request, now))
+        self.multi_edit_node_as(request, now, "system")
+    }
+
+    pub fn multi_edit_node_as(
+        &self,
+        request: MultiEditNodeRequest,
+        now: i64,
+        author_principal: &str,
+    ) -> Result<MultiEditNodeResult, NodeMutationError> {
+        self.write_history_mutation_conn(None, author_principal, "multi_edit", now, None, |tx| {
+            multi_edit_node_in_tx(tx, request, now)
+        })
     }
 
     pub fn delete_node(
         &self,
         request: DeleteNodeRequest,
-        _now: i64,
+        now: i64,
     ) -> Result<DeleteNodeResult, NodeMutationError> {
-        self.delete_node_with_publication_commit(request, None)
+        self.delete_node_with_publication_commit_as(request, now, None, "system")
     }
 
-    pub fn delete_node_with_publication_commit(
+    pub fn delete_node_with_publication_commit_as(
         &self,
         request: DeleteNodeRequest,
+        now: i64,
         publication_operation_id: Option<i64>,
+        author_principal: &str,
     ) -> Result<DeleteNodeResult, NodeMutationError> {
-        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
-            delete_node_in_tx(tx, request)
-        })
+        self.write_history_mutation_conn(
+            publication_operation_id,
+            author_principal,
+            "delete",
+            now,
+            None,
+            |tx| delete_node_in_tx(tx, request),
+        )
     }
 
     pub fn publication_mutation_committed(&self, operation_id: i64) -> Result<bool, String> {
@@ -649,13 +959,6 @@ impl FsStore {
         }
     }
 
-    fn write_mutation_conn<T>(
-        &self,
-        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
-    ) -> Result<T, NodeMutationError> {
-        self.write_mutation_conn_with_publication_commit(None, f)
-    }
-
     fn write_mutation_conn_with_publication_commit<T>(
         &self,
         publication_operation_id: Option<i64>,
@@ -699,6 +1002,31 @@ impl FsStore {
             }
             result.map_err(|error| NodeMutationError::write_unavailable(error.to_string()))
         }
+    }
+
+    fn write_history_mutation_conn<T>(
+        &self,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+        operation: &str,
+        changed_at: i64,
+        forced_kind: Option<&str>,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            let change_id = history::begin_change(
+                tx,
+                author_principal,
+                operation,
+                changed_at,
+                forced_kind,
+                None,
+            )
+            .map_err(NodeMutationError::write_unavailable)?;
+            let value = f(tx)?;
+            history::finish_change(tx, change_id).map_err(NodeMutationError::write_unavailable)?;
+            Ok(value)
+        })
     }
 
     #[cfg(not(target_arch = "wasm32"))]

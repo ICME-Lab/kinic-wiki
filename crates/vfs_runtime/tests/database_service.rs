@@ -15,10 +15,11 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
+    ListNodeHistoryRequest, MarketCreateListingRequest, MarketListing, MarketListingStatus,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest,
+    NodeHistoryTarget, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
+    QueryContextRequest, RestoreNodeVersionRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
@@ -38,6 +39,61 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
+}
+
+#[test]
+fn node_history_is_member_only_and_restore_requires_writer() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
+        .expect("reader grant should succeed");
+    let written = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Knowledge/history.md".to_string(),
+                kind: NodeKind::File,
+                content: "history".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("owner write should succeed");
+    let request = ListNodeHistoryRequest {
+        database_id: "alpha".to_string(),
+        target: NodeHistoryTarget::CurrentPath("/Knowledge/history.md".to_string()),
+        cursor: None,
+        limit: 20,
+    };
+    let history = service
+        .list_node_history("reader", request.clone())
+        .expect("database reader should read history");
+    assert_eq!(history.entries[0].author_principal, "owner");
+    assert!(service.list_node_history("outsider", request).is_err());
+    let version_id = history.entries[0]
+        .after_version
+        .as_ref()
+        .expect("create version should exist")
+        .version_id;
+    let restore = RestoreNodeVersionRequest {
+        database_id: "alpha".to_string(),
+        page_id: history.page_id,
+        version_id,
+        expected_current_etag: Some(written.node.etag),
+    };
+    let forbidden = service
+        .restore_node_version("reader", restore.clone(), 20)
+        .expect_err("reader should not restore history");
+    assert_eq!(forbidden.code, vfs_types::NodeMutationErrorCode::Forbidden);
+    service
+        .restore_node_version("owner", restore, 20)
+        .expect("owner should restore history");
 }
 
 fn activate_pending_database(service: &VfsService) -> String {

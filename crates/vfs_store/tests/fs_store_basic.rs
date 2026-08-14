@@ -5,12 +5,270 @@ use rusqlite::Connection;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
-    DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MutateNodesBatchRequest, NodeEntryKind,
-    NodeKind, NodeMutation, NodeMutationErrorCode, OutgoingLinksRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewField, SearchPreviewMode, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    DeleteNodeItem, DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest,
+    ListChildrenRequest, ListDeletedNodesRequest, ListNodeHistoryRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MutateNodesBatchRequest, NodeEntryKind,
+    NodeHistoryChangeKind, NodeHistoryTarget, NodeKind, NodeMutation, NodeMutationErrorCode,
+    OutgoingLinksRequest, ReadNodeVersionRequest, RestoreNodeVersionRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewField, SearchPreviewMode,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
+
+#[test]
+fn node_history_tracks_authors_moves_deletes_and_restores() {
+    let (_dir, store) = new_store();
+    let created = store
+        .write_node_with_publication_commit_as(
+            WriteNodeRequest {
+                database_id: "db".to_string(),
+                path: "/Knowledge/history.md".to_string(),
+                kind: NodeKind::File,
+                content: "first\n".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+            None,
+            "alice",
+        )
+        .expect("initial write should succeed");
+    let updated = store
+        .write_node_with_publication_commit_as(
+            WriteNodeRequest {
+                database_id: "db".to_string(),
+                path: "/Knowledge/history.md".to_string(),
+                kind: NodeKind::File,
+                content: "second\n".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(created.node.etag),
+            },
+            20,
+            None,
+            "bob",
+        )
+        .expect("update should succeed");
+    store
+        .move_node_with_publication_commit_as(
+            MoveNodeRequest {
+                database_id: "db".to_string(),
+                from_path: "/Knowledge/history.md".to_string(),
+                to_path: "/Knowledge/moved.md".to_string(),
+                expected_etag: Some(updated.node.etag),
+                expected_target_etag: None,
+                overwrite: false,
+            },
+            30,
+            None,
+            "carol",
+        )
+        .expect("move should succeed");
+    let history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "db".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge/moved.md".to_string()),
+            cursor: None,
+            limit: 20,
+        })
+        .expect("history should load");
+    assert_eq!(history.entries.len(), 3);
+    assert_eq!(history.entries[0].author_principal, "carol");
+    assert_eq!(history.entries[0].change_kind, NodeHistoryChangeKind::Move);
+    assert_eq!(history.entries[1].author_principal, "bob");
+    assert_eq!(history.entries[2].author_principal, "alice");
+    let first_version_id = history.entries[2]
+        .after_version
+        .as_ref()
+        .expect("create should have after version")
+        .version_id;
+    let first = store
+        .read_node_version(ReadNodeVersionRequest {
+            database_id: "db".to_string(),
+            page_id: history.page_id,
+            version_id: first_version_id,
+        })
+        .expect("version read should succeed")
+        .expect("version should exist");
+    assert_eq!(first.content, "first\n");
+
+    let moved = store
+        .read_node("/Knowledge/moved.md")
+        .expect("current read should succeed")
+        .expect("moved node should exist");
+    store
+        .delete_node_with_publication_commit_as(
+            DeleteNodeRequest {
+                database_id: "db".to_string(),
+                path: moved.path,
+                expected_etag: Some(moved.etag),
+                expected_folder_index_etag: None,
+            },
+            40,
+            None,
+            "dave",
+        )
+        .expect("delete should succeed");
+    let deleted = store
+        .list_deleted_nodes(ListDeletedNodesRequest {
+            database_id: "db".to_string(),
+            cursor: None,
+            limit: 20,
+        })
+        .expect("deleted nodes should load");
+    let tombstone = deleted
+        .nodes
+        .iter()
+        .find(|node| node.page_id == history.page_id)
+        .expect("deleted page should be discoverable");
+    assert_eq!(tombstone.deleted_by, "dave");
+    assert_eq!(tombstone.deleted_at, 40);
+
+    let restored = store
+        .restore_node_version_as(
+            RestoreNodeVersionRequest {
+                database_id: "db".to_string(),
+                page_id: history.page_id,
+                version_id: first_version_id,
+                expected_current_etag: None,
+            },
+            50,
+            None,
+            "erin",
+        )
+        .expect("deleted version restore should succeed");
+    assert!(restored.created);
+    assert_eq!(restored.node.path, "/Knowledge/history.md");
+    let restored_history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "db".to_string(),
+            target: NodeHistoryTarget::PageId(history.page_id),
+            cursor: None,
+            limit: 20,
+        })
+        .expect("restored history should load");
+    assert_eq!(restored_history.entries[0].author_principal, "erin");
+    assert_eq!(
+        restored_history.entries[0].change_kind,
+        NodeHistoryChangeKind::Restore
+    );
+}
+
+#[test]
+fn node_history_lists_large_versions_without_losing_pagination_or_full_reads() {
+    let (_dir, store) = new_store();
+    let path = "/Knowledge/large-history.md";
+    let mut expected_etag = None;
+    let mut latest_content = String::new();
+    for revision in 0..20 {
+        latest_content = format!("revision {revision}\n{}", "x".repeat(256 * 1024));
+        let written = store
+            .write_node_with_publication_commit_as(
+                WriteNodeRequest {
+                    database_id: "db".to_string(),
+                    path: path.to_string(),
+                    kind: NodeKind::File,
+                    content: latest_content.clone(),
+                    metadata_json: format!(r#"{{"revision":{revision}}}"#),
+                    expected_etag,
+                },
+                revision + 1,
+                None,
+                "writer",
+            )
+            .expect("large history write should succeed");
+        expected_etag = Some(written.node.etag);
+    }
+
+    let first = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "db".to_string(),
+            target: NodeHistoryTarget::CurrentPath(path.to_string()),
+            cursor: None,
+            limit: 10,
+        })
+        .expect("first history page should load");
+    assert_eq!(first.entries.len(), 10);
+    let cursor = first
+        .next_cursor
+        .expect("another history page should exist");
+    let second = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "db".to_string(),
+            target: NodeHistoryTarget::PageId(first.page_id),
+            cursor: Some(cursor),
+            limit: 10,
+        })
+        .expect("second history page should load");
+    assert_eq!(second.entries.len(), 10);
+    assert!(second.next_cursor.is_none());
+    assert!(first.entries.iter().all(|left| {
+        second
+            .entries
+            .iter()
+            .all(|right| left.item_id != right.item_id)
+    }));
+
+    let latest_version_id = first.entries[0]
+        .after_version
+        .as_ref()
+        .expect("latest entry should have an after version")
+        .version_id;
+    let latest = store
+        .read_node_version(ReadNodeVersionRequest {
+            database_id: "db".to_string(),
+            page_id: first.page_id,
+            version_id: latest_version_id,
+        })
+        .expect("full version read should succeed")
+        .expect("latest version should exist");
+    assert_eq!(latest.content, latest_content);
+    assert_eq!(latest.metadata_json, r#"{"revision":19}"#);
+}
+
+#[test]
+fn deleted_node_pagination_keeps_items_from_the_same_change() {
+    let (_dir, store) = new_store();
+    let first_etag = write_file(&store, "/Knowledge/first.md", None, 10);
+    let second_etag = write_file(&store, "/Knowledge/second.md", None, 11);
+    store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Delete(DeleteNodeItem {
+                        path: "/Knowledge/first.md".to_string(),
+                        expected_etag: Some(first_etag),
+                        expected_folder_index_etag: None,
+                    }),
+                    NodeMutation::Delete(DeleteNodeItem {
+                        path: "/Knowledge/second.md".to_string(),
+                        expected_etag: Some(second_etag),
+                        expected_folder_index_etag: None,
+                    }),
+                ],
+            },
+            20,
+        )
+        .expect("batch delete should succeed");
+
+    let first_page = store
+        .list_deleted_nodes(ListDeletedNodesRequest {
+            database_id: "default".to_string(),
+            cursor: None,
+            limit: 1,
+        })
+        .expect("first deleted page should load");
+    assert_eq!(first_page.nodes.len(), 1);
+    let second_page = store
+        .list_deleted_nodes(ListDeletedNodesRequest {
+            database_id: "default".to_string(),
+            cursor: first_page.next_cursor,
+            limit: 1,
+        })
+        .expect("second deleted page should load");
+    assert_eq!(second_page.nodes.len(), 1);
+    assert_ne!(first_page.nodes[0].page_id, second_page.nodes[0].page_id);
+    assert_eq!(second_page.next_cursor, None);
+}
 
 fn assert_v5_snapshot_revision_without_state_hash(snapshot_revision: &str) {
     let parts = snapshot_revision.split(':').collect::<Vec<_>>();
@@ -151,6 +409,7 @@ fn fs_migrations_create_tables() {
         vec![
             "vfs_store:001_initial".to_string(),
             "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_node_history".to_string(),
         ]
     );
 
@@ -1270,6 +1529,7 @@ fn fs_migrations_are_idempotent() {
         vec![
             "vfs_store:001_initial".to_string(),
             "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_node_history".to_string(),
         ]
     );
 
@@ -1287,9 +1547,31 @@ fn fs_migrations_apply_publication_commit_marker_once() {
     let conn = Connection::open(store.database_path()).expect("db should open");
     conn.execute("DROP TABLE publication_mutation_commits", [])
         .expect("publication commit table should drop");
+    for trigger in [
+        "fs_history_node_insert",
+        "fs_history_node_update",
+        "fs_history_node_delete",
+    ] {
+        conn.execute(&format!("DROP TRIGGER {trigger}"), [])
+            .expect("history trigger should drop");
+    }
+    for table in [
+        "fs_history_items",
+        "fs_history_active_change",
+        "fs_history_changes",
+        "fs_history_versions",
+        "fs_history_blobs",
+        "fs_history_pages",
+    ] {
+        conn.execute(&format!("DROP TABLE {table}"), [])
+            .expect("history table should drop");
+    }
     conn.execute(
-        "DELETE FROM schema_migrations WHERE version = ?1",
-        ["vfs_store:002_publication_mutation_commits"],
+        "DELETE FROM schema_migrations WHERE version IN (?1, ?2)",
+        [
+            "vfs_store:002_publication_mutation_commits",
+            "vfs_store:003_node_history",
+        ],
     )
     .expect("publication commit migration marker should delete");
     drop(conn);
@@ -1323,6 +1605,15 @@ fn fs_migrations_apply_publication_commit_marker_once() {
 #[test]
 fn write_node_creates_missing_store_root_on_current_schema() {
     let (_dir, store) = new_store();
+    let page_id = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge".to_string()),
+            cursor: None,
+            limit: 1,
+        })
+        .expect("knowledge root history should load")
+        .page_id;
     let conn = Connection::open(store.database_path()).expect("db should open");
     conn.execute("DELETE FROM fs_nodes WHERE path = '/Knowledge'", [])
         .expect("knowledge root should delete");
@@ -1353,6 +1644,20 @@ fn write_node_creates_missing_store_root_on_current_schema() {
         .expect("child should read")
         .expect("child should exist");
     assert_eq!(child.kind, NodeKind::File);
+    let repaired_history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge".to_string()),
+            cursor: None,
+            limit: 10,
+        })
+        .expect("repaired root history should load");
+    assert_eq!(repaired_history.page_id, page_id);
+    assert_eq!(repaired_history.entries.len(), 1);
+    assert_eq!(
+        repaired_history.entries[0].change_kind,
+        NodeHistoryChangeKind::Create
+    );
 }
 
 #[test]

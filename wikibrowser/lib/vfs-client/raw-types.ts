@@ -15,6 +15,50 @@ export type RawNode = {
   metadata_json: string;
 };
 
+export type RawNodeVersionSummary = {
+  version_id: bigint;
+  page_id: bigint;
+  path: string;
+  kind: Variant;
+  etag: string;
+  node_created_at: bigint;
+  node_updated_at: bigint;
+};
+
+export type RawNodeHistoryEntry = {
+  item_id: bigint;
+  change_id: bigint;
+  page_id: bigint;
+  operation: string;
+  change_kind: Variant;
+  author_principal: string;
+  changed_at: bigint;
+  before_version: [] | [RawNodeVersionSummary];
+  after_version: [] | [RawNodeVersionSummary];
+};
+
+export type RawListNodeHistoryResponse = {
+  page_id: bigint;
+  entries: RawNodeHistoryEntry[];
+  next_cursor: [] | [bigint];
+};
+
+export type RawNodeVersion = {
+  summary: RawNodeVersionSummary;
+  content: string;
+  metadata_json: string;
+};
+
+export type RawDeletedNodeSummary = RawNodeVersionSummary & {
+  deleted_at: bigint;
+  deleted_by: string;
+};
+
+export type RawListDeletedNodesResponse = {
+  nodes: RawDeletedNodeSummary[];
+  next_cursor: [] | [bigint];
+};
+
 export type RawNodePublication = {
   public_id: string;
   database_id: string;
@@ -498,6 +542,28 @@ export type VfsActor = {
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
   update_database_metadata: (request: RawUpdateDatabaseMetadataRequest) => Promise<{ Ok: RawDatabaseMetadata } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
+  list_node_history: (request: {
+    database_id: string;
+    target: { CurrentPath: string } | { PageId: bigint };
+    cursor: [] | [bigint];
+    limit: number;
+  }) => Promise<{ Ok: RawListNodeHistoryResponse } | { Err: string }>;
+  read_node_version: (request: {
+    database_id: string;
+    page_id: bigint;
+    version_id: bigint;
+  }) => Promise<{ Ok: [] | [RawNodeVersion] } | { Err: string }>;
+  list_deleted_nodes: (request: {
+    database_id: string;
+    cursor: [] | [bigint];
+    limit: number;
+  }) => Promise<{ Ok: RawListDeletedNodesResponse } | { Err: string }>;
+  restore_node_version: (request: {
+    database_id: string;
+    page_id: bigint;
+    version_id: bigint;
+    expected_current_etag: [] | [string];
+  }) => Promise<{ Ok: RawWriteNodeResult } | { Err: RawNodeMutationError }>;
   read_public_node: (publicId: string) => Promise<{ Ok: [] | [RawPublicNode] } | { Err: string }>;
   publish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: RawNodePublication } | { Err: string }>;
   unpublish_node: (request: { database_id: string; path: string }) => Promise<{ Ok: null } | { Err: string }>;

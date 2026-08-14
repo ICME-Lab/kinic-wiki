@@ -7,11 +7,17 @@ use crate::sqlite::{
 };
 
 const SCHEMA_VERSION_INITIAL: &str = "vfs_store:001_initial";
-const SCHEMA_VERSION_CURRENT: &str = "vfs_store:002_publication_mutation_commits";
-const SCHEMA_VERSIONS: &[&str] = &[SCHEMA_VERSION_INITIAL, SCHEMA_VERSION_CURRENT];
+const SCHEMA_VERSION_002: &str = "vfs_store:002_publication_mutation_commits";
+const SCHEMA_VERSION_CURRENT: &str = "vfs_store:003_node_history";
+const SCHEMA_VERSIONS: &[&str] = &[
+    SCHEMA_VERSION_INITIAL,
+    SCHEMA_VERSION_002,
+    SCHEMA_VERSION_CURRENT,
+];
 const FRESH_FS_SCHEMA_SQL: &str = include_str!("../migrations/fresh_fs_schema.sql");
 const SCHEMA_MIGRATION_002: &str =
     include_str!("../migrations/002_publication_mutation_commits.sql");
+const SCHEMA_MIGRATION_003: &str = include_str!("../migrations/003_node_history.sql");
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
 
@@ -28,7 +34,9 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
         create_fresh_schema(tx)?;
         seed_initial_store_roots(tx)?;
         record_schema_migration(tx, SCHEMA_VERSION_INITIAL)?;
+        record_schema_migration(tx, SCHEMA_VERSION_002)?;
         record_schema_migration(tx, SCHEMA_VERSION_CURRENT)?;
+        seed_history_pages(tx)?;
         return Ok(());
     }
 
@@ -43,13 +51,17 @@ fn apply_pending_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     if version_refs == SCHEMA_VERSIONS {
         return Ok(());
     }
-    if version_refs != [SCHEMA_VERSION_INITIAL] {
+    if version_refs == [SCHEMA_VERSION_INITIAL] {
+        conn.execute_batch(SCHEMA_MIGRATION_002)
+            .map_err(|error| error.to_string())?;
+        record_schema_migration(conn, SCHEMA_VERSION_002)?;
+    } else if version_refs != [SCHEMA_VERSION_INITIAL, SCHEMA_VERSION_002] {
         return Err(format!(
             "unsupported vfs_store schema version; recreate database: {}",
             versions.join(", ")
         ));
     }
-    conn.execute_batch(SCHEMA_MIGRATION_002)
+    conn.execute_batch(SCHEMA_MIGRATION_003)
         .map_err(|error| error.to_string())?;
     record_schema_migration(conn, SCHEMA_VERSION_CURRENT)
 }
@@ -119,6 +131,11 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
         "fs_nodes_parent_idx",
         "fs_links_target_path_idx",
         "fs_links_source_path_idx",
+        "fs_history_versions_page_idx",
+        "fs_history_items_page_idx",
+        "fs_history_items_change_idx",
+        "fs_history_pages_deleted_idx",
+        "fs_history_pages_current_path_idx",
     ] {
         if !index_exists(conn, index)? {
             return Err(format!(
@@ -157,6 +174,59 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
             ][..],
         ),
         ("publication_mutation_commits", &["operation_id"][..]),
+        (
+            "fs_history_pages",
+            &[
+                "id",
+                "current_node_id",
+                "current_path",
+                "current_version_id",
+                "deleted_at",
+                "last_change_id",
+                "last_item_id",
+            ][..],
+        ),
+        (
+            "fs_history_blobs",
+            &["hash", "kind", "content", "metadata_json"][..],
+        ),
+        (
+            "fs_history_versions",
+            &[
+                "id",
+                "page_id",
+                "blob_hash",
+                "path",
+                "etag",
+                "node_created_at",
+                "node_updated_at",
+            ][..],
+        ),
+        (
+            "fs_history_changes",
+            &["id", "author_principal", "operation", "changed_at"][..],
+        ),
+        (
+            "fs_history_active_change",
+            &[
+                "singleton",
+                "change_id",
+                "changed_at",
+                "forced_kind",
+                "restore_page_id",
+            ][..],
+        ),
+        (
+            "fs_history_items",
+            &[
+                "id",
+                "change_id",
+                "page_id",
+                "change_kind",
+                "before_version_id",
+                "after_version_id",
+            ][..],
+        ),
     ] {
         for column in columns {
             if !table_column_exists(conn, table, column)? {
@@ -241,6 +311,12 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_path_state",
         "fs_links",
         "publication_mutation_commits",
+        "fs_history_pages",
+        "fs_history_blobs",
+        "fs_history_versions",
+        "fs_history_changes",
+        "fs_history_active_change",
+        "fs_history_items",
     ]
 }
 
@@ -258,6 +334,16 @@ fn seed_initial_store_roots(conn: &Transaction<'_>) -> Result<(), String> {
         insert_initial_folder(conn, path)?;
     }
     Ok(())
+}
+
+fn seed_history_pages(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO fs_history_pages (current_node_id, current_path)
+         SELECT id, path FROM fs_nodes ORDER BY id ASC",
+        params![],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 fn insert_initial_folder(conn: &Transaction<'_>, path: &str) -> Result<(), String> {

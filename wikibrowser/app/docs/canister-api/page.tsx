@@ -86,7 +86,8 @@ const parameters = [
   { name: "limit", type: "nat32", detail: "Maximum rows returned by the canister response envelope." },
   { name: "path", type: "text", detail: "Exact VFS path, for example /Knowledge/index.md or a path returned by query_database_sql_json." },
   { name: "nodes", type: "vec WriteNodeItem", detail: "Batch of File, Source, or Folder writes. Each item has path, kind, content, metadata_json, and optional expected_etag." },
-  { name: "expected_etag", type: "opt text", detail: "Use null for create or unchecked replace; use opt \"<etag>\" to reject stale overwrites." }
+  { name: "expected_etag", type: "opt text", detail: "Use null for create or unchecked replace; use opt \"<etag>\" to reject stale overwrites." },
+  { name: "page_id / version_id", type: "nat64", detail: "Stable page identity and immutable version identity returned by page-history queries." }
 ];
 
 const queryEndpoints = [
@@ -98,6 +99,9 @@ const queryEndpoints = [
   { name: "search_nodes(request)", detail: "Search wiki content and paths with lightweight previews." },
   { name: "search_node_paths(request)", detail: "Search paths only." },
   { name: "list_children(request)", detail: "List direct children under one folder path." },
+  { name: "list_node_history(request)", detail: "List principal-attributed changes for a live path or stable page ID. Database membership is required." },
+  { name: "read_node_version(request)", detail: "Read one immutable historical version for diff or inspection." },
+  { name: "list_deleted_nodes(request)", detail: "Discover deleted pages that can be inspected or restored." },
   { name: "read_node_context(request)", detail: "Read a node with nearby link context." },
   { name: "query_context(request)", detail: "Recall task-scoped memory from role pages, search, and linked nodes." },
   { name: "source_evidence(request)", detail: "Resolve source evidence for a knowledge node." },
@@ -111,7 +115,8 @@ const writeEndpoints = [
   { name: "edit_node(request)", detail: "Replace text inside one node with an optional etag guard." },
   { name: "delete_node(request)", detail: "Delete one node. Use etag guards for destructive edits." },
   { name: "mkdir_node(request)", detail: "Create a folder node." },
-  { name: "move_node(request)", detail: "Move or rename one node." }
+  { name: "move_node(request)", detail: "Move or rename one node." },
+  { name: "restore_node_version(request)", detail: "Restore a historical version as a new current version. Requires writer access and an exact live etag, or path absence for a deleted page." }
 ];
 
 const sqlRules = [
@@ -131,7 +136,9 @@ const writeRules = [
   "Use expected_etag when replacing existing content to avoid overwriting concurrent edits.",
   "Use expected_etag = null only for a create or intentionally unchecked replace.",
   "write_node and write_nodes accept File, Source, and Folder items; folder writes are create-only and idempotent.",
-  "Anonymous identity can read only anonymous-readable DBs; it cannot write."
+  "Anonymous identity can read only anonymous-readable DBs; it cannot write.",
+  "History reads are member-only even when the current database is anonymously readable; restore requires writer or owner access.",
+  "Restore creates a new history entry and does not automatically republish the page."
 ];
 
 const accessRules = [

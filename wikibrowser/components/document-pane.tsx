@@ -15,6 +15,7 @@ import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
 import { MarkdownEditDocument } from "@/components/markdown-edit-document";
 import { MarkdownPreview } from "@/components/markdown-preview";
+import { NodeHistory } from "@/components/node-history";
 
 const LARGE_CONTENT_BYTES = 1024 * 1024;
 const RAW_INITIAL_CHARS = 64 * 1024;
@@ -33,6 +34,7 @@ export function DocumentHeader({
   onViewChange,
   isDirectory,
   canEditDirectory,
+  historyAvailable,
   editState,
   rawContent,
   actions
@@ -44,6 +46,7 @@ export function DocumentHeader({
   onViewChange: (view: ViewMode) => void;
   isDirectory: boolean;
   canEditDirectory: boolean;
+  historyAvailable: boolean;
   editState: DocumentEditState;
   rawContent: string | null;
   actions?: ReactNode;
@@ -71,6 +74,7 @@ export function DocumentHeader({
           <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
             <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
             <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
+            {historyAvailable ? <ViewButton active={view === "history"} label="History" onClick={() => onViewChange("history")} /> : null}
             {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
           </div>
           {rawContent !== null ? (
@@ -233,6 +237,7 @@ export function DocumentPane({
           databaseRoleError={databaseRoleError ?? null}
           databaseCyclesError={databaseCyclesError ?? null}
           onFolderIndexSaved={onFolderIndexSaved}
+          onFolderRestored={onNodeSaved}
           onEditStateChange={onEditStateChange}
         />
       </PaneBody>
@@ -408,6 +413,9 @@ function NodeDocument({
         onEditStateChange={onEditStateChange}
       />
     );
+  }
+  if (view === "history") {
+    return <NodeHistory canisterId={canisterId} databaseId={databaseId} node={node} identity={writeIdentity} databaseRole={currentDatabaseRole} onRestored={onNodeSaved} />;
   }
   return (
     <article className="h-full overflow-auto px-6 py-6 md:px-10">
@@ -636,6 +644,7 @@ function FolderDocument({
   databaseRoleError,
   databaseCyclesError,
   onFolderIndexSaved,
+  onFolderRestored,
   onEditStateChange
 }: {
   folder: WikiNode;
@@ -651,6 +660,7 @@ function FolderDocument({
   databaseRoleError: string | null;
   databaseCyclesError: string | null;
   onFolderIndexSaved?: () => Promise<WikiNode>;
+  onFolderRestored?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
   const indexNode = folderIndexNode.data ?? emptyFolderIndexNode(folder.path);
@@ -674,6 +684,9 @@ function FolderDocument({
         onEditStateChange={onEditStateChange}
       />
     );
+  }
+  if (view === "history") {
+    return <NodeHistory canisterId={canisterId} databaseId={databaseId} node={folder} identity={writeIdentity} databaseRole={currentDatabaseRole} onRestored={onFolderRestored} />;
   }
   return (
     <div className="h-full overflow-auto p-6">

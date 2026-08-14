@@ -11,6 +11,52 @@ export type WikiNode = {
   metadataJson: string;
 };
 
+export type NodeHistoryChangeKind = "create" | "update" | "move" | "delete" | "restore";
+
+export type NodeVersionSummary = {
+  versionId: bigint;
+  pageId: bigint;
+  path: string;
+  kind: NodeKind;
+  etag: string;
+  nodeCreatedAt: string;
+  nodeUpdatedAt: string;
+};
+
+export type NodeHistoryEntry = {
+  itemId: bigint;
+  changeId: bigint;
+  pageId: bigint;
+  operation: string;
+  changeKind: NodeHistoryChangeKind;
+  authorPrincipal: string;
+  changedAt: string;
+  beforeVersion: NodeVersionSummary | null;
+  afterVersion: NodeVersionSummary | null;
+};
+
+export type NodeHistoryPage = {
+  pageId: bigint;
+  entries: NodeHistoryEntry[];
+  nextCursor: bigint | null;
+};
+
+export type NodeVersion = {
+  summary: NodeVersionSummary;
+  content: string;
+  metadataJson: string;
+};
+
+export type DeletedNodeSummary = NodeVersionSummary & {
+  deletedAt: string;
+  deletedBy: string;
+};
+
+export type DeletedNodePage = {
+  nodes: DeletedNodeSummary[];
+  nextCursor: bigint | null;
+};
+
 export type NodePublication = {
   publicId: string;
   databaseId: string;

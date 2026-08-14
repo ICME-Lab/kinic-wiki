@@ -65,7 +65,7 @@ export function hrefForPath(
     .map(encodeURIComponent)
     .join("/");
   const params = new URLSearchParams();
-  if (view === "raw" || view === "edit") {
+  if (view === "raw" || view === "history" || view === "edit") {
     params.set("view", view);
   }
   if (tab) {

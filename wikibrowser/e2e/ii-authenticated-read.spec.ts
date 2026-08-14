@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createDatabaseAuthenticated,
+  deleteNodeAuthenticated,
   grantDatabaseAccessAuthenticated,
   mkdirNodeAuthenticated,
   writeNodeAuthenticated
@@ -18,6 +19,7 @@ const E2E_TITLE = "E2E Private Note";
 const E2E_LINKED_TITLE = "E2E Linked Note";
 const E2E_TOKEN = `e2e-private-token-${Date.now()}`;
 const IMPORT_ROOT_NAME = "folder-import-fixture";
+const DELETED_PATH = "/Knowledge/e2e-deleted.md";
 
 testWithII.skip(!CANISTER_ID, "VITE_KINIC_WIKI_CANISTER_ID is required.");
 
@@ -34,8 +36,10 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   const principalLabel = await page.locator('[aria-label^="Principal "]').getAttribute("aria-label");
   const principal = principalLabel?.slice("Principal ".length) ?? "";
   expect(principal).not.toEqual("");
-  const databaseId = await seedPrivateDatabase(principal);
-  const secondDatabaseId = await seedPrivateDatabase(principal);
+  const firstSeed = await seedPrivateDatabase(principal, "history-marker-a");
+  const secondSeed = await seedPrivateDatabase(principal, "history-marker-b");
+  const { databaseId, deletedBy } = firstSeed;
+  const secondDatabaseId = secondSeed.databaseId;
   const privateHref = `/db/${encodeURIComponent(databaseId)}${E2E_PATH}`;
   const secondPrivateHref = `/db/${encodeURIComponent(secondDatabaseId)}${E2E_PATH}`;
 
@@ -49,6 +53,10 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await page.goto(privateHref);
   await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page.getByText("History rail")).toBeVisible();
+  await expect(page.getByText("history-marker-a")).toBeVisible();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
 
   const markdownImportPath = testInfo.outputPath("selected-local.md");
   const pdfImportPath = testInfo.outputPath("selected-manual.pdf");
@@ -123,7 +131,7 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await explorer.getByRole("button", { name: "More Explorer actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Rename" })).toBeEnabled();
   await expect(page.getByRole("menuitem", { name: "Move" })).toBeEnabled();
-  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Delete", exact: true })).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
   await explorer.getByRole("button", { name: "More Explorer actions" }).click();
@@ -167,6 +175,16 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await page.goto(`/db/${encodeURIComponent(databaseId)}/graph?center=${encodeURIComponent(E2E_PATH)}&depth=1`);
   await expect(page.getByText("principal has no access")).toHaveCount(0);
   await expect(page.getByText("Local link graph")).toBeVisible();
+
+  await page.goto(privateHref);
+  await page.locator('[data-tid="wiki-explorer-panel"]').getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Deleted pages" }).click();
+  await expect(page.getByText(DELETED_PATH)).toBeVisible();
+  await expect(page.getByText(deletedBy)).toBeVisible();
+  await page.getByRole("button", { name: "Logout" }).click();
+  await expect(page.getByText(DELETED_PATH)).toHaveCount(0);
+  await expect(page.getByText(deletedBy)).toHaveCount(0);
+  await expect(page.getByText("Login as a database member to view deleted pages.")).toBeVisible();
 });
 
 testWithII("publishes one node without exposing the private database", async ({ page, browser }) => {
@@ -305,16 +323,24 @@ testWithII("publishes one node without exposing the private database", async ({ 
   await anonymousContext.close();
 });
 
-async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
+async function seedPrivateDatabase(readerPrincipal: string, historyMarker: string): Promise<{ databaseId: string; deletedBy: string }> {
   const seedIdentity = Ed25519KeyIdentity.generate();
   const { database_id: databaseId } = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, `II e2e ${Date.now()}`);
-  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+  const firstWrite = await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
     databaseId,
     path: E2E_PATH,
     kind: "file",
     content: `# ${E2E_TITLE}\n\n${E2E_TOKEN}\n\n[Open linked note](./e2e-linked.md)\n`,
     metadataJson: "{}",
     expectedEtag: null
+  });
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: E2E_PATH,
+    kind: "file",
+    content: `# ${E2E_TITLE}\n\n${E2E_TOKEN}\n\n${historyMarker}\n\n[Open linked note](./e2e-linked.md)\n`,
+    metadataJson: "{}",
+    expectedEtag: firstWrite.node.etag
   });
   await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
     databaseId,
@@ -336,8 +362,22 @@ async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
     metadataJson: "{}",
     expectedEtag: null
   });
+  const deleted = await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: DELETED_PATH,
+    kind: "file",
+    content: "# Deleted E2E note\n",
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await deleteNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: DELETED_PATH,
+    expectedEtag: deleted.node.etag,
+    expectedFolderIndexEtag: null
+  });
   await grantDatabaseAccessAuthenticated(CANISTER_ID, seedIdentity, databaseId, readerPrincipal, "writer");
-  return databaseId;
+  return { databaseId, deletedBy: seedIdentity.getPrincipal().toText() };
 }
 
 async function createLocalIdentity(page: Page): Promise<void> {

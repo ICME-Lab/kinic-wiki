@@ -46,15 +46,17 @@ use vfs_types::{
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
-    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
+    LinkEdge, ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse,
+    ListNodeHistoryRequest, ListNodeHistoryResponse, ListNodesRequest, MarketCreateListingRequest,
     MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
     MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
     MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
     MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeMutationError,
-    NodeMutationResult, NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
-    OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    NodeMutationResult, NodePublication, NodeVersion, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode,
+    PublishNodeRequest, QueryContext, QueryContextRequest, ReadNodeVersionRequest,
+    RenameDatabaseRequest, RestoreNodeVersionRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
@@ -1322,6 +1324,35 @@ fn graph_neighborhood(request: GraphNeighborhoodRequest) -> Result<Vec<LinkEdge>
 #[query]
 fn read_node_context(request: NodeContextRequest) -> Result<Option<NodeContext>, String> {
     with_service(|service| service.read_node_context(&caller_text(), request))
+}
+
+#[query]
+fn list_node_history(request: ListNodeHistoryRequest) -> Result<ListNodeHistoryResponse, String> {
+    with_service(|service| service.list_node_history(&caller_text(), request))
+}
+
+#[query]
+fn read_node_version(request: ReadNodeVersionRequest) -> Result<Option<NodeVersion>, String> {
+    with_service(|service| service.read_node_version(&caller_text(), request))
+}
+
+#[query]
+fn list_deleted_nodes(
+    request: ListDeletedNodesRequest,
+) -> Result<ListDeletedNodesResponse, String> {
+    with_service(|service| service.list_deleted_nodes(&caller_text(), request))
+}
+
+#[update]
+fn restore_node_version(
+    request: RestoreNodeVersionRequest,
+) -> Result<WriteNodeResult, NodeMutationError> {
+    let database_id = request.database_id.clone();
+    with_node_mutation_metered_update(
+        "restore_node_version",
+        Some(database_id),
+        |service, caller, now| service.restore_node_version(caller, request, now),
+    )
 }
 
 #[query]

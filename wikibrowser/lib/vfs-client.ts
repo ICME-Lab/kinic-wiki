@@ -13,6 +13,11 @@ import type {
   DatabaseRole,
   InitialFreeDatabaseGrantStatus,
   LinkEdge,
+  DeletedNodePage,
+  NodeHistoryEntry,
+  NodeHistoryPage,
+  NodeVersion,
+  NodeVersionSummary,
   UpdateDatabaseMetadataRequest,
   MkdirNodeRequest,
   MkdirNodeResult,
@@ -45,7 +50,7 @@ export * from "./vfs-client/raw-types";
 export * from "./vfs-client/actor";
 export * from "./vfs-client/cycles";
 export * from "./vfs-client/market";
-import type { CreateDatabaseResult, RawCanisterHealth, RawChild, RawDatabaseMember, RawNode, RawNodeContext, RawNodePublication, RawPublicNode, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, Variant } from "./vfs-client/raw-types";
+import type { CreateDatabaseResult, RawCanisterHealth, RawChild, RawDatabaseMember, RawDeletedNodeSummary, RawNode, RawNodeContext, RawNodeHistoryEntry, RawNodePublication, RawNodeVersion, RawNodeVersionSummary, RawPublicNode, RawQueryAnswerSessionCheckRequest, RawQueryAnswerSessionRequest, RawQueryContext, RawRecent, RawSourceCaptureTriggerSessionCheckRequest, RawSourceCaptureTriggerSessionRequest, RawSourceEvidence, RawSourceRunSessionCheckRequest, RawUpdateDatabaseMetadataRequest, Variant } from "./vfs-client/raw-types";
 import { callVfs, createAuthenticatedActor, createReadActor, healthCache, normalizeDatabaseRole, normalizeDatabaseStatus, normalizeLinkEdge, normalizeDatabaseMetadata, rawOptionalText, throwCanisterError, throwNodeMutationError, createVfsActor } from "./vfs-client/actor";
 import { normalizeInitialFreeDatabaseGrantStatus } from "./vfs-client/cycles";
 export async function readNode(canisterId: string, databaseId: string, path: string, identity?: Identity): Promise<WikiNode | null> {
@@ -57,6 +62,89 @@ export async function readNode(canisterId: string, databaseId: string, path: str
     }
     const raw = result.Ok[0];
     return raw ? normalizeNode(raw) : null;
+  });
+}
+
+export async function listNodeHistory(
+  canisterId: string,
+  databaseId: string,
+  target: { path: string } | { pageId: bigint },
+  identity: Identity,
+  cursor: bigint | null = null,
+  limit = 50
+): Promise<NodeHistoryPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_node_history({
+      database_id: databaseId,
+      target: "path" in target ? { CurrentPath: target.path } : { PageId: target.pageId },
+      cursor: cursor === null ? [] : [cursor],
+      limit
+    });
+    if ("Err" in result) throwCanisterError(result.Err);
+    return {
+      pageId: result.Ok.page_id,
+      entries: result.Ok.entries.map(normalizeNodeHistoryEntry),
+      nextCursor: result.Ok.next_cursor[0] ?? null
+    };
+  });
+}
+
+export async function readNodeVersion(
+  canisterId: string,
+  databaseId: string,
+  pageId: bigint,
+  versionId: bigint,
+  identity: Identity
+): Promise<NodeVersion | null> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.read_node_version({ database_id: databaseId, page_id: pageId, version_id: versionId });
+    if ("Err" in result) throwCanisterError(result.Err);
+    return result.Ok[0] ? normalizeNodeVersion(result.Ok[0]) : null;
+  });
+}
+
+export async function listDeletedNodes(
+  canisterId: string,
+  databaseId: string,
+  identity: Identity,
+  cursor: bigint | null = null,
+  limit = 50
+): Promise<DeletedNodePage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_deleted_nodes({
+      database_id: databaseId,
+      cursor: cursor === null ? [] : [cursor],
+      limit
+    });
+    if ("Err" in result) throwCanisterError(result.Err);
+    return {
+      nodes: result.Ok.nodes.map(normalizeDeletedNode),
+      nextCursor: result.Ok.next_cursor[0] ?? null
+    };
+  });
+}
+
+export async function restoreNodeVersionAuthenticated(
+  canisterId: string,
+  databaseId: string,
+  pageId: bigint,
+  versionId: bigint,
+  expectedCurrentEtag: string | null,
+  identity: Identity
+): Promise<WriteNodeResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.restore_node_version({
+      database_id: databaseId,
+      page_id: pageId,
+      version_id: versionId,
+      expected_current_etag: expectedCurrentEtag ? [expectedCurrentEtag] : []
+    });
+    if ("Err" in result) throwNodeMutationError(result.Err);
+    return { created: result.Ok.created, node: normalizeRecentNode(result.Ok.node) };
   });
 }
 
@@ -578,6 +666,52 @@ function normalizeNode(raw: RawNode): WikiNode {
     updatedAt: raw.updated_at.toString(),
     etag: raw.etag,
     metadataJson: raw.metadata_json
+  };
+}
+
+function normalizeNodeVersionSummary(raw: RawNodeVersionSummary): NodeVersionSummary {
+  return {
+    versionId: raw.version_id,
+    pageId: raw.page_id,
+    path: raw.path,
+    kind: normalizeNodeKind(raw.kind),
+    etag: raw.etag,
+    nodeCreatedAt: raw.node_created_at.toString(),
+    nodeUpdatedAt: raw.node_updated_at.toString()
+  };
+}
+
+function normalizeNodeHistoryEntry(raw: RawNodeHistoryEntry): NodeHistoryEntry {
+  const changeKind = Object.keys(raw.change_kind)[0]?.toLowerCase();
+  if (!changeKind || !["create", "update", "move", "delete", "restore"].includes(changeKind)) {
+    throw new Error("Unknown node history change kind");
+  }
+  return {
+    itemId: raw.item_id,
+    changeId: raw.change_id,
+    pageId: raw.page_id,
+    operation: raw.operation,
+    changeKind: changeKind as NodeHistoryEntry["changeKind"],
+    authorPrincipal: raw.author_principal,
+    changedAt: raw.changed_at.toString(),
+    beforeVersion: raw.before_version[0] ? normalizeNodeVersionSummary(raw.before_version[0]) : null,
+    afterVersion: raw.after_version[0] ? normalizeNodeVersionSummary(raw.after_version[0]) : null
+  };
+}
+
+function normalizeNodeVersion(raw: RawNodeVersion): NodeVersion {
+  return {
+    summary: normalizeNodeVersionSummary(raw.summary),
+    content: raw.content,
+    metadataJson: raw.metadata_json
+  };
+}
+
+function normalizeDeletedNode(raw: RawDeletedNodeSummary) {
+  return {
+    ...normalizeNodeVersionSummary(raw),
+    deletedAt: raw.deleted_at.toString(),
+    deletedBy: raw.deleted_by
   };
 }
 

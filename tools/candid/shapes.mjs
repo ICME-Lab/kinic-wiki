@@ -406,6 +406,92 @@ export const expectedTypes = {
   },
   NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null", Folder: "null" } },
   NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
+  NodeHistoryTarget: {
+    kind: "variant",
+    cases: { PageId: "nat64", CurrentPath: "text" }
+  },
+  NodeHistoryChangeKind: {
+    kind: "variant",
+    cases: { Move: "null", Restore: "null", Delete: "null", Create: "null", Update: "null" }
+  },
+  NodeVersionSummary: {
+    kind: "record",
+    fields: {
+      version_id: "nat64",
+      page_id: "nat64",
+      path: "text",
+      kind: "NodeKind",
+      etag: "text",
+      node_created_at: "int64",
+      node_updated_at: "int64"
+    }
+  },
+  NodeHistoryEntry: {
+    kind: "record",
+    fields: {
+      item_id: "nat64",
+      change_id: "nat64",
+      page_id: "nat64",
+      operation: "text",
+      change_kind: "NodeHistoryChangeKind",
+      author_principal: "text",
+      changed_at: "int64",
+      before_version: "opt NodeVersionSummary",
+      after_version: "opt NodeVersionSummary"
+    }
+  },
+  ListNodeHistoryRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      target: "NodeHistoryTarget",
+      cursor: "opt nat64",
+      limit: "nat32"
+    }
+  },
+  ListNodeHistoryResponse: {
+    kind: "record",
+    fields: { page_id: "nat64", entries: "vec NodeHistoryEntry", next_cursor: "opt nat64" }
+  },
+  ReadNodeVersionRequest: {
+    kind: "record",
+    fields: { database_id: "text", page_id: "nat64", version_id: "nat64" }
+  },
+  NodeVersion: {
+    kind: "record",
+    fields: { summary: "NodeVersionSummary", content: "text", metadata_json: "text" }
+  },
+  DeletedNodeSummary: {
+    kind: "record",
+    fields: {
+      page_id: "nat64",
+      version_id: "nat64",
+      path: "text",
+      kind: "NodeKind",
+      etag: "text",
+      node_created_at: "int64",
+      node_updated_at: "int64",
+      deleted_at: "int64",
+      deleted_by: "text"
+    }
+  },
+  ListDeletedNodesRequest: {
+    kind: "record",
+    fields: { database_id: "text", cursor: "opt nat64", limit: "nat32" }
+  },
+  ListDeletedNodesResponse: {
+    kind: "record",
+    fields: { nodes: "vec DeletedNodeSummary", next_cursor: "opt nat64" }
+  },
+  RestoreNodeVersionRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      page_id: "nat64",
+      version_id: "nat64",
+      expected_current_etag: "opt text"
+    }
+  },
   NodeMutationErrorCode: {
     kind: "variant",
     cases: {
@@ -641,6 +727,9 @@ export const expectedTypes = {
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
+  ResultDeletedNodes: { kind: "variant", cases: { Ok: "ListDeletedNodesResponse", Err: "text" } },
+  ResultNodeHistory: { kind: "variant", cases: { Ok: "ListNodeHistoryResponse", Err: "text" } },
+  ResultNodeVersion: { kind: "variant", cases: { Ok: "opt NodeVersion", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
   ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "NodeMutationError" } },
   ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "NodeMutationError" } },
@@ -763,35 +852,38 @@ export const didTypeAliases = {
   ResultCyclesPendingPurchases: "Result_16",
   ResultMembers: "Result_17",
   ResultDatabases: "Result_18",
-  ResultNat64: "Result_20",
-  ResultMarketListing: "Result_21",
-  ResultMarketListingDetail: "Result_22",
-  ResultMarketEntitlementPage: "Result_23",
-  ResultMarketListings: "Result_24",
-  ResultMarketListingPage: "Result_25",
-  ResultMarketOrderPage: "Result_26",
-  ResultMarketPurchasePreview: "Result_27",
-  ResultMarketOrder: "Result_28",
-  ResultMemoryManifest: "Result_29",
-  ResultMkdirNode: "Result_30",
-  ResultMoveNode: "Result_31",
-  ResultNodePublication: "Result_33",
-  ResultCyclesPurchase: "Result_34",
-  ResultQueryContext: "Result_35",
-  ResultIndexSqlJsonQuery: "Result_36",
-  ResultNode: "Result_37",
-  ResultNodeContext: "Result_38",
-  ResultPublicNode: "Result_39",
-  ResultSearch: "Result_40",
-  ResultStorageBillingBatch: "Result_41",
-  ResultSourceEvidence: "Result_42",
+  ResultDeletedNodes: "Result_19",
+  ResultNodeHistory: "Result_20",
+  ResultNat64: "Result_22",
+  ResultMarketListing: "Result_23",
+  ResultMarketListingDetail: "Result_24",
+  ResultMarketEntitlementPage: "Result_25",
+  ResultMarketListings: "Result_26",
+  ResultMarketListingPage: "Result_27",
+  ResultMarketOrderPage: "Result_28",
+  ResultMarketPurchasePreview: "Result_29",
+  ResultMarketOrder: "Result_30",
+  ResultMemoryManifest: "Result_31",
+  ResultMkdirNode: "Result_32",
+  ResultMoveNode: "Result_33",
+  ResultNodePublication: "Result_35",
+  ResultCyclesPurchase: "Result_36",
+  ResultQueryContext: "Result_37",
+  ResultIndexSqlJsonQuery: "Result_38",
+  ResultNode: "Result_39",
+  ResultNodeContext: "Result_40",
+  ResultNodeVersion: "Result_41",
+  ResultPublicNode: "Result_42",
+  ResultSearch: "Result_43",
+  ResultStorageBillingBatch: "Result_44",
+  ResultSourceEvidence: "Result_45",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteNodes: "Result_46",
-  ResultDatabaseMetadata: "Result_43",
-  ResultWikiMetrics: "Result_44",
-  ResultWikiMetricsSeries: "Result_45",
-  ResultWriteSourceForGeneration: "Result_47"
+  ResultWriteNodes: "Result_49",
+  ResultDatabaseMetadata: "Result_46",
+  ResultWikiMetrics: "Result_47",
+  ResultWikiMetricsSeries: "Result_48",
+  ResultWriteSourceForGeneration: "Result_50"
 };
 
 export const expectedMethods = {
@@ -822,6 +914,8 @@ export const expectedMethods = {
   list_database_cycles_pending_purchases: { input: ["text"], output: "ResultCyclesPendingPurchases", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
+  list_deleted_nodes: { input: ["ListDeletedNodesRequest"], output: "ResultDeletedNodes", mode: "query" },
+  list_node_history: { input: ["ListNodeHistoryRequest"], output: "ResultNodeHistory", mode: "query" },
   market_count_active_entitlements: { input: ["text"], output: "ResultNat64", mode: "query" },
   market_create_listing: { input: ["MarketCreateListingRequest"], output: "ResultMarketListing", mode: "update" },
   market_get_listing: { input: ["text"], output: "ResultMarketListingDetail", mode: "query" },
@@ -848,8 +942,10 @@ export const expectedMethods = {
   wiki_metrics_series: { input: ["nat32"], output: "ResultWikiMetricsSeries", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
+  read_node_version: { input: ["ReadNodeVersionRequest"], output: "ResultNodeVersion", mode: "query" },
   read_public_node: { input: ["text"], output: "ResultPublicNode", mode: "query" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
+  restore_node_version: { input: ["RestoreNodeVersionRequest"], output: "ResultWriteNode", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },

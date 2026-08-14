@@ -436,6 +436,114 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub enum NodeHistoryTarget {
+    CurrentPath(String),
+    PageId(u64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeHistoryChangeKind {
+    #[serde(alias = "Create")]
+    Create,
+    #[serde(alias = "Update")]
+    Update,
+    #[serde(alias = "Move")]
+    Move,
+    #[serde(alias = "Delete")]
+    Delete,
+    #[serde(alias = "Restore")]
+    Restore,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodeVersionSummary {
+    pub version_id: u64,
+    pub page_id: u64,
+    pub path: String,
+    pub kind: NodeKind,
+    pub etag: String,
+    pub node_created_at: i64,
+    pub node_updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodeHistoryEntry {
+    pub item_id: u64,
+    pub change_id: u64,
+    pub page_id: u64,
+    pub operation: String,
+    pub change_kind: NodeHistoryChangeKind,
+    pub author_principal: String,
+    pub changed_at: i64,
+    pub before_version: Option<NodeVersionSummary>,
+    pub after_version: Option<NodeVersionSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListNodeHistoryRequest {
+    pub database_id: String,
+    pub target: NodeHistoryTarget,
+    pub cursor: Option<u64>,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListNodeHistoryResponse {
+    pub page_id: u64,
+    pub entries: Vec<NodeHistoryEntry>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ReadNodeVersionRequest {
+    pub database_id: String,
+    pub page_id: u64,
+    pub version_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct NodeVersion {
+    pub summary: NodeVersionSummary,
+    pub content: String,
+    pub metadata_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListDeletedNodesRequest {
+    pub database_id: String,
+    pub cursor: Option<u64>,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DeletedNodeSummary {
+    pub page_id: u64,
+    pub version_id: u64,
+    pub path: String,
+    pub kind: NodeKind,
+    pub etag: String,
+    pub node_created_at: i64,
+    pub node_updated_at: i64,
+    pub deleted_at: i64,
+    pub deleted_by: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListDeletedNodesResponse {
+    pub nodes: Vec<DeletedNodeSummary>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct RestoreNodeVersionRequest {
+    pub database_id: String,
+    pub page_id: u64,
+    pub version_id: u64,
+    pub expected_current_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct ListNodesRequest {
     pub database_id: String,
     pub prefix: String,
