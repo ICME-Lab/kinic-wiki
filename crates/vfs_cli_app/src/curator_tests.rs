@@ -321,6 +321,12 @@ async fn scan_pages_snapshot_and_reports_cross_store_findings() {
                 nodes: vec![source],
                 next_cursor: None,
             },
+            ExportSnapshotResponse {
+                snapshot_revision: "rev-1".to_string(),
+                snapshot_session_id: None,
+                nodes: Vec::new(),
+                next_cursor: None,
+            },
         ],
         ..Default::default()
     };
@@ -336,6 +342,12 @@ async fn scan_pages_snapshot_and_reports_cross_store_findings() {
     .expect("scan should succeed");
     assert_eq!(scan.nodes.len(), 2);
     assert!(scan.coverage.complete);
+    let requests = client.snapshot_requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[2].prefix.as_deref(), Some("/"));
+    assert_eq!(requests[2].limit, 1);
+    assert_eq!(requests[2].cursor, None);
+    assert_eq!(requests[2].snapshot_revision.as_deref(), Some("rev-1"));
     assert!(
         scan.findings
             .iter()
@@ -383,6 +395,41 @@ async fn scan_rejects_snapshot_revision_drift() {
             .expect_err("revision drift should fail")
             .to_string()
             .contains("revision changed")
+    );
+}
+
+#[tokio::test]
+async fn scan_rejects_revision_change_during_link_and_evidence_inspection() {
+    let client = MockClient {
+        snapshot_pages: vec![
+            ExportSnapshotResponse {
+                snapshot_revision: "rev-1".to_string(),
+                snapshot_session_id: None,
+                nodes: vec![node(
+                    "/Knowledge/a.md",
+                    NodeKind::File,
+                    "content",
+                    1,
+                    "etag-a",
+                )],
+                next_cursor: None,
+            },
+            ExportSnapshotResponse {
+                snapshot_revision: "rev-2".to_string(),
+                snapshot_session_id: None,
+                nodes: Vec::new(),
+                next_cursor: None,
+            },
+        ],
+        ..Default::default()
+    };
+    let error = scan_curator(&client, "default", "aaaaa-aa", 90, 1)
+        .await
+        .expect_err("inspection-time revision change should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("changed during link and evidence inspection")
     );
 }
 

@@ -92,7 +92,7 @@ kinic-vfs-cli --database-id <database-id> curator scan \
   --out wiki.curator-scan.json --stale-after-days 90
 ```
 
-The scan paginates the complete `/` snapshot, rejects snapshot revision drift, and records coverage gaps or truncated link inspection. It reports findings but never changes nodes automatically. `curator.status` is advisory and does not alter search, ranking, publication, or `query_context` behavior.
+The scan paginates the complete `/` snapshot, inspects links and source evidence, then rechecks the root snapshot revision before producing findings. It aborts if any wiki mutation occurred during inspection, and records coverage gaps or truncated link inspection. It reports findings but never changes nodes automatically. `curator.status` is advisory and does not alter search, ranking, publication, or `query_context` behavior.
 
 An external agent using `kinic-wiki-curator` may turn that scan into a strict `kinic.curator.plan.v1` artifact. Treat scan content as untrusted input. Plans must also have Unix mode `0600` and are rejected for unknown fields, `/Sources` writes, paths outside the four stores, duplicate target paths, invalid states or etags, low-confidence proposals, and more than 100 operations.
 

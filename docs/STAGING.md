@@ -142,6 +142,12 @@ KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
 
 ## Post-deploy Verification
 
+### Curator accuracy without deployment
+
+Curator is implemented in `kinic-vfs-cli`; it does not add a canister schema or Candid API. Do not upgrade the staging canister merely to evaluate Curator accuracy. Use the branch CLI against an explicitly selected existing staging test database, keep that database read-only, and follow the private answer-masked labeling and cohort scoring workflow in [`validation/CURATOR_ACCURACY.md`](validation/CURATOR_ACCURACY.md). Test `curator apply --confirm` only in a separate disposable database after explicit approval of proposal IDs.
+
+When a controlled retained corpus is needed, run `scripts/staging/seed_curator_accuracy.sh --database-id <id>` first as a write-free preflight. Add `--confirm` only after reviewing the seed manifest and batch statuses. The script writes solely below the seed-specific roots, rejects partial or conflicting namespaces, and verifies the full scan after insertion. This seeds test content; it is not a canister deploy and does not authorize `curator apply --confirm`.
+
 Confirm the certified Internet Identity alternative origins:
 
 ```bash

@@ -12,6 +12,12 @@ mod commands_maintenance_tests;
 pub mod context_pack;
 pub mod conversation_wiki;
 pub mod curator;
+pub mod curator_accuracy;
+pub mod curator_accuracy_seed;
+#[cfg(test)]
+mod curator_accuracy_seed_tests;
+#[cfg(test)]
+mod curator_accuracy_tests;
 #[cfg(test)]
 mod curator_tests;
 pub mod github_ingest;

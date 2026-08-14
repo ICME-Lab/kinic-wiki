@@ -434,6 +434,7 @@ pub(crate) async fn scan_curator(
         });
     }
 
+    ensure_snapshot_revision_current(client, database_id, &snapshot_revision).await?;
     let findings =
         collect_deterministic_findings(&scan_nodes, &all_paths, stale_after_days, now_ms);
     coverage.complete =
@@ -450,6 +451,32 @@ pub(crate) async fn scan_curator(
         findings,
         coverage,
     })
+}
+
+async fn ensure_snapshot_revision_current(
+    client: &impl VfsApi,
+    database_id: &str,
+    snapshot_revision: &str,
+) -> Result<()> {
+    let page = client
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: database_id.to_string(),
+            prefix: Some("/".to_string()),
+            limit: 1,
+            cursor: None,
+            snapshot_revision: Some(snapshot_revision.to_string()),
+            snapshot_session_id: None,
+        })
+        .await
+        .context(
+            "curator snapshot changed during link and evidence inspection; rerun curator scan",
+        )?;
+    if page.snapshot_revision != snapshot_revision {
+        bail!(
+            "curator snapshot revision changed during link and evidence inspection; rerun curator scan"
+        );
+    }
+    Ok(())
 }
 
 async fn export_complete_snapshot(
@@ -1062,7 +1089,7 @@ pub(crate) fn parse_and_validate_plan(bytes: &[u8]) -> Result<CuratorPlanV1> {
     Ok(plan)
 }
 
-fn validate_plan(plan: &CuratorPlanV1) -> Result<()> {
+pub(crate) fn validate_plan(plan: &CuratorPlanV1) -> Result<()> {
     if plan.schema_version != PLAN_SCHEMA {
         bail!("unsupported Curator plan schema: {}", plan.schema_version);
     }
@@ -1419,7 +1446,7 @@ pub(crate) fn write_private_json(
     Ok(())
 }
 
-fn require_private_file(path: &Path) -> Result<()> {
+pub(crate) fn require_private_file(path: &Path) -> Result<()> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("failed to inspect Curator artifact: {}", path.display()))?;
     if !metadata.is_file() {

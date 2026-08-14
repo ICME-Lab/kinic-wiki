@@ -46,6 +46,10 @@ node_modules/
 *.tmp
 *.curator-scan.json
 *.curator-plan.json
+*.curator-accuracy-input.json
+*.curator-accuracy-labels.json
+*.curator-accuracy-report.json
+*.curator-accuracy-seed-report.json
 *.tsbuildinfo
 .playwright-cli/
 .pnpm-store/

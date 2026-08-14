@@ -41,6 +41,7 @@ pub(crate) struct MockClient {
     pub(crate) searches: std::sync::Mutex<Vec<SearchNodesRequest>>,
     pub(crate) path_searches: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
     pub(crate) snapshot_calls: std::sync::Mutex<usize>,
+    pub(crate) snapshot_requests: std::sync::Mutex<Vec<ExportSnapshotRequest>>,
     pub(crate) mutation_batches: std::sync::Mutex<Vec<MutateNodesBatchRequest>>,
 }
 
@@ -353,8 +354,12 @@ impl VfsApi for MockClient {
 
     async fn export_snapshot(
         &self,
-        _request: ExportSnapshotRequest,
+        request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse> {
+        self.snapshot_requests
+            .lock()
+            .expect("snapshot requests should lock")
+            .push(request);
         if !self.snapshot_pages.is_empty() {
             let mut call = self
                 .snapshot_calls
