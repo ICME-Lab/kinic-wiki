@@ -294,6 +294,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     path: idl.Text,
     kind: NodeKind,
     etag: idl.Text,
+    blob_oid: idl.Text,
     node_created_at: idl.Int64,
     node_updated_at: idl.Int64
   });
@@ -305,6 +306,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     change_kind: NodeHistoryChangeKind,
     author_principal: idl.Text,
     changed_at: idl.Int64,
+    commit_oid: idl.Text,
     before_version: idl.Opt(NodeVersionSummary),
     after_version: idl.Opt(NodeVersionSummary)
   });
@@ -321,12 +323,42 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const ReadNodeVersionRequest = idl.Record({ database_id: idl.Text, page_id: idl.Nat64, version_id: idl.Nat64 });
   const NodeVersion = idl.Record({ summary: NodeVersionSummary, content: idl.Text, metadata_json: idl.Text });
+  const GitRepositorySnapshot = idl.Record({
+    object_format: idl.Text,
+    head_ref: idl.Text,
+    head_commit_oid: idl.Text,
+    change_id: idl.Nat64
+  });
+  const GitObjectSummary = idl.Record({ oid: idl.Text, object_type: idl.Text, size: idl.Nat64 });
+  const ListGitObjectsRequest = idl.Record({
+    database_id: idl.Text,
+    snapshot_change_id: idl.Nat64,
+    cursor: idl.Opt(idl.Text),
+    limit: idl.Nat32
+  });
+  const ListGitObjectsResponse = idl.Record({ objects: idl.Vec(GitObjectSummary), next_cursor: idl.Opt(idl.Text) });
+  const ReadGitObjectChunkRequest = idl.Record({
+    database_id: idl.Text,
+    snapshot_change_id: idl.Nat64,
+    oid: idl.Text,
+    offset: idl.Nat64,
+    limit: idl.Nat32
+  });
+  const GitObjectChunk = idl.Record({
+    oid: idl.Text,
+    object_type: idl.Text,
+    size: idl.Nat64,
+    offset: idl.Nat64,
+    data: idl.Vec(idl.Nat8),
+    next_offset: idl.Opt(idl.Nat64)
+  });
   const DeletedNodeSummary = idl.Record({
     page_id: idl.Nat64,
     version_id: idl.Nat64,
     path: idl.Text,
     kind: NodeKind,
     etag: idl.Text,
+    blob_oid: idl.Text,
     node_created_at: idl.Int64,
     node_updated_at: idl.Int64,
     deleted_at: idl.Int64,
@@ -561,6 +593,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultDeletedNodes = idl.Variant({ Ok: ListDeletedNodesResponse, Err: idl.Text });
   const ResultNodeHistory = idl.Variant({ Ok: ListNodeHistoryResponse, Err: idl.Text });
   const ResultNodeVersion = idl.Variant({ Ok: idl.Opt(NodeVersion), Err: idl.Text });
+  const ResultGitRepositorySnapshot = idl.Variant({ Ok: GitRepositorySnapshot, Err: idl.Text });
+  const ResultGitObjects = idl.Variant({ Ok: ListGitObjectsResponse, Err: idl.Text });
+  const ResultGitObjectChunk = idl.Variant({ Ok: idl.Opt(GitObjectChunk), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
   const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
@@ -591,6 +626,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
     get_initial_free_database_grant_status: idl.Func([], [ResultInitialFreeDatabaseGrantStatus], ["query"]),
     get_node_publication: idl.Func([PublishNodeRequest], [ResultOptionalNodePublication], ["query"]),
+    git_repository_snapshot: idl.Func([DatabaseIdRequest], [ResultGitRepositorySnapshot], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
@@ -602,6 +638,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
     list_deleted_nodes: idl.Func([ListDeletedNodesRequest], [ResultDeletedNodes], ["query"]),
+    list_git_objects: idl.Func([ListGitObjectsRequest], [ResultGitObjects], ["query"]),
     list_node_history: idl.Func([ListNodeHistoryRequest], [ResultNodeHistory], ["query"]),
     market_count_active_entitlements: idl.Func([idl.Text], [ResultNat64], ["query"]),
     market_create_listing: idl.Func([MarketCreateListingRequest], [ResultMarketListing], []),
@@ -624,6 +661,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     query_index_sql_json: idl.Func([idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
+    read_git_object_chunk: idl.Func([ReadGitObjectChunkRequest], [ResultGitObjectChunk], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     read_node_version: idl.Func([ReadNodeVersionRequest], [ResultNodeVersion], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),

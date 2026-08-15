@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build:probe": "cargo build -p ic-sqlite-vfs-probe --target wasm32-unknown-unknown --release",
-    "test": "npm run build:probe && node scripts/run-tests.mjs"
+    "build:vfs-upgrade-fixtures": "bash ../scripts/build-vfs-git-upgrade-fixtures.sh",
+    "test": "npm run build:probe && npm run build:vfs-upgrade-fixtures && node scripts/run-tests.mjs"
   },
   "devDependencies": {
     "@dfinity/candid": "3.4.3",

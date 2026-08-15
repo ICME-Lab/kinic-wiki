@@ -537,6 +537,31 @@ impl VfsService {
         self.run_database_migrations_for_meta(database_id, &meta)
     }
 
+    #[cfg(feature = "canbench-rs")]
+    pub fn prepare_git_migration_benchmark_fixture(
+        &self,
+        database_id: &str,
+        node_count: usize,
+        total_content_bytes: usize,
+        max_content_bytes: usize,
+        depth: usize,
+    ) -> Result<(), String> {
+        let meta = self.database_meta(database_id)?;
+        self.database_store(&meta)?
+            .prepare_git_migration_benchmark_fixture(
+                node_count,
+                total_content_bytes,
+                max_content_bytes,
+                depth,
+            )
+    }
+
+    #[cfg(feature = "canbench-rs")]
+    pub fn run_git_migration_benchmark(&self, database_id: &str) -> Result<(), String> {
+        let meta = self.database_meta(database_id)?;
+        self.database_store(&meta)?.run_git_migration_benchmark()
+    }
+
     pub fn run_pending_database_migrations(&self, database_id: &str) -> Result<(), String> {
         let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Pending])?;
         self.run_database_migrations_for_meta(database_id, &meta)

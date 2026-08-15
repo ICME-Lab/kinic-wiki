@@ -38,6 +38,64 @@ pub(crate) fn delete_source_links(tx: &Transaction<'_>, source_path: &str) -> Re
     .map_err(|error| error.to_string())
 }
 
+pub(crate) fn move_source_links(
+    tx: &Transaction<'_>,
+    old_source_path: &str,
+    new_source_path: &str,
+    updated_at: i64,
+) -> Result<(), String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT raw_href, link_text, link_kind FROM fs_links
+             WHERE source_path = ?1 ORDER BY target_path, raw_href",
+        )
+        .map_err(|error| error.to_string())?;
+    let stored = crate::sqlite::query_map(&mut stmt, params![old_source_path], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+            crate::sqlite::row_get::<String>(row, 2)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    drop(stmt);
+    delete_source_links(tx, old_source_path)?;
+    let mut moved = Vec::with_capacity(stored.len());
+    for (raw_href, link_text, link_kind) in stored {
+        let target_href = if link_kind == "wikilink" {
+            split_wikilink_alias(&raw_href).0
+        } else {
+            raw_href.as_str()
+        };
+        push_edge(
+            new_source_path,
+            &raw_href,
+            target_href,
+            &link_text,
+            &link_kind,
+            updated_at,
+            &mut moved,
+        );
+    }
+    for edge in moved {
+        tx.execute(
+            "INSERT OR REPLACE INTO fs_links
+             (source_path, target_path, raw_href, link_text, link_kind, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                edge.source_path,
+                edge.target_path,
+                edge.raw_href,
+                edge.link_text,
+                edge.link_kind,
+                edge.updated_at
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 pub(crate) fn load_incoming_links(
     conn: &Connection,
     target_path: &str,

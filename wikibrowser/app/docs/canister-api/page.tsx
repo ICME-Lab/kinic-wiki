@@ -87,7 +87,10 @@ const parameters = [
   { name: "path", type: "text", detail: "Exact VFS path, for example /Knowledge/index.md or a path returned by query_database_sql_json." },
   { name: "nodes", type: "vec WriteNodeItem", detail: "Batch of File, Source, or Folder writes. Each item has path, kind, content, metadata_json, and optional expected_etag." },
   { name: "expected_etag", type: "opt text", detail: "Use null for create or unchecked replace; use opt \"<etag>\" to reject stale overwrites." },
-  { name: "page_id / version_id", type: "nat64", detail: "Stable page identity and immutable version identity returned by page-history queries." }
+  { name: "page_id / version_id", type: "nat64", detail: "Stable page identity and immutable version identity returned by page-history queries." },
+  { name: "snapshot_change_id", type: "nat64", detail: "Pinned Git repository change ID returned by git_repository_snapshot. Reuse it for every object request in one export." },
+  { name: "cursor / oid", type: "opt text / text", detail: "Exactly 40 lowercase hexadecimal SHA-1 characters. Object listing uses the previous page's next_cursor." },
+  { name: "offset", type: "nat64", detail: "Byte offset returned as next_offset by the preceding Git object chunk." }
 ];
 
 const queryEndpoints = [
@@ -102,6 +105,9 @@ const queryEndpoints = [
   { name: "list_node_history(request)", detail: "List principal-attributed changes for a live path or stable page ID. Database membership is required." },
   { name: "read_node_version(request)", detail: "Read one immutable historical version for diff or inspection." },
   { name: "list_deleted_nodes(request)", detail: "Discover deleted pages that can be inspected or restored." },
+  { name: "git_repository_snapshot(database_id)", detail: "Pin the current SHA-1 repository HEAD and change ID for a consistent export." },
+  { name: "list_git_objects(request)", detail: "List at most 100 Git objects visible in a pinned repository snapshot, ordered by lowercase SHA-1 OID." },
+  { name: "read_git_object_chunk(request)", detail: "Read 1 to 512 KiB from one Git object visible in a pinned snapshot and continue from next_offset." },
   { name: "read_node_context(request)", detail: "Read a node with nearby link context." },
   { name: "query_context(request)", detail: "Recall task-scoped memory from role pages, search, and linked nodes." },
   { name: "source_evidence(request)", detail: "Resolve source evidence for a knowledge node." },
@@ -138,7 +144,8 @@ const writeRules = [
   "write_node and write_nodes accept File, Source, and Folder items; folder writes are create-only and idempotent.",
   "Anonymous identity can read only anonymous-readable DBs; it cannot write.",
   "History reads are member-only even when the current database is anonymously readable; restore requires writer or owner access.",
-  "Restore creates a new history entry and does not automatically republish the page."
+  "Restore creates a new history entry and does not automatically republish the page.",
+  "One atomic mutation may affect at most 100 distinct pages and 1.5 MiB of changed UTF-8 data. Normal writes count resulting path, content, and metadata; moves count resulting path and metadata; deletes count the removed path. Exceeding either limit rolls back the complete call."
 ];
 
 const accessRules = [
@@ -146,7 +153,16 @@ const accessRules = [
   "Anonymous read means calls use --identity anonymous and caller principal 2vxsx-fae.",
   "Only DBs that granted Reader to 2vxsx-fae are readable anonymously.",
   "Private DB calls use the current ICP CLI identity and require that identity to be a DB member.",
+  "Git repository snapshot, object listing, and object chunk calls require Reader, Writer, or Owner membership; marketplace read entitlements are insufficient.",
   "This page documents raw Candid calls, not kinic-vfs CLI commands."
+];
+
+const gitExportRules = [
+  "Start with git_repository_snapshot and reuse its change_id for the entire export.",
+  "Later wiki writes do not change the objects visible through the pinned snapshot_change_id.",
+  "list_git_objects caps each page at 100 objects and returns the next lowercase SHA-1 OID cursor.",
+  "read_git_object_chunk accepts 1 to 524,288 bytes and returns next_offset until the object is complete.",
+  "The CLI export-git command verifies every object ID and runs git fsck --full before publishing its bare repository."
 ];
 
 export default function CanisterApiPage() {
@@ -171,6 +187,20 @@ export default function CanisterApiPage() {
               ))}
             </div>
           </div>
+        </AdminPanel>
+
+        <AdminPanel className="min-w-0" padding="lg">
+          <div className="flex items-center gap-2">
+            <ListTree aria-hidden className="text-accent" size={18} />
+            <h2 className="text-lg font-semibold text-ink">Git Repository Export Contract</h2>
+          </div>
+          <ol className="mt-4 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
+            {gitExportRules.map((rule, index) => (
+              <li className="rounded-lg border border-line bg-white p-3" key={rule}>
+                <span className="mr-2 font-mono font-semibold text-accentText">{index + 1}.</span>{rule}
+              </li>
+            ))}
+          </ol>
         </AdminPanel>
 
         <div className="grid gap-4 md:grid-cols-2">

@@ -13,18 +13,20 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseMetadata,
-    DatabaseRole, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
-    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
-    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
+    DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GitObjectChunk,
+    GitRepositorySnapshot, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeMutationError, NodeMutationResult, NodePublication, OutgoingLinksRequest, PublicNode,
-    PublishNodeRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    ListChildrenRequest, ListGitObjectsRequest, ListGitObjectsResponse, ListNodesRequest,
+    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node,
+    NodeContext, NodeContextRequest, NodeEntry, NodeMutationError, NodeMutationResult,
+    NodePublication, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, ReadGitObjectChunkRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest,
@@ -305,6 +307,27 @@ pub trait VfsApi: Sync {
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse>;
     async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse>;
+    async fn git_repository_snapshot(&self, _database_id: &str) -> Result<GitRepositorySnapshot> {
+        Err(anyhow!(
+            "git_repository_snapshot is not implemented by this client"
+        ))
+    }
+    async fn list_git_objects(
+        &self,
+        _request: ListGitObjectsRequest,
+    ) -> Result<ListGitObjectsResponse> {
+        Err(anyhow!(
+            "list_git_objects is not implemented by this client"
+        ))
+    }
+    async fn read_git_object_chunk(
+        &self,
+        _request: ReadGitObjectChunkRequest,
+    ) -> Result<Option<GitObjectChunk>> {
+        Err(anyhow!(
+            "read_git_object_chunk is not implemented by this client"
+        ))
+    }
 }
 
 #[derive(Clone)]
@@ -944,6 +967,36 @@ impl VfsApi for CanisterVfsClient {
     async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse> {
         let result: Result<FetchUpdatesResponse, String> =
             self.query("fetch_updates", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn git_repository_snapshot(&self, database_id: &str) -> Result<GitRepositorySnapshot> {
+        let result: Result<GitRepositorySnapshot, String> = self
+            .query(
+                "git_repository_snapshot",
+                &DatabaseIdRequest {
+                    database_id: database_id.to_string(),
+                },
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_git_objects(
+        &self,
+        request: ListGitObjectsRequest,
+    ) -> Result<ListGitObjectsResponse> {
+        let result: Result<ListGitObjectsResponse, String> =
+            self.query("list_git_objects", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn read_git_object_chunk(
+        &self,
+        request: ReadGitObjectChunkRequest,
+    ) -> Result<Option<GitObjectChunk>> {
+        let result: Result<Option<GitObjectChunk>, String> =
+            self.query("read_git_object_chunk", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 }

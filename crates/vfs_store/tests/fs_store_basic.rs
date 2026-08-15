@@ -2,17 +2,988 @@ mod common;
 
 use common::{ensure_parent_folders, new_store, write_file};
 use rusqlite::Connection;
-use tempfile::tempdir;
+use sha2::{Digest, Sha256};
+use std::io::Write;
+use std::process::{Command, Stdio};
+use tempfile::{TempDir, tempdir};
 use vfs_store::FsStore;
 use vfs_types::{
     DeleteNodeItem, DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest,
-    ListChildrenRequest, ListDeletedNodesRequest, ListNodeHistoryRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MutateNodesBatchRequest, NodeEntryKind,
-    NodeHistoryChangeKind, NodeHistoryTarget, NodeKind, NodeMutation, NodeMutationErrorCode,
-    OutgoingLinksRequest, ReadNodeVersionRequest, RestoreNodeVersionRequest,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewField, SearchPreviewMode,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    GitRepositorySnapshot, ListChildrenRequest, ListDeletedNodesRequest, ListGitObjectsRequest,
+    ListNodeHistoryRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeItem, MoveNodeRequest,
+    MutateNodesBatchRequest, NodeEntryKind, NodeHistoryChangeKind, NodeHistoryTarget, NodeKind,
+    NodeMutation, NodeMutationErrorCode, OutgoingLinksRequest, ReadGitObjectChunkRequest,
+    ReadNodeVersionRequest, RestoreNodeVersionRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewField, SearchPreviewMode, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
+
+fn export_git_repository(store: &FsStore) -> (TempDir, GitRepositorySnapshot) {
+    let snapshot = store
+        .git_repository_snapshot()
+        .expect("Git snapshot should exist");
+    let output = tempdir().expect("temporary Git directory should exist");
+    let init = Command::new("git")
+        .args(["init", "--bare", "--object-format=sha1"])
+        .arg(output.path())
+        .output()
+        .expect("git init should run");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let mut cursor = None;
+    loop {
+        let page = store
+            .list_git_objects(ListGitObjectsRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: snapshot.change_id,
+                cursor: cursor.clone(),
+                limit: 100,
+            })
+            .expect("Git object list should succeed");
+        for summary in page.objects {
+            let mut data = Vec::new();
+            let mut offset = 0;
+            while offset < summary.size {
+                let chunk = store
+                    .read_git_object_chunk(ReadGitObjectChunkRequest {
+                        database_id: "default".to_string(),
+                        snapshot_change_id: snapshot.change_id,
+                        oid: summary.oid.clone(),
+                        offset,
+                        limit: 512 * 1024,
+                    })
+                    .expect("Git object chunk should read")
+                    .expect("Git object should exist");
+                data.extend_from_slice(&chunk.data);
+                offset = chunk.next_offset.unwrap_or(summary.size);
+            }
+            let mut child = Command::new("git")
+                .arg("--git-dir")
+                .arg(output.path())
+                .args(["hash-object", "-w", "-t", &summary.object_type, "--stdin"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("git hash-object should start");
+            child
+                .stdin
+                .take()
+                .expect("stdin should exist")
+                .write_all(&data)
+                .unwrap();
+            let hashed = child
+                .wait_with_output()
+                .expect("git hash-object should finish");
+            assert!(hashed.status.success());
+            assert_eq!(String::from_utf8_lossy(&hashed.stdout).trim(), summary.oid);
+        }
+        let Some(next) = page.next_cursor else { break };
+        cursor = Some(next);
+    }
+    std::fs::write(output.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::create_dir_all(output.path().join("refs/heads")).unwrap();
+    std::fs::write(
+        output.path().join("refs/heads/main"),
+        format!("{}\n", snapshot.head_commit_oid),
+    )
+    .unwrap();
+    let fsck = Command::new("git")
+        .arg("--git-dir")
+        .arg(output.path())
+        .args(["fsck", "--full"])
+        .output()
+        .expect("git fsck should run");
+    assert!(
+        fsck.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+    (output, snapshot)
+}
+
+#[test]
+fn git_objects_export_to_a_repository_accepted_by_git() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Knowledge/git.md", None, 10);
+    let (output, snapshot) = export_git_repository(&store);
+    assert_eq!(snapshot.object_format, "sha1");
+    let tree = Command::new("git")
+        .arg("--git-dir")
+        .arg(output.path())
+        .args(["ls-tree", "-r", "HEAD"])
+        .output()
+        .expect("git ls-tree should run");
+    let tree = String::from_utf8(tree.stdout).unwrap();
+    assert!(tree.contains("Knowledge/git.md"));
+    assert!(tree.contains(".kinic/format.json"));
+    assert!(tree.contains(".kinic/pages/"));
+    let log = Command::new("git")
+        .arg("--git-dir")
+        .arg(output.path())
+        .args(["log", "--format=%H"])
+        .output()
+        .expect("git log should run");
+    assert!(
+        log.status.success(),
+        "{}",
+        String::from_utf8_lossy(&log.stderr)
+    );
+    assert!(String::from_utf8_lossy(&log.stdout).contains(&snapshot.head_commit_oid));
+    let checkout = tempdir().expect("checkout directory should exist");
+    let checked_out = Command::new("git")
+        .arg("--git-dir")
+        .arg(output.path())
+        .arg("--work-tree")
+        .arg(checkout.path())
+        .args(["checkout", "HEAD", "--", "."])
+        .output()
+        .expect("checkout from the bare repository should run");
+    assert!(
+        checked_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked_out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(checkout.path().join("Knowledge/git.md")).unwrap(),
+        "content revision 10"
+    );
+}
+
+#[test]
+fn git_object_queries_pin_objects_to_the_requested_snapshot() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Knowledge/first.md", None, 10);
+    let first = store.git_repository_snapshot().unwrap();
+    write_file(&store, "/Knowledge/second.md", None, 20);
+    let second = store.git_repository_snapshot().unwrap();
+    assert!(second.change_id > first.change_id);
+
+    let previous = store
+        .list_git_objects(ListGitObjectsRequest {
+            database_id: "default".to_string(),
+            snapshot_change_id: first.change_id,
+            cursor: None,
+            limit: 100,
+        })
+        .unwrap();
+    let current = store
+        .list_git_objects(ListGitObjectsRequest {
+            database_id: "default".to_string(),
+            snapshot_change_id: second.change_id,
+            cursor: None,
+            limit: 100,
+        })
+        .unwrap();
+    let new_object = current
+        .objects
+        .iter()
+        .find(|object| !previous.objects.iter().any(|old| old.oid == object.oid))
+        .expect("the second write should create a new object");
+    assert!(
+        store
+            .read_git_object_chunk(ReadGitObjectChunkRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: first.change_id,
+                oid: new_object.oid.clone(),
+                offset: 0,
+                limit: 1,
+            })
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .list_git_objects(ListGitObjectsRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: second.change_id + 1,
+                cursor: None,
+                limit: 100,
+            })
+            .is_err()
+    );
+    assert!(
+        store
+            .list_git_objects(ListGitObjectsRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: second.change_id,
+                cursor: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string()),
+                limit: 100,
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn git_reserved_top_level_names_are_rejected_case_insensitively() {
+    let (_dir, store) = new_store();
+    for path in ["/.git/config", "/.KINIC/pages/example.json"] {
+        let error = store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path: path.to_string(),
+                    kind: NodeKind::File,
+                    content: "reserved".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                10,
+            )
+            .expect_err("reserved Git paths should not be writable");
+        assert!(error.message.contains("reserved"), "{}", error.message);
+    }
+}
+
+#[test]
+fn git_finalize_failures_roll_back_vfs_history_objects_and_ref() {
+    let (_dir, store) = new_store();
+    let initial = store.git_repository_snapshot().unwrap();
+    let initial_objects = store
+        .list_git_objects(ListGitObjectsRequest {
+            database_id: "default".to_string(),
+            snapshot_change_id: initial.change_id,
+            cursor: None,
+            limit: 100,
+        })
+        .unwrap()
+        .objects
+        .len();
+    for stage in 1..=4 {
+        vfs_store::set_git_finalize_failpoint_for_test(stage);
+        let path = format!("/fail-{stage}.md");
+        let error = store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path: path.clone(),
+                    kind: NodeKind::File,
+                    content: format!("failure stage {stage}"),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                stage as i64,
+            )
+            .expect_err("the injected finalize failure should abort the mutation");
+        assert!(error.message.contains("injected Git finalize failure"));
+        assert!(store.read_node(&path).unwrap().is_none());
+        let current = store.git_repository_snapshot().unwrap();
+        assert_eq!(current.head_commit_oid, initial.head_commit_oid);
+        assert_eq!(current.change_id, initial.change_id);
+        assert_eq!(
+            store
+                .list_git_objects(ListGitObjectsRequest {
+                    database_id: "default".to_string(),
+                    snapshot_change_id: current.change_id,
+                    cursor: None,
+                    limit: 100,
+                })
+                .unwrap()
+                .objects
+                .len(),
+            initial_objects
+        );
+    }
+}
+
+#[test]
+fn git_mutation_limits_reject_oversized_and_101_node_changes_atomically() {
+    let (_dir, store) = new_store();
+    let oversized = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/oversized.md".to_string(),
+                kind: NodeKind::File,
+                content: "x".repeat(1_537_000),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect_err("a mutation above 1.5 MiB should fail");
+    assert!(oversized.message.contains("1.5 MiB"));
+    assert!(store.read_node("/oversized.md").unwrap().is_none());
+
+    let batch_oversized = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Write(WriteNodeItem {
+                        path: "/batch-oversized-a.md".to_string(),
+                        kind: NodeKind::File,
+                        content: "a".repeat(800 * 1024),
+                        metadata_json: "{}".to_string(),
+                        expected_etag: None,
+                    }),
+                    NodeMutation::Write(WriteNodeItem {
+                        path: "/batch-oversized-b.md".to_string(),
+                        kind: NodeKind::File,
+                        content: "b".repeat(800 * 1024),
+                        metadata_json: "{}".to_string(),
+                        expected_etag: None,
+                    }),
+                ],
+            },
+            15,
+        )
+        .expect_err("a batch above 1.5 MiB should fail before applying writes");
+    assert!(batch_oversized.message.contains("1.5 MiB"));
+    assert!(store.read_node("/batch-oversized-a.md").unwrap().is_none());
+    assert!(store.read_node("/batch-oversized-b.md").unwrap().is_none());
+
+    let nodes = (0..101)
+        .map(|index| WriteNodeItem {
+            path: format!("/bulk-{index:03}.md"),
+            kind: NodeKind::File,
+            content: "small".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .collect();
+    let too_many = store
+        .write_nodes(
+            WriteNodesRequest {
+                database_id: "default".to_string(),
+                nodes,
+            },
+            20,
+        )
+        .expect_err("a mutation affecting 101 nodes should fail");
+    assert!(too_many.message.contains("100"), "{}", too_many.message);
+    assert!(store.read_node("/bulk-000.md").unwrap().is_none());
+    assert!(store.read_node("/bulk-100.md").unwrap().is_none());
+}
+
+fn moved_node_etag(path: &str, content: &str, metadata_json: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{path}\nfile\n{content}\n{metadata_json}"));
+    let digest = hasher.finalize();
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("v4h:{hex}")
+}
+
+#[test]
+fn git_batch_resolves_blob_oids_for_sequential_moves() {
+    let (_dir, store) = new_store();
+    let original = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/batch-move.md".to_string(),
+                kind: NodeKind::File,
+                content: "batch content".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("fixture should write");
+    let first_path = "/Knowledge/batch-move-one.md";
+    let second_path = "/Knowledge/batch-move-two.md";
+    let first_etag = moved_node_etag(first_path, "batch content", "{}");
+    let before = store.git_repository_snapshot().unwrap();
+
+    store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![
+                    NodeMutation::Move(MoveNodeItem {
+                        from_path: "/Knowledge/batch-move.md".to_string(),
+                        to_path: first_path.to_string(),
+                        expected_etag: Some(original.node.etag),
+                        expected_target_etag: None,
+                        overwrite: false,
+                    }),
+                    NodeMutation::Move(MoveNodeItem {
+                        from_path: first_path.to_string(),
+                        to_path: second_path.to_string(),
+                        expected_etag: Some(first_etag),
+                        expected_target_etag: None,
+                        overwrite: false,
+                    }),
+                ],
+            },
+            20,
+        )
+        .expect("sequential moves should commit as one mutation");
+
+    let after = store.git_repository_snapshot().unwrap();
+    assert_eq!(after.change_id, before.change_id + 1);
+    let history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath(second_path.to_string()),
+            cursor: None,
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(history.entries.len(), 3);
+    let baseline_oid = history.entries[2]
+        .after_version
+        .as_ref()
+        .map(|version| version.blob_oid.clone())
+        .expect("baseline blob OID should exist");
+    for entry in history.entries.iter().take(2) {
+        assert_eq!(
+            entry.before_version.as_ref().unwrap().blob_oid,
+            baseline_oid
+        );
+        assert_eq!(entry.after_version.as_ref().unwrap().blob_oid, baseline_oid);
+    }
+}
+
+#[test]
+fn git_same_content_update_reuses_the_existing_blob_object() {
+    let (_dir, store) = new_store();
+    let original = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/reuse.md".to_string(),
+                kind: NodeKind::File,
+                content: "same content".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("fixture should write");
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/reuse.md".to_string(),
+                kind: NodeKind::File,
+                content: "same content".to_string(),
+                metadata_json: "{\"title\":\"updated\"}".to_string(),
+                expected_etag: Some(original.node.etag),
+            },
+            20,
+        )
+        .expect("metadata-only update should commit");
+
+    let history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge/reuse.md".to_string()),
+            cursor: None,
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(history.entries.len(), 2);
+    assert_eq!(
+        history.entries[0].after_version.as_ref().unwrap().blob_oid,
+        history.entries[1].after_version.as_ref().unwrap().blob_oid
+    );
+    let connection = Connection::open(store.database_path()).unwrap();
+    let content_blob_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM git_objects
+             WHERE object_type = 'blob' AND data = CAST(?1 AS BLOB)",
+            ["same content"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(content_blob_count, 1);
+}
+
+#[test]
+fn git_folder_move_rejects_more_than_100_nodes_before_rewriting_paths() {
+    let (_dir, store) = new_store();
+    let nodes = (0..100)
+        .map(|index| WriteNodeItem {
+            path: format!("/Knowledge/large-folder/file-{index:03}.md"),
+            kind: NodeKind::File,
+            content: "small".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .collect();
+    ensure_parent_folders(&store, "/Knowledge/large-folder/file-000.md", 9);
+    store
+        .write_nodes(
+            WriteNodesRequest {
+                database_id: "default".to_string(),
+                nodes,
+            },
+            10,
+        )
+        .expect("first 100 children should commit");
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/large-folder/file-100.md".to_string(),
+                kind: NodeKind::File,
+                content: "small".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            20,
+        )
+        .expect("the 101st child should commit separately");
+    let folder = store
+        .read_node("/Knowledge/large-folder")
+        .unwrap()
+        .expect("folder should exist");
+    let before = store.git_repository_snapshot().unwrap();
+
+    let error = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/large-folder".to_string(),
+                to_path: "/Knowledge/large-folder-moved".to_string(),
+                expected_etag: Some(folder.etag),
+                expected_target_etag: None,
+                overwrite: false,
+            },
+            30,
+        )
+        .expect_err("folder move above the node limit should fail");
+    assert!(error.message.contains("100"), "{}", error.message);
+    assert_eq!(store.git_repository_snapshot().unwrap(), before);
+    assert!(
+        store
+            .read_node("/Knowledge/large-folder")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .read_node("/Knowledge/large-folder-moved")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn git_folder_move_reuses_large_content_blobs_without_counting_them_again() {
+    let (_dir, store) = new_store();
+    let content = "x".repeat(800 * 1024);
+    for (index, now) in [10, 20].into_iter().enumerate() {
+        let path = format!("/Knowledge/large-move/file-{index}.md");
+        ensure_parent_folders(&store, &path, now - 1);
+        store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path,
+                    kind: NodeKind::File,
+                    content: content.clone(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                now,
+            )
+            .expect("each large file should fit in its own mutation");
+    }
+    ensure_parent_folders(&store, "/Knowledge/archive/placeholder", 29);
+    let folder = store
+        .read_node("/Knowledge/large-move")
+        .unwrap()
+        .expect("source folder should exist");
+    let before = store.git_repository_snapshot().unwrap();
+
+    store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/large-move".to_string(),
+                to_path: "/Knowledge/archive/large-move".to_string(),
+                expected_etag: Some(folder.etag),
+                expected_target_etag: None,
+                overwrite: false,
+            },
+            30,
+        )
+        .expect("moving unchanged content should not consume the content byte budget");
+
+    let after = store.git_repository_snapshot().unwrap();
+    assert_eq!(after.change_id, before.change_id + 1);
+    let moved_path = "/Knowledge/archive/large-move/file-0.md";
+    assert_eq!(
+        store.read_node(moved_path).unwrap().unwrap().content,
+        content
+    );
+    let history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath(moved_path.to_string()),
+            cursor: None,
+            limit: 2,
+        })
+        .expect("moved file history should load");
+    let moved = &history.entries[0];
+    assert_eq!(moved.change_kind, NodeHistoryChangeKind::Move);
+    assert_eq!(
+        moved.before_version.as_ref().unwrap().blob_oid,
+        moved.after_version.as_ref().unwrap().blob_oid
+    );
+
+    let file_paths = [
+        "/Knowledge/archive/large-move/file-0.md",
+        "/Knowledge/archive/large-move/file-1.md",
+    ];
+    let mut delete_operations = file_paths
+        .iter()
+        .map(|path| {
+            let node = store.read_node(path).unwrap().unwrap();
+            NodeMutation::Delete(DeleteNodeItem {
+                path: (*path).to_string(),
+                expected_etag: Some(node.etag),
+                expected_folder_index_etag: None,
+            })
+        })
+        .collect::<Vec<_>>();
+    let moved_folder = store
+        .read_node("/Knowledge/archive/large-move")
+        .unwrap()
+        .unwrap();
+    delete_operations.push(NodeMutation::Delete(DeleteNodeItem {
+        path: moved_folder.path,
+        expected_etag: Some(moved_folder.etag),
+        expected_folder_index_etag: None,
+    }));
+    store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: delete_operations,
+            },
+            40,
+        )
+        .expect("deleting unchanged large content should not consume the content byte budget");
+    for path in file_paths {
+        assert!(store.read_node(path).unwrap().is_none());
+    }
+    assert!(
+        store
+            .read_node("/Knowledge/archive/large-move")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn git_move_without_a_previous_blob_oid_rolls_back_the_mutation() {
+    let (_dir, store) = new_store();
+    let etag = write_file(&store, "/Knowledge/missing-oid.md", None, 10);
+    let before = store.git_repository_snapshot().unwrap();
+    let before_history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge/missing-oid.md".to_string()),
+            cursor: None,
+            limit: 100,
+        })
+        .unwrap();
+    let connection = Connection::open(store.database_path()).unwrap();
+    connection
+        .execute(
+            "UPDATE fs_history_versions SET git_blob_oid = NULL
+             WHERE id = (
+                 SELECT current_version_id FROM fs_history_pages
+                 WHERE current_path = '/Knowledge/missing-oid.md'
+             )",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = store
+        .move_node(
+            MoveNodeRequest {
+                database_id: "default".to_string(),
+                from_path: "/Knowledge/missing-oid.md".to_string(),
+                to_path: "/Knowledge/moved.md".to_string(),
+                expected_etag: Some(etag),
+                expected_target_etag: None,
+                overwrite: false,
+            },
+            20,
+        )
+        .expect_err("move must fail instead of re-reading content when the blob OID is missing");
+    assert!(
+        error.message.contains("Git blob OID is missing"),
+        "{error:?}"
+    );
+    assert!(
+        store
+            .read_node("/Knowledge/missing-oid.md")
+            .unwrap()
+            .is_some()
+    );
+    assert!(store.read_node("/Knowledge/moved.md").unwrap().is_none());
+    assert_eq!(store.git_repository_snapshot().unwrap(), before);
+    let connection = Connection::open(store.database_path()).unwrap();
+    let after_history_count = connection
+        .query_row(
+            "SELECT COUNT(*)
+             FROM fs_history_versions version
+             JOIN fs_history_pages page ON page.id = version.page_id
+             WHERE page.current_path = '/Knowledge/missing-oid.md'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(after_history_count as usize, before_history.entries.len());
+}
+
+#[test]
+fn git_object_payload_mismatch_rolls_back_the_mutation() {
+    let (_dir, store) = new_store();
+    let content = "shared collision payload";
+    ensure_parent_folders(&store, "/Knowledge/collision-a.md", 9);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/collision-a.md".to_string(),
+                kind: NodeKind::File,
+                content: content.to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .unwrap();
+    let history = store
+        .list_node_history(ListNodeHistoryRequest {
+            database_id: "default".to_string(),
+            target: NodeHistoryTarget::CurrentPath("/Knowledge/collision-a.md".to_string()),
+            cursor: None,
+            limit: 1,
+        })
+        .unwrap();
+    let content_oid = history.entries[0]
+        .after_version
+        .as_ref()
+        .unwrap()
+        .blob_oid
+        .clone();
+    let before = store.git_repository_snapshot().unwrap();
+    let connection = Connection::open(store.database_path()).unwrap();
+    connection
+        .execute(
+            "UPDATE git_objects SET data = ?2 WHERE oid = ?1",
+            rusqlite::params![content_oid, b"corrupt".as_slice()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/collision-b.md".to_string(),
+                kind: NodeKind::File,
+                content: content.to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            20,
+        )
+        .expect_err("a mismatched stored object must fail the entire mutation");
+    assert!(error.message.contains("collision or corrupt"), "{error:?}");
+    assert!(
+        store
+            .read_node("/Knowledge/collision-b.md")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.git_repository_snapshot().unwrap(), before);
+}
+
+#[test]
+fn git_v002_migration_builds_scaled_trees_and_chunks_a_large_legacy_blob() {
+    let (_dir, store) = new_store();
+    let mut conn = Connection::open(store.database_path()).expect("db should open");
+    for trigger in [
+        "fs_history_node_insert",
+        "fs_history_node_update",
+        "fs_history_node_delete",
+    ] {
+        conn.execute(&format!("DROP TRIGGER {trigger}"), [])
+            .expect("history trigger should drop");
+    }
+    for table in [
+        "git_index_entries",
+        "git_refs",
+        "git_objects",
+        "fs_history_items",
+        "fs_history_active_change",
+        "fs_history_changes",
+        "fs_history_versions",
+        "fs_history_blobs",
+        "fs_history_pages",
+    ] {
+        conn.execute(&format!("DROP TABLE {table}"), [])
+            .expect("history table should drop");
+    }
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE version = ?1",
+        ["vfs_store:003_node_history"],
+    )
+    .expect("v003 marker should delete");
+
+    let transaction = conn
+        .transaction()
+        .expect("fixture transaction should start");
+    let knowledge_id = transaction
+        .query_row(
+            "SELECT id FROM fs_nodes WHERE path = '/Knowledge'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("Knowledge root should exist");
+    let mut next_id = transaction
+        .query_row("SELECT MAX(id) + 1 FROM fs_nodes", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("next node id should load");
+    let legacy_id = next_id;
+    next_id += 1;
+    transaction
+        .execute(
+            "INSERT INTO fs_nodes
+                 (id, path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+             VALUES (?1, '/Knowledge/legacy', 'folder', '', 1, 1,
+                     'legacy-root', '{}', ?2, 'legacy')",
+            rusqlite::params![legacy_id, knowledge_id],
+        )
+        .expect("legacy root should insert");
+    for index in 0..128 {
+        let branch_id = next_id;
+        next_id += 1;
+        let branch_path = format!("/Knowledge/legacy/branch-{index:03}");
+        let deep_id = next_id;
+        transaction
+            .execute(
+                "INSERT INTO fs_nodes
+                     (id, path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+                 VALUES (?1, ?2, 'folder', '', 1, 1, ?3, '{}', ?4, ?5)",
+                rusqlite::params![
+                    branch_id,
+                    branch_path,
+                    format!("legacy-branch-{index:03}"),
+                    legacy_id,
+                    format!("branch-{index:03}")
+                ],
+            )
+            .expect("legacy branch should insert");
+        transaction
+            .execute(
+                "INSERT INTO fs_nodes
+                     (id, path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+                 VALUES (?1, ?2, 'folder', '', 1, 1, ?3, '{}', ?4, 'deep')",
+                rusqlite::params![
+                    deep_id,
+                    format!("{branch_path}/deep"),
+                    format!("legacy-deep-{index:03}"),
+                    branch_id
+                ],
+            )
+            .expect("legacy deep folder should insert");
+        next_id += 1;
+        transaction
+            .execute(
+                "INSERT INTO fs_nodes
+                     (id, path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+                 VALUES (?1, ?2, 'file', 'leaf', 1, 1, ?3, '{}', ?4, 'leaf.md')",
+                rusqlite::params![
+                    next_id,
+                    format!("{branch_path}/deep/leaf.md"),
+                    format!("legacy-leaf-{index:03}"),
+                    deep_id
+                ],
+            )
+            .expect("legacy leaf should insert");
+        next_id += 1;
+    }
+    let data = (0..1_600_000)
+        .map(|index| char::from(b'a' + (index % 23) as u8))
+        .collect::<String>();
+    transaction
+        .execute(
+            "INSERT INTO fs_nodes
+                 (id, path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+             VALUES (?1, '/Knowledge/legacy/large.md', 'file', ?2, 1, 1,
+                     'legacy-large', '{}', ?3, 'large.md')",
+            rusqlite::params![next_id, data, legacy_id],
+        )
+        .expect("large legacy file should insert");
+    transaction.commit().expect("fixture should commit");
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("v002 fixture should migrate to v003");
+    let snapshot = store.git_repository_snapshot().unwrap();
+    let conn = Connection::open(store.database_path()).expect("db should reopen");
+    let directory_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM git_index_entries
+             WHERE mode = 40000
+               AND (path = 'Knowledge/legacy' OR path LIKE 'Knowledge/legacy/%')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("migrated directory count should load");
+    assert_eq!(directory_count, 257);
+    let oid = conn
+        .query_row(
+            "SELECT oid FROM git_index_entries WHERE path = 'Knowledge/legacy/large.md'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("large legacy blob oid should load");
+    drop(conn);
+
+    for (offset, limit) in [
+        (0_u64, 512 * 1024),
+        (512 * 1024, 512 * 1024),
+        (1_599_877, 512 * 1024),
+        (1_600_000, 512 * 1024),
+    ] {
+        let chunk = store
+            .read_git_object_chunk(ReadGitObjectChunkRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: snapshot.change_id,
+                oid: oid.clone(),
+                offset,
+                limit,
+            })
+            .unwrap()
+            .expect("large legacy object should exist");
+        let end = offset
+            .saturating_add(u64::from(limit))
+            .min(data.len() as u64);
+        assert_eq!(chunk.data, data.as_bytes()[offset as usize..end as usize]);
+        assert_eq!(chunk.next_offset, (end < data.len() as u64).then_some(end));
+    }
+    assert!(
+        store
+            .read_git_object_chunk(ReadGitObjectChunkRequest {
+                database_id: "default".to_string(),
+                snapshot_change_id: snapshot.change_id,
+                oid,
+                offset: data.len() as u64 + 1,
+                limit: 1,
+            })
+            .is_err()
+    );
+    let (_repository, exported_snapshot) = export_git_repository(&store);
+    assert_eq!(exported_snapshot.head_commit_oid, snapshot.head_commit_oid);
+}
 
 #[test]
 fn node_history_tracks_authors_moves_deletes_and_restores() {
@@ -440,6 +1411,22 @@ fn fs_migrations_create_tables() {
             .expect("index lookup should succeed");
         assert_eq!(exists, 1);
     }
+}
+
+#[test]
+fn fs_migrations_reject_an_incomplete_branch_local_v003_with_recreate_guidance() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute("DROP TABLE git_objects", [])
+        .expect("Git object table should drop");
+    drop(conn);
+
+    let error = store
+        .run_fs_migrations()
+        .expect_err("an incomplete schema with the current marker must be rejected");
+
+    assert!(error.contains("missing table git_objects"), "{error}");
+    assert!(error.contains("recreate database"), "{error}");
 }
 
 #[test]
@@ -1556,6 +2543,9 @@ fn fs_migrations_apply_publication_commit_marker_once() {
             .expect("history trigger should drop");
     }
     for table in [
+        "git_index_entries",
+        "git_refs",
+        "git_objects",
         "fs_history_items",
         "fs_history_active_change",
         "fs_history_changes",

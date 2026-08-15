@@ -29,6 +29,18 @@ The main benchmark targets are:
 - `search_nodes`
 - `export_snapshot`
 - `fetch_updates`
+- filesystem v003 Git-history backfill during upgrade
+
+The migration suite uses synthetic content only. `git_v003_backfill_representative` models one database with 100 nodes, about 1 MiB total content, a 128 KiB maximum node, and path depth 5. `git_v003_backfill_stress` models ten databases with 100 nodes each, 2 MiB per database, a 1.5 MiB maximum node, and path depth 8. Fixture creation and DDL are outside the named benchmark scope; the measured body runs the production history/blob/index/tree/initial-commit backfill synchronously in one update message.
+
+Results recorded on 2026-08-14 with canbench 0.4.1 and PocketIC 10.0.0:
+
+| Case | Instructions | Heap increase | Total heap after fixture + backfill | Stable-memory high-water increase | Total stable memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| representative | 301.00 M | 35 pages | 200 pages (12.50 MiB) | 0 pages | 390 pages (24.38 MiB) |
+| stress | 3.96 B | 710 pages | 1,351 pages (84.44 MiB) | 0 pages | 1,542 pages (96.38 MiB) |
+
+The zero high-water increase means the backfill reused stable-memory pages already allocated while preparing the synthetic legacy content; it does not mean that history has no logical storage cost. The stress result uses 1.32% of the current 300 B install/upgrade instruction limit, 2.06% of the 4 GiB wasm32 heap limit, and 0.02% of the 500 GiB stable-memory capacity, leaving more than 30% headroom against each platform ceiling. These limits come from the [ICP execution error reference](https://docs.internetcomputer.org/references/execution-errors/) and [canister memory model](https://docs.internetcomputer.org/concepts/canisters/). The release operator must still inspect the target canister's configured `wasm_memory_limit`; this repository does not set one, and a lower live setting overrides the platform heap ceiling.
 
 ## Required VFS Scenarios
 
@@ -72,6 +84,8 @@ The main benchmark targets are:
 - `list_nodes`, `search_nodes`, and `fetch_updates` do not collapse as node counts grow
 - small changes remain delta-syncable without falling back to full refresh
 - single-operation transaction cost stays within an acceptable range
+- both Git-history migration cases complete with measured instruction, Wasm heap, and stable-memory usage recorded
+- release evidence identifies the target environment limits and retains at least 30% headroom for each migration resource; otherwise rollout stops for migration redesign
 
 ## Next Layer: `llm-wiki`
 

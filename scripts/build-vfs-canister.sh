@@ -61,6 +61,9 @@ EXTRA_FEATURES=""
 case "${VFS_CANISTER_DIAGNOSTIC_PROFILE:-baseline}" in
   baseline)
     ;;
+  migration-failpoint)
+    EXTRA_FEATURES="pocketic-migration-failpoint"
+    ;;
   *)
     echo "unknown VFS_CANISTER_DIAGNOSTIC_PROFILE: ${VFS_CANISTER_DIAGNOSTIC_PROFILE}" >&2
     exit 1

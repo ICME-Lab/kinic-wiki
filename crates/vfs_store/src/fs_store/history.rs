@@ -43,6 +43,16 @@ pub(super) fn begin_change(
 }
 
 pub(super) fn finish_change(tx: &Transaction<'_>, change_id: i64) -> Result<(), String> {
+    let item_count = tx
+        .query_row(
+            "SELECT COUNT(*) FROM fs_history_items WHERE change_id = ?1",
+            params![change_id],
+            |row| crate::sqlite::row_get::<i64>(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    if item_count > 0 {
+        crate::git_repository::finalize_change(tx, change_id)?;
+    }
     tx.execute(
         "DELETE FROM fs_history_active_change WHERE singleton = 1 AND change_id = ?1",
         params![change_id],
@@ -107,12 +117,12 @@ pub(super) fn list_history(
     let mut stmt = conn
         .prepare(
             "SELECT item.id, item.change_id, item.page_id, item.change_kind,
-                    change.operation, change.author_principal, change.changed_at,
+                    change.operation, change.author_principal, change.changed_at, change.commit_oid,
                     before_version.id, before_version.page_id, before_version.path,
-                    before_blob.kind, before_version.etag,
+                    before_blob.kind, before_version.etag, before_version.git_blob_oid,
                     before_version.node_created_at, before_version.node_updated_at,
                     after_version.id, after_version.page_id, after_version.path,
-                    after_blob.kind, after_version.etag,
+                    after_blob.kind, after_version.etag, after_version.git_blob_oid,
                     after_version.node_created_at, after_version.node_updated_at
              FROM fs_history_items item
              JOIN fs_history_changes change ON change.id = item.change_id
@@ -143,8 +153,9 @@ pub(super) fn list_history(
             operation: crate::sqlite::row_get(row, 4)?,
             author_principal: crate::sqlite::row_get(row, 5)?,
             changed_at: crate::sqlite::row_get(row, 6)?,
-            before_version: RawVersionSummary::from_row(row, 7)?,
-            after_version: RawVersionSummary::from_row(row, 14)?,
+            commit_oid: crate::sqlite::row_get(row, 7)?,
+            before_version: RawVersionSummary::from_row(row, 8)?,
+            after_version: RawVersionSummary::from_row(row, 16)?,
         })
     })
     .map_err(|error| error.to_string())?;
@@ -172,6 +183,7 @@ struct HistoryRow {
     operation: String,
     author_principal: String,
     changed_at: i64,
+    commit_oid: String,
     before_version: RawVersionSummary,
     after_version: RawVersionSummary,
 }
@@ -197,6 +209,7 @@ impl HistoryRow {
             change_kind: parse_change_kind(&self.change_kind)?,
             author_principal: self.author_principal,
             changed_at: self.changed_at,
+            commit_oid: self.commit_oid,
             before_version,
             after_version,
         })
@@ -209,6 +222,7 @@ struct RawVersionSummary {
     path: Option<String>,
     kind: Option<String>,
     etag: Option<String>,
+    blob_oid: Option<String>,
     node_created_at: Option<i64>,
     node_updated_at: Option<i64>,
 }
@@ -221,8 +235,9 @@ impl RawVersionSummary {
             path: crate::sqlite::row_get(row, start + 2)?,
             kind: crate::sqlite::row_get(row, start + 3)?,
             etag: crate::sqlite::row_get(row, start + 4)?,
-            node_created_at: crate::sqlite::row_get(row, start + 5)?,
-            node_updated_at: crate::sqlite::row_get(row, start + 6)?,
+            blob_oid: crate::sqlite::row_get(row, start + 5)?,
+            node_created_at: crate::sqlite::row_get(row, start + 6)?,
+            node_updated_at: crate::sqlite::row_get(row, start + 7)?,
         })
     }
 
@@ -238,6 +253,7 @@ impl RawVersionSummary {
             kind: node_kind_from_db(&self.kind.ok_or_else(|| missing("kind"))?)
                 .map_err(|error| error.to_string())?,
             etag: self.etag.ok_or_else(|| missing("etag"))?,
+            blob_oid: self.blob_oid.ok_or_else(|| missing("Git blob oid"))?,
             node_created_at: self
                 .node_created_at
                 .ok_or_else(|| missing("created timestamp"))?,
@@ -255,7 +271,8 @@ pub(super) fn read_version(
 ) -> Result<Option<NodeVersion>, String> {
     conn.query_row(
         "SELECT version.id, version.page_id, version.path, blob.kind, version.etag,
-                version.node_created_at, version.node_updated_at, blob.content, blob.metadata_json
+                version.git_blob_oid, version.node_created_at, version.node_updated_at,
+                blob.content, blob.metadata_json
          FROM fs_history_versions version
          JOIN fs_history_blobs blob ON blob.hash = version.blob_hash
          WHERE version.id = ?1 AND version.page_id = ?2",
@@ -269,11 +286,12 @@ pub(super) fn read_version(
                     path: crate::sqlite::row_get(row, 2)?,
                     kind,
                     etag: crate::sqlite::row_get(row, 4)?,
-                    node_created_at: crate::sqlite::row_get(row, 5)?,
-                    node_updated_at: crate::sqlite::row_get(row, 6)?,
+                    blob_oid: crate::sqlite::row_get(row, 5)?,
+                    node_created_at: crate::sqlite::row_get(row, 6)?,
+                    node_updated_at: crate::sqlite::row_get(row, 7)?,
                 },
-                content: crate::sqlite::row_get(row, 7)?,
-                metadata_json: crate::sqlite::row_get(row, 8)?,
+                content: crate::sqlite::row_get(row, 8)?,
+                metadata_json: crate::sqlite::row_get(row, 9)?,
             })
         },
     )
@@ -290,7 +308,7 @@ pub(super) fn list_deleted(
     let mut stmt = conn
         .prepare(
             "SELECT page.id, version.id, version.path, blob.kind, version.etag,
-                    version.node_created_at, version.node_updated_at, page.deleted_at,
+                    version.git_blob_oid, version.node_created_at, version.node_updated_at, page.deleted_at,
                     change.author_principal, page.last_item_id
              FROM fs_history_pages page
              JOIN fs_history_versions version ON version.id = page.current_version_id
@@ -313,12 +331,13 @@ pub(super) fn list_deleted(
                 path: crate::sqlite::row_get(row, 2)?,
                 kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
                 etag: crate::sqlite::row_get(row, 4)?,
-                node_created_at: crate::sqlite::row_get(row, 5)?,
-                node_updated_at: crate::sqlite::row_get(row, 6)?,
-                deleted_at: crate::sqlite::row_get(row, 7)?,
-                deleted_by: crate::sqlite::row_get(row, 8)?,
+                blob_oid: crate::sqlite::row_get(row, 5)?,
+                node_created_at: crate::sqlite::row_get(row, 6)?,
+                node_updated_at: crate::sqlite::row_get(row, 7)?,
+                deleted_at: crate::sqlite::row_get(row, 8)?,
+                deleted_by: crate::sqlite::row_get(row, 9)?,
             },
-            crate::sqlite::row_get::<i64>(row, 9)?,
+            crate::sqlite::row_get::<i64>(row, 10)?,
         ))
     })
     .map_err(|error| error.to_string())?;

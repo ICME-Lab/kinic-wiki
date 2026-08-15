@@ -101,7 +101,10 @@ pub(crate) fn load_ranked_fts_candidates(
     let limit = candidate_limit(top_k);
     let mut candidates = BTreeMap::new();
     for query in [&plan.exact_fts, &plan.recall_fts].into_iter().flatten() {
-        let mut values = vec![crate::sqlite::types::Value::from(query.clone())];
+        // Path and basename matches are ranked from fs_nodes below. Restricting FTS to
+        // content lets path-only moves preserve the rowid-backed content index unchanged.
+        let content_query = format!("content : ({query})");
+        let mut values = vec![crate::sqlite::types::Value::from(content_query)];
         let (scope_sql, scope_values) = non_root_prefix(prefix)
             .map(|prefix| prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1))
             .unwrap_or_else(|| (String::new(), Vec::new()));

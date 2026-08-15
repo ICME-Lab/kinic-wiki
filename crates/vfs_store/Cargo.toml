@@ -5,10 +5,14 @@ edition = "2024"
 
 [features]
 bench-search-stages = []
+canbench-rs = []
+pocketic-migration-failpoint = []
 
 [dependencies]
 kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }
 sha2 = "0.10.9"
+sha1 = "0.10.6"
+serde_json = "1.0.145"
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

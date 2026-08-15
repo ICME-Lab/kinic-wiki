@@ -10,6 +10,8 @@ pub(crate) use database::*;
 pub(crate) use market::*;
 use std::borrow::Cow;
 use std::fs;
+use std::io::Write;
+use std::path::Path;
 use std::process::Command as ProcessCommand;
 
 use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
@@ -17,19 +19,22 @@ use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use flate2::{Compression, write::ZlibEncoder};
 use serde::Deserialize;
+use sha1::{Digest as Sha1Digest, Sha1};
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, PublishNodeRequest, QueryContextRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidenceRequest, UpdateDatabaseMetadataRequest, WriteNodeItem,
-    WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
+    ListChildrenRequest, ListGitObjectsRequest, ListNodesRequest, MarketEntitlementPage,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, PublishNodeRequest, QueryContextRequest,
+    ReadGitObjectChunkRequest, SearchNodePathsRequest, SearchNodesRequest, SourceEvidenceRequest,
+    UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    kinic_base_units_per_token,
 };
 
 const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
@@ -609,6 +614,13 @@ pub async fn run_vfs_command(
                 }
             }
         }
+        VfsCommand::ExportGit { output } => {
+            export_git_repository(client, database_id, &output, |phase, objects, bytes| {
+                eprintln!("export_git_progress\tphase={phase}\tobjects={objects}\tbytes={bytes}");
+            })
+            .await?;
+            println!("exported_git_repository\t{}", output.display());
+        }
         VfsCommand::ExportSnapshot {
             prefix,
             limit,
@@ -671,6 +683,184 @@ pub async fn run_vfs_command(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+async fn export_git_repository(
+    client: &impl VfsApi,
+    database_id: &str,
+    output: &Path,
+    mut progress: impl FnMut(&str, u64, u64),
+) -> Result<()> {
+    if output.exists() {
+        bail!("Git export output already exists: {}", output.display());
+    }
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        bail!(
+            "Git export parent directory does not exist: {}",
+            parent.display()
+        );
+    }
+    let temp = tempfile::Builder::new()
+        .prefix(".kinic-git-export-")
+        .tempdir_in(parent)
+        .context("failed to create temporary Git export directory")?;
+    let init = ProcessCommand::new("git")
+        .arg("init")
+        .arg("--bare")
+        .arg("--object-format=sha1")
+        .arg(temp.path())
+        .output()
+        .context("failed to run git init --bare")?;
+    if !init.status.success() {
+        bail!(
+            "git init --bare failed: {}",
+            String::from_utf8_lossy(&init.stderr).trim()
+        );
+    }
+
+    let snapshot = client.git_repository_snapshot(database_id).await?;
+    if snapshot.object_format != "sha1" || snapshot.head_ref != "refs/heads/main" {
+        bail!("unsupported exported Git repository format");
+    }
+    let mut downloaded_objects = 0_u64;
+    let mut downloaded_bytes = 0_u64;
+    progress("download", downloaded_objects, downloaded_bytes);
+    let mut cursor = None;
+    loop {
+        let page = client
+            .list_git_objects(ListGitObjectsRequest {
+                database_id: database_id.to_string(),
+                snapshot_change_id: snapshot.change_id,
+                cursor: cursor.clone(),
+                limit: 100,
+            })
+            .await?;
+        for summary in &page.objects {
+            write_loose_object(
+                client,
+                database_id,
+                snapshot.change_id,
+                temp.path(),
+                summary,
+            )
+            .await?;
+            downloaded_objects = downloaded_objects.saturating_add(1);
+            downloaded_bytes = downloaded_bytes.saturating_add(summary.size);
+        }
+        progress("download", downloaded_objects, downloaded_bytes);
+        let Some(next) = page.next_cursor else {
+            break;
+        };
+        cursor = Some(next);
+    }
+
+    fs::write(temp.path().join("HEAD"), "ref: refs/heads/main\n")?;
+    let ref_path = temp.path().join("refs/heads/main");
+    if let Some(parent) = ref_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&ref_path, format!("{}\n", snapshot.head_commit_oid))?;
+
+    progress("verify", downloaded_objects, downloaded_bytes);
+    let fsck = ProcessCommand::new("git")
+        .arg("--git-dir")
+        .arg(temp.path())
+        .arg("fsck")
+        .arg("--full")
+        .output()
+        .context("failed to run git fsck --full")?;
+    if !fsck.status.success() {
+        bail!(
+            "git fsck --full failed: {}",
+            String::from_utf8_lossy(&fsck.stderr).trim()
+        );
+    }
+    progress("publish", downloaded_objects, downloaded_bytes);
+    let temp_path = temp.path().to_path_buf();
+    fs::rename(&temp_path, output).with_context(|| {
+        format!(
+            "failed to move completed Git export from {} to {}",
+            temp_path.display(),
+            output.display()
+        )
+    })?;
+    Ok(())
+}
+
+async fn write_loose_object(
+    client: &impl VfsApi,
+    database_id: &str,
+    snapshot_change_id: u64,
+    git_dir: &Path,
+    summary: &vfs_types::GitObjectSummary,
+) -> Result<()> {
+    if summary.oid.len() != 40
+        || !summary.oid.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || summary.oid.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        bail!("server returned invalid Git object id: {}", summary.oid);
+    }
+    if !matches!(summary.object_type.as_str(), "blob" | "tree" | "commit") {
+        bail!(
+            "server returned invalid Git object type: {}",
+            summary.object_type
+        );
+    }
+    let object_dir = git_dir.join("objects").join(&summary.oid[..2]);
+    fs::create_dir_all(&object_dir)?;
+    let object_path = object_dir.join(&summary.oid[2..]);
+    let file = fs::File::create(&object_path)?;
+    let mut encoder = ZlibEncoder::new(file, Compression::default());
+    let header = format!("{} {}\0", summary.object_type, summary.size);
+    encoder.write_all(header.as_bytes())?;
+    let mut hasher = Sha1::new();
+    hasher.update(header.as_bytes());
+    let mut offset = 0_u64;
+    while offset < summary.size {
+        let chunk = client
+            .read_git_object_chunk(ReadGitObjectChunkRequest {
+                database_id: database_id.to_string(),
+                snapshot_change_id,
+                oid: summary.oid.clone(),
+                offset,
+                limit: 512 * 1024,
+            })
+            .await?
+            .ok_or_else(|| anyhow!("Git object disappeared during export: {}", summary.oid))?;
+        if chunk.oid != summary.oid
+            || chunk.object_type != summary.object_type
+            || chunk.size != summary.size
+            || chunk.offset != offset
+            || chunk.data.is_empty()
+        {
+            bail!(
+                "inconsistent Git object chunk: {} at offset {offset}",
+                summary.oid
+            );
+        }
+        encoder.write_all(&chunk.data)?;
+        hasher.update(&chunk.data);
+        offset = offset.saturating_add(chunk.data.len() as u64);
+        if chunk.next_offset != (offset < summary.size).then_some(offset) {
+            bail!(
+                "invalid Git object continuation: {} at offset {offset}",
+                summary.oid
+            );
+        }
+    }
+    encoder.finish()?;
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != summary.oid {
+        bail!(
+            "Git object checksum mismatch: expected {}, got {actual}",
+            summary.oid
+        );
     }
     Ok(())
 }

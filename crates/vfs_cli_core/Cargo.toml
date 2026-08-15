@@ -16,9 +16,12 @@ name = "vfs_cli"
 anyhow = "1.0.100"
 chrono = { version = "0.4.42", default-features = true, features = ["clock"] }
 clap = { version = "4.5.48", features = ["derive"] }
+flate2 = { version = "1.1.5", default-features = false, features = ["rust_backend"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
+sha1 = "0.10.6"
+tempfile = "3.23.0"
 toml = "0.9.8"
 vfs_client = { package = "kinic-vfs-client", version = "0.1.0", path = "../vfs_client" }
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }

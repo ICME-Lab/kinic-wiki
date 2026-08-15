@@ -43,21 +43,22 @@ use vfs_types::{
     DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
     DatabaseIdRequest, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
-    LinkEdge, ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse,
-    ListNodeHistoryRequest, ListNodeHistoryResponse, ListNodesRequest, MarketCreateListingRequest,
-    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage, MarketOrder,
-    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
-    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GitObjectChunk,
+    GitRepositorySnapshot, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult,
+    InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
+    ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse, ListGitObjectsRequest,
+    ListGitObjectsResponse, ListNodeHistoryRequest, ListNodeHistoryResponse, ListNodesRequest,
+    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
     MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeMutationError,
     NodeMutationResult, NodePublication, NodeVersion, OpsAnswerSessionCheckRequest,
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode,
-    PublishNodeRequest, QueryContext, QueryContextRequest, ReadNodeVersionRequest,
-    RenameDatabaseRequest, RestoreNodeVersionRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    PublishNodeRequest, QueryContext, QueryContextRequest, ReadGitObjectChunkRequest,
+    ReadNodeVersionRequest, RenameDatabaseRequest, RestoreNodeVersionRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
@@ -1341,6 +1342,23 @@ fn list_deleted_nodes(
     request: ListDeletedNodesRequest,
 ) -> Result<ListDeletedNodesResponse, String> {
     with_service(|service| service.list_deleted_nodes(&caller_text(), request))
+}
+
+#[query]
+fn git_repository_snapshot(request: DatabaseIdRequest) -> Result<GitRepositorySnapshot, String> {
+    with_service(|service| service.git_repository_snapshot(&request.database_id, &caller_text()))
+}
+
+#[query]
+fn list_git_objects(request: ListGitObjectsRequest) -> Result<ListGitObjectsResponse, String> {
+    with_service(|service| service.list_git_objects(&caller_text(), request))
+}
+
+#[query]
+fn read_git_object_chunk(
+    request: ReadGitObjectChunkRequest,
+) -> Result<Option<GitObjectChunk>, String> {
+    with_service(|service| service.read_git_object_chunk(&caller_text(), request))
 }
 
 #[update]

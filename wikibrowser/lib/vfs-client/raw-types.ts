@@ -21,6 +21,7 @@ export type RawNodeVersionSummary = {
   path: string;
   kind: Variant;
   etag: string;
+  blob_oid: string;
   node_created_at: bigint;
   node_updated_at: bigint;
 };
@@ -33,6 +34,7 @@ export type RawNodeHistoryEntry = {
   change_kind: Variant;
   author_principal: string;
   changed_at: bigint;
+  commit_oid: string;
   before_version: [] | [RawNodeVersionSummary];
   after_version: [] | [RawNodeVersionSummary];
 };

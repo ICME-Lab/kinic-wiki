@@ -616,6 +616,11 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Export the complete Git object history to a new bare repository")]
+    ExportGit {
+        #[arg(long)]
+        output: PathBuf,
+    },
     #[command(
         about = "Export one Store API snapshot page for a path scope",
         after_help = EXPORT_SNAPSHOT_AFTER_HELP
@@ -1016,7 +1021,8 @@ impl Command {
             | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
-            | Self::MultiEditNode { .. } => true,
+            | Self::MultiEditNode { .. }
+            | Self::ExportGit { .. } => true,
             Self::ReadNode { .. }
             | Self::ReadPublicNode { .. }
             | Self::ListNodes { .. }
@@ -1106,7 +1112,8 @@ impl Command {
             | Self::PurgeSourceCapture { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
-            | Self::MultiEditNode { .. } => false,
+            | Self::MultiEditNode { .. }
+            | Self::ExportGit { .. } => false,
         }
     }
 
@@ -1374,6 +1381,9 @@ impl Command {
             Self::SourceEvidence { node_path, json } => Some(VfsCommand::SourceEvidence {
                 node_path: node_path.clone(),
                 json: *json,
+            }),
+            Self::ExportGit { output } => Some(VfsCommand::ExportGit {
+                output: output.clone(),
             }),
             Self::ExportSnapshot {
                 prefix,

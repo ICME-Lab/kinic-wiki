@@ -4,7 +4,7 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, and links.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The CLI exposes the read-only Store API methods `memory_manifest`, `query_context`, `source_evidence`, `export_snapshot`, and `fetch_updates` as shell commands; see [`STORE_API.md`](STORE_API.md).
+The CLI exposes read-only Store API and export operations including `memory_manifest`, `query_context`, `source_evidence`, `export-git`, `export-snapshot`, and `fetch-updates`; see [`STORE_API.md`](STORE_API.md).
 Use the CLI commands below for shell workflows against the remote VFS.
 Run `kinic-vfs-cli --help` for the command list and `kinic-vfs-cli <command> --help` for command-specific examples, notes, and safety guidance.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
@@ -71,15 +71,27 @@ Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then ho
 Store API commands are read-only and use the same database access policy as `read-node`.
 Agents should prefer `--json`.
 The CLI intentionally does not expose `delete_database`, `canister_health`, `wiki_metrics`, or `wiki_metrics_series`.
-`export-snapshot` and `fetch-updates` are CLI sync/export commands and are intentionally not exposed by the wiki MCP tools.
+`export-git`, `export-snapshot`, and `fetch-updates` are CLI sync/export commands and are intentionally not exposed by the wiki MCP tools.
 
 ```bash
 kinic-vfs-cli --database-id <database-id> memory-manifest --json
 kinic-vfs-cli --database-id <database-id> query-context --task "answer auth question" --namespace /Knowledge --entity auth --budget-tokens 8000 --depth 1 --json
 kinic-vfs-cli --database-id <database-id> source-evidence --node-path /Knowledge/auth.md --json
+kinic-vfs-cli --database-id <database-id> export-git --output ./wiki.git
 kinic-vfs-cli --database-id <database-id> export-snapshot --prefix /Knowledge --limit 100 --json
 kinic-vfs-cli --database-id <database-id> fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json
 ```
+
+### Export complete Git history
+
+`export-git` reads the complete commit, tree, and blob history visible to an authenticated database member with Reader, Writer, or Owner role and writes a new bare SHA-1 repository. A marketplace read entitlement does not authorize history export. The local `git` executable must be available on `PATH`. The exported repository uses `refs/heads/main` as `HEAD` and can be inspected without checking out a worktree:
+
+```bash
+git --git-dir ./wiki.git log --oneline --all
+git clone ./wiki.git wiki-checkout
+```
+
+The output path must not already exist, and its parent directory must exist. The CLI pins one repository snapshot, downloads every object in that snapshot, verifies each object ID, and runs `git fsck --full` before moving the completed repository into place. Downloaded object and byte counts plus the verification/publish phases are reported on stderr; the existing `exported_git_repository<TAB><path>` completion record remains on stdout for scripts. The API does not expose a total object count, so progress does not claim a percentage or remaining time. A concurrent wiki write does not change the pinned export. If download or verification fails, the CLI removes its temporary repository and does not create the requested output path.
 
 ## Curator
 
@@ -387,6 +399,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ```
 
 `kind` is `file`, `source`, or `folder`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required. Folder writes are create-only and idempotent; use empty `content`, `metadata_json: "{}"`, and omit `expected_etag`.
+Git-backed node mutations affect at most 100 distinct pages and have a 1.5 MiB changed-byte budget per atomic call. The budget counts UTF-8 bytes: normal writes count the resulting path, content, and metadata; moves count the resulting path and metadata; deletes count the removed path. Exceeding either limit rejects and rolls back the complete mutation.
 For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 

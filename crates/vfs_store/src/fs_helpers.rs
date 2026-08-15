@@ -18,6 +18,9 @@ pub(crate) fn normalize_node_path(path: &str, allow_root: bool) -> Result<String
     if path.contains("//") {
         return Err(format!("path must not contain '//': {path}"));
     }
+    if path.as_bytes().contains(&0) {
+        return Err("path must not contain NUL".to_string());
+    }
     if path.len() > 1 && path.ends_with('/') {
         return Err(format!("path must not end with '/': {path}"));
     }
@@ -32,6 +35,9 @@ pub(crate) fn normalize_node_path(path: &str, allow_root: bool) -> Result<String
         if segment.is_empty() || segment == "." || segment == ".." {
             return Err(format!("path contains invalid segment: {path}"));
         }
+    }
+    if crate::git_repository::is_reserved_path(path) {
+        return Err(format!("path uses reserved Git namespace: {path}"));
     }
     Ok(path.to_string())
 }

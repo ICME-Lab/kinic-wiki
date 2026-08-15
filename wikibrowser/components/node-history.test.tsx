@@ -26,6 +26,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("NodeHistory", () => {
+  it("shows a short commit id while exposing the complete id", async () => {
+    vi.mocked(listNodeHistory).mockResolvedValue(historyPage("db-a"));
+    vi.mocked(readNodeVersion).mockImplementation(async (_canisterId, databaseId, pageId, versionId) => version(databaseId, pageId, versionId));
+    renderHistory("db-a");
+
+    const commit = await screen.findByLabelText("Commit 0123456789abcdef0123456789abcdef01234567");
+    expect(commit.textContent).toContain("commit 01234567");
+    expect(commit.getAttribute("title")).toBe("0123456789abcdef0123456789abcdef01234567");
+  });
+
   it("does not reuse version content from another database with the same ids", async () => {
     vi.mocked(listNodeHistory).mockImplementation(async (_canisterId, databaseId) => historyPage(databaseId));
     vi.mocked(readNodeVersion).mockImplementation(async (_canisterId, databaseId, pageId, versionId) => version(databaseId, pageId, versionId));
@@ -99,6 +109,7 @@ function entry(databaseId: string): NodeHistoryEntry {
     changeKind: "update",
     authorPrincipal: `${databaseId}-author`,
     changedAt: "2",
+    commitOid: "0123456789abcdef0123456789abcdef01234567",
     beforeVersion: summary(7n, 1n),
     afterVersion: summary(7n, 2n)
   };
@@ -111,6 +122,7 @@ function summary(pageId: bigint, versionId: bigint): NodeVersionSummary {
     path: "/Knowledge/history.md",
     kind: "file",
     etag: `etag-${versionId.toString()}`,
+    blobOid: "89abcdef0123456789abcdef0123456789abcdef",
     nodeCreatedAt: "1",
     nodeUpdatedAt: versionId.toString()
   };

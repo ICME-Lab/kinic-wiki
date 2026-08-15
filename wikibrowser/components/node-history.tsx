@@ -140,6 +140,13 @@ export function NodeHistory({
               <span className="absolute -left-1 top-5 size-2 rounded-full bg-action" />
               <span className="block text-sm font-semibold capitalize text-ink">{entry.changeKind}</span>
               <span className="mt-1 block truncate font-mono text-[11px] text-muted">{entry.authorPrincipal}</span>
+              <span
+                aria-label={`Commit ${entry.commitOid}`}
+                className="mt-1 block font-mono text-[10px] text-muted"
+                title={entry.commitOid}
+              >
+                commit {entry.commitOid.slice(0, 8)}
+              </span>
               <span className="mt-1 block text-xs text-muted">{formatTime(entry.changedAt)}</span>
             </button>
           ))}

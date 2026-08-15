@@ -17,6 +17,25 @@ Context Pack is an export artifact generated from store content. It is not a sto
 Its `Reference` concepts identify Kinic targets with `kinic.store` and `kinic.store_path`, so `/Sources/...`, `/Sources/sessions/...`, `/Sources/skill-runs/...`, and `/Sessions/...` can be represented without copying referenced bodies into the bundle.
 Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
 
+## Git Repository Export
+
+The Git repository query surface exports the complete immutable page history without changing the database. All three methods require database membership with Reader, Writer, or Owner role; marketplace read entitlements do not authorize export. An anonymous caller can use them only when the anonymous principal has been granted Reader membership.
+
+1. Call `git_repository_snapshot(database_id)` and retain its `change_id`, `head_commit_oid`, `head_ref`, and `object_format`.
+2. Page through `list_git_objects` with that `change_id`. Each response contains at most 100 objects and an optional lowercase SHA-1 OID cursor.
+3. Read each listed object with `read_git_object_chunk`, keeping the same `change_id` and following `next_offset` until the object is complete. Each chunk is limited to 512 KiB.
+4. Materialize the objects and set the returned `head_ref` to `head_commit_oid`. The CLI `export-git` command performs this flow and verifies the resulting bare repository.
+
+`snapshot_change_id` pins object visibility while later wiki writes append new commits. `oid` and object-list cursors are exactly 40 lowercase hexadecimal SHA-1 characters. Object-list `limit` must be greater than zero and is capped at 100. Chunk `limit` must be between 1 and 524,288 bytes; an offset beyond the object size is rejected. `read_git_object_chunk` returns no object when a valid OID is not visible in the pinned snapshot.
+
+The public response contracts are:
+
+- `GitRepositorySnapshot`: `object_format`, `head_ref`, `head_commit_oid`, `change_id`.
+- `GitObjectSummary`: `oid`, `object_type`, `size`.
+- `GitObjectChunk`: `oid`, `object_type`, `size`, `offset`, `data`, `next_offset`.
+
+Node mutations that append to this history are limited to 100 distinct affected pages and 1.5 MiB of changed UTF-8 data per atomic call. Normal writes count the resulting path, content, and metadata; moves count the resulting path and metadata; deletes count the removed path. Exceeding either limit rejects and rolls back the complete mutation.
+
 ## Trust Model
 
 Kinic store trust follows this lifecycle:

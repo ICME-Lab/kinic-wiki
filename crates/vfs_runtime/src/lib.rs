@@ -43,20 +43,21 @@ use vfs_types::{
     DatabaseInfo, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary,
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, LinkEdge,
-    ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse, ListNodeHistoryRequest,
-    ListNodeHistoryResponse, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
-    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
-    MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    GitObjectChunk, GitRepositorySnapshot, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult,
+    InitialFreeDatabaseGrantStatus, LinkEdge, ListChildrenRequest, ListDeletedNodesRequest,
+    ListDeletedNodesResponse, ListGitObjectsRequest, ListGitObjectsResponse,
+    ListNodeHistoryRequest, ListNodeHistoryResponse, ListNodesRequest, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
     MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
     NodeMutation, NodeMutationError, NodeMutationResult, NodePublication, NodeVersion,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
-    ReadNodeVersionRequest, RestoreNodeVersionRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
+    ReadGitObjectChunkRequest, ReadNodeVersionRequest, RestoreNodeVersionRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
     SourceCaptureTriggerSessionRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
@@ -468,6 +469,38 @@ impl VfsService {
         let database_id = request.database_id.clone();
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
             store.list_deleted_nodes(request)
+        })
+    }
+
+    pub fn git_repository_snapshot(
+        &self,
+        database_id: &str,
+        caller: &str,
+    ) -> Result<GitRepositorySnapshot, String> {
+        self.with_database_store(database_id, caller, RequiredRole::Reader, |store| {
+            store.git_repository_snapshot()
+        })
+    }
+
+    pub fn list_git_objects(
+        &self,
+        caller: &str,
+        request: ListGitObjectsRequest,
+    ) -> Result<ListGitObjectsResponse, String> {
+        let database_id = request.database_id.clone();
+        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
+            store.list_git_objects(request)
+        })
+    }
+
+    pub fn read_git_object_chunk(
+        &self,
+        caller: &str,
+        request: ReadGitObjectChunkRequest,
+    ) -> Result<Option<GitObjectChunk>, String> {
+        let database_id = request.database_id.clone();
+        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
+            store.read_git_object_chunk(request)
         })
     }
 

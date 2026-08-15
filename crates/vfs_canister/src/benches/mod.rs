@@ -5,8 +5,9 @@ mod scale;
 
 use canbench_rs::{BenchResult, bench};
 use scale::{
-    BenchCase, FETCH_UPDATED_COUNT, run_append, run_export_snapshot, run_fetch_updates, run_move,
-    run_search, run_storage_billing, run_write,
+    BenchCase, FETCH_UPDATED_COUNT, GitMigrationBenchCase, run_append, run_export_snapshot,
+    run_fetch_updates, run_folder_move, run_git_migration, run_move, run_search,
+    run_storage_billing, run_write,
 };
 use vfs_types::SearchPreviewMode;
 
@@ -49,6 +50,16 @@ scale_bench!(append_node_scale_n50000, run_append, "append", 50_000, 1);
 scale_bench!(move_node_scale_n1000, run_move, "move", 1_000, 1);
 scale_bench!(move_node_scale_n10000, run_move, "move", 10_000, 1);
 scale_bench!(move_node_scale_n50000, run_move, "move", 50_000, 1);
+
+#[bench(raw)]
+fn folder_move_99_files_content_4kib() -> BenchResult {
+    run_folder_move("folder_move_99_files_content_4kib", 4 * 1024)
+}
+
+#[bench(raw)]
+fn folder_move_99_files_content_1mib() -> BenchResult {
+    run_folder_move("folder_move_99_files_content_1mib", 1024 * 1024)
+}
 search_scale_bench!(
     search_nodes_scale_none_n1000,
     SearchPreviewMode::None,
@@ -141,3 +152,27 @@ storage_billing_bench!(storage_billing_batch_n1, 1);
 storage_billing_bench!(storage_billing_batch_n10, 10);
 storage_billing_bench!(storage_billing_batch_n100, 100);
 storage_billing_bench!(storage_billing_batch_n1000, 1_000);
+
+#[bench(raw)]
+fn git_v003_backfill_representative() -> BenchResult {
+    run_git_migration(GitMigrationBenchCase {
+        bench_name: "git_v003_backfill_representative",
+        database_count: 1,
+        nodes_per_database: 100,
+        bytes_per_database: 1024 * 1024,
+        max_content_bytes: 128 * 1024,
+        depth: 5,
+    })
+}
+
+#[bench(raw)]
+fn git_v003_backfill_stress() -> BenchResult {
+    run_git_migration(GitMigrationBenchCase {
+        bench_name: "git_v003_backfill_stress",
+        database_count: 10,
+        nodes_per_database: 100,
+        bytes_per_database: 2 * 1024 * 1024,
+        max_content_bytes: 1_500 * 1024,
+        depth: 8,
+    })
+}

@@ -3,6 +3,10 @@ name = "vfs-runtime"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+canbench-rs = ["vfs-store/canbench-rs"]
+pocketic-migration-failpoint = ["vfs-store/pocketic-migration-failpoint"]
+
 [dependencies]
 candid = "0.10.26"
 kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }

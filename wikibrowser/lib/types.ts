@@ -19,6 +19,7 @@ export type NodeVersionSummary = {
   path: string;
   kind: NodeKind;
   etag: string;
+  blobOid: string;
   nodeCreatedAt: string;
   nodeUpdatedAt: string;
 };
@@ -31,6 +32,7 @@ export type NodeHistoryEntry = {
   changeKind: NodeHistoryChangeKind;
   authorPrincipal: string;
   changedAt: string;
+  commitOid: string;
   beforeVersion: NodeVersionSummary | null;
   afterVersion: NodeVersionSummary | null;
 };

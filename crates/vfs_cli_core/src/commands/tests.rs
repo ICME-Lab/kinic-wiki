@@ -1,8 +1,12 @@
-use super::{command_requires_write_cycles_available, run_vfs_command};
+use super::{
+    command_requires_write_cycles_available, export_git_repository, run_vfs_command,
+    write_loose_object,
+};
 use crate::cli::{CyclesCommand, NodeKindArg, VfsCommand};
 use crate::connection::ResolvedConnection;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use sha1::{Digest, Sha1};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -55,6 +59,9 @@ struct MockClient {
     export_snapshots: Mutex<Vec<ExportSnapshotRequest>>,
     fetch_updates_requests: Mutex<Vec<FetchUpdatesRequest>>,
     neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
+    git_snapshot: Mutex<Option<GitRepositorySnapshot>>,
+    git_object_page: Mutex<Option<ListGitObjectsResponse>>,
+    git_chunk: Mutex<Option<GitObjectChunk>>,
 }
 
 fn test_connection() -> ResolvedConnection {
@@ -462,6 +469,172 @@ impl VfsApi for MockClient {
             next_cursor: None,
         })
     }
+    async fn read_git_object_chunk(
+        &self,
+        _request: ReadGitObjectChunkRequest,
+    ) -> Result<Option<GitObjectChunk>> {
+        Ok(self.git_chunk.lock().unwrap().clone())
+    }
+    async fn git_repository_snapshot(&self, _database_id: &str) -> Result<GitRepositorySnapshot> {
+        self.git_snapshot
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow!("missing mock Git snapshot"))
+    }
+    async fn list_git_objects(
+        &self,
+        _request: ListGitObjectsRequest,
+    ) -> Result<ListGitObjectsResponse> {
+        self.git_object_page
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow!("missing mock Git object page"))
+    }
+}
+
+#[tokio::test]
+async fn export_git_rejects_an_existing_output_without_contacting_the_server() {
+    let dir = tempdir().unwrap();
+    let output = dir.path().join("existing.git");
+    fs::create_dir(&output).unwrap();
+    let error = run_vfs_command(
+        &MockClient::default(),
+        &test_connection(),
+        VfsCommand::ExportGit {
+            output: output.clone(),
+        },
+    )
+    .await
+    .expect_err("existing output must be preserved");
+    assert!(error.to_string().contains("already exists"));
+    assert!(output.is_dir());
+}
+
+#[tokio::test]
+async fn export_git_rejects_object_checksum_mismatches() {
+    let dir = tempdir().unwrap();
+    let data = b"actual payload".to_vec();
+    let client = MockClient {
+        git_chunk: Mutex::new(Some(GitObjectChunk {
+            oid: "0000000000000000000000000000000000000000".to_string(),
+            object_type: "blob".to_string(),
+            size: data.len() as u64,
+            offset: 0,
+            data,
+            next_offset: None,
+        })),
+        ..MockClient::default()
+    };
+    let summary = GitObjectSummary {
+        oid: "0000000000000000000000000000000000000000".to_string(),
+        object_type: "blob".to_string(),
+        size: "actual payload".len() as u64,
+    };
+    let error = write_loose_object(&client, "alpha", 1, dir.path(), &summary)
+        .await
+        .expect_err("a forged object id must be rejected");
+    assert!(error.to_string().contains("checksum mismatch"));
+}
+
+#[tokio::test]
+async fn export_git_removes_temporary_repository_when_fetch_validation_fails() {
+    let dir = tempdir().unwrap();
+    let output = dir.path().join("export.git");
+    let data = b"forged".to_vec();
+    let summary = GitObjectSummary {
+        oid: "0000000000000000000000000000000000000000".to_string(),
+        object_type: "blob".to_string(),
+        size: data.len() as u64,
+    };
+    let client = MockClient {
+        git_snapshot: Mutex::new(Some(GitRepositorySnapshot {
+            object_format: "sha1".to_string(),
+            head_ref: "refs/heads/main".to_string(),
+            head_commit_oid: summary.oid.clone(),
+            change_id: 1,
+        })),
+        git_object_page: Mutex::new(Some(ListGitObjectsResponse {
+            objects: vec![summary.clone()],
+            next_cursor: None,
+        })),
+        git_chunk: Mutex::new(Some(GitObjectChunk {
+            oid: summary.oid,
+            object_type: summary.object_type,
+            size: summary.size,
+            offset: 0,
+            data,
+            next_offset: None,
+        })),
+        ..MockClient::default()
+    };
+    run_vfs_command(
+        &client,
+        &test_connection(),
+        VfsCommand::ExportGit {
+            output: output.clone(),
+        },
+    )
+    .await
+    .expect_err("a forged object should abort export");
+    assert!(!output.exists());
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn export_git_reports_cumulative_progress_on_stderr_callback() {
+    let dir = tempdir().unwrap();
+    let output = dir.path().join("export.git");
+    let data = b"progress payload".to_vec();
+    let header = format!("blob {}\0", data.len());
+    let mut hasher = Sha1::new();
+    hasher.update(header.as_bytes());
+    hasher.update(&data);
+    let oid = format!("{:x}", hasher.finalize());
+    let summary = GitObjectSummary {
+        oid: oid.clone(),
+        object_type: "blob".to_string(),
+        size: data.len() as u64,
+    };
+    let client = MockClient {
+        git_snapshot: Mutex::new(Some(GitRepositorySnapshot {
+            object_format: "sha1".to_string(),
+            head_ref: "refs/heads/main".to_string(),
+            head_commit_oid: oid.clone(),
+            change_id: 1,
+        })),
+        git_object_page: Mutex::new(Some(ListGitObjectsResponse {
+            objects: vec![summary.clone()],
+            next_cursor: None,
+        })),
+        git_chunk: Mutex::new(Some(GitObjectChunk {
+            oid,
+            object_type: summary.object_type,
+            size: summary.size,
+            offset: 0,
+            data,
+            next_offset: None,
+        })),
+        ..MockClient::default()
+    };
+    let mut progress = Vec::new();
+
+    export_git_repository(&client, "alpha", &output, |phase, objects, bytes| {
+        progress.push((phase.to_string(), objects, bytes));
+    })
+    .await
+    .expect_err("a blob cannot be the repository HEAD commit");
+
+    assert_eq!(
+        progress,
+        vec![
+            ("download".to_string(), 0, 0),
+            ("download".to_string(), 1, 16),
+            ("verify".to_string(), 1, 16),
+        ]
+    );
+    assert!(!output.exists());
 }
 
 #[tokio::test]

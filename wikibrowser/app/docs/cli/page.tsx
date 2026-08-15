@@ -1,5 +1,5 @@
 import { AppLink as Link } from "@/components/app-link";
-import { Bot, CheckCircle2, Database, Layers3, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { Bot, CheckCircle2, Database, GitBranch, Layers3, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
@@ -38,6 +38,11 @@ const storeApiCommands = [
   "kinic-vfs-cli source-evidence --node-path /Knowledge/page.md --json",
   "kinic-vfs-cli export-snapshot --prefix /Knowledge --limit 100 --json",
   "kinic-vfs-cli fetch-updates --known-snapshot-revision <revision> --prefix /Knowledge --limit 100 --json"
+];
+
+const gitExportCommands = [
+  "kinic-vfs-cli --database-id <database-id> export-git --output ./wiki.git",
+  "git --git-dir ./wiki.git log --oneline --all"
 ];
 
 const writeCommands = [
@@ -122,8 +127,11 @@ export default function CliPage() {
           <CliGuideBlock icon={<Layers3 aria-hidden size={18} />} title="Store API Reads" commands={storeApiCommands}>
             Use Store API commands for task-scoped recall, source evidence references, full-scope snapshots, and trusted snapshot deltas.
           </CliGuideBlock>
+          <CliGuideBlock icon={<GitBranch aria-hidden size={18} />} title="Git History Export" commands={gitExportCommands}>
+            Export the complete commit, tree, and blob history as a new bare SHA-1 repository. An authenticated Reader, Writer, or Owner membership and a local <code>git</code> executable are required; marketplace read entitlements do not authorize export. The output path must not exist. The CLI pins one snapshot, reports cumulative object and byte progress on stderr, verifies every object, and runs <code>git fsck --full</code> before publishing the completed repository. Its machine-readable completion record remains on stdout.
+          </CliGuideBlock>
           <CliGuideBlock icon={<Wrench aria-hidden size={18} />} title="Safe Write Workflow" commands={writeCommands}>
-            Read the node first, keep its <code>etag</code>, edit with <code>--expected-etag</code>, then read again to verify the stored content.
+            Read the node first, keep its <code>etag</code>, edit with <code>--expected-etag</code>, then read again to verify the stored content. One atomic mutation may affect at most 100 pages and 1.5 MiB of changed UTF-8 data; exceeding either limit rolls back the complete call.
           </CliGuideBlock>
           <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="Skill Registry" commands={skillCommands}>
             Find a skill, inspect the package before use, then record run evidence after the agent completes the task.

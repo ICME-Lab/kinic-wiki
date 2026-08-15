@@ -79,6 +79,7 @@ function deletedNode(label: string): DeletedNodeSummary {
     path: `/Knowledge/${label}-deleted.md`,
     kind: "file",
     etag: `${label}-etag`,
+    blobOid: "89abcdef0123456789abcdef0123456789abcdef",
     nodeCreatedAt: "1",
     nodeUpdatedAt: "2",
     deletedAt: "3",

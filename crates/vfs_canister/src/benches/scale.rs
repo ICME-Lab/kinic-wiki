@@ -33,6 +33,7 @@ const SHAPE_ID: &str = "uniform_depth4_content256_hits20pct";
 const CERTIFICATION_STATUS: &str = "not_implemented";
 const STORAGE_BILLING_DATABASE_PREFIX: &str = "storage-billing-";
 const STORAGE_BILLING_PAYMENT_E8S: u64 = 10_000;
+const FOLDER_MOVE_FILE_COUNT: usize = 99;
 
 pub(super) const FETCH_UPDATED_COUNT: usize = 10;
 
@@ -43,6 +44,16 @@ pub(super) struct BenchCase {
     pub(super) n: usize,
     pub(super) updated_count: usize,
     pub(super) preview_mode: SearchPreviewMode,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct GitMigrationBenchCase {
+    pub(super) bench_name: &'static str,
+    pub(super) database_count: usize,
+    pub(super) nodes_per_database: usize,
+    pub(super) bytes_per_database: usize,
+    pub(super) max_content_bytes: usize,
+    pub(super) depth: usize,
 }
 
 struct SnapshotMetrics {
@@ -67,6 +78,74 @@ fn ensure_bench_service() {
         Ok(())
     })
     .expect("bench database should exist");
+}
+
+fn git_migration_database_id(case: GitMigrationBenchCase, index: usize) -> String {
+    format!("canbench-{}-{index:02}", case.bench_name.replace('_', "-"))
+}
+
+fn prepare_git_migration_fixture(case: GitMigrationBenchCase) {
+    ensure_bench_service();
+    with_service(|service| {
+        let caller = caller_text();
+        let existing = service
+            .list_databases()?
+            .into_iter()
+            .map(|meta| meta.database_id)
+            .collect::<BTreeSet<_>>();
+        for index in 0..case.database_count {
+            let database_id = git_migration_database_id(case, index);
+            if !existing.contains(&database_id) {
+                service.create_database(
+                    &database_id,
+                    &caller,
+                    40_000 + i64::try_from(index).unwrap_or(i64::MAX),
+                )?;
+            }
+            service.prepare_git_migration_benchmark_fixture(
+                &database_id,
+                case.nodes_per_database,
+                case.bytes_per_database,
+                case.max_content_bytes,
+                case.depth,
+            )?;
+        }
+        Ok(())
+    })
+    .expect("Git migration benchmark fixture should prepare");
+}
+
+pub(super) fn run_git_migration(case: GitMigrationBenchCase) -> BenchResult {
+    prepare_git_migration_fixture(case);
+    let total_nodes = case.database_count.saturating_mul(case.nodes_per_database);
+    let total_bytes = case.database_count.saturating_mul(case.bytes_per_database);
+    ic_cdk::eprintln!(
+        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"git_v003_backfill\",\"database_count\":{},\"node_count\":{},\"depth\":{},\"content_size\":{},\"max_content_size\":{},\"shape\":\"synthetic_v002_filesystem\",\"fixture_setup_measured\":false}}",
+        case.bench_name,
+        case.database_count,
+        total_nodes,
+        case.depth,
+        total_bytes,
+        case.max_content_bytes,
+    );
+    bench_fn(|| {
+        let _scope = bench_scope("git_v003_backfill_call");
+        with_service(|service| {
+            for index in 0..case.database_count {
+                service.run_git_migration_benchmark(&git_migration_database_id(case, index))?;
+            }
+            Ok(())
+        })
+        .expect("Git migration benchmark should succeed");
+        #[cfg(target_arch = "wasm32")]
+        ic_cdk::eprintln!(
+            "CANBENCH_RESOURCE {{\"bench_name\":\"{}\",\"heap_pages_total\":{},\"stable_memory_pages_total\":{}}}",
+            case.bench_name,
+            core::arch::wasm32::memory_size(0),
+            ic_cdk::api::stable_size(),
+        );
+        black_box(total_nodes);
+    })
 }
 
 fn bench_prefix(case: BenchCase) -> String {
@@ -419,6 +498,53 @@ pub(super) fn run_move(case: BenchCase) -> BenchResult {
                 overwrite: false,
             })
             .expect("bench move should succeed"),
+        );
+    })
+}
+
+pub(super) fn run_folder_move(bench_name: &'static str, content_size: usize) -> BenchResult {
+    ensure_bench_service();
+    let prefix = format!("/Knowledge/canbench/{bench_name}");
+    let from_path = format!("{prefix}/source");
+    let destination = format!("{prefix}/destination");
+    ensure_seed_parent_folders_for_path(&format!("{from_path}/file-000.md"), 9_000);
+    ensure_seed_parent_folders_for_path(&format!("{destination}/placeholder"), 9_001);
+    let content = "x".repeat(content_size);
+    for index in 0..FOLDER_MOVE_FILE_COUNT {
+        write_seed(
+            &format!("{from_path}/file-{index:03}.md"),
+            &content,
+            None,
+            10_000 + index as i64,
+        );
+    }
+    fund_database_for_storage_billing(BENCH_DATABASE_ID, &caller_text(), 20_000);
+    let metrics = snapshot_metrics(&prefix);
+    ic_cdk::eprintln!(
+        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"folder_move\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":1,\"content_size\":{},\"updated_count\":{},\"snapshot_node_count\":{},\"snapshot_bytes\":{},\"shape\":\"folder_move_99_files_shared_content\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
+        bench_name,
+        FOLDER_MOVE_FILE_COUNT,
+        FOLDER_MOVE_FILE_COUNT + 1,
+        content_size,
+        FOLDER_MOVE_FILE_COUNT + 1,
+        metrics.snapshot_node_count,
+        metrics.snapshot_bytes,
+        CERTIFICATION_STATUS
+    );
+    let expected_etag = current_etag(&from_path);
+    let to_path = format!("{destination}/source");
+    bench_fn(|| {
+        let _scope = bench_scope("folder_move_call");
+        black_box(
+            move_node(MoveNodeRequest {
+                database_id: BENCH_DATABASE_ID.to_string(),
+                from_path: from_path.clone(),
+                to_path: to_path.clone(),
+                expected_etag: expected_etag.clone(),
+                expected_target_etag: None,
+                overwrite: false,
+            })
+            .expect("bench folder move should succeed"),
         );
     })
 }

@@ -898,7 +898,7 @@ fn export_snapshot_pages_by_byte_budget() {
 #[test]
 fn export_snapshot_rejects_single_node_over_byte_budget() {
     let (_dir, store) = new_store();
-    let content = "x".repeat(1_600_000);
+    let content = "x".repeat(1_510_000);
     write_node(&store, "/Knowledge/huge.md", &content, None, 10);
 
     let error = store
@@ -1312,7 +1312,7 @@ fn fetch_updates_rejects_single_node_over_byte_budget() {
             snapshot_session_id: None,
         })
         .expect("base snapshot should succeed");
-    let content = "x".repeat(1_600_000);
+    let content = "x".repeat(1_510_000);
     write_node(&store, "/Knowledge/huge.md", &content, None, 10);
 
     let error = store

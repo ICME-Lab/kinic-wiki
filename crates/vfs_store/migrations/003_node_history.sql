@@ -19,6 +19,7 @@ CREATE TABLE fs_history_versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     page_id INTEGER NOT NULL,
     blob_hash TEXT NOT NULL,
+    git_blob_oid TEXT,
     path TEXT NOT NULL,
     etag TEXT NOT NULL,
     node_created_at INTEGER NOT NULL,
@@ -29,8 +30,37 @@ CREATE TABLE fs_history_changes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     author_principal TEXT NOT NULL,
     operation TEXT NOT NULL,
-    changed_at INTEGER NOT NULL
+    changed_at INTEGER NOT NULL,
+    commit_oid TEXT
 );
+
+CREATE TABLE git_objects (
+    oid TEXT PRIMARY KEY CHECK (length(oid) = 40 AND oid = lower(oid)),
+    object_type TEXT NOT NULL CHECK (object_type IN ('blob', 'tree', 'commit')),
+    size INTEGER NOT NULL CHECK (size >= 0),
+    data BLOB NOT NULL,
+    first_change_id INTEGER NOT NULL CHECK (first_change_id >= 0)
+);
+
+CREATE INDEX git_objects_snapshot_idx
+ON git_objects (first_change_id, oid);
+
+CREATE TABLE git_refs (
+    name TEXT PRIMARY KEY,
+    commit_oid TEXT NOT NULL,
+    change_id INTEGER NOT NULL CHECK (change_id >= 0)
+);
+
+CREATE TABLE git_index_entries (
+    path TEXT PRIMARY KEY,
+    parent_path TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mode INTEGER NOT NULL CHECK (mode IN (100644, 40000)),
+    oid TEXT NOT NULL
+);
+
+CREATE INDEX git_index_entries_parent_idx
+ON git_index_entries (parent_path, name);
 
 CREATE TABLE fs_history_active_change (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -115,7 +145,11 @@ AFTER UPDATE OF path, kind, content, created_at, updated_at, etag, metadata_json
 WHEN EXISTS (SELECT 1 FROM fs_history_active_change WHERE singleton = 1)
 BEGIN
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
-    VALUES (OLD.etag, OLD.kind, OLD.content, OLD.metadata_json);
+    SELECT OLD.etag, OLD.kind, OLD.content, OLD.metadata_json
+    WHERE EXISTS (
+        SELECT 1 FROM fs_history_pages
+        WHERE current_node_id = OLD.id AND current_version_id IS NULL
+    );
     INSERT INTO fs_history_versions
         (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
     SELECT id, OLD.etag, OLD.path, OLD.etag, OLD.created_at, OLD.updated_at
@@ -125,10 +159,16 @@ BEGIN
     SET current_version_id = (SELECT MAX(id) FROM fs_history_versions WHERE page_id = fs_history_pages.id)
     WHERE current_node_id = OLD.id AND current_version_id IS NULL;
     INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
-    VALUES (NEW.etag, NEW.kind, NEW.content, NEW.metadata_json);
+    SELECT NEW.etag, NEW.kind, NEW.content, NEW.metadata_json
+    WHERE OLD.path = NEW.path;
     INSERT INTO fs_history_versions
         (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
-    SELECT id, NEW.etag, NEW.path, NEW.etag, NEW.created_at, NEW.updated_at
+    SELECT id,
+           CASE WHEN OLD.path <> NEW.path THEN
+               (SELECT blob_hash FROM fs_history_versions
+                WHERE id = fs_history_pages.current_version_id)
+           ELSE NEW.etag END,
+           NEW.path, NEW.etag, NEW.created_at, NEW.updated_at
     FROM fs_history_pages WHERE current_node_id = NEW.id;
     INSERT INTO fs_history_items
         (change_id, page_id, change_kind, before_version_id, after_version_id)
@@ -175,6 +215,3 @@ BEGIN
         last_item_id = (SELECT MAX(id) FROM fs_history_items WHERE page_id = fs_history_pages.id)
     WHERE current_node_id = OLD.id;
 END;
-
-INSERT INTO fs_history_pages (current_node_id, current_path)
-SELECT id, path FROM fs_nodes ORDER BY id ASC;

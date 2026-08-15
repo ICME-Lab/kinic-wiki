@@ -35,8 +35,8 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
         seed_initial_store_roots(tx)?;
         record_schema_migration(tx, SCHEMA_VERSION_INITIAL)?;
         record_schema_migration(tx, SCHEMA_VERSION_002)?;
+        crate::git_repository::seed_repository(tx)?;
         record_schema_migration(tx, SCHEMA_VERSION_CURRENT)?;
-        seed_history_pages(tx)?;
         return Ok(());
     }
 
@@ -63,6 +63,7 @@ fn apply_pending_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     }
     conn.execute_batch(SCHEMA_MIGRATION_003)
         .map_err(|error| error.to_string())?;
+    crate::git_repository::seed_repository(conn)?;
     record_schema_migration(conn, SCHEMA_VERSION_CURRENT)
 }
 
@@ -120,7 +121,7 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
     for table in managed_tables() {
         if !table_exists(conn, table)? {
             return Err(format!(
-                "unsupported vfs_store schema: missing table {table}"
+                "unsupported vfs_store schema: missing table {table}; recreate database"
             ));
         }
     }
@@ -136,10 +137,12 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
         "fs_history_items_change_idx",
         "fs_history_pages_deleted_idx",
         "fs_history_pages_current_path_idx",
+        "git_objects_snapshot_idx",
+        "git_index_entries_parent_idx",
     ] {
         if !index_exists(conn, index)? {
             return Err(format!(
-                "unsupported vfs_store schema: missing index {index}"
+                "unsupported vfs_store schema: missing index {index}; recreate database"
             ));
         }
     }
@@ -196,6 +199,7 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
                 "id",
                 "page_id",
                 "blob_hash",
+                "git_blob_oid",
                 "path",
                 "etag",
                 "node_created_at",
@@ -204,7 +208,22 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
         ),
         (
             "fs_history_changes",
-            &["id", "author_principal", "operation", "changed_at"][..],
+            &[
+                "id",
+                "author_principal",
+                "operation",
+                "changed_at",
+                "commit_oid",
+            ][..],
+        ),
+        (
+            "git_objects",
+            &["oid", "object_type", "size", "data", "first_change_id"][..],
+        ),
+        ("git_refs", &["name", "commit_oid", "change_id"][..]),
+        (
+            "git_index_entries",
+            &["path", "parent_path", "name", "mode", "oid"][..],
         ),
         (
             "fs_history_active_change",
@@ -231,7 +250,7 @@ fn validate_current_schema_shape(conn: &Connection) -> Result<(), String> {
         for column in columns {
             if !table_column_exists(conn, table, column)? {
                 return Err(format!(
-                    "unsupported vfs_store schema: missing column {table}.{column}"
+                    "unsupported vfs_store schema: missing column {table}.{column}; recreate database"
                 ));
             }
         }
@@ -257,7 +276,7 @@ fn validate_fts_shape(conn: &Connection) -> Result<(), String> {
     if public_columns == ["path", "title", "content"] {
         return Ok(());
     }
-    Err("unsupported vfs_store schema: invalid fs_nodes_fts shape".to_string())
+    Err("unsupported vfs_store schema: invalid fs_nodes_fts shape; recreate database".to_string())
 }
 
 fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
@@ -317,6 +336,9 @@ fn managed_tables() -> &'static [&'static str] {
         "fs_history_changes",
         "fs_history_active_change",
         "fs_history_items",
+        "git_objects",
+        "git_refs",
+        "git_index_entries",
     ]
 }
 
@@ -334,16 +356,6 @@ fn seed_initial_store_roots(conn: &Transaction<'_>) -> Result<(), String> {
         insert_initial_folder(conn, path)?;
     }
     Ok(())
-}
-
-fn seed_history_pages(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO fs_history_pages (current_node_id, current_path)
-         SELECT id, path FROM fs_nodes ORDER BY id ASC",
-        params![],
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string())
 }
 
 fn insert_initial_folder(conn: &Transaction<'_>, path: &str) -> Result<(), String> {

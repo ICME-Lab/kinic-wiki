@@ -23,19 +23,21 @@ use ic_sqlite_vfs::{DbError, DbHandle};
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListDeletedNodesRequest, ListDeletedNodesResponse, ListNodeHistoryRequest,
-    ListNodeHistoryResponse, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
-    MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
-    MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node,
-    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeHistoryTarget, NodeKind,
-    NodeMutation, NodeMutationError, NodeMutationResult, NodeVersion, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, ReadNodeVersionRequest, RestoreNodeVersionRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
-    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    FetchUpdatesResponse, GitObjectChunk, GitRepositorySnapshot, GlobNodeHit, GlobNodeType,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListDeletedNodesRequest,
+    ListDeletedNodesResponse, ListGitObjectsRequest, ListGitObjectsResponse,
+    ListNodeHistoryRequest, ListNodeHistoryResponse, ListNodesRequest, MarketCategoryGraph,
+    MarketCategoryGraphEdge, MarketCategoryGraphNode, MarketListingPreview,
+    MarketListingVerifiedStats, MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest, MultiEditNodeResult,
+    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind,
+    NodeHistoryTarget, NodeKind, NodeMutation, NodeMutationError, NodeMutationResult, NodeVersion,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, ReadGitObjectChunkRequest,
+    ReadNodeVersionRequest, RestoreNodeVersionRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidence, SourceEvidenceRef,
+    SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 use crate::{
@@ -47,7 +49,7 @@ use crate::{
     },
     fs_links::{
         delete_source_links, load_graph_links, load_graph_neighborhood, load_incoming_links,
-        load_outgoing_links, sync_node_links,
+        load_outgoing_links, move_source_links, sync_node_links,
     },
     fs_search::{
         SearchCandidate, build_previews_for_hits, build_search_query_plan, finalize_hits,
@@ -183,6 +185,101 @@ impl FsStore {
         }
     }
 
+    #[cfg(feature = "canbench-rs")]
+    pub fn prepare_git_migration_benchmark_fixture(
+        &self,
+        node_count: usize,
+        total_content_bytes: usize,
+        max_content_bytes: usize,
+        depth: usize,
+    ) -> Result<(), String> {
+        if node_count == 0 || total_content_bytes < max_content_bytes || depth == 0 {
+            return Err("invalid Git migration benchmark fixture dimensions".to_string());
+        }
+        self.write_conn(|tx| {
+            tx.execute(
+                "DELETE FROM fs_nodes WHERE path LIKE '/Knowledge/canbench-migration/%'",
+                params![],
+            )
+            .map_err(|error| error.to_string())?;
+            let knowledge_id = tx
+                .query_row(
+                    "SELECT id FROM fs_nodes WHERE path = '/Knowledge'",
+                    params![],
+                    |row| crate::sqlite::row_get::<i64>(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            let first_id = tx
+                .query_row(
+                    "SELECT COALESCE(MAX(id), 0) + 1 FROM fs_nodes",
+                    params![],
+                    |row| crate::sqlite::row_get::<i64>(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            let remaining_bytes = total_content_bytes.saturating_sub(max_content_bytes);
+            let remaining_nodes = node_count.saturating_sub(1);
+            for index in 0..node_count {
+                let content_bytes = if index == 0 {
+                    max_content_bytes
+                } else {
+                    let base = remaining_bytes
+                        .checked_div(remaining_nodes)
+                        .ok_or_else(|| {
+                            "invalid Git migration benchmark fixture node count".to_string()
+                        })?;
+                    let remainder =
+                        remaining_bytes
+                            .checked_rem(remaining_nodes)
+                            .ok_or_else(|| {
+                                "invalid Git migration benchmark fixture node count".to_string()
+                            })?;
+                    let extra = usize::from(index <= remainder);
+                    base + extra
+                };
+                let mut path = String::from("/Knowledge/canbench-migration");
+                for level in 0..depth.saturating_sub(2) {
+                    path.push_str(&format!("/d{level}-{:02}", index % 10));
+                }
+                path.push_str(&format!("/node-{index:06}.md"));
+                tx.execute(
+                    "INSERT INTO fs_nodes
+                         (id, path, kind, content, created_at, updated_at, etag,
+                          metadata_json, parent_id, name)
+                     VALUES (?1, ?2, 'file', ?3, 1, 1, ?4, '{}', ?5, ?6)",
+                    params![
+                        first_id + i64::try_from(index).map_err(|error| error.to_string())?,
+                        path,
+                        "x".repeat(content_bytes),
+                        format!("canbench-v002-{index:06}"),
+                        knowledge_id,
+                        format!("node-{index:06}.md"),
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            for table in [
+                "git_index_entries",
+                "git_refs",
+                "git_objects",
+                "fs_history_items",
+                "fs_history_active_change",
+                "fs_history_changes",
+                "fs_history_versions",
+                "fs_history_blobs",
+                "fs_history_pages",
+            ] {
+                tx.execute(&format!("DELETE FROM {table}"), params![])
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "canbench-rs")]
+    pub fn run_git_migration_benchmark(&self) -> Result<(), String> {
+        self.write_conn(crate::git_repository::seed_repository)
+    }
+
     pub fn status(&self) -> Result<Status, String> {
         self.read_conn(|conn| {
             Ok(Status {
@@ -312,6 +409,43 @@ impl FsStore {
         self.read_conn(|conn| history::list_deleted(conn, cursor, limit))
     }
 
+    pub fn git_repository_snapshot(&self) -> Result<GitRepositorySnapshot, String> {
+        self.read_conn(crate::git_repository::repository_snapshot)
+    }
+
+    pub fn list_git_objects(
+        &self,
+        request: ListGitObjectsRequest,
+    ) -> Result<ListGitObjectsResponse, String> {
+        let snapshot_change_id = i64::try_from(request.snapshot_change_id)
+            .map_err(|_| "snapshot_change_id is too large".to_string())?;
+        self.read_conn(|conn| {
+            crate::git_repository::list_objects(
+                conn,
+                snapshot_change_id,
+                request.cursor.as_deref(),
+                request.limit,
+            )
+        })
+    }
+
+    pub fn read_git_object_chunk(
+        &self,
+        request: ReadGitObjectChunkRequest,
+    ) -> Result<Option<GitObjectChunk>, String> {
+        let snapshot_change_id = i64::try_from(request.snapshot_change_id)
+            .map_err(|_| "snapshot_change_id is too large".to_string())?;
+        self.read_conn(|conn| {
+            crate::git_repository::read_object_chunk(
+                conn,
+                snapshot_change_id,
+                &request.oid,
+                request.offset,
+                request.limit,
+            )
+        })
+    }
+
     pub fn restore_node_version_as(
         &self,
         request: RestoreNodeVersionRequest,
@@ -382,18 +516,6 @@ impl FsStore {
                     path,
                 ));
             }
-            ensure_missing_store_root_for_path(tx, &path, now)
-                .map_err(NodeMutationError::write_unavailable)?;
-            require_parent_folder_for_mutation(tx, &path)?;
-            let change_id = history::begin_change(
-                tx,
-                author_principal,
-                "restore",
-                now,
-                Some("restore"),
-                existing.is_none().then_some(page_id),
-            )
-            .map_err(NodeMutationError::write_unavailable)?;
             let mut node = Node {
                 path,
                 kind: selected.summary.kind,
@@ -406,6 +528,26 @@ impl FsStore {
                 etag: String::new(),
                 metadata_json: selected.metadata_json,
             };
+            let changed_bytes = crate::git_repository::node_mutation_bytes(
+                "restore",
+                existing.as_ref().map(|stored| &stored.node),
+                Some(&node),
+            )
+            .map_err(NodeMutationError::invalid_operation)?;
+            crate::git_repository::validate_mutation_budget(1, changed_bytes)
+                .map_err(NodeMutationError::invalid_operation)?;
+            ensure_missing_store_root_for_path(tx, &node.path, now)
+                .map_err(NodeMutationError::write_unavailable)?;
+            require_parent_folder_for_mutation(tx, &node.path)?;
+            let change_id = history::begin_change(
+                tx,
+                author_principal,
+                "restore",
+                now,
+                Some("restore"),
+                existing.is_none().then_some(page_id),
+            )
+            .map_err(NodeMutationError::write_unavailable)?;
             let revision =
                 record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
             update_path_state(tx, &node.path, revision)
@@ -510,6 +652,9 @@ impl FsStore {
     ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
         validate_write_nodes_count(request.nodes.len())
             .map_err(NodeMutationError::invalid_operation)?;
+        preflight_write_nodes_budget(&request.nodes)?;
+        let database_id = request.database_id;
+        let nodes = request.nodes;
         self.write_history_mutation_conn(
             publication_operation_id,
             author_principal,
@@ -517,10 +662,10 @@ impl FsStore {
             now,
             None,
             |tx| {
-                let mut results = Vec::with_capacity(request.nodes.len());
-                for (index, item) in request.nodes.into_iter().enumerate() {
+                let mut results = Vec::with_capacity(nodes.len());
+                for (index, item) in nodes.into_iter().enumerate() {
                     results.push(
-                        write_node_item_in_tx(tx, &request.database_id, item, now)
+                        write_node_item_in_tx(tx, &database_id, item, now)
                             .map_err(|error| error.with_failed_index(index))?,
                     );
                 }
@@ -651,19 +796,22 @@ impl FsStore {
     ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
         validate_mutate_nodes_batch_count(request.operations.len())
             .map_err(NodeMutationError::invalid_operation)?;
-        self.write_history_mutation_conn(
+        let database_id = request.database_id;
+        let operations = request.operations;
+        let preflight_operations = operations.clone();
+        self.write_history_mutation_conn_with_preflight(
             publication_operation_id,
             author_principal,
             "batch",
             now,
             None,
+            move |_| preflight_mutate_nodes_batch_budget(&preflight_operations),
             |tx| {
-                request
-                    .operations
+                operations
                     .into_iter()
                     .enumerate()
                     .map(|(index, operation)| {
-                        mutate_node_in_tx(tx, &request.database_id, operation, now)
+                        mutate_node_in_tx(tx, &database_id, operation, now)
                             .map_err(|error| error.with_failed_index(index))
                     })
                     .collect()
@@ -1013,7 +1161,30 @@ impl FsStore {
         forced_kind: Option<&str>,
         f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
     ) -> Result<T, NodeMutationError> {
+        self.write_history_mutation_conn_with_preflight(
+            publication_operation_id,
+            author_principal,
+            operation,
+            changed_at,
+            forced_kind,
+            |_| Ok(()),
+            f,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_history_mutation_conn_with_preflight<T>(
+        &self,
+        publication_operation_id: Option<i64>,
+        author_principal: &str,
+        operation: &str,
+        changed_at: i64,
+        forced_kind: Option<&str>,
+        preflight: impl FnOnce(&Transaction<'_>) -> Result<(), NodeMutationError>,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
         self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            preflight(tx)?;
             let change_id = history::begin_change(
                 tx,
                 author_principal,
@@ -1060,6 +1231,15 @@ fn append_node_in_tx(
         None => create_appended_node(path, request, now)
             .map_err(NodeMutationError::invalid_operation)?,
     };
+    let change_kind = if created { "create" } else { "update" };
+    let changed_bytes = crate::git_repository::node_mutation_bytes(
+        change_kind,
+        existing.as_ref().map(|stored| &stored.node),
+        Some(&node),
+    )
+    .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     ensure_missing_store_root_for_path(tx, &node.path, now)
         .map_err(NodeMutationError::write_unavailable)?;
     require_parent_folder_for_mutation(tx, &node.path)?;
@@ -1113,6 +1293,11 @@ fn edit_node_in_tx(
     let mut node = current.node.clone();
     node.content = content;
     node.updated_at = now;
+    let changed_bytes =
+        crate::git_repository::node_mutation_bytes("update", Some(&current.node), Some(&node))
+            .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
@@ -1162,6 +1347,10 @@ fn mkdir_node_in_tx(
         etag: String::new(),
         metadata_json: "{}".to_string(),
     };
+    let changed_bytes = crate::git_repository::node_mutation_bytes("create", None, Some(&node))
+        .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     ensure_missing_store_root_for_path(tx, &node.path, now)
         .map_err(NodeMutationError::write_unavailable)?;
     require_parent_folder_for_mutation(tx, &node.path)?;
@@ -1206,6 +1395,11 @@ fn multi_edit_node_in_tx(
     let mut node = current.node.clone();
     node.content = content;
     node.updated_at = now;
+    let changed_bytes =
+        crate::git_repository::node_mutation_bytes("update", Some(&current.node), Some(&node))
+            .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
@@ -1234,7 +1428,7 @@ fn delete_node_in_tx(
             path.clone(),
         ));
     }
-    if current.node.kind == NodeKind::Folder {
+    let folder_index = if current.node.kind == NodeKind::Folder {
         if is_protected_root_folder(&path) {
             return Err(NodeMutationError::invalid_operation(format!(
                 "cannot delete protected folder: {path}"
@@ -1268,18 +1462,40 @@ fn delete_node_in_tx(
                         index_path,
                     ));
                 }
-                delete_node_with_history(tx, &index_node)
-                    .map_err(NodeMutationError::write_unavailable)?;
+                Some(index_node)
             }
             None if request.expected_folder_index_etag.is_some() => {
                 return Err(NodeMutationError::not_found(&index_path));
             }
-            None => {}
+            None => None,
         }
     } else if request.expected_folder_index_etag.is_some() {
         return Err(NodeMutationError::invalid_operation(format!(
             "expected_folder_index_etag is only valid for folder deletes: {path}"
         )));
+    } else {
+        None
+    };
+    let mut changed_bytes =
+        crate::git_repository::node_mutation_bytes("delete", Some(&current.node), None)
+            .map_err(NodeMutationError::invalid_operation)?;
+    if let Some(index_node) = folder_index.as_ref() {
+        changed_bytes = changed_bytes
+            .checked_add(
+                crate::git_repository::node_mutation_bytes("delete", Some(&index_node.node), None)
+                    .map_err(NodeMutationError::invalid_operation)?,
+            )
+            .ok_or_else(|| {
+                NodeMutationError::invalid_operation("Git mutation byte length is too large")
+            })?;
+    }
+    crate::git_repository::validate_mutation_budget(
+        if folder_index.is_some() { 2 } else { 1 },
+        changed_bytes,
+    )
+    .map_err(NodeMutationError::invalid_operation)?;
+    if let Some(index_node) = folder_index.as_ref() {
+        delete_node_with_history(tx, index_node).map_err(NodeMutationError::write_unavailable)?;
     }
     delete_node_with_history(tx, &current).map_err(NodeMutationError::write_unavailable)?;
     Ok(DeleteNodeResult { path })
@@ -1320,9 +1536,6 @@ fn move_node_in_tx(
             ));
         }
     }
-    ensure_missing_store_root_for_path(tx, &to_path, now)
-        .map_err(NodeMutationError::write_unavailable)?;
-    require_parent_folder_for_mutation(tx, &to_path)?;
     let target = load_stored_node(tx, &to_path).map_err(NodeMutationError::write_unavailable)?;
     let overwrote = target.is_some();
     if !request.overwrite && request.expected_target_etag.is_some() {
@@ -1373,12 +1586,42 @@ fn move_node_in_tx(
         )));
     }
     if current.node.kind == NodeKind::Folder {
+        validate_folder_move_budget(tx, &from_path, &to_path)?;
+    } else {
+        let mut moved_preview = current.node.clone();
+        moved_preview.path = to_path.clone();
+        let mut changed_bytes = crate::git_repository::node_mutation_bytes(
+            "move",
+            Some(&current.node),
+            Some(&moved_preview),
+        )
+        .map_err(NodeMutationError::invalid_operation)?;
+        if let Some(target) = target.as_ref() {
+            changed_bytes = changed_bytes
+                .checked_add(
+                    crate::git_repository::node_mutation_bytes("delete", Some(&target.node), None)
+                        .map_err(NodeMutationError::invalid_operation)?,
+                )
+                .ok_or_else(|| {
+                    NodeMutationError::invalid_operation("Git mutation byte length is too large")
+                })?;
+        }
+        crate::git_repository::validate_mutation_budget(
+            if target.is_some() { 2 } else { 1 },
+            changed_bytes,
+        )
+        .map_err(NodeMutationError::invalid_operation)?;
+    }
+    ensure_missing_store_root_for_path(tx, &to_path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &to_path)?;
+    if current.node.kind == NodeKind::Folder {
         let subtree =
-            load_stored_subtree(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
+            load_move_subtree(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
         for stored in &subtree {
-            let next_path = rebase_path(&stored.node.path, &from_path, &to_path)
+            let next_path = rebase_path(&stored.path, &from_path, &to_path)
                 .map_err(NodeMutationError::invalid_operation)?;
-            if next_path != stored.node.path
+            if next_path != stored.path
                 && load_stored_node(tx, &next_path)
                     .map_err(NodeMutationError::write_unavailable)?
                     .is_some()
@@ -1389,26 +1632,22 @@ fn move_node_in_tx(
             }
         }
         for stored in subtree {
-            let mut moved = stored.node.clone();
-            let old_path = moved.path.clone();
-            moved.path = rebase_path(&old_path, &from_path, &to_path)
+            let old_path = stored.path;
+            let moved_path = rebase_path(&old_path, &from_path, &to_path)
                 .map_err(NodeMutationError::invalid_operation)?;
-            moved.updated_at = now;
             let from_revision =
                 record_path_removal(tx, &old_path).map_err(NodeMutationError::write_unavailable)?;
             update_path_state(tx, &old_path, from_revision)
                 .map_err(NodeMutationError::write_unavailable)?;
-            let to_revision =
-                record_change(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
-            update_path_state(tx, &moved.path, to_revision)
+            let to_revision = record_change_path(tx, &moved_path)
                 .map_err(NodeMutationError::write_unavailable)?;
-            moved.etag = compute_node_etag(&moved);
-            save_moved_node(tx, stored.row_id, &moved)
+            update_path_state(tx, &moved_path, to_revision)
                 .map_err(NodeMutationError::write_unavailable)?;
-            sync_node_fts(tx, Some(&stored), Some((stored.row_id, &moved)))
+            let moved_etag = compute_moved_node_etag(&stored.etag, &moved_path);
+            save_moved_node(tx, stored.row_id, &moved_path, now, &moved_etag)
                 .map_err(NodeMutationError::write_unavailable)?;
-            delete_source_links(tx, &old_path).map_err(NodeMutationError::write_unavailable)?;
-            sync_node_links(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
+            move_source_links(tx, &old_path, &moved_path, now)
+                .map_err(NodeMutationError::write_unavailable)?;
         }
         let moved = load_node(tx, &to_path)
             .map_err(NodeMutationError::write_unavailable)?
@@ -1437,11 +1676,16 @@ fn move_node_in_tx(
     let to_revision = record_change(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
     update_path_state(tx, &to_path, to_revision).map_err(NodeMutationError::write_unavailable)?;
     moved.etag = compute_node_etag(&moved);
-    save_moved_node(tx, current.row_id, &moved).map_err(NodeMutationError::write_unavailable)?;
-    sync_node_fts(tx, Some(&current), Some((current.row_id, &moved)))
+    save_moved_node(
+        tx,
+        current.row_id,
+        &moved.path,
+        moved.updated_at,
+        &moved.etag,
+    )
+    .map_err(NodeMutationError::write_unavailable)?;
+    move_source_links(tx, &from_path, &moved.path, now)
         .map_err(NodeMutationError::write_unavailable)?;
-    delete_source_links(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
-    sync_node_links(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
     Ok(MoveNodeResult {
         node: node_ack(&moved),
         from_path,
@@ -1533,9 +1777,13 @@ fn mutate_node_in_tx(
 }
 
 fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
+    record_change_path(tx, &node.path)
+}
+
+fn record_change_path(tx: &Transaction<'_>, path: &str) -> Result<i64, String> {
     tx.execute(
         "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, ?2)",
-        params![node.path, ChangeKind::Upsert.as_str()],
+        params![path, ChangeKind::Upsert.as_str()],
     )
     .map_err(|error| error.to_string())?;
     crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
@@ -1589,6 +1837,15 @@ fn write_node_in_tx(
             create_new_node(path, request, now).map_err(NodeMutationError::invalid_operation)?
         }
     };
+    let change_kind = if created { "create" } else { "update" };
+    let changed_bytes = crate::git_repository::node_mutation_bytes(
+        change_kind,
+        existing.as_ref().map(|stored| &stored.node),
+        Some(&node),
+    )
+    .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     ensure_missing_store_root_for_path(tx, &node.path, now)
         .map_err(NodeMutationError::write_unavailable)?;
     require_parent_folder_for_mutation(tx, &node.path)?;
@@ -1683,6 +1940,10 @@ fn write_folder_in_tx(
         etag: String::new(),
         metadata_json: "{}".to_string(),
     };
+    let changed_bytes = crate::git_repository::node_mutation_bytes("create", None, Some(&node))
+        .map_err(NodeMutationError::invalid_operation)?;
+    crate::git_repository::validate_mutation_budget(1, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)?;
     ensure_missing_store_root_for_path(tx, &node.path, now)
         .map_err(NodeMutationError::write_unavailable)?;
     require_parent_folder_for_mutation(tx, &node.path)?;
@@ -1710,6 +1971,82 @@ fn validate_mutate_nodes_batch_count(count: usize) -> Result<(), String> {
         return Err(format!(
             "mutate_nodes_batch operation count must be between 1 and {MUTATE_NODES_BATCH_LIMIT_MAX}"
         ));
+    }
+    Ok(())
+}
+
+fn add_git_budget_bytes(total: &mut i64, value: &str) -> Result<(), NodeMutationError> {
+    let value = i64::try_from(value.len()).map_err(|_| {
+        NodeMutationError::invalid_operation("Git mutation byte length is too large")
+    })?;
+    *total = total.checked_add(value).ok_or_else(|| {
+        NodeMutationError::invalid_operation("Git mutation byte length is too large")
+    })?;
+    Ok(())
+}
+
+fn preflight_write_nodes_budget(nodes: &[WriteNodeItem]) -> Result<(), NodeMutationError> {
+    let mut changed_bytes = 0_i64;
+    for node in nodes {
+        add_git_budget_bytes(&mut changed_bytes, &node.path)?;
+        add_git_budget_bytes(&mut changed_bytes, &node.content)?;
+        add_git_budget_bytes(&mut changed_bytes, &node.metadata_json)?;
+    }
+    crate::git_repository::validate_mutation_budget(
+        i64::try_from(nodes.len()).map_err(|_| {
+            NodeMutationError::invalid_operation("write_nodes node count is too large")
+        })?,
+        changed_bytes,
+    )
+    .map_err(NodeMutationError::invalid_operation)
+}
+
+fn preflight_mutate_nodes_batch_budget(
+    operations: &[NodeMutation],
+) -> Result<(), NodeMutationError> {
+    let mut changed_bytes = 0_i64;
+    for (index, operation) in operations.iter().enumerate() {
+        let mut operation_bytes = 0_i64;
+        let result = match operation {
+            NodeMutation::Write(item) => {
+                add_git_budget_bytes(&mut operation_bytes, &item.path)?;
+                add_git_budget_bytes(&mut operation_bytes, &item.content)?;
+                add_git_budget_bytes(&mut operation_bytes, &item.metadata_json)
+            }
+            NodeMutation::Append(item) => {
+                add_git_budget_bytes(&mut operation_bytes, &item.path)?;
+                add_git_budget_bytes(&mut operation_bytes, &item.content)?;
+                if let Some(metadata_json) = &item.metadata_json {
+                    add_git_budget_bytes(&mut operation_bytes, metadata_json)?;
+                }
+                Ok(())
+            }
+            NodeMutation::Edit(item) => {
+                add_git_budget_bytes(&mut operation_bytes, &item.path)?;
+                add_git_budget_bytes(&mut operation_bytes, &item.new_text)
+            }
+            NodeMutation::MultiEdit(item) => {
+                add_git_budget_bytes(&mut operation_bytes, &item.path)?;
+                for edit in &item.edits {
+                    add_git_budget_bytes(&mut operation_bytes, &edit.new_text)?;
+                }
+                Ok(())
+            }
+            NodeMutation::Mkdir(path) => add_git_budget_bytes(&mut operation_bytes, path),
+            NodeMutation::Move(item) => add_git_budget_bytes(&mut operation_bytes, &item.to_path),
+            NodeMutation::Delete(item) => add_git_budget_bytes(&mut operation_bytes, &item.path),
+        };
+        result.map_err(|error| error.with_failed_index(index))?;
+        changed_bytes = changed_bytes.checked_add(operation_bytes).ok_or_else(|| {
+            NodeMutationError::invalid_operation("Git mutation byte length is too large")
+                .with_failed_index(index)
+        })?;
+        if changed_bytes > crate::git_repository::MUTATION_BYTES_MAX {
+            return Err(NodeMutationError::invalid_operation(
+                "Git history mutation exceeds the 1.5 MiB byte budget",
+            )
+            .with_failed_index(index));
+        }
     }
     Ok(())
 }
@@ -2344,16 +2681,18 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
     }
 }
 
-fn save_moved_node(tx: &Transaction<'_>, row_id: i64, node: &Node) -> Result<i64, String> {
-    let (parent_id, name) = parent_fields_for_path(tx, &node.path)?;
+fn save_moved_node(
+    tx: &Transaction<'_>,
+    row_id: i64,
+    path: &str,
+    updated_at: i64,
+    etag: &str,
+) -> Result<i64, String> {
+    let (parent_id, name) = parent_fields_for_path(tx, path)?;
     let values = vec![
-        crate::sqlite::text_value(node.path.clone()),
-        crate::sqlite::text_value(node_kind_to_db(&node.kind)),
-        crate::sqlite::text_value(node.content.clone()),
-        crate::sqlite::integer_value(node.created_at),
-        crate::sqlite::integer_value(node.updated_at),
-        crate::sqlite::text_value(node.etag.clone()),
-        crate::sqlite::text_value(node.metadata_json.clone()),
+        crate::sqlite::text_value(path.to_string()),
+        crate::sqlite::integer_value(updated_at),
+        crate::sqlite::text_value(etag.to_string()),
         crate::sqlite::nullable_integer_value(parent_id),
         crate::sqlite::text_value(name),
         crate::sqlite::integer_value(row_id),
@@ -2362,15 +2701,11 @@ fn save_moved_node(tx: &Transaction<'_>, row_id: i64, node: &Node) -> Result<i64
         tx,
         "UPDATE fs_nodes
          SET path = ?1,
-             kind = ?2,
-             content = ?3,
-             created_at = ?4,
-             updated_at = ?5,
-             etag = ?6,
-             metadata_json = ?7,
-             parent_id = ?8,
-             name = ?9
-         WHERE id = ?10",
+             updated_at = ?2,
+             etag = ?3,
+             parent_id = ?4,
+             name = ?5
+         WHERE id = ?6",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -2437,27 +2772,75 @@ fn load_parent_folder_candidate(
     .map_err(|error| error.to_string())
 }
 
-fn load_stored_subtree(tx: &Transaction<'_>, path: &str) -> Result<Vec<StoredNode>, String> {
+struct MoveNodeRow {
+    row_id: i64,
+    path: String,
+    etag: String,
+}
+
+fn validate_folder_move_budget(
+    tx: &Transaction<'_>,
+    from_path: &str,
+    to_path: &str,
+) -> Result<(), NodeMutationError> {
+    let (affected_nodes, changed_bytes) = folder_move_budget(tx, from_path, to_path)?;
+    crate::git_repository::validate_mutation_budget(affected_nodes, changed_bytes)
+        .map_err(NodeMutationError::invalid_operation)
+}
+
+fn folder_move_budget(
+    tx: &Transaction<'_>,
+    from_path: &str,
+    to_path: &str,
+) -> Result<(i64, i64), NodeMutationError> {
+    let prefix = format!("{from_path}/");
+    let upper = prefix_upper_bound(&prefix);
+    tx.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(
+                    length(CAST(?2 AS BLOB))
+                    + length(CAST(path AS BLOB))
+                    - length(CAST(?1 AS BLOB))
+                    + length(CAST(metadata_json AS BLOB))
+                ), 0)
+         FROM fs_nodes
+         WHERE path = ?1 OR (path >= ?3 AND path < ?4)",
+        params![from_path, to_path, prefix, upper],
+        |row| {
+            Ok((
+                crate::sqlite::row_get(row, 0)?,
+                crate::sqlite::row_get(row, 1)?,
+            ))
+        },
+    )
+    .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))
+}
+
+fn load_move_subtree(tx: &Transaction<'_>, path: &str) -> Result<Vec<MoveNodeRow>, String> {
     let mut stmt = tx
         .prepare(
-            "SELECT path FROM fs_nodes
+            "SELECT id, path, etag FROM fs_nodes
              WHERE path = ?1 OR (path >= ?2 AND path < ?3)
              ORDER BY length(path), path",
         )
         .map_err(|error| error.to_string())?;
     let prefix = format!("{path}/");
     let upper = prefix_upper_bound(&prefix);
-    let paths = crate::sqlite::query_map(&mut stmt, params![path, prefix, upper], |row| {
-        crate::sqlite::row_get::<String>(row, 0)
-    })
-    .map_err(|error| error.to_string())?;
-    paths
-        .into_iter()
-        .map(|node_path| {
-            load_stored_node(tx, &node_path)?
-                .ok_or_else(|| format!("node does not exist: {node_path}"))
+    crate::sqlite::query_map(&mut stmt, params![path, prefix, upper], |row| {
+        Ok(MoveNodeRow {
+            row_id: crate::sqlite::row_get(row, 0)?,
+            path: crate::sqlite::row_get(row, 1)?,
+            etag: crate::sqlite::row_get(row, 2)?,
         })
-        .collect()
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn compute_moved_node_etag(previous_etag: &str, path: &str) -> String {
+    format!(
+        "v4h:{}",
+        sha256_hex(&format!("move\n{previous_etag}\n{path}"))
+    )
 }
 
 fn rebase_path(path: &str, from_path: &str, to_path: &str) -> Result<String, String> {

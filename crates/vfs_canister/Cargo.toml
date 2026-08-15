@@ -7,7 +7,8 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-canbench-rs = ["dep:canbench-rs", "dep:serde_json"]
+canbench-rs = ["dep:canbench-rs", "dep:serde_json", "vfs-runtime/canbench-rs"]
+pocketic-migration-failpoint = ["vfs-runtime/pocketic-migration-failpoint"]
 
 [dependencies]
 canbench-rs = { version = "0.4.1", optional = true }

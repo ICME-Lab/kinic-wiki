@@ -15,10 +15,11 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    ListNodeHistoryRequest, MarketCreateListingRequest, MarketListing, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest,
-    NodeHistoryTarget, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
-    QueryContextRequest, RestoreNodeVersionRequest, SearchNodesRequest, SearchPreviewMode,
+    ListGitObjectsRequest, ListNodeHistoryRequest, MarketCreateListingRequest, MarketListing,
+    MarketListingStatus, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
+    MoveNodeRequest, NodeHistoryTarget, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionRequest, QueryContextRequest, ReadGitObjectChunkRequest,
+    RestoreNodeVersionRequest, SearchNodesRequest, SearchPreviewMode,
     SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
@@ -75,7 +76,42 @@ fn node_history_is_member_only_and_restore_requires_writer() {
         .list_node_history("reader", request.clone())
         .expect("database reader should read history");
     assert_eq!(history.entries[0].author_principal, "owner");
+    assert_eq!(history.entries[0].commit_oid.len(), 40);
     assert!(service.list_node_history("outsider", request).is_err());
+    let snapshot = service
+        .git_repository_snapshot("alpha", "reader")
+        .expect("database reader should read Git HEAD");
+    assert_eq!(snapshot.head_commit_oid, history.entries[0].commit_oid);
+    assert!(
+        service
+            .git_repository_snapshot("alpha", "outsider")
+            .is_err()
+    );
+    let objects = service
+        .list_git_objects(
+            "reader",
+            ListGitObjectsRequest {
+                database_id: "alpha".to_string(),
+                snapshot_change_id: snapshot.change_id,
+                cursor: None,
+                limit: 1,
+            },
+        )
+        .expect("reader should list Git objects");
+    let object = &objects.objects[0];
+    service
+        .read_git_object_chunk(
+            "reader",
+            ReadGitObjectChunkRequest {
+                database_id: "alpha".to_string(),
+                snapshot_change_id: snapshot.change_id,
+                oid: object.oid.clone(),
+                offset: 0,
+                limit: 512 * 1024,
+            },
+        )
+        .expect("reader should read Git object")
+        .expect("Git object should exist");
     let version_id = history.entries[0]
         .after_version
         .as_ref()

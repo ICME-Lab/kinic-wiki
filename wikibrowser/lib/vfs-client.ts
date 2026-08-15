@@ -676,6 +676,7 @@ function normalizeNodeVersionSummary(raw: RawNodeVersionSummary): NodeVersionSum
     path: raw.path,
     kind: normalizeNodeKind(raw.kind),
     etag: raw.etag,
+    blobOid: raw.blob_oid,
     nodeCreatedAt: raw.node_created_at.toString(),
     nodeUpdatedAt: raw.node_updated_at.toString()
   };
@@ -694,6 +695,7 @@ function normalizeNodeHistoryEntry(raw: RawNodeHistoryEntry): NodeHistoryEntry {
     changeKind: changeKind as NodeHistoryEntry["changeKind"],
     authorPrincipal: raw.author_principal,
     changedAt: raw.changed_at.toString(),
+    commitOid: raw.commit_oid,
     beforeVersion: raw.before_version[0] ? normalizeNodeVersionSummary(raw.before_version[0]) : null,
     afterVersion: raw.after_version[0] ? normalizeNodeVersionSummary(raw.after_version[0]) : null
   };

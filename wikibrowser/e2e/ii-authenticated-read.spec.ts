@@ -56,6 +56,15 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByText("History rail")).toBeVisible();
   await expect(page.getByText("history-marker-a")).toBeVisible();
+  const commitOid = page.locator('[aria-label^="Commit "]').first();
+  await expect(commitOid).toHaveText(/commit [0-9a-f]{8}/);
+  const fullCommitOid = await commitOid.getAttribute("title");
+  expect(fullCommitOid).toMatch(/^[0-9a-f]{40}$/);
+  await expect(commitOid).toHaveAttribute("aria-label", `Commit ${fullCommitOid}`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("History rail")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByRole("button", { name: "Preview", exact: true }).click();
 
   const markdownImportPath = testInfo.outputPath("selected-local.md");

@@ -130,6 +130,28 @@ test("renders the Clipper guide, requirements, and docs navigation", async ({ pa
   await followInternalLink(page, mobileNavigation.getByRole("link", { name: "iOS App" }), "/docs/ios", /\/docs\/ios$/);
 });
 
+test("documents Git history export through the CLI and canister API", async ({ page }) => {
+  await page.goto("/docs/cli");
+  await expect(page.getByRole("heading", { level: 2, name: "Git History Export" })).toBeVisible();
+  await expect(page.getByText("export-git --output ./wiki.git", { exact: false })).toBeVisible();
+  await expect(page.getByText("git fsck --full", { exact: false })).toBeVisible();
+  await expect(page.getByText("progress on stderr", { exact: false })).toBeVisible();
+  await expect(page.getByText("1.5 MiB", { exact: false })).toBeVisible();
+
+  await page.goto("/docs/canister-api");
+  await expect(page.getByRole("heading", { level: 2, name: "Git Repository Export Contract" })).toBeVisible();
+  for (const endpoint of ["git_repository_snapshot", "list_git_objects", "read_git_object_chunk"]) {
+    await expect(page.getByText(endpoint, { exact: false }).first()).toBeVisible();
+  }
+  await expect(page.getByText("100 distinct pages", { exact: false })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/docs/cli");
+  await expectNoHorizontalOverflow(page);
+  await page.goto("/docs/canister-api");
+  await expectNoHorizontalOverflow(page);
+});
+
 test("renders the skills overview and each workflow detail", async ({ page }) => {
   await page.goto("/docs/skills");
 

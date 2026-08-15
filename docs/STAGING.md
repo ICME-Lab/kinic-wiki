@@ -74,6 +74,8 @@ The staging canister is used directly by the staging Wiki Browser and staging MC
 
 For this breaking rollout, first build the canister and both staging Workers from the same revision and stop mutation smoke traffic. Upgrade the staging canister, deploy the staging Wiki Browser, deploy the staging MCP Worker, then run the exact 10-tool contract and write smoke checks with the matching CLI/client build. Resume staging writes only after those checks pass.
 
+The page/Git-history rollout accepts filesystem schema `vfs_store:001_initial` or `vfs_store:002_publication_mutation_commits` and migrates it once to `vfs_store:003_node_history`. A database that already carries an earlier branch-local `vfs_store:003_node_history` marker is not repairable by this release and must be recreated before deployment. Confirm the migration canbench retains at least 30% instruction, Wasm heap, and stable-memory headroom before upgrading staging.
+
 Before promoting the same Candid change to the production canister, complete the coordinated production checklist in [`RELEASE.md`](RELEASE.md). That checklist includes the Wiki Clipper, which also decodes node-mutation results, plus externally maintained Candid clients that cannot be discovered from this repository.
 
 Upgrade the existing canister:

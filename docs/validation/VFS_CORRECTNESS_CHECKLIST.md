@@ -48,3 +48,5 @@ If the fixed canbench runtime is available, also run:
 ```bash
 bash scripts/run_canbench_guard.sh
 ```
+
+For the filesystem v003 rollout, retain the `git_v003_backfill_representative` and `git_v003_backfill_stress` result rows and their `CANBENCH_META` lines. Record the target instruction, Wasm heap, and stable-memory ceilings next to the measured values and require at least 30% headroom before upgrade.

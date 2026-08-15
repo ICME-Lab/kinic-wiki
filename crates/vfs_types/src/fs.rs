@@ -463,6 +463,7 @@ pub struct NodeVersionSummary {
     pub path: String,
     pub kind: NodeKind,
     pub etag: String,
+    pub blob_oid: String,
     pub node_created_at: i64,
     pub node_updated_at: i64,
 }
@@ -476,8 +477,57 @@ pub struct NodeHistoryEntry {
     pub change_kind: NodeHistoryChangeKind,
     pub author_principal: String,
     pub changed_at: i64,
+    pub commit_oid: String,
     pub before_version: Option<NodeVersionSummary>,
     pub after_version: Option<NodeVersionSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct GitRepositorySnapshot {
+    pub object_format: String,
+    pub head_ref: String,
+    pub head_commit_oid: String,
+    pub change_id: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct GitObjectSummary {
+    pub oid: String,
+    pub object_type: String,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListGitObjectsRequest {
+    pub database_id: String,
+    pub snapshot_change_id: u64,
+    pub cursor: Option<String>,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListGitObjectsResponse {
+    pub objects: Vec<GitObjectSummary>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ReadGitObjectChunkRequest {
+    pub database_id: String,
+    pub snapshot_change_id: u64,
+    pub oid: String,
+    pub offset: u64,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct GitObjectChunk {
+    pub oid: String,
+    pub object_type: String,
+    pub size: u64,
+    pub offset: u64,
+    pub data: Vec<u8>,
+    pub next_offset: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -523,6 +573,7 @@ pub struct DeletedNodeSummary {
     pub path: String,
     pub kind: NodeKind,
     pub etag: String,
+    pub blob_oid: String,
     pub node_created_at: i64,
     pub node_updated_at: i64,
     pub deleted_at: i64,

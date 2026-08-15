@@ -331,6 +331,11 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Export the complete Git object history to a new bare repository")]
+    ExportGit {
+        #[arg(long)]
+        output: PathBuf,
+    },
     #[command(about = "Export one Store API snapshot page for a path scope")]
     ExportSnapshot {
         #[arg(long)]
