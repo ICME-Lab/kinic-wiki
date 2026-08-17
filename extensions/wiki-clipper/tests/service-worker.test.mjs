@@ -66,6 +66,88 @@ test("save-source delegates evidence source writes to offscreen", async () => {
   }
 });
 
+test("recall-search delegates authenticated ChatGPT recall without persisting query text", async () => {
+  const syncStorage = memoryStorage();
+  syncStorage.setItem("databaseId", "team-db");
+  syncStorage.setItem("recallEnabled", "true");
+  const restore = installChromeStorage(syncStorage);
+  const calls = [];
+  setOffscreenBridgeForTest(async (message) => {
+    calls.push(message);
+    return { ok: true, result: [{ path: "/Knowledge/mcp.md", title: "MCP", snippet: "notes" }] };
+  });
+  try {
+    const response = await handleMessage({
+      type: "recall-search",
+      requestId: "1",
+      provider: "chatgpt",
+      query: "  MCP\n memory ",
+      conversationUrl: "https://chatgpt.com/c/abc"
+    }, sender());
+    assert.equal(response.ok, true);
+    assert.equal(response.result[0].path, "/Knowledge/mcp.md");
+    assert.equal(calls[0].type, "recall-search");
+    assert.equal(calls[0].query, "MCP memory");
+    assert.equal(syncStorage.getItem("MCP memory"), null);
+  } finally {
+    setOffscreenBridgeForTest(null);
+    restore();
+  }
+});
+
+test("recall-search rejects non-ChatGPT senders", async () => {
+  const syncStorage = memoryStorage();
+  syncStorage.setItem("databaseId", "team-db");
+  syncStorage.setItem("recallEnabled", "true");
+  const restore = installChromeStorage(syncStorage);
+  try {
+    await assert.rejects(
+      () => handleMessage({ type: "recall-search", query: "memory", conversationUrl: "https://example.com/" }, { tab: { url: "https://example.com/" } }),
+      /allowed ChatGPT page/
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("recall-search rejects another extension even on a ChatGPT tab", async () => {
+  const syncStorage = memoryStorage();
+  syncStorage.setItem("databaseId", "team-db");
+  syncStorage.setItem("recallEnabled", "true");
+  const restore = installChromeStorage(syncStorage);
+  try {
+    await assert.rejects(
+      () => handleMessage({ type: "recall-search", query: "memory", conversationUrl: "https://chatgpt.com/c/abc" }, { id: "other-extension", tab: { url: "https://chatgpt.com/c/abc" } }),
+      /allowed ChatGPT page/
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("recall-fetch accepts an own-extension Recall path and rejects other paths", async () => {
+  const syncStorage = memoryStorage();
+  syncStorage.setItem("databaseId", "team-db");
+  syncStorage.setItem("recallEnabled", "true");
+  const restore = installChromeStorage(syncStorage);
+  setOffscreenBridgeForTest(async (message) => {
+    assert.equal(message.type, "recall-fetch");
+    return { ok: true, result: { path: message.path, content: "memory" } };
+  });
+  try {
+    const response = await handleMessage({ type: "recall-fetch", path: "/Knowledge/mcp.md" }, sender());
+    assert.equal(response.ok, true);
+    assert.equal(response.result.content, "memory");
+    await assert.rejects(
+      () => handleMessage({ type: "recall-fetch", path: "/Other/private.md" }, sender()),
+      /recall path is invalid/
+    );
+  } finally {
+    setOffscreenBridgeForTest(null);
+    restore();
+  }
+});
+
 test("save-source keeps evidence source result when generation queue fails", async () => {
   const restore = installChromeStorage(memoryStorage());
   setOffscreenBridgeForTest(async (message) => {
@@ -1071,6 +1153,7 @@ function capture() {
 
 function sender() {
   return {
+    id: "test-extension",
     tab: {
       url: "https://chatgpt.com/c/abc"
     }
@@ -1100,6 +1183,9 @@ function installChromeStorage(syncStorage) {
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
+      runtime: {
+        id: "test-extension"
+      },
       storage: {
         sync: {
           async get(defaults) {

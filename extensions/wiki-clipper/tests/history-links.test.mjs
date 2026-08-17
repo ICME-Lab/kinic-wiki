@@ -6,7 +6,7 @@ import test from "node:test";
 import { normalizeExportLimit } from "../src/history-links.js";
 
 test("normalizeExportLimit clamps invalid and overlarge input", () => {
-  assert.equal(normalizeExportLimit(""), 10);
+  assert.equal(normalizeExportLimit(""), 1);
   assert.equal(normalizeExportLimit("-5"), 1);
   assert.equal(normalizeExportLimit("0"), 1);
   assert.equal(normalizeExportLimit("500"), 100);

@@ -25,6 +25,11 @@ const expectedTypes = selectCandidShapes(sharedTypes, [
   "NodeMutationErrorCode",
   "NodeMutationError",
   "Node",
+  "SearchPreviewField",
+  "SearchPreviewMode",
+  "SearchPreview",
+  "SearchNodeHit",
+  "SearchNodesRequest",
   "WriteSourceForGenerationRequest",
   "MkdirNodeRequest",
   "MkdirNodeResult",
@@ -38,6 +43,7 @@ const expectedMethods = selectCandidShapes(sharedMethods, [
   "list_databases",
   "mkdir_node",
   "read_node",
+  "search_nodes",
   "write_source_for_generation"
 ]);
 const idlResultAliases = {
@@ -47,6 +53,7 @@ const idlResultAliases = {
   "vec DatabaseSummary": "ResultDatabases",
   "MkdirNodeResult|NodeMutationError": "ResultMkdirNode",
   "opt Node": "ResultNode",
+  "vec SearchNodeHit": "ResultSearch",
   WriteNodeResult: "ResultWriteNode",
   "WriteSourceForGenerationResult|NodeMutationError": "ResultWriteSourceForGeneration"
 };

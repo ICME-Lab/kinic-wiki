@@ -47,7 +47,7 @@ function sourceIdForCapture(capture, provider = safeProvider(capture.provider ||
 function conversationIdFromUrl(value) {
   try {
     const url = new URL(value);
-    const match = url.pathname.match(/^\/(?:c|chat)\/([^/]+)/);
+    const match = url.pathname.match(/^\/(?:c|chat|(?:u\/\d+\/)?app)\/([^/]+)/);
     return match?.[1] || "";
   } catch {
     return "";

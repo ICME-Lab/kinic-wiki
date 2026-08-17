@@ -110,6 +110,32 @@ select {
   font: inherit;
 }
 
+.recall-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--kinic-line);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--kinic-paper);
+}
+
+.recall-toggle input {
+  width: auto;
+  margin-top: 3px;
+  accent-color: var(--kinic-hot-pink);
+}
+
+.recall-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.recall-toggle small {
+  color: var(--kinic-body);
+  font-weight: 400;
+}
+
 input:focus,
 select:focus {
   border-color: var(--kinic-hot-pink);

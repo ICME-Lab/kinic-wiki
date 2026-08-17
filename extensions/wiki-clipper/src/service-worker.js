@@ -2,6 +2,7 @@
 // What: MV3 background workflow for canister persistence.
 // Why: Content scripts fetch AI conversation data while the worker owns canister writes.
 import { buildEvidenceSource } from "./evidence-source.js";
+import { isAllowedRecallPath, isRecallSender, normalizeRecallQuery } from "./recall.js";
 import {
   DEFAULT_CANISTER_ID,
   DEFAULT_IC_HOST,
@@ -13,7 +14,8 @@ import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } f
 const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
-  host: DEFAULT_IC_HOST
+  host: DEFAULT_IC_HOST,
+  recallEnabled: false
 };
 const PROVIDERS = {
   chatgpt: {
@@ -27,6 +29,12 @@ const PROVIDERS = {
     origins: new Set(["https://claude.ai"]),
     pathPattern: /^\/chat\/[^/]+\/?$/,
     pathHint: "/chat/<id>"
+  },
+  gemini: {
+    label: "Gemini",
+    origins: new Set(["https://gemini.google.com"]),
+    pathPattern: /^\/(?:u\/\d+\/)?app\/[^/]+\/?$/,
+    pathHint: "/app/<id>"
   }
 };
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
@@ -39,6 +47,7 @@ const CREATE_WIKI_MENU_ID = "kinic-wiki-clipper-create-wiki";
 const SAVE_EVIDENCE_MENU_ID = "kinic-wiki-clipper-save-evidence";
 const SOURCE_CAPTURE_IN_FLIGHT_KEY = "kinic-source-capture-in-flight-v1";
 const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
+const RECALL_TIMEOUT_MS = 2_000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
@@ -107,6 +116,12 @@ if (globalThis.chrome?.contextMenus?.onClicked) {
 export async function handleMessage(message, sender) {
   if (message?.type === "save-source") {
     return { ok: true, result: await saveSource(message.capture, message.config, sender) };
+  }
+  if (message?.type === "recall-search") {
+    return { ok: true, result: await recallSearch(message, sender) };
+  }
+  if (message?.type === "recall-fetch") {
+    return { ok: true, result: await recallFetch(message, sender) };
   }
   if (message?.type === "load-config") {
     return { ok: true, config: await loadConfig() };
@@ -371,6 +386,59 @@ async function saveSource(capture, overrideConfig, sender) {
         ? triggerResponse.result?.triggerError || "generation queue failed"
         : triggerResponse?.error || "generation queue failed"
   };
+}
+
+async function recallSearch(message, sender) {
+  if (!isOwnExtensionSender(sender) || !isRecallSender(sender)) throw new Error("recall sender is not an allowed ChatGPT page");
+  const config = withFixedRuntimeConfig(await loadConfig());
+  if (!config.recallEnabled || !config.databaseId) return [];
+  const query = normalizeRecallQuery(message?.query);
+  if (!query) return [];
+  const conversationUrl = typeof message?.conversationUrl === "string" ? message.conversationUrl : "";
+  const response = await withTimeout(
+    offscreenBridge({
+      target: "offscreen",
+      type: "recall-search",
+      query,
+      conversationUrl,
+      config
+    }),
+    RECALL_TIMEOUT_MS
+  );
+  if (!response?.ok) throw new Error(response?.error || "recall search failed");
+  return response.result || [];
+}
+
+async function recallFetch(message, sender) {
+  if (!isOwnExtensionSender(sender) || !isRecallSender(sender)) throw new Error("recall sender is not an allowed ChatGPT page");
+  const config = withFixedRuntimeConfig(await loadConfig());
+  if (!config.recallEnabled || !config.databaseId) return null;
+  const path = typeof message?.path === "string" ? message.path : "";
+  if (!isAllowedRecallPath(path)) throw new Error("recall path is invalid");
+  const response = await withTimeout(
+    offscreenBridge({
+      target: "offscreen",
+      type: "recall-fetch",
+      path,
+      config
+    }),
+    RECALL_TIMEOUT_MS
+  );
+  if (!response?.ok) throw new Error(response?.error || "recall fetch failed");
+  return response.result || null;
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("recall request timed out")), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function isOwnExtensionSender(sender) {
+  const extensionId = globalThis.chrome?.runtime?.id;
+  return typeof extensionId === "string" && extensionId.length > 0 && sender?.id === extensionId;
 }
 
 export function setOffscreenBridgeForTest(bridge) {
@@ -851,26 +919,32 @@ async function loadConfig() {
   return {
     canisterId: DEFAULT_CONFIG.canisterId,
     databaseId: String(stored.databaseId || DEFAULT_CONFIG.databaseId),
-    host: DEFAULT_CONFIG.host
+    host: DEFAULT_CONFIG.host,
+    recallEnabled: asBoolean(stored.recallEnabled)
   };
 }
 
 async function saveConfig(config) {
-  const databaseId = String(config?.databaseId || "").trim();
-  if (databaseId) {
-    await chrome.storage.sync.set({ databaseId });
-    await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl"]);
-    return;
-  }
-  await chrome.storage.sync.remove?.(["databaseId", "canisterId", "host", "generatorUrl"]);
+  const stored = await chrome.storage.sync.get(DEFAULT_CONFIG);
+  const hasDatabaseId = Object.prototype.hasOwnProperty.call(config || {}, "databaseId");
+  const hasRecallEnabled = Object.prototype.hasOwnProperty.call(config || {}, "recallEnabled");
+  const databaseId = hasDatabaseId ? String(config?.databaseId || "").trim() : String(stored.databaseId || "").trim();
+  const recallEnabled = hasRecallEnabled ? asBoolean(config.recallEnabled) : asBoolean(stored.recallEnabled);
+  await chrome.storage.sync.set({ databaseId, recallEnabled });
+  await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl"]);
 }
 
 function withFixedRuntimeConfig(config) {
   return {
     ...config,
     canisterId: DEFAULT_CONFIG.canisterId,
-    host: DEFAULT_CONFIG.host
+    host: DEFAULT_CONFIG.host,
+    recallEnabled: asBoolean(config?.recallEnabled)
   };
+}
+
+function asBoolean(value) {
+  return value === true || value === "true";
 }
 
 async function setActionBadge(text, color, tabId = undefined) {

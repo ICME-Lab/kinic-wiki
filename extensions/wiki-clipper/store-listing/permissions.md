@@ -2,7 +2,7 @@
 
 ## storage
 
-Stores the selected database id and short-lived export or ingest status. It does not store ChatGPT or Claude conversation bodies after export completes.
+Stores the selected database id and short-lived export or ingest status. It does not store ChatGPT, Claude, or Gemini conversation bodies after export completes.
 
 ## activeTab
 
@@ -14,7 +14,7 @@ Captures the visible active page content only after the user clicks the extensio
 
 ## offscreen
 
-Runs Internet Identity and authenticated canister writes in a DOM-capable extension context.
+Runs Internet Identity and authenticated canister reads/writes in a DOM-capable extension context.
 
 ## contextMenus
 
@@ -24,7 +24,8 @@ Adds an extension settings shortcut.
 
 - `https://wiki.kinic.xyz/*`: opens and coordinates Kinic Wiki web app flows.
 - `https://id.ai/*`: authenticates with Internet Identity.
-- `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and reads conversations only when the user starts export.
+- `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and, only when `Recall beta` is enabled, reads the submitted question to perform a read-only Kinic search. Conversation export still reads conversations only when the user starts export.
 - `https://claude.ai/*`: shows the Claude export UI and reads conversations only when the user starts export.
+- `https://gemini.google.com/*`: shows the Gemini export UI and reads the current rendered conversation only when the user starts export.
 - `https://icp0.io/*`: writes evidence sources and ingest requests to the Kinic Wiki canister.
 - `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io/*`: fixed derivation origin for Internet Identity.

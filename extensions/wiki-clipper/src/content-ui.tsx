@@ -1,10 +1,11 @@
 // Where: extensions/wiki-clipper/src/content-ui.tsx
-// What: Inject an on-demand recent-chat export modal into supported AI chat pages.
-// Why: Users should explicitly export recent chats without switching the visible tab.
+// What: Inject export controls and opt-in Recall cards into supported AI chat pages.
+// Why: Users can save explicitly and bring relevant Kinic memories back into ChatGPT.
 import { computed, signal } from "@preact/signals";
 import { render } from "preact";
 import {
   cancelCurrentTabExport,
+  isConversationLocation,
   providerFromLocation,
   providerLabel,
   resumeCurrentTabExport,
@@ -13,6 +14,14 @@ import {
 import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./source-capture-request.js";
 import { databaseOptionLabel, isSelectedWritableDatabase } from "../popup/popup-state.js";
+import { applyRecallStorageChanges, formatRecallContext } from "./recall.js";
+import {
+  findChatGptComposer,
+  insertChatGptContext,
+  installChatGptRecallListeners,
+  installChatGptNavigationListener,
+  isChatGptLocation
+} from "./chatgpt-recall.js";
 
 const ROOT_ID = "kinic-wiki-clipper-root";
 const DEFAULT_DATABASE_ID = "";
@@ -20,6 +29,7 @@ const config = signal({ canisterId: DEFAULT_CANISTER_ID, databaseId: DEFAULT_DAT
 const countText = signal(String(DEFAULT_EXPORT_LIMIT));
 const status = signal("idle");
 const error = signal("");
+const toast = signal(null);
 const panelOpen = signal(false);
 const logs = signal([]);
 const phase = signal("idle");
@@ -27,6 +37,7 @@ const progress = signal({ total: 0, done: 0, ok: 0, failed: 0 });
 const databases = signal([]);
 const databaseStatus = signal("loading");
 const exportStartInFlight = signal(false);
+const recallResults = signal([]);
 const hasDatabaseConfig = computed(() => config.value.databaseId.trim().length > 0);
 const selectedWritableDatabase = computed(() =>
   isSelectedWritableDatabase({
@@ -39,12 +50,34 @@ const exportLocked = computed(() => exportStartInFlight.value || status.value ==
 const canExport = computed(() => !exportLocked.value && selectedWritableDatabase.value);
 const exportProvider = computed(() => providerFromLocation(location) || "chatgpt");
 const exportProviderLabel = computed(() => providerLabel(exportProvider.value));
+const isGeminiProvider = computed(() => exportProvider.value === "gemini");
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
 let resumeStarted = false;
 let configLoadPromise = Promise.resolve();
+let toastTimer = null;
+let recallRequestGeneration = 0;
 
 ensureMounted();
 new MutationObserver(() => ensureMounted()).observe(document.documentElement, { childList: true, subtree: true });
+installChatGptRecallListeners({
+  documentRef: document,
+  locationLike: location,
+  onSubmit: (query) => runRecall(query)
+});
+installChatGptNavigationListener({
+  windowRef: globalThis,
+  locationLike: location,
+  onNavigate: () => invalidateRecall()
+});
+chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
+  const previous = config.value;
+  const next = applyRecallStorageChanges(previous, changes, areaName);
+  const databaseChanged = next.databaseId !== previous.databaseId;
+  const recallChanged = next.recallEnabled !== previous.recallEnabled;
+  if (!databaseChanged && !recallChanged) return;
+  config.value = { ...previous, ...next };
+  if (databaseChanged || (recallChanged && !next.recallEnabled)) invalidateRecall();
+});
 
 function ensureMounted() {
   if (document.getElementById(ROOT_ID) || !document.body) return;
@@ -60,12 +93,46 @@ function App() {
   return (
     <>
       <style>{styles}</style>
-      <button class="kinic-fab" type="button" onClick={openPanel}>
-        <img class="kinic-logo" src={logoUrl} alt="" />
-        <span>Kinic Wiki Clipper</span>
-      </button>
+      <div class="quick-actions">
+        <button class="kinic-fab" type="button" disabled={exportLocked.value} onClick={quickSave}>
+          <img class="kinic-logo" src={logoUrl} alt="" />
+          <span>Save to Kinic</span>
+        </button>
+        <button class="quick-options" type="button" aria-label="Open save options" onClick={openPanel}>
+          ⋯
+        </button>
+      </div>
+      {toast.value ? <div class={`save-toast ${toast.value.kind}`} role="status" aria-live="polite">{toast.value.message}</div> : null}
+      {!panelOpen.value && recallResults.value.length > 0 ? <RecallPanel /> : null}
       {panelOpen.value ? <Modal /> : null}
     </>
+  );
+}
+
+function RecallPanel() {
+  return (
+    <section class="recall-panel" aria-label="Kinic Memory">
+      <header class="recall-header">
+        <strong>Kinic Memory</strong>
+        <span>{recallResults.value.length} related</span>
+      </header>
+      <div class="recall-list">
+        {recallResults.value.map((result) => <RecallCard key={result.path} result={result} />)}
+      </div>
+    </section>
+  );
+}
+
+function RecallCard({ result }) {
+  return (
+    <article class="recall-card">
+      <div class="recall-card-body">
+        <strong>{result.title}</strong>
+        <p>{result.snippet || result.path}</p>
+        <small>{result.path}</small>
+      </div>
+      <button type="button" onClick={() => addRecallContext(result)}>Add context</button>
+    </article>
   );
 }
 
@@ -77,9 +144,8 @@ function Modal() {
           <img class="kinic-logo" src={logoUrl} alt="" />
           <div>
             <strong>Kinic Wiki Clipper</strong>
-            <p>Export {exportProviderLabel.value} conversations into your knowledge store</p>
+            <p>{isGeminiProvider.value ? "Export the current Gemini conversation into your knowledge store" : `Export ${exportProviderLabel.value} conversations into your knowledge store`}</p>
           </div>
-          <span class="pill">{exportProviderLabel.value} export</span>
         </div>
         <button class="close" type="button" aria-label="Close" onClick={() => (panelOpen.value = false)}>
           x
@@ -101,7 +167,7 @@ function Modal() {
               </button>
             </div>
           ) : null}
-          <strong>Export the recent chats</strong>
+          <strong>{isGeminiProvider.value ? "Export the current conversation" : "Export the recent chats"}</strong>
           {status.value === "exporting" ? (
             <p class="export-warning">Export is running. You can keep using this tab, but do not close it until it finishes.</p>
           ) : null}
@@ -113,22 +179,31 @@ function Modal() {
               </button>
             </div>
           ) : null}
-          <div class="export-box">
-            <p>Processing takes ~10 seconds per chat. If you have over 50 chats, export manually to save time.</p>
-            <div class="export-control">
-              <input
-                inputMode="numeric"
-                value={countText.value}
-                onInput={(event) => (countText.value = event.currentTarget.value)}
-                onFocus={(event) => event.currentTarget.select()}
-                onMouseUp={(event) => event.preventDefault()}
-                onBlur={() => (countText.value = String(normalizeExportLimit(countText.value)))}
-              />
-              <button type="button" disabled={!canExport.value} onClick={startExport}>
-                Export
-              </button>
+          {isGeminiProvider.value ? (
+            <div class="export-box">
+              <p>Only the current rendered Gemini conversation is available for export.</p>
+              <div class="export-control">
+                <button type="button" disabled={!canExport.value} onClick={startExport}>Export current</button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div class="export-box">
+              <p>Processing takes ~10 seconds per chat. If you have over 50 chats, export manually to save time.</p>
+              <div class="export-control">
+                <input
+                  inputMode="numeric"
+                  value={countText.value}
+                  onInput={(event) => (countText.value = event.currentTarget.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onMouseUp={(event) => event.preventDefault()}
+                  onBlur={() => (countText.value = String(normalizeExportLimit(countText.value)))}
+                />
+                <button type="button" disabled={!canExport.value} onClick={startExport}>
+                  Export
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
       <section class="logs">
@@ -181,15 +256,11 @@ async function startExport() {
       await openSettings();
       return;
     }
-    const limit = normalizeExportLimit(countText.value);
-    countText.value = String(limit);
+    const limit = isGeminiProvider.value ? 1 : normalizeExportLimit(countText.value);
+    if (!isGeminiProvider.value) countText.value = String(limit);
     status.value = "exporting";
     phase.value = "fetching";
     progress.value = { total: limit, done: 0, ok: 0, failed: 0 };
-    if (isMainnetHost(nextConfig.host) && !confirmMainnetExport()) {
-      status.value = "idle";
-      return;
-    }
     await startCurrentTabExport({
       limit,
       config: nextConfig,
@@ -205,12 +276,99 @@ async function startExport() {
   }
 }
 
+async function quickSave() {
+  if (exportLocked.value) return;
+  if (!isConversationLocation(location)) {
+    showToast("Open a conversation to save.", "error");
+    return;
+  }
+  exportStartInFlight.value = true;
+  error.value = "";
+  try {
+    await configLoadPromise;
+    const nextConfig = normalizedConfig();
+    const requestedDatabaseId = nextConfig.databaseId;
+    await refreshDatabases({ repairSelection: false });
+    const requestedWritableDatabase = isSelectedWritableDatabase({
+      databaseStatus: databaseStatus.value,
+      databaseId: requestedDatabaseId,
+      databases: databases.value
+    });
+    if (!requestedDatabaseId || !requestedWritableDatabase) {
+      showToast("Select a writable database in settings.", "error");
+      await openSettings();
+      return;
+    }
+    status.value = "exporting";
+    phase.value = "fetching";
+    progress.value = { total: 1, done: 0, ok: 0, failed: 0 };
+    await startCurrentTabExport({
+      limit: 1,
+      config: nextConfig,
+      provider: exportProvider.value,
+      originalUrl: location.href,
+      callbacks: quickExportCallbacks()
+    });
+  } catch (nextError) {
+    error.value = messageForError(nextError);
+    status.value = "error";
+    showToast(error.value, "error");
+  } finally {
+    exportStartInFlight.value = false;
+  }
+}
+
 async function cancelExport() {
   await cancelCurrentTabExport(exportCallbacks());
 }
 
 async function openSettings() {
   await send({ type: "open-settings" });
+}
+
+async function runRecall(query) {
+  if (!isChatGptLocation(location)) return;
+  await configLoadPromise;
+  if (!config.value.recallEnabled) return;
+  const generation = ++recallRequestGeneration;
+  recallResults.value = [];
+  try {
+    const response = await send({
+      type: "recall-search",
+      requestId: String(generation),
+      provider: "chatgpt",
+      query,
+      conversationUrl: location.href
+    });
+    if (generation !== recallRequestGeneration) return;
+    recallResults.value = Array.isArray(response.result) ? response.result : [];
+  } catch {
+    if (generation === recallRequestGeneration) recallResults.value = [];
+  }
+}
+
+function invalidateRecall() {
+  recallRequestGeneration += 1;
+  recallResults.value = [];
+}
+
+async function addRecallContext(result) {
+  try {
+    const response = await send({
+      type: "recall-fetch",
+      requestId: String(recallRequestGeneration),
+      path: result.path
+    });
+    const fetched = response.result;
+    const context = formatRecallContext(result, fetched?.content || result.snippet);
+    if (!findChatGptComposer(document) || !insertChatGptContext(context, document)) {
+      showToast("ChatGPT input is unavailable.", "error");
+      return;
+    }
+    showToast("Kinic memory added to the input.", "success");
+  } catch (nextError) {
+    showToast(messageForError(nextError), "error");
+  }
 }
 
 async function loadConfig() {
@@ -288,7 +446,8 @@ function configWithDefaults(value) {
   return {
     canisterId: String(value?.canisterId || DEFAULT_CANISTER_ID),
     databaseId: String(value?.databaseId || DEFAULT_DATABASE_ID),
-    host: DEFAULT_IC_HOST
+    host: DEFAULT_IC_HOST,
+    recallEnabled: value?.recallEnabled === true || value?.recallEnabled === "true"
   };
 }
 
@@ -296,23 +455,9 @@ function normalizedConfig() {
   return {
     canisterId: DEFAULT_CANISTER_ID,
     databaseId: config.value.databaseId.trim(),
-    host: DEFAULT_IC_HOST
+    host: DEFAULT_IC_HOST,
+    recallEnabled: config.value.recallEnabled === true
   };
-}
-
-function isMainnetHost(host) {
-  try {
-    const { hostname } = new URL(host);
-    return hostname === "icp0.io" || hostname.endsWith(".icp0.io");
-  } catch {
-    return false;
-  }
-}
-
-function confirmMainnetExport() {
-  return globalThis.confirm(
-    `This will write ${exportProviderLabel.value} conversations to a mainnet IC host using your Internet Identity principal. Continue?`
-  );
 }
 
 async function send(message) {
@@ -345,6 +490,39 @@ function exportCallbacks() {
   };
 }
 
+function quickExportCallbacks() {
+  return {
+    send,
+    onState(nextState) {
+      config.value = configWithDefaults(nextState.config || config.value);
+      progress.value = nextState.progress;
+      logs.value = nextState.logs || [];
+      status.value = nextState.status;
+      phase.value = nextState.phase || phase.value;
+      error.value = nextState.error || "";
+      if (nextState.status === "done") {
+        showToast(quickSaveResultMessage(nextState), "success");
+      } else if (["error", "partial", "cancelled"].includes(nextState.status)) {
+        showToast(nextState.error || "Could not save to Kinic.", "error");
+      }
+    }
+  };
+}
+
+function quickSaveResultMessage(state) {
+  const latestMessage = state.logs?.[0]?.message || "";
+  return latestMessage.includes("(Updated)") ? "Already saved to Kinic." : "Saved to Kinic.";
+}
+
+function showToast(message, kind = "info") {
+  if (toastTimer) clearTimeout(toastTimer);
+  toast.value = { message, kind };
+  toastTimer = setTimeout(() => {
+    toast.value = null;
+    toastTimer = null;
+  }, 4000);
+}
+
 function statusText() {
   if (error.value) return error.value;
   const value = progress.value;
@@ -364,13 +542,16 @@ function messageForError(value) {
 const styles = `
 :host{all:initial;--kinic-white:#ffffff;--kinic-paper:#f8f8f8;--kinic-ink:#000000;--kinic-body:#636161;--kinic-support:#4d4d4d;--kinic-line:#e6e6e6;--kinic-mid-line:#d0d0d0;--kinic-hot-pink:#ff2686;--kinic-pale-pink:#ffcde5;--kinic-soft-pink:#ff81be26;--kinic-success:#11845b;--kinic-success-soft:#def2e6;--kinic-error:#dc2b2b;--kinic-error-soft:#ffeff0;color-scheme:light;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
-.kinic-fab{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--kinic-ink);border-radius:999px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font:700 13px/1 system-ui;box-shadow:0 4px 10px #14142b0a;transition:background .3s ease,border-color .3s ease,transform .3s ease,color .3s ease}
+.quick-actions{position:fixed;right:18px;bottom:18px;z-index:2147483647;display:flex;align-items:center;gap:6px}.kinic-fab{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--kinic-ink);border-radius:999px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font:700 13px/1 system-ui;box-shadow:0 4px 10px #14142b0a;transition:background .3s ease,border-color .3s ease,transform .3s ease,color .3s ease}
 .kinic-fab:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);transform:translateY(-3px)}
 .kinic-fab:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
+.quick-options{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--kinic-ink);border-radius:50%;background:var(--kinic-white);color:var(--kinic-ink);font:800 20px/1 system-ui;box-shadow:0 4px 10px #14142b0a;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}.quick-options:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);color:var(--kinic-white);transform:translateY(-3px)}.quick-options:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
+.save-toast{position:fixed;right:18px;bottom:68px;z-index:2147483647;border:1px solid var(--kinic-line);border-radius:12px;padding:9px 12px;background:var(--kinic-white);color:var(--kinic-ink);font:700 13px/1.3 system-ui;box-shadow:0 8px 24px rgb(0 0 0 / 14%)}.save-toast.error{border-color:var(--kinic-pale-pink);background:var(--kinic-soft-pink);color:var(--kinic-hot-pink)}
+.recall-panel{position:fixed;right:18px;bottom:74px;z-index:2147483646;width:min(420px,calc(100vw - 36px));max-height:min(420px,calc(100vh - 110px));overflow:auto;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);color:var(--kinic-ink);box-shadow:0 18px 44px rgb(0 0 0 / 16%);font:13px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.recall-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--kinic-line);padding:12px 14px}.recall-header span{color:var(--kinic-body);font-size:11px;font-weight:700}.recall-list{display:grid;gap:8px;padding:10px}.recall-card{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--kinic-line);border-radius:12px;padding:10px;background:var(--kinic-paper)}.recall-card-body{min-width:0}.recall-card strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.recall-card p{display:-webkit-box;overflow:hidden;margin:4px 0;color:var(--kinic-support);font-size:12px;-webkit-box-orient:vertical;-webkit-line-clamp:3}.recall-card small{display:block;overflow:hidden;color:var(--kinic-body);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.recall-card button{border:1px solid var(--kinic-ink);border-radius:10px;padding:7px 9px;background:var(--kinic-ink);color:var(--kinic-white);font-size:11px;font-weight:800;white-space:nowrap}.recall-card button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink)}
 .kinic-logo{display:block;flex:0 0 auto;width:24px;height:24px;border-radius:8px;object-fit:cover}
 .panel{position:fixed;right:18px;bottom:62px;z-index:2147483647;width:min(672px,calc(100vw - 32px));max-height:min(650px,calc(100vh - 86px));overflow:hidden;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);color:var(--kinic-ink);box-shadow:0 24px 60px rgb(0 0 0 / 18%);font:14px/1.42 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .panel-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--kinic-line);padding:14px 18px;background:var(--kinic-white)}
-.brand{display:flex;align-items:center;gap:10px;min-width:0}.brand strong{display:block;font-size:15px;font-weight:700}.brand p{margin:2px 0 0;color:var(--kinic-body);font-size:12px;font-weight:550}.pill{border:1px solid var(--kinic-pale-pink);border-radius:999px;padding:5px 8px;background:var(--kinic-soft-pink);color:var(--kinic-hot-pink);font-size:12px;font-weight:800}.close{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--kinic-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-body);font-size:17px;font-weight:800;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}.brand strong{display:block;font-size:15px;font-weight:700}.brand p{margin:2px 0 0;color:var(--kinic-body);font-size:12px;font-weight:550}.close{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--kinic-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-body);font-size:17px;font-weight:800;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
 .close:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);color:var(--kinic-white);transform:translateY(-3px)}
 .close:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 .settings{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-paper);padding:16px}

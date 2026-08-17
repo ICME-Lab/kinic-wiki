@@ -7,8 +7,10 @@ import {
   createVfsActor as defaultCreateVfsActor,
   getCyclesBillingConfigOrNull,
   normalizeWritableDatabases,
-  requireDatabaseWriteCyclesAvailable
+  requireDatabaseWriteCyclesAvailable,
+  searchNodesWithActor
 } from "./vfs-actor.js";
+import { buildRecallFallbackQuery, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, titleFromPath } from "./recall.js";
 
 const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
 
@@ -43,9 +45,13 @@ export function handleOffscreenMessage(message) {
             ? authStatus()
             : message?.type === "list-writable-databases"
               ? listWritableDatabases(message.config)
-              : message?.type === "reset-auth-client"
-                ? resetOffscreenAuthState()
-                : null;
+              : message?.type === "recall-search"
+              ? searchRecall(message.query, message.conversationUrl, message.config)
+              : message?.type === "recall-fetch"
+                  ? fetchRecall(message.path, message.config)
+                  : message?.type === "reset-auth-client"
+                    ? resetOffscreenAuthState()
+                    : null;
 }
 
 export async function acceptSourceCaptureTask(message) {
@@ -255,6 +261,59 @@ export async function listWritableDatabases(config) {
   return normalizeWritableDatabases(result.Ok, cyclesConfig);
 }
 
+export async function searchRecall(query, conversationUrl, config) {
+  if (!config?.canisterId) throw new Error("canister id is required");
+  if (!config?.databaseId) throw new Error("database id is required");
+  const literalQuery = normalizeRecallQuery(query);
+  if (!literalQuery) return [];
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  const literalHits = await searchRecallHits(actor, config.databaseId, literalQuery);
+  const literalResults = rankRecallHits(literalHits, { currentConversationUrl: conversationUrl });
+  if (literalResults.length >= 3) return normalizeRecallResults(literalResults, config.databaseId);
+
+  const fallbackQuery = buildRecallFallbackQuery(literalQuery);
+  if (!fallbackQuery) return normalizeRecallResults(literalResults, config.databaseId);
+
+  const fallbackHits = await searchRecallHits(actor, config.databaseId, fallbackQuery);
+  const results = rankRecallHits([...literalHits, ...fallbackHits], { currentConversationUrl: conversationUrl });
+  return normalizeRecallResults(results, config.databaseId);
+}
+
+async function searchRecallHits(actor, databaseId, query) {
+  const searches = await Promise.allSettled([
+    searchNodesWithActor(actor, databaseId, query, "/Knowledge", 5),
+    searchNodesWithActor(actor, databaseId, query, "/Sources", 5)
+  ]);
+  return searches.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+}
+
+function normalizeRecallResults(results, databaseId) {
+  return results.map((result) => ({
+    ...result,
+    title: result.title || titleFromPath(result.path),
+    sourceUrl: sourceUrlForPath(databaseId, result.path)
+  }));
+}
+
+export async function fetchRecall(path, config) {
+  if (!config?.canisterId) throw new Error("canister id is required");
+  if (!config?.databaseId) throw new Error("database id is required");
+  if (!isAllowedRecallPath(path)) throw new Error("recall path is invalid");
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  const result = await actor.read_node(config.databaseId, path);
+  if ("Err" in result) throw new Error(result.Err);
+  const node = result.Ok[0];
+  if (!node) throw new Error("recall node not found");
+  return {
+    path,
+    content: String(node.content || "").slice(0, 4_000),
+    metadataJson: String(node.metadata_json || ""),
+    sourceUrl: sourceUrlForPath(config.databaseId, path)
+  };
+}
+
 export function setOffscreenDepsForTest(deps = {}) {
   authSnapshotFactory = deps.authSnapshot || defaultAuthSnapshot;
   resetAuthClientFactory = deps.resetAuthClient || defaultResetAuthClient;
@@ -277,6 +336,10 @@ async function authenticatedSnapshot() {
     throw new Error("UNAUTHENTICATED");
   }
   return snapshot;
+}
+
+function sourceUrlForPath(databaseId, path) {
+  return `https://wiki.kinic.xyz/db/${encodeURIComponent(databaseId)}${path}`;
 }
 
 async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {
