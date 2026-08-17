@@ -574,3 +574,14 @@ fn rule_list_has_no_duplicates() {
         rules.into_iter().collect::<BTreeSet<_>>().len()
     );
 }
+
+#[test]
+fn rule_registry_keeps_ids_and_descriptions_aligned() {
+    let ids = crate::curator::rules::DETERMINISTIC_RULES;
+    let definitions = crate::curator::rules::DETERMINISTIC_RULE_DEFINITIONS;
+    assert_eq!(ids.len(), definitions.len());
+    for (index, (kind, definition)) in definitions.into_iter().enumerate() {
+        assert_eq!(kind, ids[index]);
+        assert!(!definition.trim().is_empty());
+    }
+}

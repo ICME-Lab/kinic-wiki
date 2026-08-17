@@ -18,6 +18,21 @@ use vfs_types::{
 };
 use wiki_domain::decode_frontmatter_scalar;
 
+mod frontmatter;
+mod plan;
+pub(crate) mod rules;
+mod scan;
+use frontmatter::{frontmatter_parts, is_entry_document, upsert_curator_block};
+pub use plan::validate_plan_file;
+use rules::{
+    AGE_REVIEW_DUE, BROKEN_INTERNAL_LINK, FACTS_FUTURE_ITEM, INVALID_CURATOR_STATUS, ISOLATED_NODE,
+    OPEN_QUESTION_RESOLVED, ORPHAN_SOURCE_EVIDENCE, PREFERENCE_ACTION_ITEM,
+    PROVENANCE_SOURCE_MISSING, SESSION_EVIDENCE_MISSING, SKILL_MANIFEST_MISSING,
+    SKILL_PROVENANCE_MISSING, SKILL_RUN_EVIDENCE_MISSING, SOURCE_EVIDENCE_MISSING,
+    SOURCE_NEWER_THAN_NODE, SUMMARY_EXACT_EVIDENCE,
+};
+use scan::{ensure_snapshot_revision_current, export_complete_snapshot};
+
 const SCAN_SCHEMA: &str = "kinic.curator.scan.v1";
 const PLAN_SCHEMA: &str = "kinic.curator.plan.v1";
 const SNAPSHOT_PAGE_SIZE: u32 = 100;
@@ -312,32 +327,6 @@ pub async fn run_curator_command(
     Ok(())
 }
 
-pub fn validate_plan_file(path: &Path, json: bool) -> Result<()> {
-    let plan = read_plan(path)?;
-    validate_plan(&plan)?;
-    let operation_count = plan
-        .proposals
-        .iter()
-        .map(|proposal| proposal.changes.len())
-        .sum::<usize>();
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "valid": true,
-                "proposal_count": plan.proposals.len(),
-                "operation_count": operation_count,
-            }))?
-        );
-    } else {
-        println!(
-            "curator plan valid: proposals={} operations={operation_count}",
-            plan.proposals.len(),
-        );
-    }
-    Ok(())
-}
-
 pub(crate) async fn scan_curator(
     client: &impl VfsApi,
     database_id: &str,
@@ -453,70 +442,6 @@ pub(crate) async fn scan_curator(
     })
 }
 
-async fn ensure_snapshot_revision_current(
-    client: &impl VfsApi,
-    database_id: &str,
-    snapshot_revision: &str,
-) -> Result<()> {
-    let page = client
-        .export_snapshot(ExportSnapshotRequest {
-            database_id: database_id.to_string(),
-            prefix: Some("/".to_string()),
-            limit: 1,
-            cursor: None,
-            snapshot_revision: Some(snapshot_revision.to_string()),
-            snapshot_session_id: None,
-        })
-        .await
-        .context(
-            "curator snapshot changed during link and evidence inspection; rerun curator scan",
-        )?;
-    if page.snapshot_revision != snapshot_revision {
-        bail!(
-            "curator snapshot revision changed during link and evidence inspection; rerun curator scan"
-        );
-    }
-    Ok(())
-}
-
-async fn export_complete_snapshot(
-    client: &impl VfsApi,
-    database_id: &str,
-) -> Result<(String, Vec<Node>)> {
-    let mut cursor = None;
-    let mut revision = None;
-    let mut nodes = Vec::new();
-    loop {
-        let page = client
-            .export_snapshot(ExportSnapshotRequest {
-                database_id: database_id.to_string(),
-                prefix: Some("/".to_string()),
-                limit: SNAPSHOT_PAGE_SIZE,
-                cursor: cursor.clone(),
-                snapshot_revision: revision.clone(),
-                snapshot_session_id: None,
-            })
-            .await
-            .context("curator snapshot changed or could not be read; rerun curator scan")?;
-        match &revision {
-            Some(expected) if expected != &page.snapshot_revision => {
-                bail!("curator snapshot revision changed between pages; rerun curator scan")
-            }
-            None => revision = Some(page.snapshot_revision.clone()),
-            _ => {}
-        }
-        nodes.extend(page.nodes);
-        cursor = page.next_cursor;
-        if cursor.is_none() {
-            break;
-        }
-    }
-    Ok((
-        revision.ok_or_else(|| anyhow!("curator snapshot did not return a revision"))?,
-        nodes,
-    ))
-}
-
 fn collect_deterministic_findings(
     nodes: &[CuratorScanNode],
     all_paths: &BTreeSet<String>,
@@ -538,7 +463,7 @@ fn collect_deterministic_findings(
         if let Err(error) = parse_curator_status_checked(&node.content) {
             push_finding(
                 &mut findings,
-                "invalid_curator_status",
+                INVALID_CURATOR_STATUS,
                 FindingSeverity::Error,
                 node.store,
                 vec![node.path.clone()],
@@ -549,7 +474,7 @@ fn collect_deterministic_findings(
             if !all_paths.contains(&link.target_path) {
                 push_finding(
                     &mut findings,
-                    "broken_internal_link",
+                    BROKEN_INTERNAL_LINK,
                     FindingSeverity::Warning,
                     node.store,
                     vec![node.path.clone(), link.target_path.clone()],
@@ -564,7 +489,7 @@ fn collect_deterministic_findings(
         {
             push_finding(
                 &mut findings,
-                "isolated_node",
+                ISOLATED_NODE,
                 FindingSeverity::Warning,
                 node.store,
                 vec![node.path.clone()],
@@ -574,7 +499,7 @@ fn collect_deterministic_findings(
         if is_mutable_store(node.store) && now_ms.saturating_sub(node.updated_at) >= stale_ms {
             push_finding(
                 &mut findings,
-                "age_review_due",
+                AGE_REVIEW_DUE,
                 FindingSeverity::Info,
                 node.store,
                 vec![node.path.clone()],
@@ -584,7 +509,7 @@ fn collect_deterministic_findings(
         if is_mutable_store(node.store) && node.source_evidence.is_empty() {
             push_finding(
                 &mut findings,
-                "source_evidence_missing",
+                SOURCE_EVIDENCE_MISSING,
                 FindingSeverity::Info,
                 node.store,
                 vec![node.path.clone()],
@@ -598,7 +523,7 @@ fn collect_deterministic_findings(
             {
                 push_finding(
                     &mut findings,
-                    "source_newer_than_node",
+                    SOURCE_NEWER_THAN_NODE,
                     FindingSeverity::Warning,
                     node.store,
                     vec![node.path.clone(), source.source_path.clone()],
@@ -628,7 +553,7 @@ fn collect_deterministic_findings(
         if incoming_counts.get(&node.path).copied().unwrap_or(0) == 0 {
             push_finding(
                 &mut findings,
-                "orphan_source_evidence",
+                ORPHAN_SOURCE_EVIDENCE,
                 FindingSeverity::Info,
                 node.store,
                 vec![node.path.clone()],
@@ -668,8 +593,8 @@ fn collect_skill_findings(
             continue;
         };
         for (name, kind) in [
-            ("manifest.md", "skill_manifest_missing"),
-            ("provenance.md", "skill_provenance_missing"),
+            ("manifest.md", SKILL_MANIFEST_MISSING),
+            ("provenance.md", SKILL_PROVENANCE_MISSING),
         ] {
             let expected = format!("{base}/{name}");
             if !all_paths.contains(&expected) {
@@ -688,7 +613,7 @@ fn collect_skill_findings(
         if !nodes.iter().any(|node| node.path.starts_with(&run_prefix)) {
             push_finding(
                 findings,
-                "skill_run_evidence_missing",
+                SKILL_RUN_EVIDENCE_MISSING,
                 FindingSeverity::Info,
                 CuratorStore::Skill,
                 vec![skill.path.clone(), run_prefix],
@@ -718,7 +643,7 @@ fn collect_session_findings(nodes: &[CuratorScanNode], findings: &mut Vec<Determ
         if !linked {
             push_finding(
                 findings,
-                "session_evidence_missing",
+                SESSION_EVIDENCE_MISSING,
                 FindingSeverity::Warning,
                 CuratorStore::Session,
                 vec![session.path.clone()],
@@ -766,13 +691,13 @@ fn note_role_findings(path: &str, content: &str) -> Vec<(&'static str, String)> 
         })
     {
         findings.push((
-            "facts_future_item",
+            FACTS_FUTURE_ITEM,
             "facts.md appears to contain future, pending, or scheduled work".to_string(),
         ));
     }
     if name == "summary.md" && contains_exact_evidence(content) {
         findings.push((
-            "summary_exact_evidence",
+            SUMMARY_EXACT_EVIDENCE,
             "summary.md appears to contain exact dated, financial, or version evidence".to_string(),
         ));
     }
@@ -783,7 +708,7 @@ fn note_role_findings(path: &str, content: &str) -> Vec<(&'static str, String)> 
             || (lower.contains("解決済み") && !lower.contains("未解決")))
     {
         findings.push((
-            "open_question_resolved",
+            OPEN_QUESTION_RESOLVED,
             "open_questions.md appears to contain a resolved item".to_string(),
         ));
     }
@@ -802,13 +727,13 @@ fn note_role_findings(path: &str, content: &str) -> Vec<(&'static str, String)> 
         })
     {
         findings.push((
-            "preference_action_item",
+            PREFERENCE_ACTION_ITEM,
             "preferences.md appears to contain a pending action".to_string(),
         ));
     }
     if name == "provenance.md" && !content.contains("/Sources/") {
         findings.push((
-            "provenance_source_missing",
+            PROVENANCE_SOURCE_MISSING,
             "provenance.md does not reference a /Sources path".to_string(),
         ));
     }
@@ -925,10 +850,6 @@ fn is_mutable_store(store: CuratorStore) -> bool {
     )
 }
 
-fn is_entry_document(path: &str) -> bool {
-    path.ends_with("/index.md") || path.ends_with("/manifest.md") || path.ends_with("/SKILL.md")
-}
-
 fn parse_curator_status(content: &str) -> Option<CuratorStatus> {
     parse_curator_status_checked(content).ok().flatten()
 }
@@ -977,22 +898,6 @@ pub(crate) fn parse_curator_status_checked(content: &str) -> Result<Option<Curat
     Ok(status)
 }
 
-fn frontmatter_parts(content: &str) -> Option<(&str, &str, usize)> {
-    let rest = content.strip_prefix("---\n")?;
-    let relative_end = rest.find("\n---\n").or_else(|| {
-        rest.ends_with("\n---")
-            .then_some(rest.len() - "\n---".len())
-    })?;
-    let header = &rest[..relative_end];
-    let delimiter_start = 4 + relative_end;
-    let body_start = if content[delimiter_start..].starts_with("\n---\n") {
-        delimiter_start + 5
-    } else {
-        content.len()
-    };
-    Some((header, &content[body_start..], body_start))
-}
-
 pub(crate) fn markdown_body(content: &str) -> &str {
     frontmatter_parts(content)
         .map(|(_, body, _)| body)
@@ -1039,39 +944,6 @@ pub(crate) fn render_curated_content(
         .transpose()?
         .unwrap_or(block);
     Ok(format!("---\n{next_header}\n---\n{body}"))
-}
-
-fn upsert_curator_block(header: &str, block: &str) -> Result<String> {
-    let mut block_start = None;
-    let mut block_end = header.len();
-    let mut offset = 0;
-    for line in header.split_inclusive('\n') {
-        let value = line.strip_suffix('\n').unwrap_or(line);
-        if block_start.is_none() {
-            if value == "curator:" {
-                block_start = Some(offset);
-            }
-        } else if !value.starts_with("  ") && !value.is_empty() {
-            block_end = offset;
-            break;
-        }
-        offset += line.len();
-    }
-    let Some(start) = block_start else {
-        return Ok(if header.is_empty() {
-            block.to_string()
-        } else {
-            format!("{header}\n{block}")
-        });
-    };
-    let mut next = String::with_capacity(header.len() + block.len());
-    next.push_str(&header[..start]);
-    next.push_str(block);
-    if block_end < header.len() {
-        next.push('\n');
-        next.push_str(&header[block_end..]);
-    }
-    Ok(next)
 }
 
 fn read_plan(path: &Path) -> Result<CuratorPlanV1> {

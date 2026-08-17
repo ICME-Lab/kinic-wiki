@@ -29,10 +29,11 @@ Use this workflow only when the user asked for mutation or accepted a specific r
 - Do not edit paths that were not explicitly accepted into the repair set.
 - For `delete-tree`, inspect first with `list-nodes --prefix <path> --recursive --json` and stop if unexpected paths are present.
 - Ask before destructive deletion, unclear redaction policy, or API-contract changes.
-- For multi-node repairs, keep a path-by-path summary of old state, intended replacement, etag, command, and verification result.
+- For multi-node repairs that require semantic review or Curator status changes, use the `kinic-wiki-lint` reviewed proposal workflow instead of direct edit commands.
+- For direct multi-node edits that remain in this skill's narrower scope, keep a path-by-path summary of old state, intended replacement, etag, command, and verification result.
 
 ## Boundaries
 
 - Use `kinic-wiki-query` for answer-only work.
 - Use `kinic-wiki-ingest` when new source material must be persisted or synthesized.
-- Use `kinic-wiki-lint` for report-only health checks.
+- Use `kinic-wiki-lint` for health checks, semantic classification, and reviewed maintenance proposals.

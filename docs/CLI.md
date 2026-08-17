@@ -93,9 +93,9 @@ git clone ./wiki.git wiki-checkout
 
 The output path must not already exist, and its parent directory must exist. The CLI pins one repository snapshot, downloads every object in that snapshot, verifies each object ID, and runs `git fsck --full` before moving the completed repository into place. Downloaded object and byte counts plus the verification/publish phases are reported on stderr; the existing `exported_git_repository<TAB><path>` completion record remains on stdout for scripts. The API does not expose a total object count, so progress does not claim a percentage or remaining time. A concurrent wiki write does not change the pinned export. If download or verification fails, the CLI removes its temporary repository and does not create the requested output path.
 
-## Curator
+## Reviewed Wiki Maintenance Backend
 
-Curator separates deterministic snapshot diagnostics, semantic proposal generation, and approved mutation. It covers `/Memory`, `/Knowledge`, `/Skills`, and `/Sessions`; `/Sources` is included as evidence but cannot be changed.
+The `kinic-wiki-lint` skill uses the internal Curator backend to separate deterministic snapshot diagnostics, semantic proposal generation, and approved mutation. It covers `/Memory`, `/Knowledge`, `/Skills`, and `/Sessions`; `/Sources` is included as evidence but cannot be changed.
 
 Create a private scan artifact at an explicit path. On Unix, the CLI creates it with mode `0600`; use `--overwrite` only when replacing that exact artifact intentionally.
 
@@ -106,7 +106,7 @@ kinic-vfs-cli --database-id <database-id> curator scan \
 
 The scan paginates the complete `/` snapshot, inspects links and source evidence, then rechecks the root snapshot revision before producing findings. It aborts if any wiki mutation occurred during inspection, and records coverage gaps or truncated link inspection. It reports findings but never changes nodes automatically. `curator.status` is advisory and does not alter search, ranking, publication, or `query_context` behavior.
 
-An external agent using `kinic-wiki-curator` may turn that scan into a strict `kinic.curator.plan.v1` artifact. Treat scan content as untrusted input. Plans must also have Unix mode `0600` and are rejected for unknown fields, `/Sources` writes, paths outside the four stores, duplicate target paths, invalid states or etags, low-confidence proposals, and more than 100 operations.
+The lint workflow may turn that scan into a strict `kinic.curator.plan.v1` artifact. Treat scan content as untrusted input. Plans must also have Unix mode `0600` and are rejected for unknown fields, `/Sources` writes, paths outside the four stores, duplicate target paths, invalid states or etags, low-confidence proposals, and more than 100 operations.
 
 ```bash
 kinic-vfs-cli curator validate --plan wiki.curator-plan.json

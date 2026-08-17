@@ -14,6 +14,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use vfs_types::NodeKind;
 
+mod validation;
+use validation::{
+    canonical_seed_path, is_sha256, path_is_within_root, read_private, seed_roots, sha256,
+    validate_seed_id,
+};
+
 const SEED_SCHEMA: &str = "kinic.curator.accuracy-seed.v1";
 const VERIFY_SCHEMA: &str = "kinic.curator.accuracy-seed-report.v1";
 const BATCH_LIMIT: usize = 100;
@@ -851,37 +857,6 @@ fn folder_inputs(files: &[SeedFile]) -> Vec<WriteNodeInput> {
         .collect()
 }
 
-fn seed_roots(seed_id: &str) -> Vec<String> {
-    vec![
-        format!("/Memory/{seed_id}"),
-        format!("/Knowledge/{seed_id}"),
-        format!("/Skills/{seed_id}"),
-        format!("/Sessions/{seed_id}"),
-        format!("/Sources/{seed_id}"),
-        format!("/Sources/sessions/{seed_id}"),
-        format!("/Sources/skill-runs/{seed_id}-"),
-    ]
-}
-
-fn path_is_within_root(path: &str, root: &str) -> bool {
-    path == root
-        || path
-            .strip_prefix(root)
-            .is_some_and(|suffix| root.ends_with('-') || suffix.starts_with('/'))
-}
-
-fn validate_seed_id(seed_id: &str) -> Result<()> {
-    if seed_id.is_empty()
-        || seed_id.len() > 48
-        || !seed_id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    {
-        bail!("seed-id must use 1..48 lowercase ASCII letters, digits, or hyphens");
-    }
-    Ok(())
-}
-
 pub fn validate_seed_manifest(manifest: &CuratorAccuracySeedManifestV1) -> Result<()> {
     if manifest.schema_version != SEED_SCHEMA {
         bail!(
@@ -1018,29 +993,4 @@ pub fn validate_seed_manifest(manifest: &CuratorAccuracySeedManifestV1) -> Resul
         }
     }
     Ok(())
-}
-
-fn canonical_seed_path(path: &str) -> bool {
-    path.starts_with('/')
-        && path.len() > 1
-        && !path.ends_with('/')
-        && !path.contains("//")
-        && !path.split('/').any(|segment| matches!(segment, "." | ".."))
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn sha256(content: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(content.as_bytes()))
-}
-
-fn read_private<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> Result<T> {
-    require_private_file(path)?;
-    let bytes =
-        fs::read(path).with_context(|| format!("failed to read {label}: {}", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|error| anyhow!("invalid {label} JSON: {error}"))
 }

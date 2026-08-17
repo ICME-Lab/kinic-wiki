@@ -13,6 +13,11 @@ use vfs_types::{
     GitObjectChunk, GitObjectSummary, GitRepositorySnapshot, ListGitObjectsResponse, Node,
 };
 
+mod migration;
+mod snapshot;
+pub(crate) use migration::seed_repository;
+pub(crate) use snapshot::{list_objects, read_object_chunk, repository_snapshot};
+
 pub(crate) const HEAD_REF: &str = "refs/heads/main";
 pub(crate) const OBJECT_PAGE_LIMIT_MAX: u32 = 100;
 pub(crate) const OBJECT_CHUNK_BYTES_MAX: u32 = 512 * 1024;
@@ -179,67 +184,12 @@ struct PreviousNodeRow {
     git_blob_oid: Option<String>,
 }
 
-pub(crate) fn seed_repository(tx: &Transaction<'_>) -> Result<(), String> {
-    reject_reserved_existing_paths(tx)?;
-    tx.execute(
-        "INSERT INTO fs_history_pages (current_node_id, current_path)
-         SELECT node.id, node.path FROM fs_nodes node
-         WHERE NOT EXISTS (SELECT 1 FROM fs_history_pages page WHERE page.current_node_id = node.id)
-         ORDER BY node.id ASC",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    tx.execute(
-        "INSERT OR IGNORE INTO fs_history_blobs (hash, kind, content, metadata_json)
-         SELECT etag, kind, content, metadata_json FROM fs_nodes",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    tx.execute(
-        "INSERT INTO fs_history_versions
-             (page_id, blob_hash, path, etag, node_created_at, node_updated_at)
-         SELECT page.id, node.etag, node.path, node.etag, node.created_at, node.updated_at
-         FROM fs_history_pages page
-         JOIN fs_nodes node ON node.id = page.current_node_id
-         WHERE page.current_version_id IS NULL
-         ORDER BY page.id ASC",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    tx.execute(
-        "UPDATE fs_history_pages
-         SET current_version_id = (
-             SELECT MAX(version.id) FROM fs_history_versions version
-             WHERE version.page_id = fs_history_pages.id
-         )
-         WHERE current_node_id IS NOT NULL AND current_version_id IS NULL",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-
-    let tree_oid = rebuild_head(tx, 0)?;
-    let changed_at = tx
-        .query_row(
-            "SELECT COALESCE(MAX(updated_at), 0) FROM fs_nodes",
-            params![],
-            |row| crate::sqlite::row_get::<i64>(row, 0),
-        )
-        .map_err(|error| error.to_string())?;
-    let commit = commit_object(
-        &tree_oid,
-        None,
-        "Kinic migration",
-        "migration@kinic.invalid",
-        changed_at,
-        "initialize history",
-        None,
-    );
-    insert_object(tx, &commit, 0)?;
-    fail_v003_migration_before_ref()?;
-    update_ref(tx, &commit.oid, 0)?;
-    Ok(())
-}
-
+/// Finalizes a history change after its node mutation has completed.
+///
+/// The caller must preserve the transaction invariant:
+/// `begin_change` -> node mutation (SQLite triggers record items) -> `finish_change`
+/// -> this Git finalize step. All stages run in the same SQLite transaction so a
+/// failure rolls back both the history rows and the materialized Git repository.
 pub(crate) fn finalize_change(tx: &Transaction<'_>, change_id: i64) -> Result<String, String> {
     let (principal, operation, changed_at): (String, String, i64) = tx
         .query_row(
@@ -843,140 +793,6 @@ pub(crate) fn head(conn: &Connection) -> Result<Option<Head>, String> {
     )
     .optional()
     .map_err(|error| error.to_string())
-}
-
-pub(crate) fn repository_snapshot(conn: &Connection) -> Result<GitRepositorySnapshot, String> {
-    let head = head(conn)?.ok_or_else(|| "Git repository HEAD is missing".to_string())?;
-    Ok(GitRepositorySnapshot {
-        object_format: "sha1".to_string(),
-        head_ref: HEAD_REF.to_string(),
-        head_commit_oid: head.commit_oid,
-        change_id: u64::try_from(head.change_id)
-            .map_err(|_| format!("invalid Git snapshot change id: {}", head.change_id))?,
-    })
-}
-
-pub(crate) fn list_objects(
-    conn: &Connection,
-    snapshot_change_id: i64,
-    cursor: Option<&str>,
-    limit: u32,
-) -> Result<ListGitObjectsResponse, String> {
-    validate_snapshot(conn, snapshot_change_id)?;
-    let limit = limit.min(OBJECT_PAGE_LIMIT_MAX);
-    if limit == 0 {
-        return Err("limit must be greater than zero".to_string());
-    }
-    if let Some(cursor) = cursor {
-        validate_oid(cursor)?;
-    }
-    let mut stmt = conn
-        .prepare(
-            "SELECT oid, object_type, size
-             FROM git_objects
-             WHERE first_change_id <= ?1 AND (?2 IS NULL OR oid > ?2)
-             ORDER BY oid ASC LIMIT ?3",
-        )
-        .map_err(|error| error.to_string())?;
-    let values = vec![
-        crate::sqlite::integer_value(snapshot_change_id),
-        crate::sqlite::nullable_text_value(cursor.map(str::to_string)),
-        crate::sqlite::integer_value(i64::from(limit) + 1),
-    ];
-    let params = crate::sqlite::params_from_values(&values);
-    let mut objects = crate::sqlite::query_map(&mut stmt, params, |row| {
-        let size = crate::sqlite::row_get::<i64>(row, 2)?;
-        Ok(GitObjectSummary {
-            oid: crate::sqlite::row_get(row, 0)?,
-            object_type: crate::sqlite::row_get(row, 1)?,
-            size: size as u64,
-        })
-    })
-    .map_err(|error| error.to_string())?;
-    let has_more = objects.len() > limit as usize;
-    objects.truncate(limit as usize);
-    let next_cursor = has_more
-        .then(|| objects.last().map(|item| item.oid.clone()))
-        .flatten();
-    Ok(ListGitObjectsResponse {
-        objects,
-        next_cursor,
-    })
-}
-
-pub(crate) fn read_object_chunk(
-    conn: &Connection,
-    snapshot_change_id: i64,
-    oid: &str,
-    offset: u64,
-    limit: u32,
-) -> Result<Option<GitObjectChunk>, String> {
-    validate_snapshot(conn, snapshot_change_id)?;
-    validate_oid(oid)?;
-    if limit == 0 || limit > OBJECT_CHUNK_BYTES_MAX {
-        return Err(format!(
-            "limit must be between 1 and {OBJECT_CHUNK_BYTES_MAX}"
-        ));
-    }
-    let offset_i64 = i64::try_from(offset).map_err(|_| "offset is too large".to_string())?;
-    let start = offset_i64
-        .checked_add(1)
-        .ok_or_else(|| "offset is too large".to_string())?;
-    let row = conn
-        .query_row(
-            "SELECT object_type, size, COALESCE(substr(data, ?3, ?4), X'') FROM git_objects
-             WHERE oid = ?1 AND first_change_id <= ?2",
-            params![oid, snapshot_change_id, start, i64::from(limit)],
-            |row| {
-                Ok((
-                    crate::sqlite::row_get::<String>(row, 0)?,
-                    crate::sqlite::row_get::<i64>(row, 1)?,
-                    crate::sqlite::row_get::<Option<Vec<u8>>>(row, 2)?.unwrap_or_default(),
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    let Some((object_type, size, data)) = row else {
-        return Ok(None);
-    };
-    let size = u64::try_from(size).map_err(|_| "Git object size is invalid".to_string())?;
-    if offset > size {
-        return Err("offset exceeds Git object size".to_string());
-    }
-    let end = offset.saturating_add(u64::from(limit)).min(size);
-    let expected_len = usize::try_from(end - offset)
-        .map_err(|_| "Git object chunk length is invalid".to_string())?;
-    if data.len() != expected_len {
-        return Err("Git object chunk length does not match stored size".to_string());
-    }
-    let next_offset = (end < size).then_some(end);
-    Ok(Some(GitObjectChunk {
-        oid: oid.to_string(),
-        object_type,
-        size,
-        offset,
-        data,
-        next_offset,
-    }))
-}
-
-fn validate_snapshot(conn: &Connection, requested: i64) -> Result<(), String> {
-    let current = head(conn)?.ok_or_else(|| "Git repository HEAD is missing".to_string())?;
-    if requested < 0 || requested > current.change_id {
-        return Err(format!("invalid Git snapshot change id: {requested}"));
-    }
-    Ok(())
-}
-
-fn validate_oid(oid: &str) -> Result<(), String> {
-    if oid.len() != 40
-        || !oid.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || oid.bytes().any(|byte| byte.is_ascii_uppercase())
-    {
-        return Err(format!("invalid Git object id: {oid}"));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

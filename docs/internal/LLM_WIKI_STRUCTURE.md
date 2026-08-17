@@ -214,6 +214,7 @@ sequenceDiagram
 | `kinic-wiki-query` | knowledge base query |
 | `kinic-wiki-mcp` | 移行中のStaging private MCPに対するreadと明示的batch writeのtool選択・呼び出し（Production Pluginへ再取り込みしない） |
 
+Curatorは独立skillではなく、`kinic-wiki-lint`が利用するCLI-onlyのreviewed maintenance backendである。
 query / ingest / lint / edit の使い分けは `skills/` 側を正本にする。
 
 ## 10. 現行ビルド対象外

@@ -3,7 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DeletedNodesPanel } from "@/components/wiki-browser/explorer-pane";
+import { DeletedNodesPanel } from "@/components/wiki-browser/deleted-nodes-panel";
 import type { DeletedNodePage, DeletedNodeSummary } from "@/lib/types";
 import { listDeletedNodes } from "@/lib/vfs-client";
 

@@ -1,6 +1,6 @@
 ---
 name: kinic-wiki-lint
-description: Kinic Wiki workflow skill for inspecting local and remote wiki health without silently fixing it.
+description: Kinic Wiki workflow skill for inspecting local and remote wiki health, classifying findings, and preparing reviewed maintenance proposals without silently fixing it.
 ---
 
 # Kinic Wiki Lint
@@ -12,14 +12,15 @@ Use this skill when the user wants to:
 - check whether `/Knowledge/index.md` is stale
 - review missing links, weak structure, or outdated organization
 - inspect database discovery metadata for public retrieval
-- decide what to fix next without auto-applying changes
+- classify deterministic and semantic findings
+- decide what to fix next and prepare reviewed proposals without auto-applying changes
 
 Do not use this skill for:
 
 - primary source ingestion
 - ordinary question answering
 - hidden repair runs
-- maintenance that changes node content or Curator status; use `kinic-wiki-curator`
+- direct mutation outside the reviewed proposal workflow; use `kinic-wiki-edit` for its narrower single-node operations
 - OKF bundle structure verification; use `kinic-context-pack` and `context-pack verify`
 - skill store package lifecycle work; use `kinic-skill-registry`
 
@@ -30,11 +31,12 @@ Core rules:
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Default to report-only behavior.
 - Do not silently fix pages.
-- Hand off any proposed repair or status transition to `kinic-wiki-curator`.
+- Use the internal Curator backend for complete remote scans, proposal validation, dry-runs, and explicitly approved apply operations.
 - Prefer concrete findings over vague style commentary.
 - Keep local lint and remote inspection conceptually separate.
 - Check note-role boundary violations as well as missing pages.
 - Treat exact-value drift in `facts.md` as a real canonicality problem, not a style nit.
-- Use the embedded note-role rules in `lint.md` as the trust model. When this skill runs inside the repo and `docs/STORE_API.md` is available, use that file only as the current repo-local refinement.
+- Treat backend deterministic findings and agent semantic analysis as separate classes. Do not describe an incomplete scan as complete.
+- Use the finding interpretation and reporting rules in `lint.md` as the trust model. When this skill runs inside the repo and `docs/STORE_API.md` is available, use that file only as the current repo-local refinement.
 
-Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work.
+Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work. For complete remote scans and reviewed maintenance, also follow the internal reference at `skills/kinic-wiki-lint/curator-backend.md`.

@@ -1,6 +1,6 @@
 # Curator Diagnostic Accuracy
 
-This benchmark measures classification accuracy for Curator's deterministic findings. It does not measure latency or the external agent's semantic duplicate and contradiction analysis.
+This benchmark measures classification accuracy for the deterministic Curator backend used by `kinic-wiki-lint`. It does not measure latency or the lint agent's semantic duplicate and contradiction analysis.
 
 ## Metric Contract
 
@@ -33,7 +33,7 @@ The command exits non-zero when F1 is below the requested threshold.
 
 ## Staging Evaluation
 
-The reusable staging evaluator measures a private real-content scan without changing the staging canister or database. Curator is a CLI-only feature, so this workflow does not deploy or upgrade Wasm.
+The reusable staging evaluator measures a private real-content scan without changing the staging canister or database. Curator is a CLI-only backend used by `kinic-wiki-lint`, so this workflow does not deploy or upgrade Wasm.
 
 ### Controlled staging seed
 

@@ -3,7 +3,7 @@
 ## Goal
 
 Inspect local or remote wiki health without silently fixing it.
-Report concrete findings with paths, evidence, severity, and suggested next actions.
+Report concrete findings with paths, evidence, severity, finding class, and suggested next actions.
 
 ## CLI Reference
 
@@ -22,11 +22,13 @@ Report concrete findings with paths, evidence, severity, and suggested next acti
 6. Prefer `query-context --json` for task-scoped remote context.
 7. Use `query-sql` for 2 or more known-path content reads during canonicality checks.
 8. Use `read-node --json` for one final offending-line confirmation.
-9. Use snapshot/export commands only when a whole scope must be inspected or a trusted snapshot revision is already available. Check the command help before use.
+9. For a complete remote scope, use the internal Curator backend reference to create a private scan artifact, inspect `coverage` first, and use its deterministic findings as the machine-checked baseline.
+10. Use snapshot/export commands only when a whole scope must be inspected or a trusted snapshot revision is already available. Check the command help before use.
 
 ## Findings
 
 - Report exact paths and the command category used to verify the issue.
+- Label each finding as `deterministic` (Curator backend output) or `semantic` (agent analysis).
 - Treat exact-value drift in `facts.md` as a real canonicality issue.
 - Flag exact evidence leaking into summaries as a canonicality finding, not a style note.
 - Prefer concrete missing-link, stale-index, duplicate-page, isolated-page, and note-role boundary findings.
@@ -36,5 +38,5 @@ Report concrete findings with paths, evidence, severity, and suggested next acti
 
 - Do not mutate remote wiki nodes in this skill.
 - Do not use `delete-node`, `delete-tree`, write, append, edit, rebuild, or proposal/status mutation commands.
-- If maintenance needs a content repair or Curator status transition, hand off to `kinic-wiki-curator` so validation, dry-run, and proposal approval remain mandatory. Use `kinic-wiki-edit` or `kinic-wiki-ingest` only for their narrower direct-edit and ingestion workflows.
+- If maintenance needs a content repair or Curator status transition, use the internal Curator backend reference so validation, dry-run, and proposal approval remain mandatory. Use `kinic-wiki-edit` or `kinic-wiki-ingest` only for their narrower direct-edit and ingestion workflows.
 - For OKF bundle validation, use `kinic-context-pack`.

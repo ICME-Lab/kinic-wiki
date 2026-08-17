@@ -1,4 +1,0 @@
-interface:
-  display_name: "Kinic Wiki Curator"
-  short_description: "Review and safely apply four-store wiki maintenance plans"
-  default_prompt: "Use $kinic-wiki-curator to scan this Kinic Wiki, prepare a validated maintenance plan, and stop for explicit proposal approval."

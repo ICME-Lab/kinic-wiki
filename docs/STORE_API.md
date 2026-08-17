@@ -15,7 +15,7 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 
 Context Pack is an export artifact generated from store content. It is not a store.
 Its `Reference` concepts identify Kinic targets with `kinic.store` and `kinic.store_path`, so `/Sources/...`, `/Sources/sessions/...`, `/Sources/skill-runs/...`, and `/Sessions/...` can be represented without copying referenced bodies into the bundle.
-Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
+Curator is a CLI-only maintenance backend used by `kinic-wiki-lint`; it is not part of Store API v1.
 
 ## Git Repository Export
 
@@ -201,4 +201,4 @@ Controller-only operational SQL remains separate in `query_index_sql_json`; data
 - The Store API v1 is read-only.
 - Writes must use CLI commands, VFS mutation APIs, or the shared tool dispatcher.
 - `memory_summary` is not part of v1. Use `query_context` with a summary-style task when a maintained overview is needed.
-- Skill curator, knowledge curator, ambient surfacing, synonyms, and session resume summaries are outside v1.
+- Curator mutation, ambient surfacing, synonyms, and session resume summaries are outside v1.
