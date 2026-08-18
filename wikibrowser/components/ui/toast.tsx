@@ -26,6 +26,12 @@ function getSnapshot(): ToastItem[] {
   return toasts;
 }
 
+const EMPTY_TOASTS: ToastItem[] = [];
+
+function getServerSnapshot(): ToastItem[] {
+  return EMPTY_TOASTS;
+}
+
 function emit(): void {
   for (const listener of listeners) listener();
 }
@@ -49,7 +55,7 @@ export const toast = {
 };
 
 export function Toaster(): ReactNode {
-  const items = useSyncExternalStore(subscribe, getSnapshot);
+  const items = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   if (items.length === 0) return null;
   return (
     <section

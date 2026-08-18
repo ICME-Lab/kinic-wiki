@@ -31,6 +31,12 @@ describe("Markdown renderer", () => {
     expect(html).toContain('<img src="https://example.com/a.png" alt="alt"/>');
   });
 
+  it("keeps underscores in link text literal", () => {
+    const html = render("[https://x.com/kinic_app](https://x.com/kinic_app)");
+    expect(html).toContain('<a href="https://x.com/kinic_app">https://x.com/kinic_app</a>');
+    expect(html).not.toContain("<em>");
+  });
+
   it("renders fenced code blocks with language class", () => {
     const html = render("```ts\nconst value = 1;\n```");
     expect(html).toContain('<pre><code class="language-ts">const value = 1;');

@@ -453,7 +453,7 @@ function parseInlineRange(source: string, from: number, to: number, refs: Refere
     }
 
     if (char === "*" || char === "_") {
-      const emphasis = readEmphasis(source, cursor, char, refs, inLink);
+      const emphasis = readEmphasis(source, cursor, char, refs, inLink, to);
       if (emphasis) {
         nodes.push(emphasis.node);
         cursor = emphasis.next;
@@ -462,7 +462,7 @@ function parseInlineRange(source: string, from: number, to: number, refs: Refere
     }
 
     if (char === "~" && source[cursor + 1] === "~") {
-      const strike = readStrikethrough(source, cursor, refs, inLink);
+      const strike = readStrikethrough(source, cursor, refs, inLink, to);
       if (strike) {
         nodes.push({ tag: "del", props: {}, children: strike.children });
         cursor = strike.next;
@@ -618,30 +618,30 @@ function scanBareUrlText(rest: string): string {
   return text;
 }
 
-function readEmphasis(source: string, start: number, marker: string, refs: ReferenceMap, inLink: boolean): { node: InlineElement; next: number } | null {
+function readEmphasis(source: string, start: number, marker: string, refs: ReferenceMap, inLink: boolean, to: number): { node: InlineElement; next: number } | null {
   if (source[start + 1] === marker) {
-    const close = findClosingMarker(source, start + 2, marker + marker);
+    const close = findClosingMarker(source, start + 2, marker + marker, to);
     if (close !== -1) {
       return { node: { tag: "strong", props: {}, children: parseInlineRange(source, start + 2, close, refs, inLink) }, next: close + 2 };
     }
   }
-  const close = findClosingMarker(source, start + 1, marker);
+  const close = findClosingMarker(source, start + 1, marker, to);
   if (close !== -1) {
     return { node: { tag: "em", props: {}, children: parseInlineRange(source, start + 1, close, refs, inLink) }, next: close + 1 };
   }
   return null;
 }
 
-function findClosingMarker(source: string, from: number, marker: string): number {
+function findClosingMarker(source: string, from: number, marker: string, to: number): number {
   const index = source.indexOf(marker, from);
-  if (index === -1) return -1;
+  if (index === -1 || index >= to) return -1;
   if (index > 0 && source[index - 1] === "\\") return -1;
   return index;
 }
 
-function readStrikethrough(source: string, start: number, refs: ReferenceMap, inLink: boolean): { children: InlineNode[]; next: number } | null {
+function readStrikethrough(source: string, start: number, refs: ReferenceMap, inLink: boolean, to: number): { children: InlineNode[]; next: number } | null {
   const close = source.indexOf("~~", start + 2);
-  if (close === -1) return null;
+  if (close === -1 || close >= to) return null;
   return { children: parseInlineRange(source, start + 2, close, refs, inLink), next: close + 2 };
 }
 
