@@ -4,7 +4,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  RECALL_MIN_SCORE,
   buildRecallFallbackQuery,
   buildRecallSearchQuery,
   applyRecallStorageChanges,
@@ -133,12 +132,24 @@ test("rankRecallHits keeps the first hit when a duplicate claims a conflicting k
   assert.equal(results[0].score, -10_000);
 });
 
-test("rankRecallHits drops weak FTS matches below the minimum score", () => {
-  const strong = hit("/Knowledge/mcp.md", ["content_fts"], -10_000, "body");
-  const weak = hit("/Knowledge/mcp.md", ["content_fts"], -100, "weak body");
-  assert.deepEqual(rankRecallHits([weak]).map((result) => result.path), []);
-  assert.deepEqual(rankRecallHits([strong]).map((result) => result.path), ["/Knowledge/mcp.md"]);
-  assert.ok(RECALL_MIN_SCORE < 0);
+test("rankRecallHits keeps near-zero bm25-scale content scores for common terms", () => {
+  // The canister returns content_fts scores of rank * 10_000, where bm25
+  // magnitude shrinks as a term becomes common in the store. A score near zero
+  // (e.g. -0.01) must still be a valid recall candidate.
+  const common = hit("/Knowledge/mcp.md", ["content_fts"], -0.01, "body");
+  const rare = hit("/Knowledge/mcp.md", ["content_fts"], -10_000, "body");
+  assert.deepEqual(rankRecallHits([common]).map((result) => result.path), ["/Knowledge/mcp.md"]);
+  assert.deepEqual(rankRecallHits([rare]).map((result) => result.path), ["/Knowledge/mcp.md"]);
+  assert.equal(rankRecallHits([common])[0].score, -0.01);
+});
+
+test("rankRecallHits drops hits without a finite score", () => {
+  const nanScore = hit("/Knowledge/mcp.md", ["content_fts"], Number.NaN, "body");
+  const infScore = hit("/Knowledge/mcp.md", ["content_fts"], Number.POSITIVE_INFINITY, "body");
+  const noScore = hit("/Knowledge/mcp.md", ["content_fts"], undefined, "body");
+  assert.deepEqual(rankRecallHits([nanScore]), []);
+  assert.deepEqual(rankRecallHits([infScore]), []);
+  assert.deepEqual(rankRecallHits([noScore]), []);
 });
 
 test("rankRecallHits excludes the current ChatGPT conversation source path", () => {
