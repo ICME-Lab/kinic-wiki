@@ -17,6 +17,8 @@ const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
 const recallEnabledInput = document.querySelector("#recall-enabled");
+const recallUrlInput = document.querySelector("#recall-url");
+const recallTokenInput = document.querySelector("#recall-token");
 const createDatabaseForm = document.querySelector("#create-database-form");
 const databaseNameInput = document.querySelector("#database-name");
 const createDatabaseButton = document.querySelector("#create-database");
@@ -66,6 +68,24 @@ recallEnabledInput.addEventListener("change", async () => {
   }
 });
 
+recallUrlInput.addEventListener("change", async () => {
+  try {
+    await saveRecallSetting(recallEnabledInput.checked, { recallUrl: recallUrlInput.value });
+    statusText.textContent = "Recall search URL saved";
+  } catch (error) {
+    statusText.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+recallTokenInput.addEventListener("change", async () => {
+  try {
+    await saveRecallSetting(recallEnabledInput.checked, { recallToken: recallTokenInput.value });
+    statusText.textContent = "Recall search token saved";
+  } catch (error) {
+    statusText.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
 createDatabaseForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   createDatabaseButton.disabled = true;
@@ -108,10 +128,12 @@ async function load() {
 async function loadRecallSetting() {
   const response = await send({ type: "load-config" });
   recallEnabledInput.checked = response.config?.recallEnabled === true || response.config?.recallEnabled === "true";
+  recallUrlInput.value = response.config?.recallUrl || "";
+  recallTokenInput.value = response.config?.recallToken || "";
 }
 
-async function saveRecallSetting(recallEnabled) {
-  await send({ type: "save-config", config: { recallEnabled: Boolean(recallEnabled) } });
+async function saveRecallSetting(recallEnabled, extra = {}) {
+  await send({ type: "save-config", config: { recallEnabled: Boolean(recallEnabled), ...extra } });
 }
 
 async function send(message) {

@@ -3,6 +3,7 @@
 // Why: Generation should run outside the wiki browser UI server.
 import { isAuthorized } from "./auth.js";
 import { parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, runManual, type QueueDisposition } from "./processing.js";
+import { parseRecallSearchInput, runRecallSearch } from "./recall-search.js";
 import { parseSourceCaptureTriggerInput, SourceCaptureTriggerError, validateSourceCaptureTriggerInput } from "./source-capture.js";
 import type { QueueMessage } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
@@ -40,6 +41,25 @@ export default {
         sessionNonce: input.sessionNonce
       });
       return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath }, 202);
+    }
+    if (request.method === "POST" && url.pathname === "/recall-search") {
+      const authError = await workerAuthError(request, env);
+      if (authError) return authError;
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: "invalid JSON body" }, 400);
+      }
+      const input = parseRecallSearchInput(body);
+      if (typeof input === "string") {
+        return jsonResponse({ error: input }, 400);
+      }
+      try {
+        return jsonResponse(await runRecallSearch(env, input), 200);
+      } catch (error) {
+        return jsonResponse({ error: errorMessage(error) }, 500);
+      }
     }
     if (request.method !== "POST" || url.pathname !== "/run") {
       return jsonResponse({ error: "not found" }, 404);

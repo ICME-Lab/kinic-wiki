@@ -329,6 +329,26 @@ test("conversation export starts without a mainnet confirmation dialog", () => {
   assert.doesNotMatch(contentUi, /globalThis\.confirm/);
 });
 
+test("recall run captures URL and generation before awaiting config and cancels pending schedules on navigation", () => {
+  const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const runRecall = /async function runRecall\(query\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(runRecall, "runRecall function should exist");
+  assert.match(runRecall, /const conversationUrl = location\.href;/);
+  assert.match(runRecall, /const generation = \+\+recallRequestGeneration;/);
+  assert.ok(
+    runRecall.indexOf("const conversationUrl = location.href;") < runRecall.indexOf("await configLoadPromise;"),
+    "URL must be captured before awaiting config load"
+  );
+  assert.ok(
+    runRecall.indexOf("const generation = ++recallRequestGeneration;") < runRecall.indexOf("await configLoadPromise;"),
+    "generation must be captured before awaiting config load"
+  );
+  assert.match(runRecall, /if \(conversationUrl !== location\.href\) return;/);
+  const invalidateRecall = /function invalidateRecall\(\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(invalidateRecall, "invalidateRecall function should exist");
+  assert.match(invalidateRecall, /recallListeners\.cancelPending\(\)/);
+});
+
 test("settings docs describe automatic database save", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const usage = readFileSync(new URL("../USAGE.md", import.meta.url), "utf8");

@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   RECALL_MIN_SCORE,
   buildRecallFallbackQuery,
+  buildRecallSearchQuery,
   applyRecallStorageChanges,
   formatRecallContext,
   isAllowedRecallPath,
@@ -37,6 +38,40 @@ test("normalizeRecallQuery collapses whitespace and caps the query", () => {
   assert.equal(normalizeRecallQuery("x".repeat(2_100)).length, 2_000);
 });
 
+test("buildRecallSearchQuery distills a Japanese draft into distinctive terms", () => {
+  assert.equal(
+    buildRecallSearchQuery("MCPを使ったAIエージェントの長期記憶をどう設計する？"),
+    "設計 長期記憶 エージェント MCP"
+  );
+  assert.equal(buildRecallSearchQuery("検索精度を改善したいです"), "改善 検索精度");
+});
+
+test("buildRecallSearchQuery keeps ASCII identifiers and drops English stopwords", () => {
+  assert.equal(
+    buildRecallSearchQuery("please tell me more about the new API and search speed"),
+    "speed search API new"
+  );
+  assert.equal(buildRecallSearchQuery("compare GPT-4 and pre-design-md"), "pre-design-md GPT-4 compare");
+});
+
+test("buildRecallSearchQuery returns null for function-only drafts", () => {
+  assert.equal(buildRecallSearchQuery("please tell me more about it"), null);
+  assert.equal(buildRecallSearchQuery("これについてどう思いますか"), null);
+});
+
+test("buildRecallSearchQuery caps the number of query terms from the end", () => {
+  const query = buildRecallSearchQuery("長期記憶 設計 MCP API エージェント 検索 改善 精度 応用");
+  assert.equal(query, "応用 精度 改善 検索");
+});
+
+test("buildRecallSearchQuery focuses on the most recent part of a long draft", () => {
+  const prefix = `${"前置き".repeat(60)} `;
+  const query = buildRecallSearchQuery(`${prefix}最終的な質問は長期記憶の設計についてです`);
+  assert.ok(query && query.includes("長期記憶") && query.includes("設計"));
+  assert.ok(query.split(" ").length <= 4);
+});
+
+
 test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hits", () => {
   const results = rankRecallHits([
     hit("/Sources/chatgpt/one.md", ["content_fts"], -20_000, "source"),
@@ -45,6 +80,57 @@ test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hit
     hit("/Knowledge/path-only.md", ["path_exact"], -1, "weak")
   ]);
   assert.deepEqual(results.map((result) => result.path), ["/Knowledge/one.md", "/Sources/chatgpt/one.md"]);
+  assert.equal(results[0].score, -30_000);
+  assert.deepEqual(results[0].matchReasons, ["title_fts", "content_fts"]);
+});
+
+test("rankRecallHits keeps content_substring hits so CJK body matches are not dropped", () => {
+  const results = rankRecallHits([
+    hit("/Knowledge/日本語ノート.md", ["content_substring"], -100_000_000, "検索改善の作業メモ", { charOffset: 12 })
+  ]);
+  assert.deepEqual(results.map((result) => result.path), ["/Knowledge/日本語ノート.md"]);
+  assert.equal(results[0].charOffset, 12);
+});
+
+test("rankRecallHits keeps path_substring hits and still drops other path-only reasons", () => {
+  const results = rankRecallHits([
+    hit("/Knowledge/path-has-term.md", ["path_substring"], -100_000_000, "/Knowledge/path-has-term.md"),
+    hit("/Knowledge/exact.md", ["path_exact"], -600_000_000, "exact"),
+    hit("/Knowledge/prefix.md", ["basename_prefix"], -400_000_000, "prefix")
+  ]);
+  assert.deepEqual(results.map((result) => result.path), ["/Knowledge/path-has-term.md"]);
+});
+
+test("rankRecallHits merges duplicates keeping the best score and union reasons", () => {
+  const results = rankRecallHits([
+    hit("/Knowledge/agent.md", ["content_fts"], -1_500, "weak literal", { charOffset: 2 }),
+    hit("/Knowledge/agent.md", ["content_substring"], -50_000, "strong fallback", { charOffset: 120 })
+  ]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].score, -50_000);
+  assert.deepEqual(results[0].matchReasons, ["content_fts", "content_substring"]);
+  assert.equal(results[0].snippet, "strong fallback");
+  assert.equal(results[0].charOffset, 120);
+});
+
+test("rankRecallHits prefers a content preview over a path preview on merge", () => {
+  const results = rankRecallHits([
+    hit("/Knowledge/agent.md", ["path_substring"], -10_000, "", { field: "Path" }),
+    hit("/Knowledge/agent.md", ["content_fts"], -20_000, "body excerpt", { charOffset: 40 })
+  ]);
+  assert.equal(results[0].snippet, "body excerpt");
+  assert.equal(results[0].charOffset, 40);
+  assert.equal(results[0].previewField, "Content");
+});
+
+test("rankRecallHits keeps the first hit when a duplicate claims a conflicting kind", () => {
+  const results = rankRecallHits([
+    hit("/Knowledge/agent.md", ["content_fts"], -10_000, "file body"),
+    hit("/Knowledge/agent.md", ["content_fts"], -50_000, "folder body", { kind: { Folder: null } })
+  ]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].kind, "File");
+  assert.equal(results[0].score, -10_000);
 });
 
 test("rankRecallHits drops weak FTS matches below the minimum score", () => {
@@ -109,6 +195,29 @@ test("normalizeRecallHit falls back to the snippet when preview is absent", () =
   assert.equal(result.snippet, "snippet text");
 });
 
+test("normalizeRecallHit keeps a content char offset and nulls path previews", () => {
+  const content = normalizeRecallHit({
+    path: "/Knowledge/mcp.md",
+    kind: { File: null },
+    match_reasons: ["content_fts"],
+    score: -10,
+    preview: [{ field: { Content: null }, char_offset: 123, match_reason: "content_fts", excerpt: ["excerpt"] }],
+    snippet: []
+  });
+  assert.equal(content.charOffset, 123);
+  assert.equal(content.previewField, "Content");
+  const pathOnly = normalizeRecallHit({
+    path: "/Knowledge/mcp.md",
+    kind: { File: null },
+    match_reasons: ["path_substring"],
+    score: -10,
+    preview: [{ field: { Path: null }, char_offset: 7, match_reason: "path_substring", excerpt: [] }],
+    snippet: []
+  });
+  assert.equal(pathOnly.charOffset, null);
+  assert.equal(pathOnly.previewField, "Path");
+});
+
 test("formatRecallContext creates a bounded quoted block without HTML interpretation", () => {
   const text = formatRecallContext(
     { title: "MCP notes", path: "/Knowledge/mcp.md", sourceUrl: "https://wiki.kinic.xyz/db/db/Knowledge/mcp.md" },
@@ -137,11 +246,18 @@ test("isAllowedRecallPath restricts reads to Recall search prefixes", () => {
 });
 
 test("applyRecallStorageChanges updates only sync Recall settings", () => {
-  const config = { databaseId: "old-db", recallEnabled: false };
+  const config = { databaseId: "old-db", recallEnabled: false, recallUrl: "https://old.example", recallToken: "old-token" };
   assert.deepEqual(applyRecallStorageChanges(config, {
     databaseId: { newValue: "new-db" },
-    recallEnabled: { newValue: "true" }
-  }, "sync"), { databaseId: "new-db", recallEnabled: true });
+    recallEnabled: { newValue: "true" },
+    recallUrl: { newValue: "https://wiki-generator.kinic.xyz" },
+    recallToken: { newValue: "new-token" }
+  }, "sync"), {
+    databaseId: "new-db",
+    recallEnabled: true,
+    recallUrl: "https://wiki-generator.kinic.xyz",
+    recallToken: "new-token"
+  });
   assert.deepEqual(applyRecallStorageChanges(config, {
     recallEnabled: { newValue: true }
   }, "local"), config);
@@ -151,14 +267,15 @@ test("titleFromPath derives a readable title", () => {
   assert.equal(titleFromPath("/Knowledge/agent_memory-note.md"), "agent memory note");
 });
 
-function hit(path, reasons, score, excerpt) {
+function hit(path, reasons, score, excerpt, options = {}) {
+  const field = options.field || "Content";
   return {
     path,
-    kind: { File: null },
+    kind: options.kind || { File: null },
     match_reasons: reasons,
     score,
-    preview: [{ field: { Content: null }, char_offset: 0, match_reason: reasons[0], excerpt: [excerpt] }],
-    snippet: [excerpt]
+    preview: [{ field: { [field]: null }, char_offset: options.charOffset ?? 0, match_reason: reasons[0], excerpt: [excerpt] }],
+    snippet: [options.snippet !== undefined ? options.snippet : excerpt]
   };
 }
 

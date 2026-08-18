@@ -136,6 +136,23 @@ select {
   font-weight: 400;
 }
 
+.recall-advanced {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--kinic-body);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 input:focus,
 select:focus {
   border-color: var(--kinic-hot-pink);

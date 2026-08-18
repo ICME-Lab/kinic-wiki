@@ -239,8 +239,62 @@ test("failure Queue outage retries the original message without acknowledging", 
   assert.equal(failureQueue.messages.length, 0);
 });
 
+test("recall search requires worker token config", async () => {
+  const response = await fetchWorker(recallSearchRequest(), { ...testEnv(new TestQueue()), KINIC_WIKI_WORKER_TOKEN: "" });
+
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /KINIC_WIKI_WORKER_TOKEN is required/);
+});
+
+test("recall search rejects missing bearer token", async () => {
+  const response = await fetchWorker(recallSearchRequest(), testEnv(new TestQueue()));
+
+  assert.equal(response.status, 401);
+  assert.match(await response.text(), /unauthorized/);
+});
+
+test("recall search rejects invalid JSON body", async () => {
+  const request = new Request("https://wiki-generator.kinic.xyz/recall-search", {
+    method: "POST",
+    headers: { authorization: "Bearer worker-token", "content-type": "application/json" },
+    body: "{not json"
+  });
+  const response = await fetchWorker(request, testEnv(new TestQueue()));
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /invalid JSON body/);
+});
+
+test("recall search rejects missing required fields", async () => {
+  const response = await fetchWorker(recallSearchRequest({ authorization: "Bearer worker-token" }, { distilledQuery: "" }), testEnv(new TestQueue()));
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /distilledQuery/);
+});
+
+test("recall search rejects a canisterId that differs from the configured canister", async () => {
+  const response = await fetchWorker(recallSearchRequest({ authorization: "Bearer worker-token" }, { canisterId: "other-cai" }), testEnv(new TestQueue()));
+
+  assert.equal(response.status, 500);
+  assert.match(await response.text(), /canisterId does not match/);
+});
+
 function authorizedSourceCaptureRequest(body: Record<string, string> = {}): Request {
   return sourceCaptureRequest({ authorization: "Bearer worker-token" }, body);
+}
+
+function recallSearchRequest(headers: Record<string, string> = {}, body: Record<string, unknown> = {}): Request {
+  return new Request("https://wiki-generator.kinic.xyz/recall-search", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({
+      draft: "How do I design long-term memory for an agent?",
+      distilledQuery: "長期記憶 設計",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
+      databaseId: "db_1",
+      ...body
+    })
+  });
 }
 
 function sourceCaptureRequest(headers: Record<string, string> = {}, body: Record<string, string> = {}): Request {

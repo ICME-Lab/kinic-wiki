@@ -235,7 +235,7 @@ export function deepSeekErrorMessage(body: unknown): string {
   return "DeepSeek request failed";
 }
 
-function extractDeepSeekResponseText(body: unknown): string {
+export function extractDeepSeekResponseText(body: unknown): string {
   if (!isDeepSeekChatCompletion(body)) {
     throw new DeepSeekResponseError("DeepSeek response shape is invalid");
   }

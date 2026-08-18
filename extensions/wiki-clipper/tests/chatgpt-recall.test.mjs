@@ -79,7 +79,7 @@ test("ChatGPT recall listener ignores typing and schedules submit once", async (
   listeners.get("keydown")({ key: "Enter", shiftKey: false, target: composer });
   await new Promise((resolve) => setTimeout(resolve, 340));
   assert.deepEqual(received, ["Find my old agent notes"]);
-  cleanup();
+  cleanup.dispose();
 });
 
 test("ChatGPT recall listener ignores IME composition Enter keys", async () => {
@@ -103,8 +103,129 @@ test("ChatGPT recall listener ignores IME composition Enter keys", async () => {
   listeners.get("keydown")({ key: "Enter", shiftKey: false, target: composer });
   await new Promise((resolve) => setTimeout(resolve, 340));
   assert.deepEqual(received, ["こんにちは"]);
-  cleanup();
+  cleanup.dispose();
 });
+
+test("ChatGPT recall listener ignores Enter and submits from unrelated inputs and forms", async () => {
+  const harness = recallHarness();
+  const listeners = new Map();
+  harness.documentRef.addEventListener = (type, listener) => listeners.set(type, listener);
+  harness.documentRef.removeEventListener = () => {};
+  const received = [];
+  const cleanup = installChatGptRecallListeners({
+    documentRef: harness.documentRef,
+    locationLike: { href: "https://chatgpt.com/c/abc" },
+    onSubmit: (query) => received.push(query)
+  });
+
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, target: harness.otherTextarea });
+  listeners.get("submit")({ target: harness.otherForm });
+  listeners.get("click")({ target: harness.otherButton });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, [], "unrelated input, form, and send button must not schedule recall");
+
+  listeners.get("submit")({ target: harness.composerForm });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, ["Find my old agent notes"]);
+  cleanup.dispose();
+});
+
+test("ChatGPT recall listener accepts only the composer form send button", async () => {
+  const harness = recallHarness();
+  const listeners = new Map();
+  harness.documentRef.addEventListener = (type, listener) => listeners.set(type, listener);
+  harness.documentRef.removeEventListener = () => {};
+  const received = [];
+  const cleanup = installChatGptRecallListeners({
+    documentRef: harness.documentRef,
+    locationLike: { href: "https://chatgpt.com/c/abc" },
+    onSubmit: (query) => received.push(query)
+  });
+
+  listeners.get("click")({ target: harness.sendButton });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, ["Find my old agent notes"]);
+  cleanup.dispose();
+});
+
+test("ChatGPT recall listener ignores defaultPrevented events", async () => {
+  const harness = recallHarness();
+  const listeners = new Map();
+  harness.documentRef.addEventListener = (type, listener) => listeners.set(type, listener);
+  harness.documentRef.removeEventListener = () => {};
+  const received = [];
+  const cleanup = installChatGptRecallListeners({
+    documentRef: harness.documentRef,
+    locationLike: { href: "https://chatgpt.com/c/abc" },
+    onSubmit: (query) => received.push(query)
+  });
+
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, target: harness.composer, defaultPrevented: true });
+  listeners.get("submit")({ target: harness.composerForm, defaultPrevented: true });
+  listeners.get("click")({ target: harness.sendButton, defaultPrevented: true });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, []);
+  cleanup.dispose();
+});
+
+test("ChatGPT recall listener cancels a pending schedule on navigation", async () => {
+  const harness = recallHarness();
+  const listeners = new Map();
+  harness.documentRef.addEventListener = (type, listener) => listeners.set(type, listener);
+  harness.documentRef.removeEventListener = () => {};
+  const received = [];
+  const cleanup = installChatGptRecallListeners({
+    documentRef: harness.documentRef,
+    locationLike: { href: "https://chatgpt.com/c/abc" },
+    onSubmit: (query) => received.push(query)
+  });
+
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, target: harness.composer });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(received, []);
+  cleanup.cancelPending();
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual(received, [], "cancelPending must suppress the scheduled recall");
+  cleanup.dispose();
+});
+
+function recallHarness() {
+  const composerForm = { tag: "form", name: "composer-form" };
+  const otherForm = { tag: "form", name: "other-form" };
+  const composer = {
+    ...textarea("Find my old agent notes"),
+    closest: (selector) => (selector === "form" ? composerForm : null),
+    contains: () => false
+  };
+  const otherTextarea = {
+    ...textarea("unrelated draft"),
+    closest: (selector) => (selector === "form" ? otherForm : null),
+    contains: () => false
+  };
+  const sendButton = makeButton("Send message", composerForm);
+  const otherButton = makeButton("Send feedback", otherForm);
+  const elements = [composer, otherTextarea, sendButton, otherButton];
+  const documentRef = {
+    activeElement: composer,
+    documentElement: { contains: (element) => elements.includes(element) },
+    querySelectorAll: () => [composer, otherTextarea],
+    defaultView: { getComputedStyle: () => ({ display: "block", visibility: "visible" }) },
+    addEventListener() {},
+    removeEventListener() {}
+  };
+  return { composer, otherTextarea, sendButton, otherButton, composerForm, otherForm, documentRef };
+}
+
+function makeButton(ariaLabel, form) {
+  const button = {
+    disabled: false,
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ display: "block", visibility: "visible" }) } },
+    getAttribute: (name) => (name === "aria-label" ? ariaLabel : ""),
+    closest: (selector) => (selector === "button" ? button : selector === "form" ? form : null),
+    contains: () => false
+  };
+  return button;
+}
 
 test("ChatGPT navigation listener detects URL changes via DOM mutations and events", () => {
   const listeners = new Map();
