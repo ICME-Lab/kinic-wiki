@@ -7,11 +7,17 @@ use crate::sqlite::{
 };
 
 const SCHEMA_VERSION_INITIAL: &str = "vfs_store:001_initial";
-const SCHEMA_VERSION_CURRENT: &str = "vfs_store:002_publication_mutation_commits";
-const SCHEMA_VERSIONS: &[&str] = &[SCHEMA_VERSION_INITIAL, SCHEMA_VERSION_CURRENT];
+const SCHEMA_VERSION_002: &str = "vfs_store:002_publication_mutation_commits";
+const SCHEMA_VERSION_CURRENT: &str = "vfs_store:003_fts_trigram";
+const SCHEMA_VERSIONS: &[&str] = &[
+    SCHEMA_VERSION_INITIAL,
+    SCHEMA_VERSION_002,
+    SCHEMA_VERSION_CURRENT,
+];
 const FRESH_FS_SCHEMA_SQL: &str = include_str!("../migrations/fresh_fs_schema.sql");
 const SCHEMA_MIGRATION_002: &str =
     include_str!("../migrations/002_publication_mutation_commits.sql");
+const SCHEMA_MIGRATION_003: &str = include_str!("../migrations/003_fts_trigram.sql");
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
 
@@ -27,8 +33,9 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
         reject_existing_managed_tables(tx)?;
         create_fresh_schema(tx)?;
         seed_initial_store_roots(tx)?;
-        record_schema_migration(tx, SCHEMA_VERSION_INITIAL)?;
-        record_schema_migration(tx, SCHEMA_VERSION_CURRENT)?;
+        for version in SCHEMA_VERSIONS {
+            record_schema_migration(tx, version)?;
+        }
         return Ok(());
     }
 
@@ -38,20 +45,29 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
 }
 
 fn apply_pending_migrations(conn: &Transaction<'_>) -> Result<(), String> {
-    let versions = applied_versions(conn)?;
-    let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-    if version_refs == SCHEMA_VERSIONS {
-        return Ok(());
+    let applied = applied_versions(conn)?;
+    for version in &applied {
+        if !SCHEMA_VERSIONS.contains(&version.as_str()) {
+            return Err(format!(
+                "unsupported vfs_store schema version; recreate database: {}",
+                applied.join(", ")
+            ));
+        }
     }
-    if version_refs != [SCHEMA_VERSION_INITIAL] {
-        return Err(format!(
-            "unsupported vfs_store schema version; recreate database: {}",
-            versions.join(", ")
-        ));
+    let applied_set: std::collections::HashSet<String> = applied.iter().cloned().collect();
+    for version in SCHEMA_VERSIONS {
+        if applied_set.contains(*version) {
+            continue;
+        }
+        let sql = match *version {
+            SCHEMA_VERSION_002 => SCHEMA_MIGRATION_002,
+            SCHEMA_VERSION_CURRENT => SCHEMA_MIGRATION_003,
+            _ => continue,
+        };
+        conn.execute_batch(sql).map_err(|error| error.to_string())?;
+        record_schema_migration(conn, version)?;
     }
-    conn.execute_batch(SCHEMA_MIGRATION_002)
-        .map_err(|error| error.to_string())?;
-    record_schema_migration(conn, SCHEMA_VERSION_CURRENT)
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

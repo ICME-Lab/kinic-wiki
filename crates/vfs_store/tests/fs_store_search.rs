@@ -551,6 +551,47 @@ fn search_nodes_supports_japanese_queries_without_spaces() {
 }
 
 #[test]
+fn search_nodes_cjk_content_only_match_uses_content_substring() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/ascii-dir/design-notes.md", 1_699);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/ascii-dir/design-notes.md".to_string(),
+                kind: NodeKind::File,
+                content: "設計の作業メモと検索方針".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_700,
+        )
+        .expect("write should succeed");
+
+    // A 2-char CJK query is below the trigram FTS minimum, and an ASCII path
+    // cannot match path_substring, so the body substring stage is the only way
+    // this node surfaces. Recall must keep these hits.
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "設計".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+
+    assert_eq!(hits[0].path, "/Knowledge/ascii-dir/design-notes.md");
+    assert!(
+        hits[0]
+            .match_reasons
+            .contains(&"content_substring".to_string()),
+        "2-char CJK body match on an ASCII path should use content_substring: {:?}",
+        hits[0].match_reasons
+    );
+}
+
+#[test]
 fn search_nodes_path_only_hits_keep_path_snippets() {
     let (_dir, store) = new_store();
     ensure_parent_folders(&store, "/Knowledge/path-only/unique-title.md", 1_799);

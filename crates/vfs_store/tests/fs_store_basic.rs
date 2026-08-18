@@ -137,7 +137,8 @@ fn fs_migrations_create_tables() {
         .expect("fts sql lookup should succeed");
     assert!(fts_sql.contains("fts5(\n    path,"));
     assert!(fts_sql.contains("title,"));
-    assert!(fts_sql.contains("content\n"));
+    assert!(fts_sql.contains("content,"));
+    assert!(fts_sql.contains("trigram"));
 
     let versions: Vec<String> = conn
         .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
@@ -151,6 +152,7 @@ fn fs_migrations_create_tables() {
         vec![
             "vfs_store:001_initial".to_string(),
             "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
         ]
     );
 
@@ -1270,6 +1272,7 @@ fn fs_migrations_are_idempotent() {
         vec![
             "vfs_store:001_initial".to_string(),
             "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
         ]
     );
 
@@ -1279,6 +1282,78 @@ fn fs_migrations_are_idempotent() {
         })
         .expect("path state count should succeed");
     assert_eq!(tracked_paths, 10);
+}
+
+#[test]
+fn fs_migration_003_rebuilds_fts_with_trigram() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/日本語/検索改善メモ.md", 1_799);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/日本語/検索改善メモ.md".to_string(),
+                kind: NodeKind::File,
+                content: "検索精度改善の作業メモ".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_800,
+        )
+        .expect("write should succeed");
+
+    // Simulate the pre-003 state: the FTS index is the old unicode61 shape and
+    // the 003 marker is absent, so the next migration run must rebuild it with
+    // the trigram tokenizer and preserve searchable content.
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_nodes_fts;
+         CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(path, title, content);
+         INSERT INTO fs_nodes_fts(rowid, path, title, content)
+            SELECT id, path, COALESCE(name, ''), content FROM fs_nodes;
+         DELETE FROM schema_migrations WHERE version = 'vfs_store:003_fts_trigram';",
+    )
+    .expect("old schema setup should succeed");
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("003 fts trigram migration should apply");
+
+    let conn = Connection::open(store.database_path()).expect("db should reopen");
+    let versions: Vec<String> = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .expect("version query should prepare")
+        .query_map([], |row| row.get(0))
+        .expect("version query should run")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("versions should collect");
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
+        ]
+    );
+
+    // "精度改善" is a 4-char substring of the node content. The unicode61
+    // tokenizer treated the whole CJK run as one token and could not match it;
+    // trigram matches substrings, so content search must work after migration.
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "精度改善".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Knowledge/日本語/検索改善メモ.md"),
+        "trigram migration should restore Japanese content substring search"
+    );
 }
 
 #[test]

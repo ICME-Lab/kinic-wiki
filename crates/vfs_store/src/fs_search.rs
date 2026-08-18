@@ -10,6 +10,7 @@ use crate::fs_helpers::{file_search_title, prefix_filter_sql_for_column};
 
 const SEARCH_CANDIDATE_MULTIPLIER: u32 = 4;
 const FTS_RANK_SCALE: f32 = 10_000.0;
+const FTS_TERM_MAX_CHARS: usize = 64;
 const PATH_EXACT_SCORE: f32 = -600_000_000.0;
 const BASENAME_EXACT_SCORE: f32 = -500_000_000.0;
 const BASENAME_PREFIX_SCORE: f32 = -400_000_000.0;
@@ -69,25 +70,31 @@ pub(crate) fn build_search_query_plan(query_text: &str) -> Option<SearchQueryPla
         .iter()
         .map(|term| term.to_lowercase())
         .collect::<Vec<_>>();
-    let mut recall_terms = Vec::new();
-    let mut has_cjk = false;
+    let has_cjk = whitespace_terms.iter().any(|term| contains_cjk(term));
+    // The fs_nodes_fts table uses the FTS5 trigram tokenizer, which requires
+    // query tokens of at least 3 characters and matches substrings. Shorter
+    // terms are handled by the path/content-substring fallback stages instead.
+    // Very long single-token terms are truncated so a huge query (or a huge
+    // stored token) cannot blow up the trigram index/query.
+    let mut fts_terms = Vec::new();
+    let mut seen_fts = std::collections::HashSet::new();
     for term in &whitespace_terms {
-        recall_terms.push(term.clone());
-        if contains_cjk(term) {
-            has_cjk = true;
-            recall_terms.extend(cjk_bigrams(term));
+        if term.chars().count() < 3 {
+            continue;
+        }
+        let trimmed: String = term.chars().take(FTS_TERM_MAX_CHARS).collect();
+        if seen_fts.insert(trimmed.clone()) {
+            fts_terms.push(trimmed);
         }
     }
-    recall_terms.sort();
-    recall_terms.dedup();
-    let exact_fts = join_fts_terms(&whitespace_terms, " ");
-    let recall_fts = join_fts_terms(&recall_terms, " OR ");
+    let exact_fts = (!fts_terms.is_empty()).then(|| join_fts_terms(&fts_terms, " "));
+    let recall_fts = (fts_terms.len() > 1).then(|| join_fts_terms(&fts_terms, " OR "));
     Some(SearchQueryPlan {
         raw_query,
         lowered_query,
         path_terms,
-        exact_fts: Some(exact_fts.clone()),
-        recall_fts: (exact_fts != recall_fts).then_some(recall_fts),
+        exact_fts,
+        recall_fts,
         has_cjk,
     })
 }
@@ -581,14 +588,6 @@ fn join_fts_terms(terms: &[String], separator: &str) -> String {
         .join(separator)
 }
 
-fn cjk_bigrams(term: &str) -> Vec<String> {
-    let chars = term.chars().collect::<Vec<_>>();
-    chars
-        .windows(2)
-        .map(|window| window.iter().collect::<String>())
-        .collect()
-}
-
 fn contains_cjk(value: &str) -> bool {
     value.chars().any(
         |ch| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff),
@@ -631,10 +630,27 @@ mod tests {
     }
 
     #[test]
-    fn cjk_query_plan_keeps_recall_fts() {
+    fn cjk_query_plan_deduplicates_single_fts_term() {
         let plan = build_search_query_plan("検索改善").expect("cjk query plan should exist");
         assert!(plan.exact_fts.is_some());
+        assert!(plan.recall_fts.is_none());
+        assert!(plan.has_cjk);
+    }
+
+    #[test]
+    fn multi_term_query_plan_keeps_or_recall_fts() {
+        let plan = build_search_query_plan("長期記憶 検索精度")
+            .expect("multi-term query plan should exist");
+        assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_some());
+    }
+
+    #[test]
+    fn short_term_query_plan_omits_fts_and_keeps_path_terms() {
+        let plan = build_search_query_plan("検 索 改").expect("short-term plan should exist");
+        assert!(plan.exact_fts.is_none());
+        assert!(plan.recall_fts.is_none());
+        assert_eq!(plan.path_terms, vec!["検", "索", "改"]);
     }
 
     #[test]
