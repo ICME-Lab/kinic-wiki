@@ -268,11 +268,6 @@ export async function searchRecall(query, conversationUrl, config) {
   if (!rawQuery) return [];
   const literalQuery = buildRecallSearchQuery(rawQuery) ?? rawQuery;
 
-  if (config.recallUrl && config.recallToken) {
-    const generatorResults = await searchRecallViaGenerator(rawQuery, literalQuery, conversationUrl, config);
-    if (generatorResults) return generatorResults;
-  }
-
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
   const literalHits = await searchRecallHits(actor, config.databaseId, literalQuery);
@@ -285,44 +280,6 @@ export async function searchRecall(query, conversationUrl, config) {
   const fallbackHits = await searchRecallHits(actor, config.databaseId, fallbackQuery);
   const results = rankRecallHits([...literalHits, ...fallbackHits], { currentConversationUrl: conversationUrl });
   return normalizeRecallResults(results, config.databaseId);
-}
-
-async function searchRecallViaGenerator(rawQuery, distilledQuery, conversationUrl, config) {
-  try {
-    const baseUrl = config.recallUrl.endsWith("/") ? config.recallUrl : `${config.recallUrl}/`;
-    const response = await fetchFactory(`${baseUrl}recall-search`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${config.recallToken}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        draft: rawQuery,
-        distilledQuery,
-        canisterId: config.canisterId,
-        databaseId: config.databaseId,
-        conversationUrl
-      })
-    });
-    if (!response.ok) return null;
-    const body = await response.json();
-    if (!body || !Array.isArray(body.results)) return null;
-    return normalizeGeneratorRecallResults(body.results, config.databaseId);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeGeneratorRecallResults(results, databaseId) {
-  return results
-    .filter((result) => result && typeof result.path === "string")
-    .map((result) => ({
-      path: result.path,
-      kind: result.kind,
-      title: titleFromPath(result.path),
-      snippet: String(result.previewExcerpt ?? result.snippet ?? "").trim(),
-      sourceUrl: sourceUrlForPath(databaseId, result.path)
-    }));
 }
 
 async function searchRecallHits(actor, databaseId, query) {

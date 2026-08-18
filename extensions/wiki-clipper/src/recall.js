@@ -140,12 +140,6 @@ export function applyRecallStorageChanges(config, changes, areaName) {
   if (Object.prototype.hasOwnProperty.call(changes, "recallEnabled")) {
     next.recallEnabled = changes.recallEnabled?.newValue === true || changes.recallEnabled?.newValue === "true";
   }
-  if (Object.prototype.hasOwnProperty.call(changes, "recallUrl")) {
-    next.recallUrl = String(changes.recallUrl?.newValue || "").trim();
-  }
-  if (Object.prototype.hasOwnProperty.call(changes, "recallToken")) {
-    next.recallToken = String(changes.recallToken?.newValue || "").trim();
-  }
   return next;
 }
 

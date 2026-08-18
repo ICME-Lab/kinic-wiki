@@ -257,17 +257,13 @@ test("isAllowedRecallPath restricts reads to Recall search prefixes", () => {
 });
 
 test("applyRecallStorageChanges updates only sync Recall settings", () => {
-  const config = { databaseId: "old-db", recallEnabled: false, recallUrl: "https://old.example", recallToken: "old-token" };
+  const config = { databaseId: "old-db", recallEnabled: false };
   assert.deepEqual(applyRecallStorageChanges(config, {
     databaseId: { newValue: "new-db" },
-    recallEnabled: { newValue: "true" },
-    recallUrl: { newValue: "https://wiki-generator.kinic.xyz" },
-    recallToken: { newValue: "new-token" }
+    recallEnabled: { newValue: "true" }
   }, "sync"), {
     databaseId: "new-db",
-    recallEnabled: true,
-    recallUrl: "https://wiki-generator.kinic.xyz",
-    recallToken: "new-token"
+    recallEnabled: true
   });
   assert.deepEqual(applyRecallStorageChanges(config, {
     recallEnabled: { newValue: true }

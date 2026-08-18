@@ -15,9 +15,7 @@ const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST,
-  recallEnabled: false,
-  recallUrl: "",
-  recallToken: ""
+  recallEnabled: false
 };
 const PROVIDERS = {
   chatgpt: {
@@ -50,7 +48,6 @@ const SAVE_EVIDENCE_MENU_ID = "kinic-wiki-clipper-save-evidence";
 const SOURCE_CAPTURE_IN_FLIGHT_KEY = "kinic-source-capture-in-flight-v1";
 const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 const RECALL_TIMEOUT_MS = 2_000;
-const RECALL_GENERATOR_TIMEOUT_MS = 10_000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
@@ -395,7 +392,6 @@ async function recallSearch(message, sender) {
   const query = normalizeRecallQuery(message?.query);
   if (!query) return [];
   const conversationUrl = typeof message?.conversationUrl === "string" ? message.conversationUrl : "";
-  const timeoutMs = config.recallUrl ? RECALL_GENERATOR_TIMEOUT_MS : RECALL_TIMEOUT_MS;
   const response = await withTimeout(
     offscreenBridge({
       target: "offscreen",
@@ -404,7 +400,7 @@ async function recallSearch(message, sender) {
       conversationUrl,
       config
     }),
-    timeoutMs
+    RECALL_TIMEOUT_MS
   );
   if (!response?.ok) throw new Error(response?.error || "recall search failed");
   return response.result || [];
@@ -922,9 +918,7 @@ async function loadConfig() {
     canisterId: DEFAULT_CONFIG.canisterId,
     databaseId: String(stored.databaseId || DEFAULT_CONFIG.databaseId),
     host: DEFAULT_CONFIG.host,
-    recallEnabled: asBoolean(stored.recallEnabled),
-    recallUrl: String(stored.recallUrl || "").trim(),
-    recallToken: String(stored.recallToken || "").trim()
+    recallEnabled: asBoolean(stored.recallEnabled)
   };
 }
 
@@ -932,13 +926,9 @@ async function saveConfig(config) {
   const stored = await chrome.storage.sync.get(DEFAULT_CONFIG);
   const hasDatabaseId = Object.prototype.hasOwnProperty.call(config || {}, "databaseId");
   const hasRecallEnabled = Object.prototype.hasOwnProperty.call(config || {}, "recallEnabled");
-  const hasRecallUrl = Object.prototype.hasOwnProperty.call(config || {}, "recallUrl");
-  const hasRecallToken = Object.prototype.hasOwnProperty.call(config || {}, "recallToken");
   const databaseId = hasDatabaseId ? String(config?.databaseId || "").trim() : String(stored.databaseId || "").trim();
   const recallEnabled = hasRecallEnabled ? asBoolean(config.recallEnabled) : asBoolean(stored.recallEnabled);
-  const recallUrl = hasRecallUrl ? String(config?.recallUrl || "").trim() : String(stored.recallUrl || "").trim();
-  const recallToken = hasRecallToken ? String(config?.recallToken || "").trim() : String(stored.recallToken || "").trim();
-  await chrome.storage.sync.set({ databaseId, recallEnabled, recallUrl, recallToken });
+  await chrome.storage.sync.set({ databaseId, recallEnabled });
   await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl"]);
 }
 
@@ -947,9 +937,7 @@ function withFixedRuntimeConfig(config) {
     ...config,
     canisterId: DEFAULT_CONFIG.canisterId,
     host: DEFAULT_CONFIG.host,
-    recallEnabled: asBoolean(config?.recallEnabled),
-    recallUrl: String(config?.recallUrl || "").trim(),
-    recallToken: String(config?.recallToken || "").trim()
+    recallEnabled: asBoolean(config?.recallEnabled)
   };
 }
 
