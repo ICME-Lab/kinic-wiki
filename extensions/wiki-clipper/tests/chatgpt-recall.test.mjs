@@ -45,21 +45,94 @@ test("ChatGPT recall listener ignores typing and schedules submit once", async (
   cleanup();
 });
 
-test("ChatGPT navigation listener observes history and popstate changes and restores history", () => {
+test("ChatGPT recall listener ignores IME composition Enter keys", async () => {
+  const composer = textarea("こんにちは");
+  const documentRef = fakeDocument(composer);
+  const listeners = new Map();
+  documentRef.addEventListener = (type, listener) => listeners.set(type, listener);
+  documentRef.removeEventListener = () => {};
+  const received = [];
+  const cleanup = installChatGptRecallListeners({
+    documentRef,
+    locationLike: { href: "https://chatgpt.com/c/abc" },
+    onSubmit: (query) => received.push(query)
+  });
+
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, isComposing: true, target: composer });
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, keyCode: 229, target: composer });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, []);
+
+  listeners.get("keydown")({ key: "Enter", shiftKey: false, target: composer });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.deepEqual(received, ["こんにちは"]);
+  cleanup();
+});
+
+test("ChatGPT navigation listener detects URL changes via DOM mutations and events", () => {
   const listeners = new Map();
   const location = { href: "https://chatgpt.com/c/one" };
-  const originalPushState = function () {};
-  const originalReplaceState = function () {};
-  const history = { pushState: originalPushState, replaceState: originalReplaceState };
   const windowRef = {
     location,
-    history,
     addEventListener(type, listener) {
       listeners.set(type, listener);
     },
     removeEventListener(type) {
       listeners.delete(type);
     }
+  };
+  let observerCallback = null;
+  let disconnected = 0;
+  let observed = null;
+  class FakeMutationObserver {
+    constructor(callback) {
+      observerCallback = callback;
+    }
+    observe(target, options) {
+      observed = { target, options };
+    }
+    disconnect() {
+      disconnected += 1;
+    }
+  }
+  const documentRef = { documentElement: {} };
+  const navigations = [];
+  const dispose = installChatGptNavigationListener({
+    windowRef,
+    locationLike: location,
+    documentRef,
+    MutationObserverRef: FakeMutationObserver,
+    onNavigate: (url) => navigations.push(url)
+  });
+
+  assert.deepEqual(observed, { target: documentRef.documentElement, options: { childList: true, subtree: true } });
+
+  location.href = "https://chatgpt.com/c/two";
+  observerCallback();
+  assert.deepEqual(navigations, ["https://chatgpt.com/c/two"]);
+
+  location.href = "https://chatgpt.com/c/three";
+  listeners.get("hashchange")();
+  assert.deepEqual(navigations, ["https://chatgpt.com/c/two", "https://chatgpt.com/c/three"]);
+
+  listeners.get("popstate")();
+  assert.deepEqual(navigations, ["https://chatgpt.com/c/two", "https://chatgpt.com/c/three"]);
+
+  dispose();
+  assert.equal(disconnected, 1);
+  assert.equal(listeners.has("popstate"), false);
+  assert.equal(listeners.has("hashchange"), false);
+});
+
+test("ChatGPT navigation listener falls back to events without a document", () => {
+  const listeners = new Map();
+  const location = { href: "https://chatgpt.com/c/one" };
+  const windowRef = {
+    location,
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    removeEventListener() {}
   };
   const navigations = [];
   const dispose = installChatGptNavigationListener({
@@ -69,20 +142,9 @@ test("ChatGPT navigation listener observes history and popstate changes and rest
   });
 
   location.href = "https://chatgpt.com/c/two";
-  history.pushState({}, "", "/c/two");
-  location.href = "https://chatgpt.com/c/three";
-  history.replaceState({}, "", "/c/three");
-  location.href = "https://chatgpt.com/c/four";
   listeners.get("popstate")();
-
-  assert.deepEqual(navigations, [
-    "https://chatgpt.com/c/two",
-    "https://chatgpt.com/c/three",
-    "https://chatgpt.com/c/four"
-  ]);
+  assert.deepEqual(navigations, ["https://chatgpt.com/c/two"]);
   dispose();
-  assert.equal(history.pushState, originalPushState);
-  assert.equal(history.replaceState, originalReplaceState);
 });
 
 function textarea(value) {

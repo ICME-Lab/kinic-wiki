@@ -15,8 +15,8 @@ import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./source-capture-request.js";
 import { databaseOptionLabel, isSelectedWritableDatabase } from "../popup/popup-state.js";
 import { applyRecallStorageChanges, formatRecallContext } from "./recall.js";
+import { applyRecallContext } from "./recall-context.js";
 import {
-  findChatGptComposer,
   insertChatGptContext,
   installChatGptRecallListeners,
   installChatGptNavigationListener,
@@ -67,6 +67,8 @@ installChatGptRecallListeners({
 installChatGptNavigationListener({
   windowRef: globalThis,
   locationLike: location,
+  documentRef: document,
+  MutationObserverRef: MutationObserver,
   onNavigate: () => invalidateRecall()
 });
 chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
@@ -354,14 +356,16 @@ function invalidateRecall() {
 
 async function addRecallContext(result) {
   try {
-    const response = await send({
-      type: "recall-fetch",
-      requestId: String(recallRequestGeneration),
-      path: result.path
+    const outcome = await applyRecallContext({
+      result,
+      request: recallState(),
+      send,
+      state: recallState,
+      format: formatRecallContext,
+      insert: (context) => insertChatGptContext(context, document)
     });
-    const fetched = response.result;
-    const context = formatRecallContext(result, fetched?.content || result.snippet);
-    if (!findChatGptComposer(document) || !insertChatGptContext(context, document)) {
+    if (outcome.reason === "stale") return;
+    if (!outcome.applied) {
       showToast("ChatGPT input is unavailable.", "error");
       return;
     }
@@ -369,6 +373,15 @@ async function addRecallContext(result) {
   } catch (nextError) {
     showToast(messageForError(nextError), "error");
   }
+}
+
+function recallState() {
+  return {
+    generation: recallRequestGeneration,
+    conversationUrl: location.href,
+    databaseId: config.value.databaseId,
+    recallEnabled: config.value.recallEnabled === true
+  };
 }
 
 async function loadConfig() {

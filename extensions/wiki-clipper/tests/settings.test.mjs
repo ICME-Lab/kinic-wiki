@@ -45,6 +45,7 @@ test("settings popup omits fixed runtime inputs", () => {
 test("settings and ChatGPT export use Kinic brand colors", () => {
   const popupCss = readFileSync(new URL("../popup/popup.css", import.meta.url), "utf8");
   const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const recallContext = readFileSync(new URL("../src/recall-context.js", import.meta.url), "utf8");
   const storeAssets = readFileSync(new URL("../scripts/generate-store-assets.mjs", import.meta.url), "utf8");
   assert.match(popupCss, /margin: 0 auto/);
   assert.match(popupCss, /width: min\(380px, calc\(100vw - 28px\)\)/);
@@ -93,7 +94,7 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.doesNotMatch(contentUi, /Database ID/);
   assert.match(contentUi, /Kinic Memory/);
   assert.match(contentUi, /type: "recall-search"/);
-  assert.match(contentUi, /type: "recall-fetch"/);
+  assert.match(recallContext, /type: "recall-fetch"/);
   assert.match(contentUi, /chrome\.storage\?\.onChanged/);
   assert.match(contentUi, /applyRecallStorageChanges/);
   assert.match(contentUi, /invalidateRecall/);

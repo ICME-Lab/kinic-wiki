@@ -72,6 +72,7 @@ export function installChatGptRecallListeners({ documentRef = globalThis.documen
 
   const onSubmitEvent = () => schedule();
   const onKeyDown = (event) => {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter" && !event.shiftKey && isComposerTarget(event.target)) schedule();
   };
   const onClick = (event) => {
@@ -88,7 +89,7 @@ export function installChatGptRecallListeners({ documentRef = globalThis.documen
   };
 }
 
-export function installChatGptNavigationListener({ windowRef = globalThis, locationLike, onNavigate }) {
+export function installChatGptNavigationListener({ windowRef = globalThis, locationLike, documentRef, MutationObserverRef = globalThis.MutationObserver, onNavigate }) {
   const currentLocation = locationLike || windowRef?.location;
   if (!windowRef || !currentLocation || !isChatGptOrigin(currentLocation.href || "") || typeof onNavigate !== "function") return () => {};
   let currentUrl = String(currentLocation.href || "");
@@ -98,27 +99,16 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
     currentUrl = nextUrl;
     onNavigate(nextUrl);
   };
-  const history = windowRef.history;
-  const wrappedMethods = [];
-  for (const method of ["pushState", "replaceState"]) {
-    const original = history?.[method];
-    if (typeof original !== "function") continue;
-    const wrapped = function (...args) {
-      const result = original.apply(this, args);
-      notify();
-      return result;
-    };
-    history[method] = wrapped;
-    wrappedMethods.push([method, original, wrapped]);
-  }
+  const observer = documentRef?.documentElement && MutationObserverRef
+    ? new MutationObserverRef(() => notify())
+    : null;
+  observer?.observe?.(documentRef.documentElement, { childList: true, subtree: true });
   windowRef.addEventListener?.("popstate", notify);
   windowRef.addEventListener?.("hashchange", notify);
   return () => {
     windowRef.removeEventListener?.("popstate", notify);
     windowRef.removeEventListener?.("hashchange", notify);
-    for (const [method, original, wrapped] of wrappedMethods) {
-      if (history[method] === wrapped) history[method] = original;
-    }
+    observer?.disconnect?.();
   };
 }
 

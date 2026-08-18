@@ -1,6 +1,7 @@
 // Where: extensions/wiki-clipper/src/recall.js
 // What: Pure Recall query normalization, ranking, and context formatting.
 // Why: Search policy must be testable without a browser or canister.
+import { fnv1aHex } from "@kinic/source-contracts";
 
 export const RECALL_QUERY_MAX_CHARS = 2_000;
 export const RECALL_RESULT_LIMIT = 3;
@@ -84,11 +85,14 @@ export function rankRecallHits(hits, { currentConversationUrl = "" } = {}) {
 
 export function normalizeRecallHit(hit) {
   const path = String(hit?.path || "");
+  const preview = candidOpt(hit?.preview);
+  const excerpt = candidOpt(preview?.excerpt);
+  const snippet = candidOpt(hit?.snippet);
   return {
     path,
     kind: variantKey(hit?.kind) || "File",
     title: titleFromPath(path),
-    snippet: String(hit?.preview?.excerpt?.[0] || hit?.snippet?.[0] || "").trim(),
+    snippet: String(excerpt || snippet || "").trim(),
     updatedAt: null,
     sourceUrl: null,
     score: Number.isFinite(Number(hit?.score)) ? Number(hit.score) : Number.POSITIVE_INFINITY,
@@ -122,6 +126,10 @@ function variantKey(value) {
   return "";
 }
 
+function candidOpt(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function equivalentRecallQueryKey(value) {
   return normalizeRecallQuery(value)
     .toLocaleLowerCase("en-US")
@@ -133,7 +141,7 @@ function equivalentRecallQueryKey(value) {
 
 function conversationIdFromUrl(value) {
   try {
-    const match = new URL(String(value || "")).pathname.match(/^\/c\/([^/]+)/);
+    const match = new URL(String(value || "")).pathname.match(/^\/(?:c|chat|(?:u\/\d+\/)?app)\/([^/]+)/);
     return match?.[1] || "";
   } catch {
     return "";
@@ -141,5 +149,7 @@ function conversationIdFromUrl(value) {
 }
 
 function pathLooksLikeCurrentConversation(path, conversationId) {
-  return Boolean(conversationId && path.includes(`/chatgpt/${conversationId}`));
+  if (!conversationId) return false;
+  const currentHash = fnv1aHex(`chatgpt:${conversationId}`);
+  return path.startsWith("/Sources/chatgpt/") && path.endsWith(`-${currentHash}.md`);
 }

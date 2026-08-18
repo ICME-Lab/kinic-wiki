@@ -10,10 +10,12 @@ import {
   isAllowedRecallPath,
   isChatGptOrigin,
   isRecallSender,
+  normalizeRecallHit,
   normalizeRecallQuery,
   rankRecallHits,
   titleFromPath
 } from "../src/recall.js";
+import { buildEvidenceSource } from "../src/evidence-source.js";
 
 test("buildRecallFallbackQuery keeps compact ASCII anchors and a Japanese term", () => {
   assert.equal(
@@ -44,11 +46,58 @@ test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hit
   assert.deepEqual(results.map((result) => result.path), ["/Knowledge/one.md", "/Sources/chatgpt/one.md"]);
 });
 
-test("rankRecallHits excludes a path containing the current ChatGPT conversation id", () => {
-  const results = rankRecallHits([hit("/Sources/chatgpt/abc.md", ["content_fts"], -1, "current")], {
+test("rankRecallHits excludes the current ChatGPT conversation source path", () => {
+  const source = chatgptSource("https://chatgpt.com/c/abc", "Project Chat");
+  const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "current")], {
     currentConversationUrl: "https://chatgpt.com/c/abc"
   });
   assert.deepEqual(results, []);
+});
+
+test("rankRecallHits keeps another conversation's source path", () => {
+  const source = chatgptSource("https://chatgpt.com/c/abc", "Project Chat");
+  const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "other")], {
+    currentConversationUrl: "https://chatgpt.com/c/def"
+  });
+  assert.deepEqual(results.map((result) => result.path), [source.path]);
+});
+
+test("rankRecallHits excludes the current conversation for chat and app URL forms", () => {
+  const source = chatgptSource("https://chatgpt.com/c/abc", "Project Chat");
+  for (const url of [
+    "https://chatgpt.com/chat/abc",
+    "https://chatgpt.com/app/abc",
+    "https://chatgpt.com/u/1/app/abc"
+  ]) {
+    const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "current")], {
+      currentConversationUrl: url
+    });
+    assert.deepEqual(results, [], `expected ${url} to exclude the current conversation`);
+  }
+});
+
+test("normalizeRecallHit prefers the ContentStart preview excerpt over an empty snippet", () => {
+  const result = normalizeRecallHit({
+    path: "/Knowledge/mcp.md",
+    kind: { File: null },
+    match_reasons: ["content_fts"],
+    score: -10,
+    preview: [{ field: { Content: null }, char_offset: 0, match_reason: "content_start", excerpt: ["preview body"] }],
+    snippet: []
+  });
+  assert.equal(result.snippet, "preview body");
+});
+
+test("normalizeRecallHit falls back to the snippet when preview is absent", () => {
+  const result = normalizeRecallHit({
+    path: "/Knowledge/mcp.md",
+    kind: { File: null },
+    match_reasons: ["title_fts"],
+    score: -10,
+    preview: [],
+    snippet: ["snippet text"]
+  });
+  assert.equal(result.snippet, "snippet text");
 });
 
 test("formatRecallContext creates a bounded quoted block without HTML interpretation", () => {
@@ -102,4 +151,14 @@ function hit(path, reasons, score, excerpt) {
     preview: [{ field: { Content: null }, char_offset: 0, match_reason: reasons[0], excerpt: [excerpt] }],
     snippet: [excerpt]
   };
+}
+
+function chatgptSource(url, conversationTitle) {
+  return buildEvidenceSource({
+    provider: "chatgpt",
+    url,
+    conversationTitle,
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
 }
