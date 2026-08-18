@@ -4,7 +4,7 @@ import { AppLink as Link } from "@/components/app-link";
 import { CheckCircle, Database, FileText, GitBranch, ShoppingCart, Tag, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";

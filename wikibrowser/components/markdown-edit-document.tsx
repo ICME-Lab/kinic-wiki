@@ -2,7 +2,7 @@
 
 import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import type { WikiNode } from "@/lib/types";
 import { errorMessage } from "@/lib/wiki-helpers";
 import { writeNodeAuthenticated } from "@/lib/vfs-client";

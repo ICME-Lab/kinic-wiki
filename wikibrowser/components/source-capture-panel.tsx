@@ -3,7 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { createSourceCaptureRequest } from "@/lib/source-capture";
 
 export function SourceCapturePanel({

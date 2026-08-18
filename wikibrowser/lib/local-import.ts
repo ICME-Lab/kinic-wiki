@@ -1,5 +1,5 @@
 import type { ChildNode, WriteNodeItem } from "@/lib/types";
-import { extractPdfForLocalImport, type ExtractedPdfImport } from "@/lib/pdf-local-import";
+import type { ExtractedPdfImport } from "@/lib/pdf-local-import";
 
 export const LOCAL_IMPORT_NODE_LIMIT = 100;
 export const LOCAL_IMPORT_BYTE_LIMIT = 1_500_000;
@@ -64,13 +64,21 @@ export type PrepareLocalImportOptions = {
   signal?: AbortSignal;
 };
 
+async function defaultExtractPdf(file: LocalImportFile, signal?: AbortSignal): Promise<ExtractedPdfImport> {
+  if (import.meta.env.SSR) {
+    throw new Error("PDF import is only available in the browser.");
+  }
+  const { extractPdfForLocalImport } = await import("@/lib/pdf-local-import");
+  return extractPdfForLocalImport(file, signal);
+}
+
 export async function prepareLocalImport(
   selectedFiles: LocalImportFile[],
   destinationDirectory: string,
   mode: LocalImportMode,
   options: PrepareLocalImportOptions = {}
 ): Promise<PreparedLocalImport> {
-  const { extractPdf = extractPdfForLocalImport, signal } = options;
+  const { extractPdf = defaultExtractPdf, signal } = options;
   throwIfAborted(signal);
   if (selectedFiles.length === 0) {
     throw new Error(mode === "folder" ? "Choose a folder containing Markdown or PDF files." : "Choose one or more Markdown or PDF files.");

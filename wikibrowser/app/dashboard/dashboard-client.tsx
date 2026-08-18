@@ -4,7 +4,7 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useAppNavigate } from "@/lib/app-router";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import type { BusyAction } from "./access-control";
 import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, DatabaseMetadataDialog, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
 import { useAppSession } from "../app-session-provider";

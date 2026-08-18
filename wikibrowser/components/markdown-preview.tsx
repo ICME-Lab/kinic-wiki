@@ -1,8 +1,7 @@
 "use client";
 
 import { WikiNavigationLink } from "@/components/wiki-navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/lib/markdown-renderer";
 import { safeMarkdownImageSrc } from "@/lib/markdown-images";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import { renderWikilinksAsMarkdown } from "@/lib/markdown-wikilinks";
@@ -25,8 +24,7 @@ export function MarkdownPreview({
     <>
       {frontmatter ? <TrustBanner canisterId={canisterId} databaseId={databaseId} fields={frontmatter.fields} /> : null}
       {frontmatter && frontmatter.fields.length > 0 ? <FrontmatterSummary fields={frontmatter.fields} /> : null}
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+      <Markdown
         components={{
           a({ href, children, ...props }) {
             const wikiHref = hrefForMarkdownLink(canisterId, databaseId, nodePath, href);
@@ -46,7 +44,7 @@ export function MarkdownPreview({
         }}
       >
         {markdown}
-      </ReactMarkdown>
+      </Markdown>
     </>
   );
 }
