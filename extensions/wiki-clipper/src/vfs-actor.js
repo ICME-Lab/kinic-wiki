@@ -82,6 +82,29 @@ function idlFactory({ IDL: idl }) {
     etag: idl.Text,
     metadata_json: idl.Text
   });
+  const SearchPreviewField = idl.Variant({ Path: idl.Null, Content: idl.Null });
+  const SearchPreviewMode = idl.Variant({ Light: idl.Null, ContentStart: idl.Null, None: idl.Null });
+  const SearchPreview = idl.Record({
+    field: SearchPreviewField,
+    char_offset: idl.Nat32,
+    match_reason: idl.Text,
+    excerpt: idl.Opt(idl.Text)
+  });
+  const SearchNodeHit = idl.Record({
+    preview: idl.Opt(SearchPreview),
+    kind: NodeKind,
+    path: idl.Text,
+    match_reasons: idl.Vec(idl.Text),
+    snippet: idl.Opt(idl.Text),
+    score: idl.Float32
+  });
+  const SearchNodesRequest = idl.Record({
+    top_k: idl.Nat32,
+    database_id: idl.Text,
+    preview_mode: idl.Opt(SearchPreviewMode),
+    prefix: idl.Opt(idl.Text),
+    query_text: idl.Text
+  });
   const WriteSourceForGenerationRequest = idl.Record({
     database_id: idl.Text,
     path: idl.Text,
@@ -109,6 +132,7 @@ function idlFactory({ IDL: idl }) {
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
+    search_nodes: idl.Func([SearchNodesRequest], [idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text })], ["query"]),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: NodeMutationError })], [])
   });
 }
@@ -136,6 +160,18 @@ export async function listWritableDatabases(config) {
     throw new Error(databaseResult.Err);
   }
   return normalizeWritableDatabases(databaseResult.Ok, cyclesConfig);
+}
+
+export async function searchNodesWithActor(actor, databaseId, query, prefix, topK = 5) {
+  const result = await actor.search_nodes({
+    database_id: databaseId,
+    query_text: query,
+    prefix: prefix ? [prefix] : [],
+    top_k: topK,
+    preview_mode: [{ ContentStart: null }]
+  });
+  if ("Err" in result) throw new Error(result.Err);
+  return result.Ok;
 }
 
 export async function requireDatabaseWriteCyclesAvailable(actor, databaseId) {

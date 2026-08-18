@@ -1,10 +1,10 @@
 # Kinic Wiki Clipper
 
-MV3 Chrome extension for creating Kinic Wiki pages from the active tab and saving recent ChatGPT and Claude conversations as evidence sources.
+MV3 Chrome extension for creating Kinic Wiki pages from the active tab and saving ChatGPT, Claude, and Gemini conversations as evidence sources.
 
 See [USAGE.md](./USAGE.md) for local canister setup and Chrome loading steps.
 
-ChatGPT/Claude evidence-source export and active-tab evidence-source capture use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude/Gemini evidence-source export and active-tab evidence-source capture use Internet Identity and require writer access for the selected database.
 
 ## Build
 
@@ -35,15 +35,17 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude export, active-tab capture, Internet Identity auth, and selected database storage behavior.
+Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude/Gemini export, active-tab capture, Internet Identity auth, and selected database storage behavior.
 
 ## Flow
 
-1. Open a ChatGPT or Claude conversation tab.
+1. Open a ChatGPT, Claude, or Gemini conversation tab.
 2. Select a database from extension settings, or create one there if none exists.
-3. Use the page-level `Kinic Memory` button.
-4. Enter the number of recent chats to export. The default is `10`.
-5. Export to `/Sources/<provider>/<source_id>.md`.
+3. Click `Save to Kinic` to save the open conversation immediately, or open save options to export multiple recent chats.
+4. Multiple-chat exports use the count field, whose default is `1`.
+5. Exported evidence is saved to `/Sources/<provider>/<source_id>.md`.
+
+When `Recall beta` is enabled in extension settings, ChatGPT questions are searched against `/Knowledge` first and `/Sources` second. Up to three matching previews can appear after a question is sent. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation.
 
 ## Active Tab Capture
 
@@ -55,7 +57,7 @@ Required settings:
 
 The active-tab flow writes `/Sources/web/<source_id>.md` as a VFS `source`, then asks WikiBrowser to trigger generation for that source with its server-side token.
 
-ChatGPT/Claude export only writes source evidence. Generate wiki pages later:
+ChatGPT/Claude/Gemini export only writes source evidence. Generate wiki pages later:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
@@ -69,8 +71,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 - IC host is fixed to `https://icp0.io`.
 - Database ID is selected and saved automatically from writable active databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
-- Mainnet hosts require explicit confirmation before export.
-- ChatGPT/Claude evidence-source export and active-tab capture writes use the logged-in Internet Identity principal and require writer access for that principal.
+- ChatGPT/Claude/Gemini evidence-source export and active-tab capture writes use the logged-in Internet Identity principal and require writer access for that principal.
 - Active-tab generation needs WikiBrowser `KINIC_WIKI_WORKER_TOKEN` configured to trigger processing.
-- ChatGPT export uses private `/backend-api/*` endpoints. Claude export uses private `claude.ai/api/.../chat_conversations/*` endpoints. Endpoint shape can change without notice.
+- ChatGPT export uses private `/backend-api/*` endpoints. Claude export uses private `claude.ai/api/.../chat_conversations/*` endpoints. Gemini current-chat export reads the rendered conversation DOM. Provider behavior can change without notice.
 - Public release requires owner, allowlist, token, delegation, or equivalent write authorization on the canister.

@@ -7,7 +7,9 @@ import {
   authStatus,
   handleOffscreenMessage,
   listWritableDatabases,
+  fetchRecall,
   saveEvidenceSource,
+  searchRecall,
   setOffscreenDepsForTest,
   triggerSourceGeneration,
   webSourceExists
@@ -58,6 +60,117 @@ test("saveEvidenceSource writes with authenticated identity", async () => {
     assert.deepEqual(calls[4][3], ["etag-1"]);
     assert.equal(typeof calls[4][4], "string");
     assert.equal(result.sourceRunSessionNonce, calls[4][4]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall searches Knowledge and Sources and ranks normalized hits", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.prefix[0] === "/Knowledge") {
+         return { Ok: [rawRecallHit("/Knowledge/mcp.md", ["title_fts"], -10_000)] };
+       }
+       return { Ok: [rawRecallHit("/Sources/chatgpt/mcp.md", ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.deepEqual(calls.map((request) => request.prefix[0]).sort(), ["/Knowledge", "/Sources"]);
+    assert.equal(calls[0].preview_mode[0].ContentStart, null);
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/mcp.md", "/Sources/chatgpt/mcp.md"]);
+    assert.match(result[0].sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall runs one fallback query only when literal results are insufficient", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.query_text === "MCP agent memory") {
+          return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
+        }
+        assert.equal(request.query_text, "MCP");
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/fallback.md" : "/Sources/literal.md", ["title_fts"], -5_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("MCP agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(calls.length, 4);
+    assert.deepEqual([...new Set(calls.map((request) => request.query_text))], ["MCP agent memory", "MCP"]);
+    assert.deepEqual(result.map((entry) => entry.path), [
+      "/Knowledge/literal.md",
+      "/Knowledge/fallback.md",
+      "/Sources/literal.md"
+    ]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall preserves literal results when fallback search fails", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.query_text === "MCP") throw new Error("fallback unavailable");
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("MCP agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(calls.length, 4);
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/literal.md", "/Sources/literal.md"]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall reads bounded text for explicit context insertion", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node(databaseId, path) {
+        assert.equal(databaseId, "team-db");
+        assert.equal(path, "/Knowledge/mcp.md");
+        return { Ok: [{ content: "memory".repeat(2_500), metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/mcp.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(result.content.length, 4_000);
+    assert.match(result.sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -797,5 +910,16 @@ function rawDatabaseWithoutMetadata(databaseId, name, role, status) {
   return {
     ...rawDatabase(databaseId, name, role, status),
     metadata: []
+  };
+}
+
+function rawRecallHit(path, matchReasons, score) {
+  return {
+    path,
+    kind: { File: null },
+    match_reasons: matchReasons,
+    score,
+    preview: [{ field: { Content: null }, char_offset: 0, match_reason: matchReasons[0], excerpt: ["recall excerpt"] }],
+    snippet: ["recall excerpt"]
   };
 }

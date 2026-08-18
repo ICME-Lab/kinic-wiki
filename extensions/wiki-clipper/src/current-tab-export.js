@@ -1,12 +1,14 @@
 // Where: extensions/wiki-clipper/src/current-tab-export.js
-// What: Export recent AI conversations through provider browser APIs.
-// Why: Direct API export avoids visible tab navigation where provider sessions allow it.
+// What: Export recent AI conversations through provider-specific browser adapters.
+// Why: Provider adapters keep authenticated API and current-page DOM capture paths separate.
 import {
   fetchClaudeConversationCapture,
   fetchClaudeConversationTargets,
+  claudeConversationIdFromUrl,
   resolveClaudeOrganizationId
 } from "./claude-response.js";
 import { captureFromChatGptResponse } from "./chatgpt-response.js";
+import { captureFromGeminiDom, currentGeminiConversationTarget } from "./gemini-response.js";
 
 const STATE_KEY = "kinic-current-tab-export-v1";
 const STATE_VERSION = 1;
@@ -190,6 +192,13 @@ export async function exportTarget(target, config, send, fetchImpl = fetch) {
 }
 
 export async function fetchRecentConversationTargets(limit, fetchImpl = fetch, loc = location, provider = providerFromLocation(loc)) {
+  if (provider === "gemini") {
+    const target = currentGeminiConversationTarget(loc);
+    if (!target) {
+      throw new Error("No current Gemini conversation found. Open a Gemini conversation and try again.");
+    }
+    return [target];
+  }
   if (provider === "claude") {
     const organizationId = resolveClaudeOrganizationId();
     if (!organizationId) {
@@ -236,6 +245,14 @@ export async function fetchRecentConversationTargets(limit, fetchImpl = fetch, l
 
 export async function fetchConversationCapture(target, fetchImpl = fetch) {
   const provider = target.provider || providerFromUrl(target.url) || "chatgpt";
+  if (provider === "gemini") {
+    const currentTarget = currentGeminiConversationTarget(globalThis.location);
+    if (!currentTarget || currentTarget.id !== target.id) {
+      return { ok: false, target, error: "Gemini conversation changed during export." };
+    }
+    const capture = captureFromGeminiDom(document, target.url);
+    return capture.messages.length > 0 ? { ok: true, target, capture } : { ok: false, target, error: "no conversation messages found" };
+  }
   if (provider === "claude") {
     return fetchClaudeConversationCapture(target, fetchImpl);
   }
@@ -471,11 +488,20 @@ export function providerFromLocation(loc = location) {
   return providerFromUrl(loc?.href || loc?.origin || "");
 }
 
+export function isConversationLocation(loc = location) {
+  const provider = providerFromLocation(loc);
+  if (provider === "chatgpt") return Boolean(currentConversationTarget(loc));
+  if (provider === "claude") return Boolean(claudeConversationIdFromUrl(loc?.href || "", loc));
+  if (provider === "gemini") return Boolean(currentGeminiConversationTarget(loc));
+  return false;
+}
+
 export function providerFromUrl(value) {
   try {
     const hostname = new URL(value).hostname;
     if (hostname === "chatgpt.com" || hostname === "chat.openai.com") return "chatgpt";
     if (hostname === "claude.ai") return "claude";
+    if (hostname === "gemini.google.com") return "gemini";
     return "";
   } catch {
     return "";
@@ -483,5 +509,6 @@ export function providerFromUrl(value) {
 }
 
 export function providerLabel(provider) {
+  if (provider === "gemini") return "Gemini";
   return provider === "claude" ? "Claude" : "ChatGPT";
 }
