@@ -7,6 +7,11 @@
 import satori from "satori";
 import type { Resvg as ResvgClass } from "@resvg/resvg-wasm";
 import type { PublicDatabaseSummary } from "./types.js";
+import {
+  decodeBase64,
+  FALLBACK_FONT_BASE64,
+  PLACEHOLDER_PNG_BASE64
+} from "./assets.js";
 
 export const LINK_PREVIEW_SIZE = {
   width: 1200,
@@ -52,7 +57,8 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
   const fonts: { name: string; data: ArrayBuffer; weight: 400; style: "normal" }[] = fontData
     ? [{ name: PREVIEW_FONT_NAME, data: fontData, weight: 400, style: "normal" }]
     : [];
-  const svg = await satori(
+  try {
+    const svg = await satori(
     element(
       "div",
       {
@@ -121,10 +127,21 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
       )
     ),
     { ...LINK_PREVIEW_SIZE, fonts }
-  );
-  const { Resvg } = await loadResvg();
-  const png = new Resvg(svg, { fitTo: { mode: "width", value: LINK_PREVIEW_SIZE.width } }).render().asPng();
-  return new Response(png, {
+    );
+    const { Resvg } = (await resvgLoader()) as Rasterizer;
+    const png = new Resvg(svg, { fitTo: { mode: "width", value: LINK_PREVIEW_SIZE.width } }).render().asPng();
+    return previewResponse(png);
+  } catch (error) {
+    // The preview is best-effort. A transient CDN font failure, wasm load
+    // failure, or layout error must not 500 the worker; serve a static
+    // placeholder instead.
+    console.error("link preview render failed, serving placeholder", error);
+    return previewResponse(decodeBase64(PLACEHOLDER_PNG_BASE64));
+  }
+}
+
+function previewResponse(bytes: Uint8Array | ArrayBuffer): Response {
+  return new Response(bytes, {
     headers: {
       "content-type": LINK_PREVIEW_CONTENT_TYPE,
       "cache-control": LINK_PREVIEW_CACHE_CONTROL
@@ -190,6 +207,18 @@ function shortenPreviewText(value: string, maxLength: number): string {
 
 let resvgPromise: Promise<{ Resvg: typeof ResvgClass }> | null = null;
 let previewFontPromise: Promise<ArrayBuffer | null> | null = null;
+let fetchImpl: typeof fetch = globalThis.fetch;
+let resvgLoader: () => Promise<unknown> = loadResvg;
+
+export type Rasterizer = {
+  Resvg: new (svg: string, options?: unknown) => { render(): { asPng(): Uint8Array } };
+};
+
+export function setLinkPreviewDepsForTest(deps: { fetch?: typeof fetch; loadResvg?: () => Promise<unknown> } = {}) {
+  fetchImpl = deps.fetch || globalThis.fetch;
+  resvgLoader = deps.loadResvg || loadResvg;
+  previewFontPromise = null;
+}
 
 type ResvgModule = { Resvg: typeof ResvgClass; initWasm: (input: unknown) => Promise<void> };
 
@@ -212,12 +241,15 @@ async function previewFontData(): Promise<ArrayBuffer | null> {
   if (!previewFontPromise) {
     previewFontPromise = (async () => {
       try {
-        const response = await fetch(PREVIEW_FONT_URL);
-        if (!response.ok) return null;
-        return await response.arrayBuffer();
+        const response = await fetchImpl(PREVIEW_FONT_URL);
+        if (response.ok) return await response.arrayBuffer();
       } catch {
-        return null;
+        // Fall through to the bundled fallback font.
       }
+      // The fallback font is bundled at build time, so previews render even when
+      // the CDN is unreachable. It covers Latin text; Japanese glyphs degrade to
+      // the layout engine's missing-glyph box until the CDN is reachable again.
+      return decodeBase64(FALLBACK_FONT_BASE64);
     })();
   }
   return previewFontPromise;
