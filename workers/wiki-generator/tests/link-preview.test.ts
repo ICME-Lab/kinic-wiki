@@ -1,18 +1,27 @@
 // Where: workers/wiki-generator/tests/link-preview.test.ts
-// What: Link preview image renderer regression tests.
-// Why: Keep the Worker-compatible image renderer producing valid PNG responses.
+// What: Link preview module helpers and constants.
+// Why: The full PNG render path uses satori + @resvg/resvg-wasm whose wasm only loads in the Workers
+//      runtime (verified via `wrangler dev`), so it is not exercised under `node --test`.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LINK_PREVIEW_CONTENT_TYPE, renderLinkPreviewImage } from "../src/link-preview.js";
+import {
+  LINK_PREVIEW_CONTENT_TYPE,
+  LINK_PREVIEW_SIZE,
+  databaseLinkPreviewImageKey
+} from "../src/link-preview.js";
 
-test("link preview renderer returns a PNG", async () => {
-  const response = await renderLinkPreviewImage({
-    title: "Ask AI",
-    description: "Query a Kinic Wiki database."
-  });
-  const bytes = new Uint8Array(await response.arrayBuffer());
+test("link preview exposes PNG constants", () => {
+  assert.equal(LINK_PREVIEW_CONTENT_TYPE, "image/png");
+  assert.deepEqual(LINK_PREVIEW_SIZE, { width: 1200, height: 630 });
+});
 
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("content-type"), LINK_PREVIEW_CONTENT_TYPE);
-  assert.deepEqual([...bytes.slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+test("database link preview image key is namespaced and URL-encoded", () => {
+  assert.equal(
+    databaseLinkPreviewImageKey("db_active"),
+    "db-link-preview/v1/db_active.png"
+  );
+  assert.equal(
+    databaseLinkPreviewImageKey("db 1/2"),
+    "db-link-preview/v1/db%201%2F2.png"
+  );
 });
