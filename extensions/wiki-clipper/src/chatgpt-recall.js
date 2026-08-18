@@ -44,10 +44,38 @@ export function insertChatGptContext(context, documentRef = globalThis.document)
     selection.removeAllRanges();
     selection.addRange(range);
   }
-  if (documentRef.execCommand?.("insertText", false, text)) return true;
+  // Rich editors (ChatGPT's ProseMirror composer) translate a paste into their
+  // own document model, matching the "pasted long text" state in the input box.
+  // execCommand text insertion only edits the DOM and leaves the editor state stale.
+  // When paste is available, trust the editor to apply it; never fall back to
+  // direct textContent writes that would leave the editor model stale.
+  if (supportsPaste(documentRef, composer)) return pasteChatGptText(documentRef, composer, text);
   composer.textContent = composer.textContent?.trim() ? `${composer.textContent.trim()}\n\n${text}` : text;
   composer.dispatchEvent(new Event("input", { bubbles: true }));
   return true;
+}
+
+function supportsPaste(documentRef, composer) {
+  const win = composer?.ownerDocument?.defaultView || documentRef?.defaultView || globalThis;
+  return Boolean(win?.DataTransfer && win?.ClipboardEvent);
+}
+
+function pasteChatGptText(documentRef, composer, text) {
+  try {
+    const win = composer?.ownerDocument?.defaultView || documentRef?.defaultView || globalThis;
+    const dataTransfer = new win.DataTransfer();
+    dataTransfer.setData("text/plain", text);
+    const before = composer.textContent || "";
+    const pasteEvent = new win.ClipboardEvent("paste", {
+      clipboardData: dataTransfer,
+      bubbles: true,
+      cancelable: true
+    });
+    composer.dispatchEvent(pasteEvent);
+    return (composer.textContent || "").length > before.length;
+  } catch {
+    return false;
+  }
 }
 
 export function installChatGptRecallListeners({ documentRef = globalThis.document, locationLike = globalThis.location, onSubmit }) {
@@ -89,10 +117,51 @@ export function installChatGptRecallListeners({ documentRef = globalThis.documen
   };
 }
 
+const historyRegistrations = new WeakMap();
+
+function registerHistoryWrap(historyRef, notify) {
+  if (!historyRef || typeof notify !== "function") return () => {};
+  let registration = historyRegistrations.get(historyRef);
+  if (!registration) {
+    const pushOriginal = typeof historyRef.pushState === "function" ? historyRef.pushState : null;
+    const replaceOriginal = typeof historyRef.replaceState === "function" ? historyRef.replaceState : null;
+    const notifiers = new Set();
+    const callNotifiers = () => {
+      for (const fn of notifiers) fn();
+    };
+    if (pushOriginal) {
+      historyRef.pushState = function (...args) {
+        const result = pushOriginal.apply(this, args);
+        callNotifiers();
+        return result;
+      };
+    }
+    if (replaceOriginal) {
+      historyRef.replaceState = function (...args) {
+        const result = replaceOriginal.apply(this, args);
+        callNotifiers();
+        return result;
+      };
+    }
+    registration = { pushOriginal, replaceOriginal, notifiers };
+    historyRegistrations.set(historyRef, registration);
+  }
+  registration.notifiers.add(notify);
+  return () => {
+    registration.notifiers.delete(notify);
+    if (registration.notifiers.size === 0) {
+      if (registration.pushOriginal) historyRef.pushState = registration.pushOriginal;
+      if (registration.replaceOriginal) historyRef.replaceState = registration.replaceOriginal;
+      historyRegistrations.delete(historyRef);
+    }
+  };
+}
+
 export function installChatGptNavigationListener({ windowRef = globalThis, locationLike, documentRef, MutationObserverRef = globalThis.MutationObserver, onNavigate }) {
   const currentLocation = locationLike || windowRef?.location;
   if (!windowRef || !currentLocation || !isChatGptOrigin(currentLocation.href || "") || typeof onNavigate !== "function") return () => {};
   let currentUrl = String(currentLocation.href || "");
+  const historyRef = windowRef.history;
   const notify = () => {
     const nextUrl = String(currentLocation.href || "");
     if (nextUrl === currentUrl) return;
@@ -103,12 +172,14 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
     ? new MutationObserverRef(() => notify())
     : null;
   observer?.observe?.(documentRef.documentElement, { childList: true, subtree: true });
+  const unregisterHistory = registerHistoryWrap(historyRef, notify);
   windowRef.addEventListener?.("popstate", notify);
   windowRef.addEventListener?.("hashchange", notify);
   return () => {
     windowRef.removeEventListener?.("popstate", notify);
     windowRef.removeEventListener?.("hashchange", notify);
     observer?.disconnect?.();
+    unregisterHistory();
   };
 }
 

@@ -6,6 +6,7 @@ import { fnv1aHex } from "@kinic/source-contracts";
 export const RECALL_QUERY_MAX_CHARS = 2_000;
 export const RECALL_RESULT_LIMIT = 3;
 export const RECALL_SEARCH_TOP_K = 5;
+export const RECALL_MIN_SCORE = -1_000;
 
 export function normalizeRecallQuery(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, RECALL_QUERY_MAX_CHARS);
@@ -70,6 +71,8 @@ export function rankRecallHits(hits, { currentConversationUrl = "" } = {}) {
   for (const hit of Array.isArray(hits) ? hits : []) {
     const path = String(hit?.path || "");
     if (!path || pathLooksLikeCurrentConversation(path, currentConversationId)) continue;
+    const score = Number.isFinite(Number(hit?.score)) ? Number(hit.score) : Number.POSITIVE_INFINITY;
+    if (score > RECALL_MIN_SCORE) continue;
     const reasons = Array.isArray(hit?.match_reasons) ? hit.match_reasons.map(String) : [];
     if (!reasons.some((reason) => reason === "content_fts" || reason === "title_fts")) continue;
     if (!candidates.has(path)) candidates.set(path, normalizeRecallHit(hit));

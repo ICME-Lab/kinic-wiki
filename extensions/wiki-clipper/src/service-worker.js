@@ -108,9 +108,6 @@ if (globalThis.chrome?.contextMenus?.onClicked) {
       setActionBadge("ERR", "#b42318");
     });
   });
-  createSettingsContextMenu().catch((error) => {
-    console.warn("failed to create settings context menu", error);
-  });
 }
 
 export async function handleMessage(message, sender) {

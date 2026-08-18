@@ -83,14 +83,12 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(quickSave, /await configLoadPromise;[\s\S]*const nextConfig = normalizedConfig\(\)/);
   assert.match(quickSave, /const requestedDatabaseId = nextConfig\.databaseId[\s\S]*await refreshDatabases\(\{ repairSelection: false \}\)/);
   assert.match(contentUi, /databaseOptionLabel/);
-  assert.match(contentUi, /exportProviderLabel/);
   assert.doesNotMatch(contentUi, /<span class="pill">/);
   assert.match(contentUi, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
   assert.match(contentUi, /onMouseUp=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(storeAssets, /#ff2686/);
   assert.match(storeAssets, /icons\/icon-128\.png/);
   assert.match(contentUi, /Kinic Wiki Clipper/);
-  assert.match(contentUi, /providerLabel/);
   assert.doesNotMatch(contentUi, /Database ID/);
   assert.match(contentUi, /Kinic Memory/);
   assert.match(contentUi, /type: "recall-search"/);

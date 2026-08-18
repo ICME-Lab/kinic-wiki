@@ -73,9 +73,9 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
       async search_nodes(request) {
         calls.push(request);
         if (request.prefix[0] === "/Knowledge") {
-          return { Ok: [rawRecallHit("/Knowledge/mcp.md", ["title_fts"], -10)] };
-        }
-        return { Ok: [rawRecallHit("/Sources/chatgpt/mcp.md", ["content_fts"], -1)] };
+         return { Ok: [rawRecallHit("/Knowledge/mcp.md", ["title_fts"], -10_000)] };
+       }
+       return { Ok: [rawRecallHit("/Sources/chatgpt/mcp.md", ["content_fts"], -10_000)] };
       }
     })
   });
@@ -102,10 +102,10 @@ test("searchRecall runs one fallback query only when literal results are insuffi
       async search_nodes(request) {
         calls.push(request);
         if (request.query_text === "MCP agent memory") {
-          return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10)] };
+          return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
         }
         assert.equal(request.query_text, "MCP");
-        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/fallback.md" : "/Sources/literal.md", ["title_fts"], -5)] };
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/fallback.md" : "/Sources/literal.md", ["title_fts"], -5_000)] };
       }
     })
   });
@@ -135,7 +135,7 @@ test("searchRecall preserves literal results when fallback search fails", async 
       async search_nodes(request) {
         calls.push(request);
         if (request.query_text === "MCP") throw new Error("fallback unavailable");
-        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10)] };
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
       }
     })
   });

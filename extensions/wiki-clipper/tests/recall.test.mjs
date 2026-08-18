@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  RECALL_MIN_SCORE,
   buildRecallFallbackQuery,
   applyRecallStorageChanges,
   formatRecallContext,
@@ -38,17 +39,25 @@ test("normalizeRecallQuery collapses whitespace and caps the query", () => {
 
 test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hits", () => {
   const results = rankRecallHits([
-    hit("/Sources/chatgpt/one.md", ["content_fts"], -10, "source"),
-    hit("/Knowledge/one.md", ["title_fts"], -30, "knowledge"),
-    hit("/Knowledge/one.md", ["content_fts"], -5, "duplicate"),
+    hit("/Sources/chatgpt/one.md", ["content_fts"], -20_000, "source"),
+    hit("/Knowledge/one.md", ["title_fts"], -30_000, "knowledge"),
+    hit("/Knowledge/one.md", ["content_fts"], -25_000, "duplicate"),
     hit("/Knowledge/path-only.md", ["path_exact"], -1, "weak")
   ]);
   assert.deepEqual(results.map((result) => result.path), ["/Knowledge/one.md", "/Sources/chatgpt/one.md"]);
 });
 
+test("rankRecallHits drops weak FTS matches below the minimum score", () => {
+  const strong = hit("/Knowledge/mcp.md", ["content_fts"], -10_000, "body");
+  const weak = hit("/Knowledge/mcp.md", ["content_fts"], -100, "weak body");
+  assert.deepEqual(rankRecallHits([weak]).map((result) => result.path), []);
+  assert.deepEqual(rankRecallHits([strong]).map((result) => result.path), ["/Knowledge/mcp.md"]);
+  assert.ok(RECALL_MIN_SCORE < 0);
+});
+
 test("rankRecallHits excludes the current ChatGPT conversation source path", () => {
   const source = chatgptSource("https://chatgpt.com/c/abc", "Project Chat");
-  const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "current")], {
+  const results = rankRecallHits([hit(source.path, ["content_fts"], -10_000, "current")], {
     currentConversationUrl: "https://chatgpt.com/c/abc"
   });
   assert.deepEqual(results, []);
@@ -56,7 +65,7 @@ test("rankRecallHits excludes the current ChatGPT conversation source path", () 
 
 test("rankRecallHits keeps another conversation's source path", () => {
   const source = chatgptSource("https://chatgpt.com/c/abc", "Project Chat");
-  const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "other")], {
+  const results = rankRecallHits([hit(source.path, ["content_fts"], -10_000, "other")], {
     currentConversationUrl: "https://chatgpt.com/c/def"
   });
   assert.deepEqual(results.map((result) => result.path), [source.path]);
@@ -69,7 +78,7 @@ test("rankRecallHits excludes the current conversation for chat and app URL form
     "https://chatgpt.com/app/abc",
     "https://chatgpt.com/u/1/app/abc"
   ]) {
-    const results = rankRecallHits([hit(source.path, ["content_fts"], -1, "current")], {
+    const results = rankRecallHits([hit(source.path, ["content_fts"], -10_000, "current")], {
       currentConversationUrl: url
     });
     assert.deepEqual(results, [], `expected ${url} to exclude the current conversation`);

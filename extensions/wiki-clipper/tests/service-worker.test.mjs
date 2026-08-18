@@ -148,6 +148,28 @@ test("recall-fetch accepts an own-extension Recall path and rejects other paths"
   }
 });
 
+test("recall-fetch rejects another extension even on a ChatGPT page", async () => {
+  const syncStorage = memoryStorage();
+  syncStorage.setItem("databaseId", "team-db");
+  syncStorage.setItem("recallEnabled", "true");
+  const restore = installChromeStorage(syncStorage);
+  try {
+    await assert.rejects(
+      () =>
+        handleMessage(
+          { type: "recall-fetch", path: "/Knowledge/mcp.md" },
+          {
+            id: "other-extension",
+            tab: { url: "https://chatgpt.com/c/abc" }
+          }
+        ),
+      /allowed ChatGPT page/
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("save-source keeps evidence source result when generation queue fails", async () => {
   const restore = installChromeStorage(memoryStorage());
   setOffscreenBridgeForTest(async (message) => {
