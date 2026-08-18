@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use rusqlite::Connection;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
@@ -404,5 +405,68 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
     assert_eq!(
         updates.removed_paths,
         vec!["/Knowledge/snapshot/note-0002.md".to_string()]
+    );
+}
+
+#[test]
+fn fts_trigram_migration_rebuilds_index_at_scale_and_preserves_search() {
+    let (_dir, store) = new_store();
+
+    for index in 0..500 {
+        let path = format!("/Knowledge/trigram/note-{index:04}.md");
+        let content = format!(
+            "# Note {index}\n\nThis note body repeats a searchable keyword token-{index} and a Japanese phrase 検索対象{index} for the trigram rebuild scale check."
+        );
+        write_file(&store, &path, &content, None, 10 + index as i64);
+    }
+
+    let db_path = store.database_path();
+    let size_before = std::fs::metadata(db_path)
+        .expect("db file should exist")
+        .len();
+    let conn = Connection::open(db_path).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_nodes_fts;
+         CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(path, title, content);
+         INSERT INTO fs_nodes_fts(rowid, path, title, content)
+            SELECT id, path, COALESCE(name, ''), content FROM fs_nodes;
+         DELETE FROM schema_migrations WHERE version = 'vfs_store:003_fts_trigram';",
+    )
+    .expect("pre-003 state setup should succeed");
+    drop(conn);
+    let size_unicode61 = std::fs::metadata(db_path)
+        .expect("db file should exist")
+        .len();
+
+    let started_at = Instant::now();
+    store
+        .run_fs_migrations()
+        .expect("003 trigram migration should apply at scale");
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let size_after = std::fs::metadata(db_path)
+        .expect("db file should exist")
+        .len();
+    println!(
+        "fts_trigram_migration node_count=500 elapsed_ms={elapsed_ms} size_unicode61={size_unicode61} size_trigram={size_after} growth_ratio={:.2}",
+        size_after as f64 / size_unicode61.max(1) as f64
+    );
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "検索対象".to_string(),
+            prefix: Some("/Knowledge/trigram".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Knowledge/trigram/note-0001.md"),
+        "trigram migration should preserve Japanese substring search after scale rebuild"
+    );
+    assert!(
+        size_after >= size_before,
+        "trigram index should not shrink below the pre-rebuild file size"
     );
 }

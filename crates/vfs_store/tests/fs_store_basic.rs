@@ -1357,6 +1357,118 @@ fn fs_migration_003_rebuilds_fts_with_trigram() {
 }
 
 #[test]
+fn search_matches_short_ascii_terms_in_content_case_insensitively() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/AI-agent-notes.md", 1_799);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/AI-agent-notes.md".to_string(),
+                kind: NodeKind::File,
+                content: "AI agent memory design notes".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_800,
+        )
+        .expect("write should succeed");
+
+    for query in ["ai", "AI", "ai agent"] {
+        let hits = store
+            .search_nodes(SearchNodesRequest {
+                database_id: "default".to_string(),
+                query_text: query.to_string(),
+                prefix: Some("/Knowledge".to_string()),
+                top_k: 5,
+                preview_mode: Some(SearchPreviewMode::None),
+            })
+            .expect("search should succeed");
+        assert!(
+            hits.iter()
+                .any(|hit| hit.path == "/Knowledge/AI-agent-notes.md"),
+            "query {query:?} should match content case-insensitively"
+        );
+    }
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "ai".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::Light),
+        })
+        .expect("search should succeed");
+    let hit = hits
+        .iter()
+        .find(|hit| hit.path == "/Knowledge/AI-agent-notes.md")
+        .expect("hit should exist");
+    assert!(
+        hit.match_reasons
+            .iter()
+            .any(|reason| reason == "content_substring"),
+        "short ascii term should match via content substring fallback"
+    );
+}
+
+#[test]
+fn search_scores_are_negative_and_sorted_best_first() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/score/note-00.md", 999);
+    for index in 0..50 {
+        let path = format!("/Knowledge/score/note-{index:02}.md");
+        let content = if index == 0 {
+            "needle appears exactly once here".to_string()
+        } else if index % 5 == 0 {
+            format!("needle repeated in note {index} to increase frequency")
+        } else {
+            format!("unrelated note body {index}")
+        };
+        store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path,
+                    kind: NodeKind::File,
+                    content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_000 + index as i64,
+            )
+            .expect("write should succeed");
+    }
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "needle".to_string(),
+            prefix: Some("/Knowledge/score".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+    assert!(!hits.is_empty());
+    // Every canister hit score must be finite and negative. Consumers such as
+    // the Wiki Clipper recall feature rank by this value and must not assume a
+    // fixed magnitude floor, because bm25 magnitude shrinks as a term becomes
+    // common in the store.
+    for hit in &hits {
+        assert!(
+            hit.score.is_finite() && hit.score < 0.0,
+            "score must be negative: {hit:?}"
+        );
+    }
+    let mut sorted = hits.clone();
+    sorted.sort_by(|left, right| left.score.total_cmp(&right.score));
+    assert_eq!(
+        hits, sorted,
+        "search results should already be sorted by score"
+    );
+}
+
+#[test]
 fn fs_migrations_apply_publication_commit_marker_once() {
     let (_dir, store) = new_store();
     let conn = Connection::open(store.database_path()).expect("db should open");

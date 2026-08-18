@@ -29,6 +29,7 @@ pub(crate) struct SearchQueryPlan {
     exact_fts: Option<String>,
     recall_fts: Option<String>,
     has_cjk: bool,
+    has_short_term: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -76,6 +77,7 @@ pub(crate) fn build_search_query_plan(query_text: &str) -> Option<SearchQueryPla
     // terms are handled by the path/content-substring fallback stages instead.
     // Very long single-token terms are truncated so a huge query (or a huge
     // stored token) cannot blow up the trigram index/query.
+    let has_short_term = whitespace_terms.iter().any(|term| term.chars().count() < 3);
     let mut fts_terms = Vec::new();
     let mut seen_fts = std::collections::HashSet::new();
     for term in &whitespace_terms {
@@ -96,6 +98,7 @@ pub(crate) fn build_search_query_plan(query_text: &str) -> Option<SearchQueryPla
         exact_fts,
         recall_fts,
         has_cjk,
+        has_short_term,
     })
 }
 
@@ -208,18 +211,31 @@ pub(crate) fn load_content_substring_candidates(
     prefix: Option<&str>,
     top_k: i64,
 ) -> Result<Vec<SearchCandidate>, String> {
-    if !plan.has_cjk {
+    if !plan.has_cjk && !plan.has_short_term {
         return Ok(Vec::new());
     }
-    let mut values = vec![crate::sqlite::types::Value::from(plan.raw_query.clone())];
+    let mut values = if plan.has_cjk {
+        vec![crate::sqlite::types::Value::from(plan.raw_query.clone())]
+    } else {
+        vec![crate::sqlite::types::Value::from(
+            plan.raw_query.to_lowercase(),
+        )]
+    };
     let (scope_sql, scope_values) = non_root_prefix(prefix)
         .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
         .unwrap_or_else(|| (String::new(), Vec::new()));
     values.extend(scope_values);
+    // CJK text has no case, so the plain substring scan stays fast. ASCII-only
+    // short-term queries fold both sides to lowercase so "AI" matches "ai".
+    let content_column = if plan.has_cjk {
+        "content"
+    } else {
+        "lower(content)"
+    };
     let sql = format!(
         "SELECT id, path, kind
          FROM fs_nodes
-         WHERE instr(content, ?1) > 0{}
+         WHERE instr({content_column}, ?1) > 0{}
          ORDER BY path ASC
          LIMIT {}",
         scope_sql,
@@ -627,6 +643,8 @@ mod tests {
             build_search_query_plan("shared-bench-search").expect("ascii query plan should exist");
         assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_none());
+        assert!(!plan.has_cjk);
+        assert!(!plan.has_short_term);
     }
 
     #[test]
@@ -635,6 +653,7 @@ mod tests {
         assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_none());
         assert!(plan.has_cjk);
+        assert!(!plan.has_short_term);
     }
 
     #[test]
@@ -643,6 +662,8 @@ mod tests {
             .expect("multi-term query plan should exist");
         assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_some());
+        assert!(plan.has_cjk);
+        assert!(!plan.has_short_term);
     }
 
     #[test]
@@ -651,6 +672,17 @@ mod tests {
         assert!(plan.exact_fts.is_none());
         assert!(plan.recall_fts.is_none());
         assert_eq!(plan.path_terms, vec!["検", "索", "改"]);
+        assert!(plan.has_cjk);
+        assert!(plan.has_short_term);
+    }
+
+    #[test]
+    fn short_ascii_query_plan_omits_fts_and_marks_short_term() {
+        let plan = build_search_query_plan("AI agents").expect("short ascii plan should exist");
+        assert!(plan.exact_fts.is_some());
+        assert!(plan.recall_fts.is_none());
+        assert!(!plan.has_cjk);
+        assert!(plan.has_short_term);
     }
 
     #[test]
