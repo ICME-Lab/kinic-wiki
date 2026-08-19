@@ -64,8 +64,30 @@ test("applyRecallContext inserts when the click-time state is unchanged", async 
   assert.equal(outcome.reason, "inserted");
   assert.deepEqual(inserted, ["block"]);
   assert.deepEqual(captured.messages, [
-    { type: "recall-fetch", requestId: "1", path: "/Knowledge/mcp.md" }
+    { type: "recall-fetch", requestId: "1", path: "/Knowledge/mcp.md", charOffset: null }
   ]);
+});
+
+test("applyRecallContext passes the result char offset to the fetch", async () => {
+  const send = deferred();
+  const state = baseState();
+  let capturedMessage = null;
+  const pending = applyRecallContext({
+    result: { path: "/Knowledge/mcp.md", snippet: "fallback", charOffset: 1_234 },
+    request: { ...state },
+    send: (message) => {
+      capturedMessage = message;
+      return send.promise;
+    },
+    state: () => state,
+    format: () => "block",
+    insert: () => true
+  });
+  send.resolve({ ok: true, result: { content: "fetched body" } });
+  await pending;
+  assert.equal(capturedMessage.type, "recall-fetch");
+  assert.equal(capturedMessage.path, "/Knowledge/mcp.md");
+  assert.equal(capturedMessage.charOffset, 1_234);
 });
 
 test("applyRecallContext uses the fetched content when present", async () => {

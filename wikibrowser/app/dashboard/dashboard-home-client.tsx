@@ -5,7 +5,7 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppNavigate, useAppSearchParams } from "@/lib/app-router";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
 import { DatabaseBody, StatusPanel } from "../home-ui";

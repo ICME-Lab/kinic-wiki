@@ -79,13 +79,29 @@ function pasteChatGptText(documentRef, composer, text) {
 }
 
 export function installChatGptRecallListeners({ documentRef = globalThis.document, locationLike = globalThis.location, onSubmit }) {
-  if (!documentRef || !isChatGptLocation(locationLike) || typeof onSubmit !== "function") return () => {};
+  if (!documentRef || !isChatGptLocation(locationLike) || typeof onSubmit !== "function") {
+    return { cancelPending: () => {}, dispose: () => {} };
+  }
   let timer = null;
   let lastScheduled = "";
   let lastScheduledAt = 0;
+  let pinnedComposer = findChatGptComposer(documentRef);
+
+  const currentComposer = () => {
+    if (!pinnedComposer || !isConnected(pinnedComposer, documentRef)) {
+      pinnedComposer = findChatGptComposer(documentRef);
+    }
+    return pinnedComposer;
+  };
+
+  const readComposer = () => {
+    const composer = currentComposer();
+    if (!composer) return "";
+    return normalizeRecallQuery("value" in composer ? composer.value : composer.textContent);
+  };
 
   const schedule = () => {
-    const query = readChatGptComposer(documentRef);
+    const query = readComposer();
     if (!query) return;
     const now = Date.now();
     if (query === lastScheduled && now - lastScheduledAt < 800) return;
@@ -98,23 +114,43 @@ export function installChatGptRecallListeners({ documentRef = globalThis.documen
     }, 300);
   };
 
-  const onSubmitEvent = () => schedule();
+  const cancelPending = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    lastScheduled = "";
+    lastScheduledAt = 0;
+  };
+
+  const onSubmitEvent = (event) => {
+    if (event.defaultPrevented) return;
+    const composer = currentComposer();
+    if (!composer || event.target !== formOf(composer)) return;
+    schedule();
+  };
   const onKeyDown = (event) => {
+    if (event.defaultPrevented) return;
     if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === "Enter" && !event.shiftKey && isComposerTarget(event.target)) schedule();
+    if (event.key !== "Enter" || event.shiftKey) return;
+    const composer = currentComposer();
+    if (!isComposerOrWithin(event.target, composer)) return;
+    schedule();
   };
   const onClick = (event) => {
-    if (isSendButton(event.target)) schedule();
+    if (event.defaultPrevented) return;
+    const composer = currentComposer();
+    if (!composer || !isSendButton(event.target) || !isWithinSameForm(event.target, composer)) return;
+    schedule();
   };
   documentRef.addEventListener("submit", onSubmitEvent, true);
   documentRef.addEventListener("keydown", onKeyDown, true);
   documentRef.addEventListener("click", onClick, true);
-  return () => {
-    if (timer) clearTimeout(timer);
+  const dispose = () => {
+    cancelPending();
     documentRef.removeEventListener("submit", onSubmitEvent, true);
     documentRef.removeEventListener("keydown", onKeyDown, true);
     documentRef.removeEventListener("click", onClick, true);
   };
+  return { cancelPending, dispose };
 }
 
 const historyRegistrations = new WeakMap();
@@ -183,8 +219,23 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
   };
 }
 
-function isComposerTarget(target) {
-  return Boolean(target?.matches?.("textarea, [contenteditable='true']") || target?.closest?.("textarea, [contenteditable='true']"));
+function isComposerOrWithin(target, composer) {
+  if (!composer) return false;
+  return target === composer || (typeof composer.contains === "function" && composer.contains(target));
+}
+
+function isWithinSameForm(element, composer) {
+  const form = formOf(composer);
+  if (!form) return false;
+  return typeof element?.closest === "function" && element.closest("form") === form;
+}
+
+function formOf(composer) {
+  return typeof composer?.closest === "function" ? composer.closest("form") : null;
+}
+
+function isConnected(element, documentRef) {
+  return Boolean(documentRef?.documentElement && documentRef.documentElement.contains(element));
 }
 
 function isSendButton(target) {

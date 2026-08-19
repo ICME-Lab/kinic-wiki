@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { Check, Copy, FileText } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/lib/markdown-renderer";
 import { AdminPanel } from "@/components/admin-ui";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import type { SkillMarkdownReference } from "../../skill-markdown";
@@ -107,8 +106,7 @@ export function SkillMarkdownBlock({ markdown, references }: { markdown: string;
 
 function SkillMarkdownDocument({ markdown, references }: { markdown: string; references: SkillMarkdownReference[] }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+    <Markdown
       components={{
         h1({ children }) {
           return <h3 className="mt-0 text-xl font-semibold text-ink">{children}</h3>;
@@ -133,7 +131,7 @@ function SkillMarkdownDocument({ markdown, references }: { markdown: string; ref
       }}
     >
       {markdown}
-    </ReactMarkdown>
+    </Markdown>
   );
 }
 

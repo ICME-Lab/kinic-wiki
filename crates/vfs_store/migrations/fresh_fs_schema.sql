@@ -14,7 +14,8 @@ CREATE TABLE fs_nodes (
 CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
     path,
     title,
-    content
+    content,
+    tokenize = 'trigram case_sensitive 0'
 );
 
 CREATE TABLE fs_change_log (

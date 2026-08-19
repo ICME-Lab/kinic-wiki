@@ -513,6 +513,95 @@ fn search_nodes_recovers_partial_multi_term_matches() {
 }
 
 #[test]
+fn search_nodes_requires_short_ascii_term_in_mixed_query() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/short/agents-a.md", 1_650);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/short/agents-a.md".to_string(),
+                kind: NodeKind::File,
+                content: "autonomous agents are useful".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_651,
+        )
+        .expect("write should succeed");
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/short/agents-b.md".to_string(),
+                kind: NodeKind::File,
+                content: "AI agents are here".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_652,
+        )
+        .expect("write should succeed");
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "AI agents".to_string(),
+            prefix: Some("/Knowledge/short".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+
+    assert!(
+        !hits
+            .iter()
+            .any(|hit| hit.path == "/Knowledge/short/agents-a.md"),
+        "document matching only the long term (agents) but missing the short term (AI) should not surface"
+    );
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Knowledge/short/agents-b.md"),
+        "document matching both terms should surface"
+    );
+}
+
+#[test]
+fn search_nodes_matches_all_short_terms_across_content() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/short-query/unrelated.md", 1_660);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/short-query/unrelated.md".to_string(),
+                kind: NodeKind::File,
+                content: "AI and ML are related".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_661,
+        )
+        .expect("write should succeed");
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "AI ML".to_string(),
+            prefix: Some("/Knowledge/short-query".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Knowledge/short-query/unrelated.md"),
+        "all-short query should surface a document where the terms are not adjacent"
+    );
+}
+
+#[test]
 fn search_nodes_supports_japanese_queries_without_spaces() {
     let (_dir, store) = new_store();
     ensure_parent_folders(&store, "/Knowledge/日本語/検索改善メモ.md", 1_699);
@@ -547,6 +636,47 @@ fn search_nodes_supports_japanese_queries_without_spaces() {
             .iter()
             .any(|reason| reason == "path_substring" || reason == "content_substring"),
         "japanese query should surface path or content recall reason"
+    );
+}
+
+#[test]
+fn search_nodes_cjk_content_only_match_uses_content_substring() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/ascii-dir/design-notes.md", 1_699);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/ascii-dir/design-notes.md".to_string(),
+                kind: NodeKind::File,
+                content: "設計の作業メモと検索方針".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_700,
+        )
+        .expect("write should succeed");
+
+    // A 2-char CJK query is below the trigram FTS minimum, and an ASCII path
+    // cannot match path_substring, so the body substring stage is the only way
+    // this node surfaces. Recall must keep these hits.
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "設計".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 10,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+
+    assert_eq!(hits[0].path, "/Knowledge/ascii-dir/design-notes.md");
+    assert!(
+        hits[0]
+            .match_reasons
+            .contains(&"content_substring".to_string()),
+        "2-char CJK body match on an ASCII path should use content_substring: {:?}",
+        hits[0].match_reasons
     );
 }
 

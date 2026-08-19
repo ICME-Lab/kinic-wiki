@@ -10,7 +10,7 @@ import {
   requireDatabaseWriteCyclesAvailable,
   searchNodesWithActor
 } from "./vfs-actor.js";
-import { buildRecallFallbackQuery, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, titleFromPath } from "./recall.js";
+import { buildRecallFallbackQuery, buildRecallSearchQuery, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, RECALL_CONTEXT_MAX_CHARS, titleFromPath } from "./recall.js";
 
 const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
 
@@ -48,7 +48,7 @@ export function handleOffscreenMessage(message) {
               : message?.type === "recall-search"
               ? searchRecall(message.query, message.conversationUrl, message.config)
               : message?.type === "recall-fetch"
-                  ? fetchRecall(message.path, message.config)
+                  ? fetchRecall(message.path, message.config, { charOffset: message.charOffset })
                   : message?.type === "reset-auth-client"
                     ? resetOffscreenAuthState()
                     : null;
@@ -264,15 +264,17 @@ export async function listWritableDatabases(config) {
 export async function searchRecall(query, conversationUrl, config) {
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
-  const literalQuery = normalizeRecallQuery(query);
-  if (!literalQuery) return [];
+  const rawQuery = normalizeRecallQuery(query);
+  if (!rawQuery) return [];
+  const literalQuery = buildRecallSearchQuery(rawQuery) ?? rawQuery;
+
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
   const literalHits = await searchRecallHits(actor, config.databaseId, literalQuery);
   const literalResults = rankRecallHits(literalHits, { currentConversationUrl: conversationUrl });
   if (literalResults.length >= 3) return normalizeRecallResults(literalResults, config.databaseId);
 
-  const fallbackQuery = buildRecallFallbackQuery(literalQuery);
+  const fallbackQuery = buildRecallFallbackQuery(rawQuery);
   if (!fallbackQuery) return normalizeRecallResults(literalResults, config.databaseId);
 
   const fallbackHits = await searchRecallHits(actor, config.databaseId, fallbackQuery);
@@ -296,7 +298,7 @@ function normalizeRecallResults(results, databaseId) {
   }));
 }
 
-export async function fetchRecall(path, config) {
+export async function fetchRecall(path, config, options = {}) {
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
   if (!isAllowedRecallPath(path)) throw new Error("recall path is invalid");
@@ -306,12 +308,38 @@ export async function fetchRecall(path, config) {
   if ("Err" in result) throw new Error(result.Err);
   const node = result.Ok[0];
   if (!node) throw new Error("recall node not found");
+  const content = String(node.content || "");
+  const charOffset = Number.isInteger(options?.charOffset) ? Number(options.charOffset) : null;
   return {
     path,
-    content: String(node.content || "").slice(0, 4_000),
+    content: recallContextWindow(content, charOffset),
     metadataJson: String(node.metadata_json || ""),
     sourceUrl: sourceUrlForPath(config.databaseId, path)
   };
+}
+
+function recallContextWindow(content, charOffset) {
+  if (content.length <= RECALL_CONTEXT_MAX_CHARS) return content;
+  const start = recallContextStartIndex(content, charOffset);
+  return content.slice(start, start + RECALL_CONTEXT_MAX_CHARS);
+}
+
+function recallContextStartIndex(content, charOffset) {
+  if (!Number.isInteger(charOffset) || charOffset <= 0) return 0;
+  const half = Math.floor(RECALL_CONTEXT_MAX_CHARS / 2);
+  const center = recallCharOffsetToIndex(content, charOffset);
+  return Math.max(0, Math.min(center - half, content.length - RECALL_CONTEXT_MAX_CHARS));
+}
+
+function recallCharOffsetToIndex(content, charOffset) {
+  let index = 0;
+  let count = 0;
+  for (const ch of content) {
+    if (count >= charOffset) break;
+    count += 1;
+    index += ch.length;
+  }
+  return index;
 }
 
 export function setOffscreenDepsForTest(deps = {}) {
@@ -339,7 +367,12 @@ async function authenticatedSnapshot() {
 }
 
 function sourceUrlForPath(databaseId, path) {
-  return `https://wiki.kinic.xyz/db/${encodeURIComponent(databaseId)}${path}`;
+  const suffix = String(path || "")
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+  return `https://wiki.kinic.xyz/db/${encodeURIComponent(databaseId)}/${suffix}`;
 }
 
 async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {

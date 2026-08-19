@@ -52,7 +52,7 @@ export async function generateDraft(
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
   deepSeekApiKey: string,
-  outputLanguage: OutputLanguage = "en"
+  outputLanguage?: OutputLanguage
 ): Promise<WikiDraft> {
   return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config, outputLanguage), config, deepSeekApiKey), source.path);
 }
@@ -116,7 +116,7 @@ function draftMessages(
   source: WikiNode,
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
-  outputLanguage: OutputLanguage
+  outputLanguage?: OutputLanguage
 ): { role: "system" | "user"; content: string }[] {
   return [
     {
@@ -235,7 +235,7 @@ export function deepSeekErrorMessage(body: unknown): string {
   return "DeepSeek request failed";
 }
 
-function extractDeepSeekResponseText(body: unknown): string {
+export function extractDeepSeekResponseText(body: unknown): string {
   if (!isDeepSeekChatCompletion(body)) {
     throw new DeepSeekResponseError("DeepSeek response shape is invalid");
   }

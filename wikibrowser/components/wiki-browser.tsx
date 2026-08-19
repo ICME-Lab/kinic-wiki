@@ -4,7 +4,7 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";

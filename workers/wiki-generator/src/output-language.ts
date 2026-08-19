@@ -4,8 +4,6 @@
 
 import type { OutputLanguage } from "./types.js";
 
-export const DEFAULT_OUTPUT_LANGUAGE: OutputLanguage = "en";
-
 const OUTPUT_LANGUAGE_NAMES: Record<OutputLanguage, string> = {
   en: "English",
   ja: "Japanese",
@@ -18,7 +16,7 @@ const OUTPUT_LANGUAGE_NAMES: Record<OutputLanguage, string> = {
 };
 
 export function parseOutputLanguage(value: unknown): OutputLanguage | null {
-  if (value === undefined || value === null) return DEFAULT_OUTPUT_LANGUAGE;
+  if (value === undefined || value === null) return null;
   if (typeof value !== "string") return null;
   switch (value) {
     case "en":

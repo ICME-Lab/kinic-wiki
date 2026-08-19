@@ -168,7 +168,7 @@ export async function searchNodesWithActor(actor, databaseId, query, prefix, top
     query_text: query,
     prefix: prefix ? [prefix] : [],
     top_k: topK,
-    preview_mode: [{ ContentStart: null }]
+    preview_mode: [{ Light: null }]
   });
   if ("Err" in result) throw new Error(result.Err);
   return result.Ok;

@@ -3,7 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { ExternalLink, Globe2, Link, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { useModalDialog } from "@/components/use-modal-dialog";
 import { publicNodePath, publicNodeUrl } from "@/lib/share-links";
 import type { DatabaseRole, NodePublication } from "@/lib/types";

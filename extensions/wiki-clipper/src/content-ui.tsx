@@ -57,7 +57,7 @@ let recallRequestGeneration = 0;
 
 ensureMounted();
 new MutationObserver(() => ensureMounted()).observe(document.documentElement, { childList: true, subtree: true });
-installChatGptRecallListeners({
+const recallListeners = installChatGptRecallListeners({
   documentRef: document,
   locationLike: location,
   onSubmit: (query) => runRecall(query)
@@ -323,17 +323,20 @@ async function openSettings() {
 
 async function runRecall(query) {
   if (!isChatGptLocation(location)) return;
-  await configLoadPromise;
-  if (!config.value.recallEnabled) return;
+  const conversationUrl = location.href;
   const generation = ++recallRequestGeneration;
   recallResults.value = [];
+  await configLoadPromise;
+  if (generation !== recallRequestGeneration) return;
+  if (!config.value.recallEnabled) return;
+  if (conversationUrl !== location.href) return;
   try {
     const response = await send({
       type: "recall-search",
       requestId: String(generation),
       provider: "chatgpt",
       query,
-      conversationUrl: location.href
+      conversationUrl
     });
     if (generation !== recallRequestGeneration) return;
     recallResults.value = Array.isArray(response.result) ? response.result : [];
@@ -343,6 +346,7 @@ async function runRecall(query) {
 }
 
 function invalidateRecall() {
+  recallListeners.cancelPending();
   recallRequestGeneration += 1;
   recallResults.value = [];
 }

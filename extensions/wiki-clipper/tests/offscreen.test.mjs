@@ -86,7 +86,7 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
       host: "https://icp0.io"
     });
     assert.deepEqual(calls.map((request) => request.prefix[0]).sort(), ["/Knowledge", "/Sources"]);
-    assert.equal(calls[0].preview_mode[0].ContentStart, null);
+    assert.equal(calls[0].preview_mode[0].Light, null);
     assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/mcp.md", "/Sources/chatgpt/mcp.md"]);
     assert.match(result[0].sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
   } finally {
@@ -101,7 +101,7 @@ test("searchRecall runs one fallback query only when literal results are insuffi
     createVfsActor: async () => ({
       async search_nodes(request) {
         calls.push(request);
-        if (request.query_text === "MCP agent memory") {
+        if (request.query_text === "memory agent MCP") {
           return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
         }
         assert.equal(request.query_text, "MCP");
@@ -116,7 +116,7 @@ test("searchRecall runs one fallback query only when literal results are insuffi
       host: "https://icp0.io"
     });
     assert.equal(calls.length, 4);
-    assert.deepEqual([...new Set(calls.map((request) => request.query_text))], ["MCP agent memory", "MCP"]);
+    assert.deepEqual([...new Set(calls.map((request) => request.query_text))], ["memory agent MCP", "MCP"]);
     assert.deepEqual(result.map((entry) => entry.path), [
       "/Knowledge/literal.md",
       "/Knowledge/fallback.md",
@@ -152,7 +152,7 @@ test("searchRecall preserves literal results when fallback search fails", async 
   }
 });
 
-test("fetchRecall reads bounded text for explicit context insertion", async () => {
+test("fetchRecall reads a bounded start window for explicit context insertion", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
@@ -169,8 +169,107 @@ test("fetchRecall reads bounded text for explicit context insertion", async () =
       databaseId: "team-db",
       host: "https://icp0.io"
     });
-    assert.equal(result.content.length, 4_000);
+    assert.equal(result.content.length, 3_000);
     assert.match(result.sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall centers the context window on a match far beyond the preview", async () => {
+  const content = `${"before\n".repeat(2_000)}TARGET_WORD\n${"after\n".repeat(2_000)}`;
+  const targetIndex = content.indexOf("TARGET_WORD");
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node() {
+        return { Ok: [{ content, metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/long.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    }, { charOffset: targetIndex });
+    assert.equal(result.content.length, 3_000);
+    assert.ok(result.content.includes("TARGET_WORD"), "context window should include the matched location");
+    assert.equal(result.content.indexOf("TARGET_WORD"), 1_500);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall falls back to the start window when the offset is absent", async () => {
+  const content = `${"head\n".repeat(1_000)}TAIL_MATCH\n${"tail\n".repeat(5_000)}`;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node() {
+        return { Ok: [{ content, metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/long.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    }, {});
+    assert.equal(result.content.length, 3_000);
+    assert.ok(result.content.startsWith("head"));
+    assert.ok(!result.content.includes("TAIL_MATCH"));
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall preserves real VFS content_substring CJK hits", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        return { Ok: [rawRecallHit("/Knowledge/メモ.md", ["content_substring"], -100_000_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("検索改善", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/メモ.md"]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall builds source URLs with per-segment encoding", async () => {
+  const rawPath = "/Knowledge/a#b?c% d日本語.md";
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes() {
+        return { Ok: [rawRecallHit(rawPath, ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    const expectedSuffix = rawPath
+      .split("/")
+      .filter(Boolean)
+      .map(encodeURIComponent)
+      .join("/");
+    assert.equal(result[0].sourceUrl, `https://wiki.kinic.xyz/db/team-db/${expectedSuffix}`);
+    assert.ok(!result[0].sourceUrl.includes("#"), "fragment marker must be encoded");
+    assert.ok(!result[0].sourceUrl.includes(" "), "spaces must be encoded");
   } finally {
     setOffscreenDepsForTest();
   }

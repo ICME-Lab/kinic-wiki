@@ -18,7 +18,8 @@ export async function applyRecallContext({ result, request, send, state, format,
   const response = await send({
     type: "recall-fetch",
     requestId: String(request.generation),
-    path: result.path
+    path: result.path,
+    charOffset: Number.isInteger(result?.charOffset) ? result.charOffset : null
   });
   if (isRecallContextStale(request, state())) {
     return { applied: false, reason: "stale" };

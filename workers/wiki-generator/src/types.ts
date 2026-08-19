@@ -179,7 +179,7 @@ export type SourceCaptureRequest = {
   url: string;
   requestedBy: string;
   requestedAt: string;
-  outputLanguage: OutputLanguage;
+  outputLanguage?: OutputLanguage;
   claimedAt: string | null;
   sourcePath: string | null;
   targetPath: string | null;

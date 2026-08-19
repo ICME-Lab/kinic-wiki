@@ -68,4 +68,19 @@ describe("PublicMarkdownPreview", () => {
     expect(html).not.toContain("Hidden title");
     expect(html).toContain("<p>Visible paragraph</p>");
   });
+
+  it("removes a leading heading after blank lines", () => {
+    const html = render("\n\n# Hidden title\n\nVisible paragraph");
+
+    expect(html).not.toContain("Hidden title");
+    expect(html).toContain("<p>Visible paragraph</p>");
+  });
+
+  it("removes a leading Setext H2 heading", () => {
+    const html = render("Hidden title\n---\n\nVisible paragraph");
+
+    expect(html).not.toContain("Hidden title");
+    expect(html).not.toContain("<h2>");
+    expect(html).toContain("<p>Visible paragraph</p>");
+  });
 });

@@ -417,6 +417,7 @@ async function recallFetch(message, sender) {
       target: "offscreen",
       type: "recall-fetch",
       path,
+      charOffset: Number.isInteger(message?.charOffset) ? message.charOffset : null,
       config
     }),
     RECALL_TIMEOUT_MS
