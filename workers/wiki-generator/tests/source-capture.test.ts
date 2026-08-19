@@ -37,7 +37,7 @@ test("valid queued request is parsed", () => {
   assert.equal(request.status, "queued");
   assert.equal(request.url, "https://example.com/a");
   assert.equal(request.finishedAt, null);
-  assert.equal(request.outputLanguage, "en");
+  assert.equal(request.outputLanguage, undefined);
   assert.equal(shouldProcessSourceCaptureRequest(request), true);
 });
 

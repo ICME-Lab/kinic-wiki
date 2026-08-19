@@ -11,7 +11,7 @@ test("core wiki prompt keeps source and wiki roles separate", () => {
   assert.match(prompt, /\/Sources/);
   assert.match(prompt, /\/Knowledge/);
   assert.match(prompt, /Every generated item must cite/);
-  assert.match(prompt, /all generated prose in English/);
+  assert.match(prompt, /all generated prose in the source material's primary language/);
   assert.match(prompt, /section labels/);
   assert.match(prompt, /Section labels must be non-empty single-line strings/);
   assert.match(buildWikiDraftSystemPrompt("ja"), /all generated prose in Japanese/);

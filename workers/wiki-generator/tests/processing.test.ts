@@ -235,7 +235,7 @@ test("source capture queue message without nonce is invalid", async () => {
         sourceEtag: "etag-source",
         requestPath: undefined,
         sessionNonce: undefined,
-        outputLanguage: "en"
+        outputLanguage: undefined
       }
     }
   );

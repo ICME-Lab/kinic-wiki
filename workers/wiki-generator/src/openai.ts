@@ -52,7 +52,7 @@ export async function generateDraft(
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
   deepSeekApiKey: string,
-  outputLanguage: OutputLanguage = "en"
+  outputLanguage?: OutputLanguage
 ): Promise<WikiDraft> {
   return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config, outputLanguage), config, deepSeekApiKey), source.path);
 }
@@ -116,7 +116,7 @@ function draftMessages(
   source: WikiNode,
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
-  outputLanguage: OutputLanguage
+  outputLanguage?: OutputLanguage
 ): { role: "system" | "user"; content: string }[] {
   return [
     {

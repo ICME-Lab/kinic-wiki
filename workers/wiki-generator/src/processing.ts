@@ -11,12 +11,12 @@ import {
   LINK_PREVIEW_CONTENT_TYPE
 } from "./link-preview.js";
 import { DeepSeekRequestError, DeepSeekResponseError, DraftValidationError, generateDraft, validateDraftSources } from "./openai.js";
-import { DEFAULT_OUTPUT_LANGUAGE, parseOutputLanguage } from "./output-language.js";
+import { parseOutputLanguage } from "./output-language.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
 import { createAnonymousVfsClient, createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { LinkPreviewQueueMessage, ManualRunInput, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
+import type { LinkPreviewQueueMessage, ManualRunInput, OutputLanguage, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export type ManualRunContext = {
@@ -200,7 +200,7 @@ async function processSourceQueueMessage(
             requestPath: message.requestPath,
             sessionNonce: message.sessionNonce,
           }),
-        message.outputLanguage ?? DEFAULT_OUTPUT_LANGUAGE
+        message.outputLanguage
       );
       const content = generated.content;
       if (new TextEncoder().encode(content).byteLength > 256 * 1024) {
@@ -405,8 +405,8 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if ("requestPath" in value && value.requestPath !== undefined && !nonEmptyString(value.requestPath)) return null;
     if (typeof value.requestPath === "string" && !isSourceCaptureRequestPath(value.requestPath)) return null;
     if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
-    const outputLanguage = parseOutputLanguage(value.outputLanguage);
-    if (!outputLanguage) return null;
+    const outputLanguage = value.outputLanguage == null ? undefined : parseOutputLanguage(value.outputLanguage);
+    if (outputLanguage === null) return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
@@ -475,7 +475,7 @@ async function generateFromSource(
   databaseId: string,
   source: WikiNode,
   beforeDeepSeek?: () => Promise<void>,
-  outputLanguage = DEFAULT_OUTPUT_LANGUAGE
+  outputLanguage?: OutputLanguage
 ): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
   await beforeDeepSeek?.();

@@ -20,11 +20,14 @@ const WIKI_RULES = [
   "Keep the generated page concise enough for human review."
 ];
 
-export function buildWikiDraftSystemPrompt(outputLanguage: OutputLanguage = "en"): string {
+export function buildWikiDraftSystemPrompt(outputLanguage?: OutputLanguage): string {
+  const languageRule = outputLanguage
+    ? `Write the title, slug, section labels, summary, and all generated prose in ${outputLanguageName(outputLanguage)}.`
+    : "Write the title, slug, section labels, summary, and all generated prose in the source material's primary language.";
   return [
     `You are using Kinic Wiki Core Skill v${WIKI_SKILL_VERSION}.`,
     "Generate one review-ready wiki page from evidence source material.",
-    `Write the title, slug, section labels, summary, and all generated prose in ${outputLanguageName(outputLanguage)}.`,
+    languageRule,
     ...WIKI_RULES.map((rule) => `- ${rule}`)
   ].join("\n");
 }

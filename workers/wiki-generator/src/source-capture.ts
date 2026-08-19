@@ -83,8 +83,9 @@ export function parseSourceCaptureRequest(node: WikiNode): SourceCaptureRequest 
   if (document.fields.schema_version !== "1") return null;
   const status = sourceCaptureStatus(document.fields.status);
   const url = document.fields.url;
-  const outputLanguage = parseOutputLanguage(document.fields.output_language);
-  if (!status || !url || !outputLanguage) return null;
+  const outputLanguage = document.fields.output_language == null ? undefined : parseOutputLanguage(document.fields.output_language);
+  if (outputLanguage === null) return null;
+  if (!status || !url) return null;
   return {
     path: node.path,
     etag: node.etag,
@@ -313,7 +314,7 @@ async function writeRequestState(
     url: request.url,
     requested_by: request.requestedBy,
     requested_at: request.requestedAt,
-    output_language: request.outputLanguage,
+    output_language: request.outputLanguage ?? null,
     claimed_at: updates.claimedAt !== undefined ? updates.claimedAt : updates.status === "fetching" ? new Date().toISOString() : request.claimedAt,
     source_path: updates.sourcePath === undefined ? request.sourcePath : updates.sourcePath,
     target_path: updates.targetPath === undefined ? request.targetPath : updates.targetPath,
