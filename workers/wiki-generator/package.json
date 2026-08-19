@@ -7,7 +7,7 @@
     "build": "vite build",
     "cf-typegen": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts",
     "cf-typecheck": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts --check",
-    "deploy": "wrangler deploy",
+    "deploy": "pnpm run build && wrangler deploy",
     "dev": "wrangler dev --test-scheduled",
     "test": "node scripts/check-candid-drift.mjs && tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
     "test:worker": "vitest run --config vitest.worker.config.ts",

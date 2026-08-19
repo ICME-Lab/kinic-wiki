@@ -202,6 +202,8 @@ jobs:
         run: pnpm test:worker
       - name: Build Cloudflare Worker
         run: pnpm build
+      - name: Verify Worker deploy path from clean artifacts
+        run: pnpm exec wrangler deploy --dry-run
 
   wiki-mcp-check:
     needs: changes
