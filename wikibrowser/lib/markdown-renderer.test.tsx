@@ -42,6 +42,52 @@ describe("Markdown renderer", () => {
     expect(html).toContain('<pre><code class="language-ts">const value = 1;');
   });
 
+  it("keeps the line after an empty fenced code block", () => {
+    const html = render("```\n```\n# After");
+    expect(html).toContain("<h1>After</h1>");
+  });
+
+  it("absorbs the rest of the document into an unterminated fence", () => {
+    const html = render("```ts\nconst value = 1;\n# After");
+    expect(html).toContain('<pre><code class="language-ts">const value = 1;\n# After</code></pre>');
+    expect(html).not.toContain("<h1>After</h1>");
+  });
+
+  it("ends a list before a horizontal rule", () => {
+    const html = render("- Foo\n---");
+    expect(html).toContain("<ul><li>Foo</li></ul>");
+    expect(html).toContain("<hr/>");
+    expect(html).not.toContain("<h2>");
+  });
+
+  it("ends a list before a heading and fence", () => {
+    const heading = render("- Foo\n# Heading");
+    expect(heading).toContain("<ul><li>Foo</li></ul>");
+    expect(heading).toContain("<h1>Heading</h1>");
+    const fence = render("- Foo\n```\ncode\n```");
+    expect(fence).toContain("<ul><li>Foo</li></ul>");
+    expect(fence).toContain("<pre><code>code</code></pre>");
+  });
+
+  it("keeps an indented heading inside a list item", () => {
+    const html = render("- Foo\n  # Inside");
+    expect(html).toContain("<ul><li>Foo<h1>Inside</h1></li></ul>");
+  });
+
+  it("does not add checkboxes to plain items in a mixed task list", () => {
+    const html = render("- normal item\n- [x] completed item");
+    expect(html).toContain("<ul><li>normal item</li>");
+    expect(html).toContain("<li><input type=\"checkbox\" disabled=\"\" checked=\"\"/>completed item</li>");
+  });
+
+  it("renders hard line breaks from two trailing spaces and a backslash", () => {
+    const twoSpaces = render("first  \nsecond");
+    expect(twoSpaces).toContain("<p>first<br/>second</p>");
+    const backslash = render("first\\\nsecond");
+    expect(backslash).toContain("<p>first<br/>second</p>");
+    expect(backslash).not.toContain("first\\");
+  });
+
   it("renders ordered, unordered, and task lists", () => {
     const html = render([
       "- one",

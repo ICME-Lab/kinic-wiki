@@ -99,9 +99,9 @@ function parseBlocks(source: string, refs: ReferenceMap): Block[] {
 
     const fence = parseFence(line);
     if (fence) {
-      const { lang, text } = readFencedCode(lines, index, fence.marker, fence.length);
+      const { lang, text, consumed } = readFencedCode(lines, index, fence.marker, fence.length);
       blocks.push({ type: "code", lang, text });
-      index += text.split("\n").length + 2;
+      index += consumed;
       continue;
     }
 
@@ -168,18 +168,21 @@ function parseFence(line: string): { marker: "`" | "~"; length: number; lang: st
   return { marker, length: fence.length, lang: match[2].trim() };
 }
 
-function readFencedCode(lines: string[], index: number, marker: "`" | "~", length: number): { lang: string | null; text: string } {
+function readFencedCode(lines: string[], index: number, marker: "`" | "~", length: number): { lang: string | null; text: string; consumed: number } {
   const lang = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)/.exec(lines[index])?.[2] ?? "";
   const body: string[] = [];
   let cursor = index + 1;
   while (cursor < lines.length) {
     const normalized = lines[cursor].endsWith("\r") ? lines[cursor].slice(0, -1) : lines[cursor];
     const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(normalized);
-    if (closing && closing[1][0] === marker && closing[1].length >= length) break;
+    if (closing && closing[1][0] === marker && closing[1].length >= length) {
+      cursor += 1;
+      break;
+    }
     body.push(lines[cursor]);
     cursor += 1;
   }
-  return { lang: lang || null, text: body.join("\n") };
+  return { lang: lang || null, text: body.join("\n"), consumed: cursor - index };
 }
 
 function isIndentedCode(line: string): boolean {
@@ -217,6 +220,8 @@ function parseSetextHeading(lines: string[], index: number): { level: number; co
   const next = lines[index + 1];
   if (next === undefined) return null;
   const current = lines[index];
+  if (current.trim() === "") return null;
+  if (listMarker(current) || parseFence(current) || /^ {0,3}> ?/.test(current)) return null;
   if (/^=+[ \t]*$/.test(next)) return { level: 1, content: current.trim() };
   if (/^-+[ \t]*$/.test(next)) return { level: 2, content: current.trim() };
   return null;
@@ -249,7 +254,6 @@ function parseList(lines: string[], index: number, refs: ReferenceMap): { block:
   const start = first.ordered ? first.start : 1;
   const items: ListItem[] = [];
   let cursor = index;
-  let sawTask = false;
   let sawBlank = false;
 
   while (cursor < lines.length) {
@@ -258,8 +262,9 @@ function parseList(lines: string[], index: number, refs: ReferenceMap): { block:
     const itemIndent = marker.indent;
     const itemStart = lines[cursor];
     const itemContent = removeListMarker(itemStart, marker);
+    const markerEnd = itemIndent + marker.marker.length;
+    const contentIndent = markerEnd + (/^[ \t]*/.exec(itemStart.slice(markerEnd))?.[0].length ?? 0);
     const task = parseTaskMarker(itemContent);
-    if (task) sawTask = true;
     const itemLines: string[] = [];
     itemLines.push(itemContent);
     let itemInternalBlank = false;
@@ -288,7 +293,7 @@ function parseList(lines: string[], index: number, refs: ReferenceMap): { block:
       const markerAtLine = listMarker(line);
       if (markerAtLine) {
         if (markerAtLine.indent <= itemIndent) break;
-      } else if (!isContinuation(line, itemIndent)) {
+      } else if (!isContinuation(line, contentIndent)) {
         break;
       }
       itemLines.push(line.slice(itemIndent));
@@ -303,14 +308,6 @@ function parseList(lines: string[], index: number, refs: ReferenceMap): { block:
   }
 
   if (items.length === 0) return null;
-  if (sawTask) {
-    items.forEach((item) => {
-      if (!item.task) {
-        item.task = true;
-        item.checked = false;
-      }
-    });
-  }
   const loose = sawBlank || items.some((item) => item.internalBlank);
   return { block: { type: "list", ordered, start, items, loose }, consumed: cursor - index };
 }
@@ -400,6 +397,23 @@ function parseInlineRange(source: string, from: number, to: number, refs: Refere
   let cursor = from;
   while (cursor < to) {
     const char = source[cursor];
+
+    if (char === "\n") {
+      const isBackslashBreak = cursor > from && source[cursor - 1] === "\\";
+      const isDoubleSpaceBreak = cursor >= from + 2 && source[cursor - 2] === " " && source[cursor - 1] === " ";
+      if (isBackslashBreak) {
+        popTrailingChar(nodes);
+        nodes.push({ tag: "br", props: {}, children: [] });
+        cursor += 1;
+        continue;
+      }
+      if (isDoubleSpaceBreak) {
+        trimTrailingSpaces(nodes);
+        nodes.push({ tag: "br", props: {}, children: [] });
+        cursor += 1;
+        continue;
+      }
+    }
 
     if (char === "`") {
       const code = readCodeSpan(source, cursor);
@@ -491,6 +505,20 @@ function appendText(nodes: InlineNode[], text: string): void {
     nodes[nodes.length - 1] = last + text;
   } else {
     nodes.push(text);
+  }
+}
+
+function popTrailingChar(nodes: InlineNode[]): void {
+  const last = nodes[nodes.length - 1];
+  if (typeof last === "string" && last.length > 0) {
+    nodes[nodes.length - 1] = last.slice(0, -1);
+  }
+}
+
+function trimTrailingSpaces(nodes: InlineNode[]): void {
+  const last = nodes[nodes.length - 1];
+  if (typeof last === "string") {
+    nodes[nodes.length - 1] = last.replace(/ +$/, "");
   }
 }
 

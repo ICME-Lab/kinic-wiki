@@ -27,11 +27,18 @@ export function PublicMarkdownPreview({ content }: { content: string }) {
 
 function stripLeadingHeading(content: string): string {
   const lines = content.split("\n");
-  const first = lines[0] ?? "";
-  const isAtxHeading = /^#{1,6}\s+/.test(first);
-  const isSetextHeading = lines.length > 1 && /^=+\s*$/.test(lines[1] ?? "");
-  if (!isAtxHeading && !isSetextHeading) return content;
-  return lines.slice(isSetextHeading ? 2 : 1).join("\n").replace(/^\n+/, "");
+  let start = 0;
+  while (start < lines.length && lines[start].trim() === "") start += 1;
+  if (start >= lines.length) return content;
+  const first = lines[start];
+  if (/^#{1,6}\s+/.test(first)) {
+    return lines.slice(start + 1).join("\n").replace(/^\n+/, "");
+  }
+  const underline = lines[start + 1] ?? "";
+  if (/^=+\s*$/.test(underline) || /^-+\s*$/.test(underline)) {
+    return lines.slice(start + 2).join("\n").replace(/^\n+/, "");
+  }
+  return content;
 }
 
 function isExternalHttpsUrl(href: string | undefined): boolean {
