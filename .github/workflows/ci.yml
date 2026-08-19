@@ -389,6 +389,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.canister == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Enable corepack
@@ -423,8 +424,6 @@ jobs:
           rustup component add rustfmt clippy
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
-      - name: Install WASI sysroot
-        run: sudo apt-get update && sudo apt-get install -y wasi-libc
       - name: Install wasm tooling
         run: |
           for attempt in 1 2 3; do
