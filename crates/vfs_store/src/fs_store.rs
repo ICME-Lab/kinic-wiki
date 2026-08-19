@@ -47,9 +47,10 @@ use crate::{
         load_outgoing_links, sync_node_links,
     },
     fs_search::{
-        SearchCandidate, build_previews_for_hits, build_search_query_plan, finalize_hits,
-        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
-        path_match_score, rerank_candidates, sort_candidates,
+        SearchCandidate, build_previews_for_hits, build_search_query_plan,
+        filter_candidates_on_short_terms, finalize_hits, load_content_substring_candidates,
+        load_path_candidates, load_ranked_fts_candidates, path_match_score, rerank_candidates,
+        sort_candidates,
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
@@ -521,6 +522,7 @@ impl FsStore {
                     candidates.entry(candidate.row_id).or_insert(candidate);
                 }
             }
+            filter_candidates_on_short_terms(conn, &mut candidates, &plan)?;
             let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
                 load_path_candidates(conn, &plan.path_terms, prefix.as_deref(), top_k)?
             } else {
