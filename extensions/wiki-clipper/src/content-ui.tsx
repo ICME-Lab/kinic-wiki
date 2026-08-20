@@ -19,7 +19,8 @@ import {
   insertChatGptContext,
   installChatGptRecallListeners,
   installChatGptNavigationListener,
-  isChatGptLocation
+  isChatGptLocation,
+  isNewChatGptConversationNavigation
 } from "./chatgpt-recall.js";
 
 const ROOT_ID = "kinic-wiki-clipper-root";
@@ -67,7 +68,9 @@ installChatGptNavigationListener({
   locationLike: location,
   documentRef: document,
   MutationObserverRef: MutationObserver,
-  onNavigate: () => invalidateRecall()
+  onNavigate: (nextUrl, previousUrl) => invalidateRecall({
+    cancelPending: !isNewChatGptConversationNavigation(previousUrl, nextUrl)
+  })
 });
 chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
   const previous = config.value;
@@ -345,8 +348,8 @@ async function runRecall(query) {
   }
 }
 
-function invalidateRecall() {
-  recallListeners.cancelPending();
+function invalidateRecall({ cancelPending = true } = {}) {
+  if (cancelPending) recallListeners.cancelPending();
   recallRequestGeneration += 1;
   recallResults.value = [];
 }
