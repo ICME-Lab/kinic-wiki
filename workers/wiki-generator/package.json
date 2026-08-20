@@ -5,12 +5,18 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:nns": "wrangler deploy --dry-run --config wrangler.nns.jsonc",
     "cf-typegen": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts",
+    "cf-typegen:nns": "wrangler types --config wrangler.nns.jsonc --include-runtime false --env-interface NnsWorkerBindings src/nns-worker-configuration.d.ts",
     "cf-typecheck": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts --check",
+    "cf-typecheck:nns": "wrangler types --config wrangler.nns.jsonc --include-runtime false --env-interface NnsWorkerBindings src/nns-worker-configuration.d.ts --check",
     "deploy": "pnpm run build && wrangler deploy",
+    "deploy:nns": "pnpm run build:nns && wrangler deploy --config wrangler.nns.jsonc",
     "dev": "wrangler dev --test-scheduled",
+    "dev:nns": "wrangler dev --config wrangler.nns.jsonc --test-scheduled",
     "test": "node scripts/check-candid-drift.mjs && tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
     "test:worker": "vitest run --config vitest.worker.config.ts",
+    "test:worker:nns": "vitest run --config vitest.nns-worker.config.ts",
     "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate"
   },
