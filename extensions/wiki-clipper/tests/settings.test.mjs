@@ -344,9 +344,10 @@ test("recall run captures URL and generation before awaiting config and cancels 
     "generation must be captured before awaiting config load"
   );
   assert.match(runRecall, /if \(conversationUrl !== location\.href\) return;/);
-  const invalidateRecall = /function invalidateRecall\(\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  const invalidateRecall = /function invalidateRecall\([^)]*\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
   assert.ok(invalidateRecall, "invalidateRecall function should exist");
   assert.match(invalidateRecall, /recallListeners\.cancelPending\(\)/);
+  assert.match(contentUi, /cancelPending: !isNewChatGptConversationNavigation\(previousUrl, nextUrl\)/);
 });
 
 test("settings docs describe automatic database save", () => {

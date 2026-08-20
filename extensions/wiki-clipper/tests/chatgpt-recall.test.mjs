@@ -9,6 +9,7 @@ import {
   installChatGptNavigationListener,
   installChatGptRecallListeners,
   isChatGptLocation,
+  isNewChatGptConversationNavigation,
   readChatGptComposer
 } from "../src/chatgpt-recall.js";
 
@@ -22,6 +23,13 @@ test("ChatGPT composer helpers read and append textarea text", () => {
   assert.match(composer.value, /What did I save about MCP\?/);
   assert.match(composer.value, /\[Kinic memory\]/);
   assert.equal(composer.inputEvents, 1);
+});
+
+test("ChatGPT new-chat navigation is distinguished from switching conversations", () => {
+  assert.equal(isNewChatGptConversationNavigation("https://chatgpt.com/", "https://chatgpt.com/c/abc"), true);
+  assert.equal(isNewChatGptConversationNavigation("https://chatgpt.com/?model=auto", "https://chatgpt.com/c/abc"), true);
+  assert.equal(isNewChatGptConversationNavigation("https://chatgpt.com/c/old", "https://chatgpt.com/c/new"), false);
+  assert.equal(isNewChatGptConversationNavigation("https://evil.test/", "https://chatgpt.com/c/abc"), false);
 });
 
 test("ChatGPT composer inserts into a contenteditable via paste so the editor model stays in sync", () => {
@@ -261,12 +269,16 @@ test("ChatGPT navigation listener detects URL changes via DOM mutations and even
   }
   const documentRef = { documentElement: {} };
   const navigations = [];
+  const transitions = [];
   const dispose = installChatGptNavigationListener({
     windowRef,
     locationLike: location,
     documentRef,
     MutationObserverRef: FakeMutationObserver,
-    onNavigate: (url) => navigations.push(url)
+    onNavigate: (url, previousUrl) => {
+      navigations.push(url);
+      transitions.push([previousUrl, url]);
+    }
   });
 
   assert.deepEqual(observed, { target: documentRef.documentElement, options: { childList: true, subtree: true } });
@@ -289,6 +301,7 @@ test("ChatGPT navigation listener detects URL changes via DOM mutations and even
   location.href = "https://chatgpt.com/c/five";
   windowRef.history.replaceState({}, "", "https://chatgpt.com/c/five");
   assert.deepEqual(navigations, ["https://chatgpt.com/c/two", "https://chatgpt.com/c/three", "https://chatgpt.com/c/four", "https://chatgpt.com/c/five"]);
+  assert.deepEqual(transitions[0], ["https://chatgpt.com/c/one", "https://chatgpt.com/c/two"]);
 
   dispose();
   assert.equal(disconnected, 1);

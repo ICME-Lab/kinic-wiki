@@ -8,6 +8,13 @@ export function isChatGptLocation(locationLike = globalThis.location) {
   return isChatGptOrigin(locationLike?.href || locationLike?.toString?.() || "");
 }
 
+export function isNewChatGptConversationNavigation(previousUrl, nextUrl) {
+  return isChatGptOrigin(previousUrl)
+    && isChatGptOrigin(nextUrl)
+    && !chatGptConversationId(previousUrl)
+    && Boolean(chatGptConversationId(nextUrl));
+}
+
 export function findChatGptComposer(documentRef = globalThis.document) {
   if (!documentRef) return null;
   const candidates = [...documentRef.querySelectorAll("textarea, [contenteditable='true']")].filter(isVisible);
@@ -201,8 +208,9 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
   const notify = () => {
     const nextUrl = String(currentLocation.href || "");
     if (nextUrl === currentUrl) return;
+    const previousUrl = currentUrl;
     currentUrl = nextUrl;
-    onNavigate(nextUrl);
+    onNavigate(nextUrl, previousUrl);
   };
   const observer = documentRef?.documentElement && MutationObserverRef
     ? new MutationObserverRef(() => notify())
@@ -217,6 +225,14 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
     observer?.disconnect?.();
     unregisterHistory();
   };
+}
+
+function chatGptConversationId(value) {
+  try {
+    return new URL(String(value || "")).pathname.match(/^\/(?:c|chat|(?:u\/\d+\/)?app)\/([^/]+)/)?.[1] || "";
+  } catch {
+    return "";
+  }
 }
 
 function isComposerOrWithin(target, composer) {
