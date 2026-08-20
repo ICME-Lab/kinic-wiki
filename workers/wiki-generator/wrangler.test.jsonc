@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-wiki-generator-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-12",
+  "compatibility_flags": ["nodejs_compat"]
+}

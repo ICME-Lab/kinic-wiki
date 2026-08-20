@@ -198,12 +198,20 @@ jobs:
         run: pnpm typecheck
       - name: Check Cloudflare types
         run: pnpm cf-typecheck
+      - name: Check NNS Worker Cloudflare types
+        run: pnpm cf-typecheck:nns
       - name: Run Workers runtime tests
         run: pnpm test:worker
+      - name: Run NNS Worker runtime tests
+        run: pnpm test:worker:nns
       - name: Build Cloudflare Worker
         run: pnpm build
+      - name: Build NNS Worker
+        run: pnpm build:nns
       - name: Verify Worker deploy path from clean artifacts
         run: pnpm exec wrangler deploy --dry-run
+      - name: Verify NNS Worker deploy path from clean artifacts
+        run: pnpm exec wrangler deploy --dry-run --config wrangler.nns.jsonc
 
   wiki-mcp-check:
     needs: changes

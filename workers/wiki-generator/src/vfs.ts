@@ -187,7 +187,7 @@ export type VfsClient = {
   fetchUpdates(databaseId: string, prefix: string, knownRevision: string, cursor: string | null, targetRevision: string | null): Promise<FetchUpdatesPage>;
 };
 
-export async function createVfsClient(config: WorkerConfig, identityPem: string): Promise<VfsClient> {
+export async function createVfsClient(config: Pick<WorkerConfig, "canisterId" | "icHost">, identityPem: string): Promise<VfsClient> {
   const identity = identityFromPem(identityPem);
   const agent = HttpAgent.createSync({ host: config.icHost, identity });
   if (isLocalHost(config.icHost)) {

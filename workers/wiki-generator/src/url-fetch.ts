@@ -14,10 +14,11 @@ export type FetchedUrlSource = {
 
 const ACCEPTED_CONTENT_TYPES = ["text/html", "text/plain", "text/markdown", "text/x-markdown"];
 const MAX_REDIRECTS = 5;
+const URL_FETCH_TIMEOUT_MS = 30_000;
 
-export async function fetchUrlSource(urlText: string, maxBytes: number): Promise<FetchedUrlSource> {
+export async function fetchUrlSource(urlText: string, maxBytes: number, userAgent = "kinic-wiki-generator/1.0"): Promise<FetchedUrlSource> {
   const firstUrl = parseAllowedUrl(urlText);
-  const { response, finalUrl } = await fetchAllowedUrl(firstUrl);
+  const { response, finalUrl } = await fetchAllowedUrl(firstUrl, userAgent);
   if (!response.ok) {
     throw new Error(`URL fetch failed with ${response.status}`);
   }
@@ -56,14 +57,15 @@ export function parseAllowedUrl(value: string): URL {
   return url;
 }
 
-async function fetchAllowedUrl(firstUrl: URL): Promise<{ response: Response; finalUrl: URL }> {
+async function fetchAllowedUrl(firstUrl: URL, userAgent: string): Promise<{ response: Response; finalUrl: URL }> {
   let currentUrl = firstUrl;
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     const response = await fetch(currentUrl.toString(), {
       redirect: "manual",
+      signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
       headers: {
         accept: "text/html,text/plain,text/markdown;q=0.9,*/*;q=0.1",
-        "user-agent": "kinic-wiki-generator/1.0"
+        "user-agent": userAgent
       }
     });
     if (!isRedirectStatus(response.status)) {

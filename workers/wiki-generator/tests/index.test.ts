@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import worker, { processQueueBatchForTest } from "../src/index.js";
-import { processQueueMessage } from "../src/processing.js";
-import { testEnv, TestQueue } from "./source-capture-fixtures.js";
+import { parseQueueMessageEnvelope, processQueueMessage } from "../src/processing.js";
+import { testEnv, TestFetcher, TestQueue } from "./source-capture-fixtures.js";
 import type { QueueMessage, SourceQueueMessage, WikiGenerationFailureMessage } from "../src/types.js";
 
 Object.defineProperty(crypto.subtle, "timingSafeEqual", {
@@ -22,6 +22,78 @@ test("health check starts without authentication or external bindings", async ()
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/json");
   assert.deepEqual(await response.json(), { ok: true });
+});
+
+test("NNS audit operations require authentication and proxy through the private service binding", async () => {
+  const service = new TestFetcher();
+  const env = { ...testEnv(new TestQueue()), NNS_PROPOSAL_REVIEW_SERVICE: service };
+  const unauthorized = await fetchWorker(new Request("https://wiki-generator.kinic.xyz/nns-audit/status"), env);
+  assert.equal(unauthorized.status, 401);
+
+  const status = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/nns-audit/status", { headers: { authorization: "Bearer worker-token" } }),
+    env
+  );
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), { enabled: false });
+
+  const run = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/nns-audit/run", { method: "POST", headers: { authorization: "Bearer worker-token" } }),
+    env
+  );
+  assert.equal(run.status, 200);
+  assert.deepEqual(await run.json(), { enabled: false, initialized: false, discovered: 0, enqueued: 0, resetFailed: 0 });
+  assert.deepEqual(
+    service.requests.map((request) => [request.method, new URL(request.url).pathname]),
+    [["GET", "/status"], ["POST", "/run"]]
+  );
+  assert.deepEqual(await service.requests[1]?.json(), { retryFailed: false });
+});
+
+test("NNS audit run validates input before forwarding", async () => {
+  const service = new TestFetcher();
+  const env = { ...testEnv(new TestQueue()), NNS_PROPOSAL_REVIEW_SERVICE: service };
+  const response = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/nns-audit/run", {
+      method: "POST",
+      headers: { authorization: "Bearer worker-token", "content-type": "application/json" },
+      body: JSON.stringify({ retryFailed: "yes" })
+    }),
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(service.requests.length, 0);
+});
+
+test("NNS service binding failures use the public JSON error contract", async () => {
+  const service = new TestFetcher();
+  service.fail = true;
+  const response = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/nns-audit/status", { headers: { authorization: "Bearer worker-token" } }),
+    { ...testEnv(new TestQueue()), NNS_PROPOSAL_REVIEW_SERVICE: service }
+  );
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "NNS review service unavailable" });
+});
+
+test("NNS service responses preserve status and JSON body", async () => {
+  const service = new TestFetcher(() => Response.json({ error: "conflict" }, { status: 409 }));
+  const response = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/nns-audit/status", { headers: { authorization: "Bearer worker-token" } }),
+    { ...testEnv(new TestQueue()), NNS_PROPOSAL_REVIEW_SERVICE: service }
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "conflict" });
+});
+
+test("general Queue rejects NNS proposal review messages", () => {
+  assert.deepEqual(parseQueueMessageEnvelope({ kind: "nns_proposal_review", databaseId: "nns-db", proposalId: 1 }), {
+    kind: "invalid",
+    reason: "queue message shape is invalid"
+  });
 });
 
 test("source capture trigger requires worker token config", async () => {

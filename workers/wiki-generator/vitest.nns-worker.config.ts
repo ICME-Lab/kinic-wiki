@@ -2,11 +2,11 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 
 export default defineWorkersConfig({
   test: {
-    include: ["worker-tests/health.worker.test.ts"],
+    include: ["worker-tests/nns-health.worker.test.ts"],
     poolOptions: {
       workers: {
-        main: "./src/index.ts",
-        wrangler: { configPath: "./wrangler.test.jsonc" }
+        main: "./src/nns-index.ts",
+        wrangler: { configPath: "./wrangler.nns.jsonc" }
       }
     }
   }

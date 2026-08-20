@@ -59,7 +59,7 @@ export async function generateDraft(
 
 export async function requestDeepSeekDraft(
   messages: { role: "system" | "user"; content: string }[],
-  config: WorkerConfig,
+  config: Pick<WorkerConfig, "model" | "maxOutputTokens">,
   deepSeekApiKey: string
 ): Promise<unknown> {
   const requestPayload = JSON.stringify({
