@@ -732,7 +732,25 @@ test("load-config leaves databaseId empty until saved", async () => {
     assert.equal(response.config.canisterId, "6emaw-iyaaa-aaaay-aacka-cai");
     assert.equal(response.config.databaseId, "");
     assert.equal(response.config.host, "https://icp0.io");
+    assert.equal(response.config.showSaveControls, true);
     assert.equal("generatorUrl" in response.config, false);
+  } finally {
+    restore();
+  }
+});
+
+test("save-config persists save-control visibility and preserves it across partial updates", async () => {
+  const syncStorage = memoryStorage();
+  const restore = installChromeStorage(syncStorage, memoryStorage());
+  try {
+    await handleMessage({ type: "save-config", config: { showSaveControls: false } }, null);
+    await handleMessage({ type: "save-config", config: { databaseId: "team_wiki" } }, null);
+    const hidden = await handleMessage({ type: "load-config" }, null);
+    assert.equal(hidden.config.showSaveControls, false);
+
+    await handleMessage({ type: "save-config", config: { showSaveControls: true } }, null);
+    const shown = await handleMessage({ type: "load-config" }, null);
+    assert.equal(shown.config.showSaveControls, true);
   } finally {
     restore();
   }

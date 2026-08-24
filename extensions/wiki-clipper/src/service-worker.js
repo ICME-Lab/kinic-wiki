@@ -15,7 +15,8 @@ const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST,
-  recallEnabled: false
+  recallEnabled: false,
+  showSaveControls: true
 };
 const PROVIDERS = {
   chatgpt: {
@@ -918,7 +919,8 @@ async function loadConfig() {
     canisterId: DEFAULT_CONFIG.canisterId,
     databaseId: String(stored.databaseId || DEFAULT_CONFIG.databaseId),
     host: DEFAULT_CONFIG.host,
-    recallEnabled: asBoolean(stored.recallEnabled)
+    recallEnabled: asBoolean(stored.recallEnabled),
+    showSaveControls: asBoolean(stored.showSaveControls)
   };
 }
 
@@ -926,9 +928,13 @@ async function saveConfig(config) {
   const stored = await chrome.storage.sync.get(DEFAULT_CONFIG);
   const hasDatabaseId = Object.prototype.hasOwnProperty.call(config || {}, "databaseId");
   const hasRecallEnabled = Object.prototype.hasOwnProperty.call(config || {}, "recallEnabled");
+  const hasShowSaveControls = Object.prototype.hasOwnProperty.call(config || {}, "showSaveControls");
   const databaseId = hasDatabaseId ? String(config?.databaseId || "").trim() : String(stored.databaseId || "").trim();
   const recallEnabled = hasRecallEnabled ? asBoolean(config.recallEnabled) : asBoolean(stored.recallEnabled);
-  await chrome.storage.sync.set({ databaseId, recallEnabled });
+  const showSaveControls = hasShowSaveControls
+    ? asBoolean(config.showSaveControls)
+    : asBoolean(stored.showSaveControls);
+  await chrome.storage.sync.set({ databaseId, recallEnabled, showSaveControls });
   await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl"]);
 }
 

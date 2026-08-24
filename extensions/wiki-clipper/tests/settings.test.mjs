@@ -25,12 +25,18 @@ import {
 
 test("settings popup omits fixed runtime inputs", () => {
   const html = readFileSync(new URL("../popup/popup.html", import.meta.url), "utf8");
+  const popupJs = readFileSync(new URL("../popup/popup.js", import.meta.url), "utf8");
   assert.match(html, /<select id="database-id">/);
   assert.match(html, /<form id="create-database-form"/);
   assert.match(html, /Database name/);
   assert.match(html, /id="create-database"/);
   assert.match(html, /id="recall-enabled"/);
   assert.match(html, /Recall beta/);
+  assert.match(html, /id="show-save-controls"/);
+  assert.match(html, /Show save controls/);
+  assert.match(html, /ChatGPT, Claude, and Gemini/);
+  assert.match(popupJs, /config: \{ showSaveControls: Boolean\(showSaveControls\) \}/);
+  assert.match(popupJs, /Save controls hidden/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
   assert.doesNotMatch(html, /Database title/);
@@ -94,6 +100,15 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /type: "recall-search"/);
   assert.match(recallContext, /type: "recall-fetch"/);
   assert.match(contentUi, /chrome\.storage\?\.onChanged/);
+  assert.match(contentUi, /showSaveControls/);
+  assert.match(contentUi, /configLoaded/);
+  assert.match(contentUi, /configLoaded\.value && config\.value\.showSaveControls/);
+  assert.match(contentUi, /saveControlsVisible\.value && panelOpen\.value/);
+  assert.match(contentUi, /panelOpen\.value = false/);
+  assert.equal(
+    contentUi.match(/configWithDefaults\(\{ \.\.\.config\.value, \.\.\.\(nextState\.config \|\| \{\}\) \}\)/g)?.length,
+    2
+  );
   assert.match(contentUi, /applyRecallStorageChanges/);
   assert.match(contentUi, /invalidateRecall/);
   assert.match(contentUi, /isGeminiProvider/);

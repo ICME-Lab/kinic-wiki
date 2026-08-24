@@ -25,7 +25,14 @@ import {
 
 const ROOT_ID = "kinic-wiki-clipper-root";
 const DEFAULT_DATABASE_ID = "";
-const config = signal({ canisterId: DEFAULT_CANISTER_ID, databaseId: DEFAULT_DATABASE_ID, host: DEFAULT_IC_HOST });
+const config = signal({
+  canisterId: DEFAULT_CANISTER_ID,
+  databaseId: DEFAULT_DATABASE_ID,
+  host: DEFAULT_IC_HOST,
+  recallEnabled: false,
+  showSaveControls: true
+});
+const configLoaded = signal(false);
 const countText = signal(String(DEFAULT_EXPORT_LIMIT));
 const status = signal("idle");
 const error = signal("");
@@ -48,6 +55,7 @@ const selectedWritableDatabase = computed(() =>
 );
 const exportLocked = computed(() => exportStartInFlight.value || status.value === "exporting");
 const canExport = computed(() => !exportLocked.value && selectedWritableDatabase.value);
+const saveControlsVisible = computed(() => configLoaded.value && config.value.showSaveControls);
 const exportProvider = computed(() => providerFromLocation(location) || "chatgpt");
 const isGeminiProvider = computed(() => exportProvider.value === "gemini");
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
@@ -75,10 +83,15 @@ installChatGptNavigationListener({
 chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
   const previous = config.value;
   const next = applyRecallStorageChanges(previous, changes, areaName);
+  if (areaName === "sync" && Object.prototype.hasOwnProperty.call(changes || {}, "showSaveControls")) {
+    next.showSaveControls = showSaveControlsFromValue(changes.showSaveControls?.newValue);
+  }
   const databaseChanged = next.databaseId !== previous.databaseId;
   const recallChanged = next.recallEnabled !== previous.recallEnabled;
-  if (!databaseChanged && !recallChanged) return;
+  const saveControlsChanged = next.showSaveControls !== previous.showSaveControls;
+  if (!databaseChanged && !recallChanged && !saveControlsChanged) return;
   config.value = { ...previous, ...next };
+  if (saveControlsChanged && !next.showSaveControls) panelOpen.value = false;
   if (databaseChanged || (recallChanged && !next.recallEnabled)) invalidateRecall();
 });
 
@@ -96,25 +109,27 @@ function App() {
   return (
     <>
       <style>{styles}</style>
-      <div class="quick-actions">
-        <button class="kinic-fab" type="button" disabled={exportLocked.value} onClick={quickSave}>
-          <img class="kinic-logo" src={logoUrl} alt="" />
-          <span>Save to Kinic</span>
-        </button>
-        <button class="quick-options" type="button" aria-label="Open save options" onClick={openPanel}>
-          ⋯
-        </button>
-      </div>
+      {saveControlsVisible.value ? (
+        <div class="quick-actions">
+          <button class="kinic-fab" type="button" disabled={exportLocked.value} onClick={quickSave}>
+            <img class="kinic-logo" src={logoUrl} alt="" />
+            <span>Save to Kinic</span>
+          </button>
+          <button class="quick-options" type="button" aria-label="Open save options" onClick={openPanel}>
+            ⋯
+          </button>
+        </div>
+      ) : null}
       {toast.value ? <div class={`save-toast ${toast.value.kind}`} role="status" aria-live="polite">{toast.value.message}</div> : null}
       {!panelOpen.value && recallResults.value.length > 0 ? <RecallPanel /> : null}
-      {panelOpen.value ? <Modal /> : null}
+      {saveControlsVisible.value && panelOpen.value ? <Modal /> : null}
     </>
   );
 }
 
 function RecallPanel() {
   return (
-    <section class="recall-panel" aria-label="Kinic Memory">
+    <section class={`recall-panel ${saveControlsVisible.value ? "" : "save-controls-hidden"}`} aria-label="Kinic Memory">
       <header class="recall-header">
         <div class="recall-heading">
           <strong>Kinic Memory</strong>
@@ -390,6 +405,8 @@ async function loadConfig() {
     config.value = configWithDefaults(response.config);
   } catch (nextError) {
     error.value = messageForError(nextError);
+  } finally {
+    configLoaded.value = true;
   }
 }
 
@@ -463,8 +480,13 @@ function configWithDefaults(value) {
     canisterId: String(value?.canisterId || DEFAULT_CANISTER_ID),
     databaseId: String(value?.databaseId || DEFAULT_DATABASE_ID),
     host: DEFAULT_IC_HOST,
-    recallEnabled: value?.recallEnabled === true || value?.recallEnabled === "true"
+    recallEnabled: value?.recallEnabled === true || value?.recallEnabled === "true",
+    showSaveControls: showSaveControlsFromValue(value?.showSaveControls)
   };
+}
+
+function showSaveControlsFromValue(value) {
+  return value !== false && value !== "false";
 }
 
 function normalizedConfig() {
@@ -496,7 +518,7 @@ function exportCallbacks() {
     send,
     onState(nextState) {
       panelOpen.value = true;
-      config.value = configWithDefaults(nextState.config || config.value);
+      config.value = configWithDefaults({ ...config.value, ...(nextState.config || {}) });
       progress.value = nextState.progress;
       logs.value = nextState.logs || [];
       status.value = nextState.status;
@@ -510,7 +532,7 @@ function quickExportCallbacks() {
   return {
     send,
     onState(nextState) {
-      config.value = configWithDefaults(nextState.config || config.value);
+      config.value = configWithDefaults({ ...config.value, ...(nextState.config || {}) });
       progress.value = nextState.progress;
       logs.value = nextState.logs || [];
       status.value = nextState.status;
@@ -563,7 +585,7 @@ const styles = `
 .kinic-fab:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 .quick-options{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--kinic-ink);border-radius:50%;background:var(--kinic-ink);color:var(--kinic-white);font:800 20px/1 system-ui;box-shadow:0 4px 10px #14142b0a;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}.quick-options:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);color:var(--kinic-white);transform:translateY(-3px)}.quick-options:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 .save-toast{position:fixed;right:18px;bottom:68px;z-index:2147483647;border:1px solid var(--kinic-line);border-radius:12px;padding:9px 12px;background:var(--kinic-white);color:var(--kinic-ink);font:700 13px/1.3 system-ui;box-shadow:0 8px 24px rgb(0 0 0 / 14%)}.save-toast.error{border-color:var(--kinic-pale-pink);background:var(--kinic-soft-pink);color:var(--kinic-hot-pink)}
-.recall-panel{position:fixed;right:18px;bottom:74px;z-index:2147483646;width:min(420px,calc(100vw - 36px));max-height:min(420px,calc(100vh - 110px));overflow:auto;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);color:var(--kinic-ink);box-shadow:0 18px 44px rgb(0 0 0 / 16%);font:13px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.recall-header{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--kinic-line);padding:10px 12px}.recall-heading{display:flex;align-items:center;gap:8px;min-width:0}.recall-heading span{color:var(--kinic-body);font-size:11px;font-weight:700}.recall-header .close{width:26px;height:26px;border-radius:10px;font-size:15px;flex:0 0 auto}.recall-list{display:grid;gap:8px;padding:10px}.recall-card{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--kinic-line);border-radius:12px;padding:10px;background:var(--kinic-paper)}.recall-card-body{min-width:0}.recall-card strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.recall-card p{display:-webkit-box;overflow:hidden;margin:4px 0;color:var(--kinic-support);font-size:12px;-webkit-box-orient:vertical;-webkit-line-clamp:3}.recall-card small{display:block;overflow:hidden;color:var(--kinic-body);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.recall-card button{border:1px solid var(--kinic-ink);border-radius:10px;padding:7px 9px;background:var(--kinic-ink);color:var(--kinic-white);font-size:11px;font-weight:800;white-space:nowrap}.recall-card button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink)}
+.recall-panel{position:fixed;right:18px;bottom:74px;z-index:2147483646;width:min(420px,calc(100vw - 36px));max-height:min(420px,calc(100vh - 110px));overflow:auto;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);color:var(--kinic-ink);box-shadow:0 18px 44px rgb(0 0 0 / 16%);font:13px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.recall-panel.save-controls-hidden{bottom:18px}.recall-header{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--kinic-line);padding:10px 12px}.recall-heading{display:flex;align-items:center;gap:8px;min-width:0}.recall-heading span{color:var(--kinic-body);font-size:11px;font-weight:700}.recall-header .close{width:26px;height:26px;border-radius:10px;font-size:15px;flex:0 0 auto}.recall-list{display:grid;gap:8px;padding:10px}.recall-card{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--kinic-line);border-radius:12px;padding:10px;background:var(--kinic-paper)}.recall-card-body{min-width:0}.recall-card strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.recall-card p{display:-webkit-box;overflow:hidden;margin:4px 0;color:var(--kinic-support);font-size:12px;-webkit-box-orient:vertical;-webkit-line-clamp:3}.recall-card small{display:block;overflow:hidden;color:var(--kinic-body);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.recall-card button{border:1px solid var(--kinic-ink);border-radius:10px;padding:7px 9px;background:var(--kinic-ink);color:var(--kinic-white);font-size:11px;font-weight:800;white-space:nowrap}.recall-card button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink)}
 .kinic-logo{display:block;flex:0 0 auto;width:24px;height:24px;border-radius:8px;object-fit:cover}
 .panel{position:fixed;right:18px;bottom:62px;z-index:2147483647;width:min(440px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 86px));overflow:hidden;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);color:var(--kinic-ink);box-shadow:0 24px 60px rgb(0 0 0 / 18%);font:14px/1.42 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .panel-header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--kinic-line);padding:10px 14px;background:var(--kinic-white)}
