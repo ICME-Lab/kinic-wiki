@@ -786,6 +786,69 @@ struct AskAIModelTests {
     }
 
     @Test
+    func deferredHistorySelectionAppliesExactConversationOnlyAfterDatabaseApproval() async {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [])
+        let current = AskAIConversation(databaseId: "db_test", databaseTitle: "Test DB")
+        let target = AskAIConversation(
+            databaseId: "db_history",
+            databaseTitle: "History DB",
+            messages: [AskAIMessage(role: .user, text: "Keep this exact conversation")]
+        )
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(savedConversations: [current, target])
+        )
+        await model.load()
+        model.currentConversation = current
+        let request = BrowseDatabaseSelectionRequest(id: UUID(), databaseId: "db_history")
+        knowledge.nextDatabaseSelectionDisposition = .awaitingDiscard(request)
+
+        model.selectConversation(target)
+
+        #expect(model.currentConversation?.id == current.id)
+        #expect(knowledge.selectedAskAIDatabaseId == "db_test")
+
+        knowledge.selectedAskAIDatabaseId = "db_history"
+        knowledge.selectedAskAIDatabaseTitle = "History DB"
+        model.syncSelectedDatabase()
+        #expect(model.currentConversation?.id == current.id)
+
+        model.resolveBrowseDatabaseSelection(BrowseDatabaseSelectionResolution(
+            requestId: request.id,
+            databaseId: request.databaseId,
+            outcome: .applied
+        ))
+        #expect(model.currentConversation?.id == target.id)
+    }
+
+    @Test
+    func cancellingDeferredHistorySelectionKeepsCurrentConversation() async {
+        let knowledge = AskAIKnowledgeProviderStub(sources: [])
+        let current = AskAIConversation(databaseId: "db_test", databaseTitle: "Test DB")
+        let target = AskAIConversation(databaseId: "db_history", databaseTitle: "History DB")
+        let model = AskAIModel(
+            knowledgeProvider: knowledge,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(savedConversations: [current, target])
+        )
+        await model.load()
+        model.currentConversation = current
+        let request = BrowseDatabaseSelectionRequest(id: UUID(), databaseId: "db_history")
+        knowledge.nextDatabaseSelectionDisposition = .awaitingDiscard(request)
+
+        model.selectConversation(target)
+        model.resolveBrowseDatabaseSelection(BrowseDatabaseSelectionResolution(
+            requestId: request.id,
+            databaseId: request.databaseId,
+            outcome: .cancelled
+        ))
+
+        #expect(model.currentConversation?.id == current.id)
+        #expect(knowledge.selectedAskAIDatabaseId == "db_test")
+    }
+
+    @Test
     func recentHistoryIsSentToRouterForReferenceResolution() async throws {
         let prior = AskAIConversation(
             databaseId: "db_test",
@@ -1492,6 +1555,7 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var askAIOutputLanguage = WikiOutputLanguage.english
     var canAskAI = true
     var askAIDatabaseCandidates: [DatabaseSummary] = []
+    var nextDatabaseSelectionDisposition: BrowseDatabaseSelectionDisposition?
     let sources: [AskAIContextSource]
     let candidateCount: Int
     let retrievalResults: [AskAIRetrievalResult]?
@@ -1513,8 +1577,13 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
         self.retrievalResults = retrievalResults
     }
 
-    func selectAskAIDatabase(_ databaseId: String) {
+    func selectAskAIDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
+        if let disposition = nextDatabaseSelectionDisposition {
+            nextDatabaseSelectionDisposition = nil
+            return disposition
+        }
         selectedAskAIDatabaseId = databaseId
+        return .applied
     }
 
     func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {

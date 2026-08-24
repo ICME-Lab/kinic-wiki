@@ -26,9 +26,6 @@ struct BrowseDatabaseListView: View {
             }
         }
         .navigationTitle("Databases")
-        .onChange(of: selectedDatabaseId) {
-            selectCurrentDatabase()
-        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
@@ -53,17 +50,6 @@ struct BrowseDatabaseListView: View {
             isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
         )
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func selectCurrentDatabase() {
-        guard let databaseId = selectedDatabaseId else {
-            return
-        }
-        selectedDocumentPath = nil
-        folderPath = []
-        if databaseId != model.selectedBrowseDatabaseId {
-            model.selectBrowseDatabase(databaseId)
-        }
     }
 
     private func refresh() {

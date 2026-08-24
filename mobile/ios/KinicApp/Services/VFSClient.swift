@@ -136,6 +136,7 @@ struct VFSClient: @unchecked Sendable {
         """
     }
 
+    @discardableResult
     func writeNode(
         databaseId: String,
         path: String,
@@ -144,7 +145,7 @@ struct VFSClient: @unchecked Sendable {
         metadataJson: String,
         expectedEtag: String?,
         session: ICAuthSession
-    ) async throws {
+    ) async throws -> VFSWriteNodeResult {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
         let data = try await client.callRaw(
             method: "write_node",
@@ -158,7 +159,7 @@ struct VFSClient: @unchecked Sendable {
             ),
             identity: session
         )
-        try VFSCandidDecoder.decodeWriteNodeResult(data)
+        return try VFSCandidDecoder.decodeWriteNodeResult(data)
     }
 
     func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {

@@ -21,7 +21,7 @@ struct BrowseDocumentContent: View {
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+            } else if mode == .preview {
                 MarkdownContent(markdown: node.content)
             }
         }

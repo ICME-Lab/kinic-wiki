@@ -435,6 +435,17 @@ struct VFSCandidCodecTests {
     }
 
     @Test
+    func decodesWriteNodeAcknowledgement() throws {
+        let result = try VFSCandidDecoder.decodeWriteNodeResult(candidWriteNodeOk())
+
+        #expect(!result.created)
+        #expect(result.node.path == "/Knowledge/Page.md")
+        #expect(result.node.kind == .file)
+        #expect(result.node.updatedAt == 250)
+        #expect(result.node.etag == "etag-new")
+    }
+
+    @Test
     func decodesStructuredNodeMutationError() throws {
         let expected = VFSNodeMutationFailure(
             code: .etagConflict,
@@ -671,6 +682,99 @@ private func candidDeleteNodeOk(_ path: String) -> Data {
     let bytes = Data(path.utf8)
     appendUnsigned(UInt64(bytes.count), to: &data)
     data.append(bytes)
+    return data
+}
+
+private func candidWriteNodeOk() -> Data {
+    enum Ref {
+        case primitive(Int64)
+        case table(Int64)
+    }
+
+    let typeNull: Int64 = -1
+    let typeBool: Int64 = -2
+    let typeInt64: Int64 = -12
+    let typeText: Int64 = -15
+    let typeRecord: Int64 = -20
+    let typeVariant: Int64 = -21
+    var data = Data([0x44, 0x49, 0x44, 0x4c])
+
+    func label(_ name: String) -> UInt32 {
+        VFSCandidLabels.id(name)
+    }
+
+    func appendRef(_ ref: Ref) {
+        switch ref {
+        case .primitive(let type):
+            appendSigned(type, to: &data)
+        case .table(let index):
+            appendSigned(index, to: &data)
+        }
+    }
+
+    func appendFields(_ raw: [(String, Ref)]) {
+        let sorted = raw.sorted { label($0.0) < label($1.0) }
+        appendUnsigned(UInt64(sorted.count), to: &data)
+        for field in sorted {
+            appendUnsigned(UInt64(label(field.0)), to: &data)
+            appendRef(field.1)
+        }
+    }
+
+    func appendText(_ value: String) {
+        let bytes = Data(value.utf8)
+        appendUnsigned(UInt64(bytes.count), to: &data)
+        data.append(bytes)
+    }
+
+    appendUnsigned(4, to: &data)
+    appendSigned(typeVariant, to: &data)
+    appendFields([("Ok", .table(1)), ("Err", .primitive(typeText))])
+    appendSigned(typeRecord, to: &data)
+    appendFields([("created", .primitive(typeBool)), ("node", .table(2))])
+    appendSigned(typeRecord, to: &data)
+    appendFields([
+        ("path", .primitive(typeText)),
+        ("kind", .table(3)),
+        ("updated_at", .primitive(typeInt64)),
+        ("etag", .primitive(typeText))
+    ])
+    appendSigned(typeVariant, to: &data)
+    appendFields([
+        ("Folder", .primitive(typeNull)),
+        ("File", .primitive(typeNull)),
+        ("Source", .primitive(typeNull))
+    ])
+    appendUnsigned(1, to: &data)
+    appendSigned(0, to: &data)
+
+    let resultCases = ["Ok", "Err"].sorted { label($0) < label($1) }
+    appendUnsigned(UInt64(resultCases.firstIndex(of: "Ok")!), to: &data)
+    for field in ["created", "node"].sorted(by: { label($0) < label($1) }) {
+        switch field {
+        case "created":
+            data.append(0)
+        case "node":
+            for nodeField in ["path", "kind", "updated_at", "etag"].sorted(by: { label($0) < label($1) }) {
+                switch nodeField {
+                case "path":
+                    appendText("/Knowledge/Page.md")
+                case "kind":
+                    let kindCases = ["Folder", "File", "Source"].sorted { label($0) < label($1) }
+                    appendUnsigned(UInt64(kindCases.firstIndex(of: "File")!), to: &data)
+                case "updated_at":
+                    var updatedAt = Int64(250).littleEndian
+                    withUnsafeBytes(of: &updatedAt) { data.append(contentsOf: $0) }
+                case "etag":
+                    appendText("etag-new")
+                default:
+                    break
+                }
+            }
+        default:
+            break
+        }
+    }
     return data
 }
 

@@ -19,6 +19,7 @@ final class AskAIModel {
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private var historyContextID = UUID()
     @ObservationIgnored private var historyOperationID: UUID?
+    @ObservationIgnored private var pendingBrowseDatabaseIntent: PendingBrowseDatabaseIntent?
     private var generationID: UUID?
     private(set) var historyScope: AskAIHistoryScope
     private(set) var hasStoredConversationData = false
@@ -200,6 +201,7 @@ final class AskAIModel {
         errorMessage = nil
         pendingDatabaseId = nil
         pendingDatabaseTitle = nil
+        pendingBrowseDatabaseIntent = nil
         isConfirmingDatabaseChange = false
         isConfirmingHistoryReset = false
     }
@@ -234,6 +236,9 @@ final class AskAIModel {
             return
         }
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
+        if pendingBrowseDatabaseIntent?.databaseId == databaseId {
+            return
+        }
         guard currentConversation?.databaseId != databaseId else {
             return
         }
@@ -286,10 +291,13 @@ final class AskAIModel {
     }
 
     func selectConversation(_ conversation: AskAIConversation) {
-        cancelGeneration()
-        knowledgeProvider.selectAskAIDatabase(conversation.databaseId)
-        currentConversation = conversation
-        errorMessage = nil
+        guard requestBrowseDatabaseSelection(
+            databaseId: conversation.databaseId,
+            action: .conversation(conversation)
+        ) else {
+            return
+        }
+        applySelectedConversation(conversation)
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
@@ -763,12 +771,67 @@ final class AskAIModel {
     }
 
     private func applyDatabaseChange(databaseId: String, title: String) {
+        guard requestBrowseDatabaseSelection(
+            databaseId: databaseId,
+            action: .newConversation(databaseId: databaseId, title: title)
+        ) else {
+            pendingDatabaseId = nil
+            pendingDatabaseTitle = nil
+            isConfirmingDatabaseChange = false
+            return
+        }
+        applySelectedDatabaseChange(databaseId: databaseId, title: title)
+    }
+
+    func resolveBrowseDatabaseSelection(_ resolution: BrowseDatabaseSelectionResolution) {
+        guard let pendingIntent = pendingBrowseDatabaseIntent,
+              pendingIntent.requestId == resolution.requestId else {
+            return
+        }
+        pendingBrowseDatabaseIntent = nil
+        guard resolution.outcome == .applied,
+              resolution.databaseId == pendingIntent.databaseId,
+              knowledgeProvider.selectedAskAIDatabaseId == pendingIntent.databaseId else {
+            return
+        }
+        switch pendingIntent.action {
+        case .newConversation(let databaseId, let title):
+            applySelectedDatabaseChange(databaseId: databaseId, title: title)
+        case .conversation(let conversation):
+            applySelectedConversation(conversation)
+        }
+    }
+
+    private func requestBrowseDatabaseSelection(
+        databaseId: String,
+        action: PendingBrowseDatabaseAction
+    ) -> Bool {
+        switch knowledgeProvider.selectAskAIDatabase(databaseId) {
+        case .unchanged, .applied:
+            pendingBrowseDatabaseIntent = nil
+            return true
+        case .awaitingDiscard(let request):
+            pendingBrowseDatabaseIntent = PendingBrowseDatabaseIntent(
+                requestId: request.id,
+                databaseId: databaseId,
+                action: action
+            )
+            return false
+        }
+    }
+
+    private func applySelectedDatabaseChange(databaseId: String, title: String) {
         cancelGeneration()
-        knowledgeProvider.selectAskAIDatabase(databaseId)
         currentConversation = makeConversation(databaseId: databaseId, title: title)
         pendingDatabaseId = nil
         pendingDatabaseTitle = nil
         isConfirmingDatabaseChange = false
+        errorMessage = nil
+    }
+
+    private func applySelectedConversation(_ conversation: AskAIConversation) {
+        cancelGeneration()
+        currentConversation = conversation
         errorMessage = nil
     }
 
@@ -886,4 +949,15 @@ final class AskAIModel {
         generationTimeoutTask = nil
         isGenerating = false
     }
+}
+
+private enum PendingBrowseDatabaseAction {
+    case newConversation(databaseId: String, title: String)
+    case conversation(AskAIConversation)
+}
+
+private struct PendingBrowseDatabaseIntent {
+    let requestId: UUID
+    let databaseId: String
+    let action: PendingBrowseDatabaseAction
 }

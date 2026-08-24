@@ -44,6 +44,7 @@ actor KinicICClient {
         try await vfsClient.sourceURLExists(databaseId: databaseId, url: url, session: session)
     }
 
+    @discardableResult
     func writeNode(
         databaseId: String,
         path: String,
@@ -52,7 +53,7 @@ actor KinicICClient {
         metadataJson: String,
         expectedEtag: String?,
         session: ICAuthSession
-    ) async throws {
+    ) async throws -> VFSWriteNodeResult {
         try await vfsClient.writeNode(
             databaseId: databaseId,
             path: path,
