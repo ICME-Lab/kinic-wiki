@@ -16,6 +16,7 @@ const principalText = document.querySelector("#principal");
 const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
+const showSaveControlsInput = document.querySelector("#show-save-controls");
 const recallEnabledInput = document.querySelector("#recall-enabled");
 const createDatabaseForm = document.querySelector("#create-database-form");
 const databaseNameInput = document.querySelector("#database-name");
@@ -66,6 +67,16 @@ recallEnabledInput.addEventListener("change", async () => {
   }
 });
 
+showSaveControlsInput.addEventListener("change", async () => {
+  try {
+    await saveShowSaveControlsSetting(showSaveControlsInput.checked);
+    statusText.textContent = showSaveControlsInput.checked ? "Save controls shown" : "Save controls hidden";
+  } catch (error) {
+    showSaveControlsInput.checked = !showSaveControlsInput.checked;
+    statusText.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
 createDatabaseForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   createDatabaseButton.disabled = true;
@@ -97,7 +108,7 @@ load();
 
 async function load() {
   try {
-    await loadRecallSetting();
+    await loadUiSettings();
     await refreshLatestStatus();
     await refreshAuthAndDatabases();
   } catch (error) {
@@ -105,9 +116,15 @@ async function load() {
   }
 }
 
-async function loadRecallSetting() {
+async function loadUiSettings() {
   const response = await send({ type: "load-config" });
+  showSaveControlsInput.checked = response.config?.showSaveControls !== false
+    && response.config?.showSaveControls !== "false";
   recallEnabledInput.checked = response.config?.recallEnabled === true || response.config?.recallEnabled === "true";
+}
+
+async function saveShowSaveControlsSetting(showSaveControls) {
+  await send({ type: "save-config", config: { showSaveControls: Boolean(showSaveControls) } });
 }
 
 async function saveRecallSetting(recallEnabled) {
