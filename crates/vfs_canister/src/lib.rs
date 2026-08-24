@@ -72,6 +72,11 @@ const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
 const II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
 const II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi","http://localhost:3000","http://127.0.0.1:3010","http://localhost:3010","http://127.0.0.1:3100"]}"#;
+const II_APP_METADATA_PATH: &str = "/.well-known/ii-app-metadata";
+const II_APP_METADATA_BODY: &str = r#"{"name":"Kinic Wiki","description":"Capture, organize, and search your knowledge with Internet Identity.","logo":"/.well-known/ii-app-logo.png"}"#;
+const II_APP_LOGO_PATH: &str = "/.well-known/ii-app-logo.png";
+const II_APP_LOGO: &[u8] =
+    include_bytes!("../../../extensions/wiki-clipper/assets/kinic-logo-transparent.png");
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
@@ -2423,6 +2428,13 @@ fn certified_static_responses() -> Vec<(
             "application/json; charset=utf-8",
             true,
         ),
+        certified_static_response_entry(
+            II_APP_METADATA_PATH,
+            II_APP_METADATA_BODY.as_bytes().to_vec(),
+            "application/json; charset=utf-8",
+            true,
+        ),
+        certified_static_response_entry(II_APP_LOGO_PATH, II_APP_LOGO.to_vec(), "image/png", true),
         certified_static_response_entry(
             ICP_CLI_LOGIN_DISCOVERY_PATH,
             ICP_CLI_LOGIN_PATH.as_bytes().to_vec(),
