@@ -13,6 +13,7 @@
     "deploy:staging:v4-migration": "node scripts/deploy-staging-v4-migration.mjs",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
     "review:smoke": "node scripts/check-submission-cases.mjs",
+    "review:seed": "node scripts/seed-review-fixture.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
     "test": "node scripts/check-candid-drift.mjs && node --test scripts/*.node-test.mjs scripts/staging-smoke.test.mjs && vitest run && vitest run --config vitest.worker.config.ts",
     "typecheck": "tsc --noEmit"

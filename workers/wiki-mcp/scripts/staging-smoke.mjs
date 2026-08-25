@@ -327,28 +327,9 @@ class SmokeOAuthProvider {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const requiredScopes = oauthScopesForRun(options.writeSmokePath);
-  const cache = await openOAuthCache({
-    path: options.authCachePath,
-    serverUrl: options.serverUrl,
-    requiredScopes,
-    reset: options.resetAuth
-  });
-  const callback = await startCallbackServer(createOAuthState());
-  const provider = new SmokeOAuthProvider(
-    callback.redirectUrl,
-    callback.oauthState,
-    (authorizationUrl) => {
-      console.log(`Authorize in your browser:\n${authorizationUrl.toString()}`);
-      if (options.openBrowser) openBrowser(authorizationUrl);
-    },
-    cache,
-    requiredScopes
-  );
-  const client = new Client({ name: "kinic-wiki-staging-smoke", version: "1.0.0" }, { capabilities: {} });
-  let transport;
+  const session = await openAuthenticatedSession(options);
+  const { client, transport } = session;
   try {
-    transport = await connectClient(client, provider, callback.waitForCode, options.serverUrl);
     console.error("staging smoke stage: tools");
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name).sort();
@@ -411,10 +392,45 @@ async function main() {
 
     console.log(JSON.stringify(summary, null, 2));
   } finally {
+    await session.close();
+  }
+}
+
+export async function openAuthenticatedSession(options) {
+  const requiredScopes = oauthScopesForRun(options.writeSmokePath);
+  const cache = await openOAuthCache({
+    path: options.authCachePath,
+    serverUrl: options.serverUrl,
+    requiredScopes,
+    reset: options.resetAuth
+  });
+  const callback = await startCallbackServer(createOAuthState());
+  const provider = new SmokeOAuthProvider(
+    callback.redirectUrl,
+    callback.oauthState,
+    (authorizationUrl) => {
+      console.log(`Authorize in your browser:\n${authorizationUrl.toString()}`);
+      if (options.openBrowser) openBrowser(authorizationUrl);
+    },
+    cache,
+    requiredScopes
+  );
+  const client = new Client({ name: "kinic-wiki-staging-smoke", version: "1.0.0" }, { capabilities: {} });
+  let transport;
+  try {
+    transport = await connectClient(client, provider, callback.waitForCode, options.serverUrl);
+    return {
+      client,
+      transport,
+      close: async () => {
+        await callback.close();
+        await transport.close();
+      }
+    };
+  } catch (error) {
     await callback.close();
-    if (transport) {
-      await transport.close();
-    }
+    if (transport) await transport.close();
+    throw error;
   }
 }
 

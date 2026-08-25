@@ -18,6 +18,7 @@ export const MUTATION_TOOL_ANNOTATIONS = {
 
 export const DESTRUCTIVE_TOOL_ANNOTATIONS = {
   ...MUTATION_TOOL_ANNOTATIONS,
+  openWorldHint: true,
   destructiveHint: true
 } as const;
 

@@ -104,6 +104,7 @@ const searchResultOutputSchema = z.object({
 const fetchedNodeOutputSchema = z.object({
   id: z.string(),
   title: z.string(),
+  text: z.string(),
   url: z.string(),
   metadata: z.object({
     database_id: z.string(),
@@ -169,6 +170,7 @@ const nodeSummaryOutputSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   metadata_json: z.string(),
+  text: z.string(),
   truncated: z.boolean()
 });
 
@@ -479,7 +481,7 @@ export function createServer(
   server.registerTool(
     "fetch_many",
     {
-      description: `Fetch full text for up to 10 Kinic Wiki search results. Pass each result's exact id or public url from search. Never pass ChatGPT citation tokens such as turn0file0. If ChatGPT hides an id behind a citation token, construct the public url as ${publicOrigin(env)}/db/{database_id}{path} from that result's metadata. Use after candidate search for broad or list questions, including for a single strongest result. Item-level errors are returned without failing the whole call.`,
+      description: "Fetch full text for up to 10 Kinic Wiki search results. Pass each result's exact id or public url from search. Never pass ChatGPT citation tokens such as turn0file0. If ChatGPT hides an id behind a citation token, construct the public url under the configured Kinic Wiki public origin as /db/{database_id}{path} from that result's metadata. Use after candidate search for broad or list questions, including for a single strongest result. Item-level errors are returned without failing the whole call.",
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
       },
@@ -602,7 +604,7 @@ function registerMutationTools(
     "write_nodes",
     {
       description:
-        "Preferred for every create/full-replacement request, including one node. Create or replace 1 to 100 nodes in order and atomically in one database; any failure rolls back the whole batch.",
+        "Preferred for every create/full-replacement request, including one node. Create or replace 1 to 100 nodes in order and atomically in one database; any failure rolls back the whole batch. Changes to a public database or published node can become publicly visible.",
       inputSchema: {
         database_id: z.string().min(1),
         nodes: z.array(z.object(withoutDatabaseId(writeNodeInputSchema))).min(1).max(MAX_MUTATION_BATCH_ITEMS)
@@ -627,7 +629,7 @@ function registerMutationTools(
     "mutate_nodes_batch",
     {
       description:
-        "Preferred for the whole request when any operation is append, edit, multi-edit, mkdir, move, or delete, including one operation. Apply 1 to 100 ordered write, append, edit, multi-edit, mkdir, move, and delete operations atomically in one database; any failure rolls back the whole batch.",
+        "Preferred for the whole request when any operation is append, edit, multi-edit, mkdir, move, or delete, including one operation. Apply 1 to 100 ordered write, append, edit, multi-edit, mkdir, move, and delete operations atomically in one database; any failure rolls back the whole batch. Changes to a public database or published node can become publicly visible.",
       inputSchema: {
         database_id: z.string().min(1),
         operations: z.array(batchOperationSchema).min(1).max(MAX_MUTATION_BATCH_ITEMS)

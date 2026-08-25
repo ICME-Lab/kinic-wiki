@@ -126,7 +126,7 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
   - A `move` with `overwrite: true` must include `expected_target_etag` when the destination exists. If the destination does not exist, omit it. Supplying it with `overwrite: false` is invalid.
   - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
-Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: false`.
+Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: true`. The open-world hint is required because an authenticated writer can change a public database or the content of an already-published node.
 
 ## Agent Write Workflow
 
@@ -272,17 +272,20 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
    - a stale etag returns the failed operation index plus current content and etag, and does not partially commit the batch.
 6. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
 
-Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with eight read tools and its existing submission configuration is unchanged.
+Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with eight read tools and is not the app represented by the current submission file.
 
 `skills/kinic-wiki-mcp/` points only to Private production. Do not attach or republish it in the public search plugin.
 
-For a later public search review submission, keep the Private skill detached and run the public endpoint smoke three times:
+Before submitting the Private app, create the dedicated reviewer fixture described in `docs/openai-private-review.md`, then run the authenticated production review smoke three times:
 
 ```bash
-pnpm --dir workers/wiki-mcp review:smoke -- --mcp-url https://wiki-mcp.kinic.xyz/mcp --repeats 3
+pnpm --dir workers/wiki-mcp review:smoke -- \
+  --mcp-url https://wiki-private-mcp.kinic.xyz/mcp \
+  --repeats 3 \
+  --open
 ```
 
-Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-submission.json` twice in a new ChatGPT web conversation with only the submitted public search plugin attached.
+Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-submission.json` in new ChatGPT web and mobile conversations with only the Private app attached.
 
 ## Review Checklist
 
