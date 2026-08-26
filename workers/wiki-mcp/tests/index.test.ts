@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { McpAuthStateV4 } from "../src/auth/state.js";
+import type { McpAuthStateV5 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
 const mocks = vi.hoisted(() => ({
@@ -87,7 +87,7 @@ function unavailableAuthBinding(): never {
   throw new Error("auth binding must not be used by this test");
 }
 
-const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV4> = {
+const fakeAuthNamespace: DurableObjectNamespace<McpAuthStateV5> = {
   newUniqueId: unavailableAuthBinding,
   idFromName: unavailableAuthBinding,
   idFromString: unavailableAuthBinding,
@@ -449,7 +449,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "write_nodes",
       {
@@ -483,7 +483,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       tool,
       args
@@ -499,7 +499,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], iiPermission: "queries" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const }
       },
       "write_nodes",
       { database_id: "db_alpha", nodes: [{ path: "/Memory/facts.md", kind: "file", content: "blocked", metadata_json: "{}" }] }
@@ -515,7 +515,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], iiPermission: "queries" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const }
       },
       "find_databases",
       { limit: 1 }
@@ -531,7 +531,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "mutate_nodes_batch",
       {
@@ -573,7 +573,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "mutate_nodes_batch",
       {
@@ -613,7 +613,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "write_nodes",
       {
@@ -655,7 +655,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "mutate_nodes_batch",
       {
@@ -690,7 +690,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], iiPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
       },
       "write_nodes",
       {

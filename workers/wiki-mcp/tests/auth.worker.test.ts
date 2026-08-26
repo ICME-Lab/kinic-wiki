@@ -11,8 +11,8 @@ import {
   delegationNeedsRefresh,
   sessionKeyContext,
   type AuthorizationSessionInput,
-  type AuthStateRecordV4,
-  type McpAuthStateV4,
+  type AuthStateRecordV5,
+  type McpAuthStateV5,
   type OAuthClientRecordV2
 } from "../src/auth/state.js";
 
@@ -243,10 +243,23 @@ describe("staging OAuth discovery and registration", () => {
       code_challenge_method: "S256"
     }).toString();
     const started = await fetchWorker(valid.toString(), { redirect: "manual" });
-    expect(started.status).toBe(302);
-    expect(started.headers.get("location")).toMatch(/^https:\/\/id\.ai\/mcp#/u);
+    expect(started.status).toBe(200);
+    const authorizationHtml = await started.text();
+    expect(authorizationHtml).toContain("Continue with Internet Identity");
+    expect(authorizationHtml).toContain("OpenAI reviewer sign in");
     expect(started.headers.get("set-cookie")).toContain("HttpOnly");
     expect(started.headers.get("set-cookie")).toContain("SameSite=Lax");
+    const iiStarted = await fetchWorker(`${origin}/oauth/connect/internet-identity`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: cookieFrom(started)
+      },
+      body: new URLSearchParams({ connect_state: connectStateFrom(authorizationHtml) }).toString()
+    });
+    expect(iiStarted.status).toBe(302);
+    expect(iiStarted.headers.get("location")).toMatch(/^https:\/\/id\.ai\/mcp#/u);
 
     valid.searchParams.set("redirect_uri", "https://chatgpt.com/connector/oauth/callback/");
     expect((await fetchWorker(valid.toString(), { redirect: "manual" })).status).toBe(400);
@@ -271,9 +284,113 @@ describe("staging OAuth discovery and registration", () => {
     });
     await expect(tokenWithWrongResource.json()).resolves.toEqual({ error: "invalid_target" });
   });
+
+  it("authorizes the dedicated reviewer without Internet Identity setup", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const verifier = "r".repeat(43);
+    const started = await fetchWorker(await authorizationUrl(clientId, verifier), { redirect: "manual" });
+    const html = await started.text();
+    const cookie = cookieFrom(started);
+    const connectState = connectStateFrom(html);
+
+    const rejected = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.240",
+        cookie
+      },
+      body: new URLSearchParams({
+        connect_state: connectState,
+        username: "openai-review",
+        password: "wrong"
+      }).toString()
+    });
+    expect(rejected.status).toBe(401);
+    expect(await rejected.text()).toContain("Sign-in failed.");
+
+    const accepted = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.240",
+        cookie
+      },
+      body: new URLSearchParams({
+        connect_state: connectState,
+        username: "openai-review",
+        password: "review-password"
+      }).toString()
+    });
+    expect(accepted.status).toBe(302);
+    const redirect = new URL(accepted.headers.get("location")!);
+    expect(redirect.origin + redirect.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
+    expect(redirect.searchParams.get("state")).toBe("client-state");
+    const code = redirect.searchParams.get("code");
+    expect(code).toMatch(/^mkc1\./u);
+
+    const tokenResponse = await fetchWorker(`${origin}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        code: code!,
+        redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+        code_verifier: verifier,
+        resource
+      }).toString()
+    });
+    expect(tokenResponse.status).toBe(200);
+    await expect(tokenResponse.json()).resolves.toMatchObject({
+      token_type: "Bearer",
+      scope: "mcp:read mcp:write offline_access",
+      resource
+    });
+  });
+
+  it("binds reviewer login to its cookie and rate limits repeated attempts", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const started = await fetchWorker(await authorizationUrl(clientId, "l".repeat(43)));
+    const html = await started.text();
+    const connectState = connectStateFrom(html);
+    const body = new URLSearchParams({
+      connect_state: connectState,
+      username: "openai-review",
+      password: "wrong"
+    }).toString();
+    const missingCookie = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.241"
+      },
+      body
+    });
+    expect(missingCookie.status).toBe(400);
+
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      response = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "cf-connecting-ip": "198.51.100.242",
+          cookie: cookieFrom(started)
+        },
+        body
+      });
+    }
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get("retry-after")).toBe("60");
+  });
 });
 
-describe("McpAuthStateV4 single-use records", () => {
+describe("McpAuthStateV5 single-use records", () => {
   it("refreshes cached delegations at the 30-second margin or on origin change", () => {
     const now = Date.now();
     const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
@@ -368,7 +485,7 @@ describe("McpAuthStateV4 single-use records", () => {
       delegationContext(sessionId, targetOrigin)
     );
     await runInDurableObject(stub, async (_instance, state) => {
-      const record = (await state.storage.get<AuthStateRecordV4>("record"))!;
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
       if (record.kind !== "authorization_session") throw new Error("session record missing");
       record.cachedDelegation = encryptedDelegation;
       record.cachedDelegationTargetOrigin = targetOrigin;
@@ -415,7 +532,7 @@ describe("McpAuthStateV4 single-use records", () => {
       now
     });
     await runInDurableObject(stub, async (instance, state) => {
-      const record = (await state.storage.get<AuthStateRecordV4>("record"))!;
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
       if (record.kind !== "authorization_session") throw new Error("session record missing");
       record.cachedDelegation = encryptedValue;
       record.cachedDelegationTargetOrigin = targetOrigin;
@@ -449,8 +566,71 @@ describe("McpAuthStateV4 single-use records", () => {
 
     await expect(stub.validateAccessToken(issued!.accessToken, resource, Date.now())).resolves.toMatchObject({
       scope: "mcp:read offline_access",
-      iiPermission: "queries"
+      actionPermission: "queries",
+      identitySource: "internet_identity"
     });
+  });
+
+  it("uses the review service source and rejects stale review access versions", async () => {
+    const now = Date.now();
+    const verifier = "v".repeat(43);
+    const validStub = env.MCP_AUTH_STATE.getByName("session:review-valid");
+    await validStub.createSession(await session("review-valid", verifier, now));
+    await validStub.claimConnect("connect-state", "review-valid.cookie", now);
+    const completed = await validStub.completeReviewConnect("review-v1", now, "review-valid");
+    const issued = await validStub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+    await expect(validStub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toMatchObject({
+      kind: "valid",
+      identitySource: "review_service",
+      actionPermission: "all",
+      delegation: null
+    });
+    let refreshTokenHashBeforeRotation: string | null = null;
+    await runInDurableObject(validStub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      refreshTokenHashBeforeRotation = record.currentRefreshTokenHash;
+      record.reviewAccessVersion = "review-v0";
+      await state.storage.put("record", record);
+    });
+    await expect(validStub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toEqual({
+      kind: "invalid"
+    });
+    await expect(
+      validStub.rotateRefreshToken({
+        refreshToken: issued!.refreshToken!,
+        clientId: "client",
+        resource,
+        now: now + 1
+      })
+    ).resolves.toBeNull();
+    await runInDurableObject(validStub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      expect(record.currentRefreshTokenHash).toBe(refreshTokenHashBeforeRotation);
+      expect(record.spentRefreshTokenHashes).toEqual([]);
+    });
+
+    const staleStub = env.MCP_AUTH_STATE.getByName("session:review-stale");
+    await staleStub.createSession(await session("review-stale", verifier, now));
+    await staleStub.claimConnect("connect-state", "review-stale.cookie", now);
+    const staleCompleted = await staleStub.completeReviewConnect("review-v0", now, "review-stale");
+    const staleIssued = await staleStub.exchangeCode({
+      code: staleCompleted!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: false,
+      now
+    });
+    expect(staleIssued).toBeNull();
   });
 
   it("atomically consumes state and authorization code", async () => {
@@ -780,6 +960,34 @@ async function register(
   });
 }
 
+async function authorizationUrl(clientId: string, verifier: string): Promise<string> {
+  const url = new URL(`${origin}/oauth/authorize`);
+  url.search = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+    state: "client-state",
+    resource,
+    scope: "mcp:read mcp:write offline_access",
+    code_challenge: "",
+    code_challenge_method: "S256"
+  }).toString();
+  url.searchParams.set("code_challenge", await sha256(verifier));
+  return url.toString();
+}
+
+function cookieFrom(response: Response): string {
+  const header = response.headers.get("set-cookie");
+  if (!header) throw new Error("authorization cookie is missing");
+  return header.split(";", 1)[0];
+}
+
+function connectStateFrom(html: string): string {
+  const match = html.match(/name="connect_state" value="([A-Za-z0-9_-]+)"/u);
+  if (!match) throw new Error("connect state is missing");
+  return match[1];
+}
+
 async function session(
   sessionId: string,
   verifier: string,
@@ -797,6 +1005,7 @@ async function session(
     codeChallenge: await sha256(verifier),
     connectStateHash: await sha256("connect-state"),
     cookieHash: await sha256(`${sessionId}.cookie`),
+    registrationPublicKey: "registration-public-key",
     registrationKey: encryptedValue,
     sessionKey: encryptedValue,
     createdAt: now,
@@ -805,7 +1014,7 @@ async function session(
   };
 }
 
-function alarmTime(stub: DurableObjectStub<McpAuthStateV4>) {
+function alarmTime(stub: DurableObjectStub<McpAuthStateV5>) {
   return runInDurableObject(stub, async (_instance, state) => state.storage.getAlarm());
 }
 

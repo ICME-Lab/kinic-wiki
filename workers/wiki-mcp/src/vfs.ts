@@ -10,8 +10,7 @@ import {
   unwrapCandidResult,
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
-import type { IiPermission } from "./auth/internet-identity.js";
-import type { McpAuthStateV4 } from "./auth/state.js";
+import type { ActionPermission, McpAuthStateV5 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, unknown>;
@@ -34,12 +33,19 @@ export type RuntimeEnv = {
   MCP_WRITE_POLICY?: string;
   MCP_PUBLIC_ORIGIN?: string;
   MCP_KEY_ENCRYPTION_KEY?: string;
-  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV4>;
+  MCP_AUTH_STATE?: DurableObjectNamespace<McpAuthStateV5>;
   MCP_REGISTRATION_RATE_LIMIT?: RateLimit;
+  MCP_REVIEW_LOGIN_RATE_LIMIT?: RateLimit;
+  MCP_REVIEW_LOGIN_ENABLED?: string;
+  MCP_REVIEW_USERNAME_HASH?: string;
+  MCP_REVIEW_PASSWORD_HASH?: string;
+  MCP_REVIEW_IDENTITY_KEY?: string;
+  MCP_REVIEW_IDENTITY_PRINCIPAL?: string;
+  MCP_REVIEW_ACCESS_VERSION?: string;
   KINIC_WIKI_IDENTITY?: Identity;
   KINIC_WIKI_AUTHORIZATION?: {
     scopes: string[];
-    iiPermission: IiPermission;
+    actionPermission: ActionPermission;
   };
 };
 

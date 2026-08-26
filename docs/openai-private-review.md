@@ -12,16 +12,16 @@ This runbook prepares the authenticated Kinic Wiki app for review. It never stor
 - Writable test boundary: `/OpenAIReview/scratch/`
 - Required consent: `Actions & questions`
 
-The review account must be a dedicated Internet Identity with no valuable data or access outside this fixture. Configure an Internet Identity recovery phrase for it. Store the identity reference and recovery phrase only in the submission portal; never put them in this repository, command arguments, shell history, test output, screenshots, or the acceptance record.
+The review login is a dedicated username-and-password path on the normal OAuth authorization page. It maps to an Ed25519 service identity stored as a Cloudflare Secret; it does not mock MCP tool results or fixture data. The service principal must have only `writer` access to `openai-review-fixture` and no access to user databases.
 
-The reviewer login instructions in the portal must direct the reviewer to the `id.ai` recovery flow. From a clean device, the reviewer recovers the dedicated identity with the supplied phrase, registers a local passkey when prompted, and completes MCP consent with `Actions & questions`. This flow must work without email, SMS, MFA, a private network, or assistance from the developer. The MCP Worker continues to use its normal Internet Identity OAuth flow; there is no review bypass.
+Set `MCP_REVIEW_IDENTITY_KEY`, `MCP_REVIEW_IDENTITY_PRINCIPAL`, `MCP_REVIEW_USERNAME_HASH`, and `MCP_REVIEW_PASSWORD_HASH` with `wrangler secret put`. Keep the plaintext password only in the OpenAI submission portal and an operator password manager. The checked-in configuration contains only the access-version label and enable flag. Incrementing `MCP_REVIEW_ACCESS_VERSION` invalidates existing reviewer authorization codes, access tokens, and refresh tokens after credential rotation; never reuse an earlier access-version value.
 
-Keep the recovery phrase valid until the review is closed. After approval or final rejection, revoke the dedicated identity's staging and production fixture access first, remove passkeys added during review, and retire that identity. Replacing only the recovery phrase is insufficient because a reviewer-added passkey remains an authentication method. Create and verify a new dedicated identity and phrase before any later submission.
+Keep the credentials valid after approval because OpenAI may perform continuing safety and quality tests. To rotate the service identity, grant the replacement principal `writer`, deploy and verify the replacement Secret and expected principal, then revoke the old principal. Never grant the reviewer service identity `owner`.
 
 ## Prepare staging
 
-1. Sign in as the dedicated review identity and create a database named exactly `openai-review-fixture` in the staging environment.
-2. Register the staging MCP URL as a trusted connector and grant `Actions & questions`.
+1. Generate a staging-only service identity and configure both its private key and expected principal as Secrets.
+2. As the existing fixture owner, grant that service principal `writer` on the single database named exactly `openai-review-fixture`.
 3. Seed the fixed fixture through the authenticated MCP session:
 
 ```bash
@@ -44,7 +44,7 @@ The seeder is idempotent for matching content and metadata, refuses truncated in
 
 ## Prepare production
 
-Use the same dedicated Internet Identity to create a separate database named `openai-review-fixture` in production, then repeat fixture seeding and the three-run smoke against `https://wiki-private-mcp.kinic.xyz/mcp`. Staging and production derive access for different target environments; their OAuth state and fixture data do not carry over.
+Generate a separate production service identity, grant it `writer` on the production `openai-review-fixture`, then repeat fixture seeding and the three-run smoke against `https://wiki-private-mcp.kinic.xyz/mcp`. Staging and production credentials, OAuth state, and fixture access do not carry over.
 
 Use an isolated production cache when switching endpoints:
 
@@ -60,16 +60,29 @@ pnpm --dir workers/wiki-mcp review:seed -- \
 
 For both ChatGPT web and mobile:
 
-1. Use a clean browser profile or a device without the dedicated identity's existing passkey.
+1. Use a clean browser profile or mobile device.
 2. Start a new conversation with only the Private Kinic Wiki app enabled.
-3. Recover the dedicated identity using only the portal instructions, register the device passkey, and complete OAuth with `Actions & questions`.
-4. Run all five positive prompts from `workers/wiki-mcp/chatgpt-app-submission.json` twice.
+3. Choose `OpenAI reviewer sign in` and enter only the submitted username and password. No account creation, passkey, or 2FA is allowed.
+4. Run all five positive prompts from `workers/wiki-mcp/chatgpt-app-submission.json` once.
 5. Confirm the two write cases create only random paths below `/OpenAIReview/scratch/` and clean them up.
 6. Run all three negative prompts and confirm Kinic Wiki is not invoked.
-7. Start another new conversation and repeat once to detect cached routing or stale tool descriptors.
+7. Record the result from that clean conversation and reconnect once only if routing or cached descriptors look stale.
 
-Record the date, client, prompt number, invoked tool sequence, pass/fail result, and any leftover scratch path. Remove leftovers only after reading their current etags. Do not put credentials, OAuth tokens, delegations, or private node bodies in the record.
+Record the date, client, prompt number, invoked tool sequence, pass/fail result, and any leftover scratch path. Remove leftovers only after reading their current etags. Do not put credentials, service keys, OAuth tokens, delegations, principals, or private node bodies in the record.
 
 ## Submission gate
 
 Submit only when the checked-in JSON validates, authenticated production smoke passes three consecutive runs, all web and mobile cases pass consistently, and the portal contains working reviewer credentials and concise login instructions.
+
+Use this credential text in the submission portal, substituting only the password:
+
+```text
+Dedicated demo account containing sample data only.
+
+Username: openai-review
+Password: <production review password>
+
+Connect Kinic Wiki, choose "OpenAI reviewer sign in", and enter the credentials above.
+Login provides immediate access to the pre-populated openai-review-fixture database.
+No account creation, passkey, or two-factor authentication is required.
+```

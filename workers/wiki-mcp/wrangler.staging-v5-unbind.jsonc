@@ -1,34 +1,26 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "kinic-wiki-mcp-staging",
-  "main": "src/staging-v4-unbind.ts",
+  "main": "src/v5-unbind.ts",
   "compatibility_date": "2026-05-12",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
-  "observability": {
-    "enabled": true
-  },
-  "routes": [
-    {
-      "pattern": "wiki-mcp-staging.kinic.xyz",
-      "custom_domain": true
-    }
-  ],
+  "observability": { "enabled": true },
+  "routes": [{ "pattern": "wiki-mcp-staging.kinic.xyz", "custom_domain": true }],
   "ratelimits": [
     {
       "name": "MCP_REGISTRATION_RATE_LIMIT",
       "namespace_id": "7802026",
-      "simple": {
-        "limit": 10,
-        "period": 60
-      }
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "MCP_REVIEW_LOGIN_RATE_LIMIT",
+      "namespace_id": "7802028",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
   "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["McpAuthState"]
-    },
+    { "tag": "v1", "new_sqlite_classes": ["McpAuthState"] },
     {
       "tag": "v2",
       "new_sqlite_classes": ["McpAuthStateV2"],
@@ -38,6 +30,11 @@
       "tag": "v3",
       "new_sqlite_classes": ["McpAuthStateV3"],
       "deleted_classes": ["McpAuthStateV2"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["McpAuthStateV4"],
+      "deleted_classes": ["McpAuthStateV3"]
     }
   ],
   "vars": {
@@ -48,6 +45,8 @@
     "MCP_ACCESS_POLICY": "private_required",
     "MCP_WRITE_POLICY": "private",
     "MCP_PUBLIC_ORIGIN": "https://wiki-mcp-staging.kinic.xyz",
+    "MCP_REVIEW_LOGIN_ENABLED": "true",
+    "MCP_REVIEW_ACCESS_VERSION": "review-v1",
     "OPENAI_APPS_CHALLENGE_TOKEN": "U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"
   }
 }

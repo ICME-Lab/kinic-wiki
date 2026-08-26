@@ -287,6 +287,18 @@ describe("staging authentication boundary", () => {
         MCP_REGISTRATION_RATE_LIMIT: undefined
       })
     ).toBe("misconfigured");
+    expect(
+      authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
+        ...stagingEnv,
+        MCP_REVIEW_LOGIN_ENABLED: "true"
+      })
+    ).toBe("misconfigured");
+    expect(
+      authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
+        ...stagingEnv,
+        MCP_REVIEW_LOGIN_ENABLED: "unexpected"
+      })
+    ).toBe("misconfigured");
 
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const invalidTargetMode = authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {

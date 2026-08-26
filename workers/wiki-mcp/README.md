@@ -1,6 +1,6 @@
 # Kinic Wiki MCP
 
-Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with eight tools. The Private production and staging Workers require OAuth at MCP connection and expose those eight reads plus two atomic batch mutation tools to an Internet Identity delegated caller.
+Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with eight tools. The Private production and staging Workers require OAuth at MCP connection and expose those eight reads plus two atomic batch mutation tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
 
 Canonical documentation: `../../docs/mcp.md`.
 
@@ -20,9 +20,9 @@ Private production and staging additionally expose:
 - `write_nodes`: atomically create or fully replace 1–100 nodes in one database; use it even for a single create or replacement.
 - `mutate_nodes_batch`: atomically apply 1–100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations; use it for the whole change set whenever any non-write operation is present, even for one operation.
 
-Private connection requires only OAuth `mcp:read`. Both mutation tools require OAuth `mcp:read mcp:write` and II `Actions & questions`, with step-up authorization when a read-only token attempts a mutation. Questions-only sessions can read but cannot mutate. There is no connection tool or single-mutation MCP tool.
+Private connection requires only OAuth `mcp:read`. Both mutation tools require OAuth `mcp:read mcp:write` and full action permission, with step-up authorization when a read-only token attempts a mutation. II Questions-only sessions can read but cannot mutate; the dedicated reviewer login has full action permission but remains bounded by its requested OAuth scopes and fixture-only service principal. There is no connection tool or single-mutation MCP tool.
 
-OAuth is validated for every Private MCP POST, while an II per-app delegation is minted only for `tools/call`. Its encrypted app key and delegation chain are reused per OAuth session until 30 seconds before the five-minute II cap; concurrent cache misses share one mint. Revocation can therefore take up to five minutes to affect an already-minted delegation.
+OAuth is validated for every Private MCP POST. II sessions mint a per-app delegation only for `tools/call`; reviewer sessions restore the configured request-scoped service identity instead. An II app key and delegation chain are reused until 30 seconds before the five-minute cap, and concurrent cache misses share one mint.
 
 Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. A batch `move` with `overwrite: true` must include `expected_target_etag` when its destination exists and omit it when the destination is absent; the field is invalid with `overwrite: false`. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
 

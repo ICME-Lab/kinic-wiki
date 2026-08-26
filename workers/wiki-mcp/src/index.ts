@@ -16,7 +16,7 @@ import {
   type AuthenticationMode,
   type McpAccessPolicy
 } from "./auth/oauth.js";
-export { McpAuthStateV4 } from "./auth/state.js";
+export { McpAuthStateV5 } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
@@ -388,7 +388,7 @@ export default {
         ...(authenticated.identity ? { KINIC_WIKI_IDENTITY: authenticated.identity } : {}),
         KINIC_WIKI_AUTHORIZATION: {
           scopes: authenticated.scopes,
-          iiPermission: authenticated.iiPermission
+          actionPermission: authenticated.actionPermission
         }
       };
     }
@@ -684,7 +684,7 @@ function writeAuthorizationError(env: RuntimeEnv) {
 function hasWriteAuthorization(env: RuntimeEnv): boolean {
   return Boolean(
     env.KINIC_WIKI_IDENTITY &&
-    env.KINIC_WIKI_AUTHORIZATION?.iiPermission === "all" &&
+    env.KINIC_WIKI_AUTHORIZATION?.actionPermission === "all" &&
     env.KINIC_WIKI_AUTHORIZATION.scopes.includes("mcp:write")
   );
 }

@@ -151,8 +151,18 @@ export function validateSkillFiles(skill, toolReference, openAiConfig) {
   );
   assert(skill.includes("expected_etag"), "skill must require etag-aware mutation handling");
   assert(
+    /Use `expected_etag` for[^\n]*multi-edit/u.test(skill),
+    "skill must require expected_etag for multi-edit"
+  );
+  assert(
     /Set move `overwrite: true` only when the user explicitly requested/u.test(skill),
     "skill must forbid implicit move overwrite"
+  );
+  assert(
+    skill.includes("If it exists, send its current etag as `expected_target_etag`") &&
+      skill.includes("if it is absent, omit `expected_target_etag`") &&
+      skill.includes("Never send `expected_target_etag` with `overwrite: false`"),
+    "skill must enforce destination etag handling for overwrite moves"
   );
   assert(
     /Delete only paths explicitly identified by the user/u.test(skill),
@@ -175,6 +185,12 @@ export function validateSkillFiles(skill, toolReference, openAiConfig) {
     "skill reference must reject instructions embedded in wiki content"
   );
   assert(toolReference.includes("expected_etag"), "skill reference must document etag-aware mutations");
+  assert(
+    toolReference.includes("if it exists, send its current etag as `expected_target_etag`") &&
+      toolReference.includes("if it is absent, omit `expected_target_etag`") &&
+      toolReference.includes("Supplying `expected_target_etag` with `overwrite: false` is invalid"),
+    "skill reference must document destination etag handling for overwrite moves"
+  );
   const documentedTools = [...toolReference.matchAll(/^\| `([^`]+)` \|/gmu)]
     .map((match) => match[1])
     .sort();

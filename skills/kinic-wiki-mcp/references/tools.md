@@ -78,6 +78,8 @@ There is no `connect_private` tool and no single-mutation tool. OAuth happens wh
 
 `mutate_nodes_batch` also accepts `write` operations with the same node fields as `write_nodes`. A folder delete may additionally require `expected_folder_index_etag`.
 
+For `move`, `expected_etag` protects the source. With `overwrite: true`, read the destination first: if it exists, send its current etag as `expected_target_etag`; if it is absent, omit `expected_target_etag`. Supplying `expected_target_etag` with `overwrite: false` is invalid. Never remove either etag to make a retry pass.
+
 ## Conflict and failure handling
 
 - A failed atomic batch returns `failed_index`; no operation from that call commits.

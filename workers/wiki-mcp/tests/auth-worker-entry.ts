@@ -5,10 +5,10 @@ import {
   handleAuthRoute,
   mcpUnauthorizedResponse
 } from "../src/auth/oauth.js";
-import { McpAuthStateV4 } from "../src/auth/state.js";
+import { McpAuthStateV5 } from "../src/auth/state.js";
 import type { RuntimeEnv } from "../src/vfs.js";
 
-export { McpAuthStateV4 };
+export { McpAuthStateV5 };
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
