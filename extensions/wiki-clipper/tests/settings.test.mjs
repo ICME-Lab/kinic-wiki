@@ -344,25 +344,32 @@ test("conversation export starts without a mainnet confirmation dialog", () => {
   assert.doesNotMatch(contentUi, /globalThis\.confirm/);
 });
 
-test("recall run captures URL and generation before awaiting config and cancels pending schedules on navigation", () => {
+test("recall preserves new-chat navigation and invalidates other navigation", () => {
   const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
   const runRecall = /async function runRecall\(query\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
   assert.ok(runRecall, "runRecall function should exist");
-  assert.match(runRecall, /const conversationUrl = location\.href;/);
   assert.match(runRecall, /const generation = \+\+recallRequestGeneration;/);
-  assert.ok(
-    runRecall.indexOf("const conversationUrl = location.href;") < runRecall.indexOf("await configLoadPromise;"),
-    "URL must be captured before awaiting config load"
-  );
   assert.ok(
     runRecall.indexOf("const generation = ++recallRequestGeneration;") < runRecall.indexOf("await configLoadPromise;"),
     "generation must be captured before awaiting config load"
   );
-  assert.match(runRecall, /if \(conversationUrl !== location\.href\) return;/);
-  const invalidateRecall = /function invalidateRecall\([^)]*\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(
+    runRecall.indexOf("await configLoadPromise;") < runRecall.indexOf("const conversationUrl = location.href;"),
+    "the current conversation URL must be captured after config load"
+  );
+  const navigationHandler = /onNavigate: \(nextUrl, previousUrl, navigation\) => \{([\s\S]*?)\n  \}/.exec(contentUi)?.[0];
+  assert.ok(navigationHandler, "navigation handler should exist");
+  assert.match(navigationHandler, /if \(preservesChatGptRecallNavigation\(previousUrl, nextUrl, navigation\)\) return;/);
+  assert.match(navigationHandler, /invalidateRecall\(\);/);
+  assert.ok(
+    navigationHandler.indexOf("preservesChatGptRecallNavigation") < navigationHandler.indexOf("invalidateRecall();"),
+    "preserved navigation must return before Recall is invalidated"
+  );
+  const invalidateRecall = /function invalidateRecall\(\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
   assert.ok(invalidateRecall, "invalidateRecall function should exist");
   assert.match(invalidateRecall, /recallListeners\.cancelPending\(\)/);
-  assert.match(contentUi, /cancelPending: !isNewChatGptConversationNavigation\(previousUrl, nextUrl\)/);
+  assert.match(invalidateRecall, /recallRequestGeneration \+= 1;/);
+  assert.match(invalidateRecall, /recallResults\.value = \[\];/);
 });
 
 test("settings docs describe automatic database save", () => {

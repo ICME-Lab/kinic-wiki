@@ -10,6 +10,7 @@ import {
   installChatGptRecallListeners,
   isChatGptLocation,
   isNewChatGptConversationNavigation,
+  preservesChatGptRecallNavigation,
   readChatGptComposer
 } from "../src/chatgpt-recall.js";
 
@@ -30,6 +31,28 @@ test("ChatGPT new-chat navigation is distinguished from switching conversations"
   assert.equal(isNewChatGptConversationNavigation("https://chatgpt.com/?model=auto", "https://chatgpt.com/c/abc"), true);
   assert.equal(isNewChatGptConversationNavigation("https://chatgpt.com/c/old", "https://chatgpt.com/c/new"), false);
   assert.equal(isNewChatGptConversationNavigation("https://evil.test/", "https://chatgpt.com/c/abc"), false);
+});
+
+test("ChatGPT Recall navigation is preserved only for a created or unchanged conversation", () => {
+  assert.equal(preservesChatGptRecallNavigation("https://chatgpt.com/", "https://chatgpt.com/c/abc"), true);
+  assert.equal(
+    preservesChatGptRecallNavigation("https://chatgpt.com/", "https://chatgpt.com/c/abc", {
+      explicitConversationSelection: true
+    }),
+    false
+  );
+  assert.equal(
+    preservesChatGptRecallNavigation("https://chatgpt.com/", "https://chatgpt.com/c/abc", {
+      kind: "history-traversal"
+    }),
+    false
+  );
+  assert.equal(
+    preservesChatGptRecallNavigation("https://chatgpt.com/c/abc", "https://chatgpt.com/c/abc?model=auto#response"),
+    true
+  );
+  assert.equal(preservesChatGptRecallNavigation("https://chatgpt.com/c/abc", "https://chatgpt.com/c/other"), false);
+  assert.equal(preservesChatGptRecallNavigation("https://chatgpt.com/c/abc", "https://evil.test/c/abc"), false);
 });
 
 test("ChatGPT composer inserts into a contenteditable via paste so the editor model stays in sync", () => {
@@ -332,6 +355,52 @@ test("ChatGPT navigation listener falls back to events without a document", () =
   listeners.get("popstate")();
   assert.deepEqual(navigations, ["https://chatgpt.com/c/two"]);
   dispose();
+});
+
+test("ChatGPT navigation listener identifies an explicit conversation link selection", () => {
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  const location = { href: "https://chatgpt.com/" };
+  const windowRef = {
+    location,
+    history: { pushState() {} },
+    addEventListener(type, listener) {
+      windowListeners.set(type, listener);
+    },
+    removeEventListener(type) {
+      windowListeners.delete(type);
+    }
+  };
+  const documentRef = {
+    addEventListener(type, listener) {
+      documentListeners.set(type, listener);
+    },
+    removeEventListener(type) {
+      documentListeners.delete(type);
+    }
+  };
+  const transitions = [];
+  const dispose = installChatGptNavigationListener({
+    windowRef,
+    locationLike: location,
+    documentRef,
+    onNavigate: (url, previousUrl, navigation) => transitions.push({ url, previousUrl, navigation })
+  });
+
+  documentListeners.get("click")({
+    target: { closest: () => ({ href: "https://chatgpt.com/c/existing" }) }
+  });
+  location.href = "https://chatgpt.com/c/existing";
+  windowRef.history.pushState({}, "", location.href);
+
+  assert.deepEqual(transitions, [{
+    url: "https://chatgpt.com/c/existing",
+    previousUrl: "https://chatgpt.com/",
+    navigation: { kind: "history-update", explicitConversationSelection: true }
+  }]);
+  dispose();
+  assert.equal(documentListeners.has("click"), false);
+  assert.equal(windowListeners.has("popstate"), false);
 });
 
 test("ChatGPT navigation listener keeps the history wrapper until the last install disposes", () => {

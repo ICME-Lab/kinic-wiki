@@ -15,6 +15,15 @@ export function isNewChatGptConversationNavigation(previousUrl, nextUrl) {
     && Boolean(chatGptConversationId(nextUrl));
 }
 
+export function preservesChatGptRecallNavigation(previousUrl, nextUrl, navigation = {}) {
+  if (isNewChatGptConversationNavigation(previousUrl, nextUrl)) {
+    return navigation.kind !== "history-traversal" && navigation.explicitConversationSelection !== true;
+  }
+  if (!isChatGptOrigin(previousUrl) || !isChatGptOrigin(nextUrl)) return false;
+  const previousConversationId = chatGptConversationId(previousUrl);
+  return Boolean(previousConversationId && previousConversationId === chatGptConversationId(nextUrl));
+}
+
 export function findChatGptComposer(documentRef = globalThis.document) {
   if (!documentRef) return null;
   const candidates = [...documentRef.querySelectorAll("textarea, [contenteditable='true']")].filter(isVisible);
@@ -169,20 +178,20 @@ function registerHistoryWrap(historyRef, notify) {
     const pushOriginal = typeof historyRef.pushState === "function" ? historyRef.pushState : null;
     const replaceOriginal = typeof historyRef.replaceState === "function" ? historyRef.replaceState : null;
     const notifiers = new Set();
-    const callNotifiers = () => {
-      for (const fn of notifiers) fn();
+    const callNotifiers = (kind) => {
+      for (const fn of notifiers) fn(kind);
     };
     if (pushOriginal) {
       historyRef.pushState = function (...args) {
         const result = pushOriginal.apply(this, args);
-        callNotifiers();
+        callNotifiers("history-update");
         return result;
       };
     }
     if (replaceOriginal) {
       historyRef.replaceState = function (...args) {
         const result = replaceOriginal.apply(this, args);
-        callNotifiers();
+        callNotifiers("history-update");
         return result;
       };
     }
@@ -204,27 +213,55 @@ export function installChatGptNavigationListener({ windowRef = globalThis, locat
   const currentLocation = locationLike || windowRef?.location;
   if (!windowRef || !currentLocation || !isChatGptOrigin(currentLocation.href || "") || typeof onNavigate !== "function") return () => {};
   let currentUrl = String(currentLocation.href || "");
+  let explicitlySelectedConversationId = "";
   const historyRef = windowRef.history;
-  const notify = () => {
+  const notify = (kind = "mutation") => {
     const nextUrl = String(currentLocation.href || "");
     if (nextUrl === currentUrl) return;
     const previousUrl = currentUrl;
     currentUrl = nextUrl;
-    onNavigate(nextUrl, previousUrl);
+    const nextConversationId = chatGptConversationId(nextUrl);
+    const explicitConversationSelection = Boolean(
+      explicitlySelectedConversationId && explicitlySelectedConversationId === nextConversationId
+    );
+    explicitlySelectedConversationId = "";
+    onNavigate(nextUrl, previousUrl, { kind, explicitConversationSelection });
   };
+  const onDocumentClick = (event) => {
+    const clickTarget = event.target?.closest ? event.target : event.target?.parentElement;
+    const anchor = clickTarget?.closest?.("a[href]");
+    if (!anchor) return;
+    const targetUrl = anchor.href || anchor.getAttribute?.("href");
+    const targetConversationId = chatGptConversationId(resolveUrl(targetUrl, currentUrl));
+    if (targetConversationId && targetConversationId !== chatGptConversationId(currentUrl)) {
+      explicitlySelectedConversationId = targetConversationId;
+    }
+  };
+  const onPopState = () => notify("history-traversal");
+  const onHashChange = () => notify("hash-change");
   const observer = documentRef?.documentElement && MutationObserverRef
     ? new MutationObserverRef(() => notify())
     : null;
   observer?.observe?.(documentRef.documentElement, { childList: true, subtree: true });
   const unregisterHistory = registerHistoryWrap(historyRef, notify);
-  windowRef.addEventListener?.("popstate", notify);
-  windowRef.addEventListener?.("hashchange", notify);
+  documentRef?.addEventListener?.("click", onDocumentClick, true);
+  windowRef.addEventListener?.("popstate", onPopState);
+  windowRef.addEventListener?.("hashchange", onHashChange);
   return () => {
-    windowRef.removeEventListener?.("popstate", notify);
-    windowRef.removeEventListener?.("hashchange", notify);
+    documentRef?.removeEventListener?.("click", onDocumentClick, true);
+    windowRef.removeEventListener?.("popstate", onPopState);
+    windowRef.removeEventListener?.("hashchange", onHashChange);
     observer?.disconnect?.();
     unregisterHistory();
   };
+}
+
+function resolveUrl(value, baseUrl) {
+  try {
+    return new URL(String(value || ""), baseUrl).href;
+  } catch {
+    return "";
+  }
 }
 
 function chatGptConversationId(value) {
