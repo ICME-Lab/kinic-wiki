@@ -15,13 +15,14 @@ struct BrowseDocumentContent: View {
                 .foregroundStyle(.primary)
                 .lineLimit(3)
 
-            if mode == .raw {
+            switch mode {
+            case .raw:
                 Text(node.content)
                     .font(.system(.footnote, design: .monospaced))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            } else if mode == .preview {
+            case .preview, .edit:
                 MarkdownContent(markdown: node.content)
             }
         }

@@ -10,7 +10,7 @@ import {
   unwrapCandidResult,
   variantName as candidVariantName
 } from "@kinic/vfs-client-core";
-import type { ActionPermission, McpAuthStateV5 } from "./auth/state.js";
+import type { ActionPermission, IdentitySource, McpAuthStateV5 } from "./auth/state.js";
 
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 type Variant = Record<string, unknown>;
@@ -42,10 +42,13 @@ export type RuntimeEnv = {
   MCP_REVIEW_IDENTITY_KEY?: string;
   MCP_REVIEW_IDENTITY_PRINCIPAL?: string;
   MCP_REVIEW_ACCESS_VERSION?: string;
+  MCP_REVIEW_DATABASE_ID?: string;
+  MCP_REVIEW_WRITE_PREFIX?: string;
   KINIC_WIKI_IDENTITY?: Identity;
   KINIC_WIKI_AUTHORIZATION?: {
     scopes: string[];
     actionPermission: ActionPermission;
+    identitySource: IdentitySource;
   };
 };
 

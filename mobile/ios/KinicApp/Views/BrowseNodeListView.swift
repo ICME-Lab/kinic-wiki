@@ -75,6 +75,7 @@ struct BrowseNodeListView: View {
         }
         .task(id: normalizedFolderPath) {
             loadFolder()
+            model.browseFolderDidBecomeActive(normalizedFolderPath)
         }
     }
 

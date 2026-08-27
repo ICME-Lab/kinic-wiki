@@ -29,7 +29,7 @@ struct BrowseSearchResultsView: View {
     }
 
     private var shouldShowResults: Bool {
-        !model.searchResults.isEmpty
+        model.browseSearchResultsMatch(folderPath: folderPath) && !model.searchResults.isEmpty
     }
 
     @ViewBuilder

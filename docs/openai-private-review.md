@@ -12,15 +12,15 @@ This runbook prepares the authenticated Kinic Wiki app for review. It never stor
 - Writable test boundary: `/OpenAIReview/scratch/`
 - Required consent: `Actions & questions`
 
-The review login is a dedicated username-and-password path on the normal OAuth authorization page. It maps to an Ed25519 service identity stored as a Cloudflare Secret; it does not mock MCP tool results or fixture data. The service principal must have only `writer` access to `openai-review-fixture` and no access to user databases.
+The review login is a dedicated username-and-password path on the normal OAuth authorization page. It maps to an Ed25519 service identity stored as a Cloudflare Secret; it does not mock MCP tool results or fixture data. The Worker permits that identity to write only to the configured review database ID at `/OpenAIReview/scratch` or its descendants. It rejects non-canonical paths and checks both paths of a move before calling the canister. The service principal must additionally have only `writer` access to `openai-review-fixture` and no access to user databases.
 
-Set `MCP_REVIEW_IDENTITY_KEY`, `MCP_REVIEW_IDENTITY_PRINCIPAL`, `MCP_REVIEW_USERNAME_HASH`, and `MCP_REVIEW_PASSWORD_HASH` with `wrangler secret put`. Keep the plaintext password only in the OpenAI submission portal and an operator password manager. The checked-in configuration contains only the access-version label and enable flag. Incrementing `MCP_REVIEW_ACCESS_VERSION` invalidates existing reviewer authorization codes, access tokens, and refresh tokens after credential rotation; never reuse an earlier access-version value.
+Set `MCP_REVIEW_IDENTITY_KEY`, `MCP_REVIEW_IDENTITY_PRINCIPAL`, `MCP_REVIEW_USERNAME_HASH`, `MCP_REVIEW_PASSWORD_HASH`, and `MCP_REVIEW_DATABASE_ID` with `wrangler secret put` for each environment. Use the exact ID returned for the single `openai-review-fixture` database; staging and production IDs are different. Keep the plaintext password only in the OpenAI submission portal and an operator password manager. The checked-in configuration contains the enable flag, access-version label, and `MCP_REVIEW_WRITE_PREFIX=/OpenAIReview/scratch`; deployments fail closed when either boundary setting is absent or invalid. Incrementing `MCP_REVIEW_ACCESS_VERSION` invalidates existing reviewer authorization codes, access tokens, and refresh tokens after credential rotation; never reuse an earlier access-version value.
 
 Keep the credentials valid after approval because OpenAI may perform continuing safety and quality tests. To rotate the service identity, grant the replacement principal `writer`, deploy and verify the replacement Secret and expected principal, then revoke the old principal. Never grant the reviewer service identity `owner`.
 
 ## Prepare staging
 
-1. Generate a staging-only service identity and configure both its private key and expected principal as Secrets.
+1. Generate a staging-only service identity and configure both its private key and expected principal as Secrets. Resolve the staging fixture's exact database ID and set it as the `MCP_REVIEW_DATABASE_ID` Secret before deploying the Worker.
 2. As the existing fixture owner, grant that service principal `writer` on the single database named exactly `openai-review-fixture`.
 3. Seed the fixed fixture through the authenticated MCP session:
 
@@ -44,7 +44,7 @@ The seeder is idempotent for matching content and metadata, refuses truncated in
 
 ## Prepare production
 
-Generate a separate production service identity, grant it `writer` on the production `openai-review-fixture`, then repeat fixture seeding and the three-run smoke against `https://wiki-private-mcp.kinic.xyz/mcp`. Staging and production credentials, OAuth state, and fixture access do not carry over.
+Generate a separate production service identity, set the production fixture's exact database ID as the production `MCP_REVIEW_DATABASE_ID` Secret, grant the identity `writer` on that `openai-review-fixture`, then repeat fixture seeding and the three-run smoke against `https://wiki-private-mcp.kinic.xyz/mcp`. Staging and production credentials, database IDs, OAuth state, and fixture access do not carry over.
 
 Use an isolated production cache when switching endpoints:
 

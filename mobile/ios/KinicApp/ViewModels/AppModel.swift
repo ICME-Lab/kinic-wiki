@@ -1126,7 +1126,6 @@ final class AppModel {
                 guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
                     return
                 }
-                await loadBrowseDocument(node.path)
             }
         } catch {
             guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
@@ -1598,6 +1597,19 @@ final class AppModel {
             return
         }
         startBrowseSearch(folderPath: folderPath, limit: 20, retainingResults: false)
+    }
+
+    func browseFolderDidBecomeActive(_ folderPath: String) {
+        guard browseSearchScope == .currentFolder,
+              !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !browseSearchRequestMatches(folderPath: folderPath) else {
+            return
+        }
+        startBrowseSearch(folderPath: folderPath, limit: 20, retainingResults: false)
+    }
+
+    func browseSearchResultsMatch(folderPath: String) -> Bool {
+        browseSearchRequestMatches(folderPath: folderPath)
     }
 
     func retryBrowseSearch(folderPath: String) {
@@ -2354,6 +2366,15 @@ final class AppModel {
 
     private func isCurrentBrowseSearch(_ request: BrowseSearchRequest, requestID: Int) -> Bool {
         searchRequestID == requestID && activeBrowseSearchRequest == request
+    }
+
+    private func browseSearchRequestMatches(folderPath: String) -> Bool {
+        guard let request = activeBrowseSearchRequest else {
+            return false
+        }
+        return request.databaseId == selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+            && request.query == searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            && request.prefix == browseSearchScope.prefix(for: folderPath)
     }
 
     private func resetBrowseSearch(resetScope: Bool) {

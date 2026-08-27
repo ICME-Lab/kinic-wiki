@@ -373,7 +373,79 @@ async function checkSuccessfulCalls(client, mcpUrl) {
   validateFetchedReviewPages(fetched, mcpUrl);
   await checkSingleWriteCase(client, mcpUrl, databaseId);
   await checkBatchWriteCase(client, mcpUrl, databaseId);
+  await checkReviewerWriteBoundary(client, mcpUrl, databaseId);
   await checkInvalidCalls(client, mcpUrl, databaseId);
+}
+
+export async function checkReviewerWriteBoundary(client, mcpUrl, databaseId) {
+  const cases = [
+    [
+      "stable evidence write",
+      "write_nodes",
+      {
+        database_id: databaseId,
+        nodes: [{
+          path: RELEASE_PATH,
+          kind: "file",
+          content: "boundary probe",
+          metadata_json: "{}",
+          expected_etag: "review-boundary-probe-invalid-etag"
+        }]
+      }
+    ],
+    [
+      "stable evidence delete",
+      "mutate_nodes_batch",
+      {
+        database_id: databaseId,
+        operations: [{
+          type: "delete",
+          path: RELEASE_PATH,
+          expected_etag: "review-boundary-probe-invalid-etag"
+        }]
+      }
+    ],
+    [
+      "move outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: databaseId,
+        operations: [{
+          type: "move",
+          from_path: `${SCRATCH_PREFIX}/boundary-probe-missing.md`,
+          to_path: "/Knowledge/boundary-probe-missing.md",
+          expected_etag: "review-boundary-probe-invalid-etag"
+        }]
+      }
+    ],
+    [
+      "move into scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: databaseId,
+        operations: [{
+          type: "move",
+          from_path: "/Knowledge/boundary-probe-missing.md",
+          to_path: `${SCRATCH_PREFIX}/boundary-probe-missing.md`,
+          expected_etag: "review-boundary-probe-invalid-etag"
+        }]
+      }
+    ]
+  ];
+  for (const [label, name, toolArgs] of cases) {
+    const result = await callTool(client, mcpUrl, name, toolArgs, { expectError: true });
+    let payload;
+    try {
+      payload = JSON.parse(result.text);
+    } catch {
+      payload = null;
+    }
+    assert(
+      payload?.error === "review_write_boundary_exceeded",
+      `${mcpUrl} ${label} must be rejected by the reviewer write boundary`
+    );
+    assert(result.raw.structuredContent === undefined, `${mcpUrl} ${label} error must omit structuredContent`);
+  }
 }
 
 export async function checkSingleWriteCase(client, mcpUrl, databaseId) {

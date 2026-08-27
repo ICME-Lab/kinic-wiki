@@ -13,6 +13,7 @@ import {
   mcpUnauthorizedResponse,
   mcpWwwAuthenticateChallenge,
   readLimitedText,
+  reviewWritePathIsAllowed,
   type AuthenticationMode,
   type McpAccessPolicy
 } from "./auth/oauth.js";
@@ -388,7 +389,8 @@ export default {
         ...(authenticated.identity ? { KINIC_WIKI_IDENTITY: authenticated.identity } : {}),
         KINIC_WIKI_AUTHORIZATION: {
           scopes: authenticated.scopes,
-          actionPermission: authenticated.actionPermission
+          actionPermission: authenticated.actionPermission,
+          identitySource: authenticated.identitySource
         }
       };
     }
@@ -614,14 +616,19 @@ function registerMutationTools(
       _meta: writeToolMeta
     },
     async ({ database_id, nodes }) =>
-      executeMutationBatch(env, database_id, nodes.map((node) => node.path), () =>
-        writeNodes(env, database_id, nodes.map((node) => ({
-          path: node.path,
-          kind: node.kind,
-          content: node.content,
-          metadataJson: node.metadata_json,
-          expectedEtag: node.expected_etag ?? null
-        })))
+      executeMutationBatch(
+        env,
+        database_id,
+        nodes.map((node) => node.path),
+        nodes.map((node) => node.path),
+        () =>
+          writeNodes(env, database_id, nodes.map((node) => ({
+            path: node.path,
+            kind: node.kind,
+            content: node.content,
+            metadataJson: node.metadata_json,
+            expectedEtag: node.expected_etag ?? null
+          })))
       )
   );
 
@@ -640,8 +647,12 @@ function registerMutationTools(
     },
     async ({ database_id, operations }) => {
       const inputs = operations.map(toNodeMutationInput);
-      return executeMutationBatch(env, database_id, inputs.map(mutationPath), () =>
-        mutateNodesBatch(env, database_id, inputs)
+      return executeMutationBatch(
+        env,
+        database_id,
+        inputs.map(mutationPath),
+        operations.flatMap(mutationAuthorizationPaths),
+        () => mutateNodesBatch(env, database_id, inputs)
       );
     }
   );
@@ -651,9 +662,10 @@ async function executeMutationBatch<T extends object>(
   env: RuntimeEnv,
   databaseId: string,
   paths: Array<string | null>,
+  authorizationPaths: string[],
   operation: () => Promise<T[]>
 ) {
-  const authorizationError = writeAuthorizationError(env);
+  const authorizationError = writeAuthorizationError(env, databaseId, authorizationPaths);
   if (authorizationError) return authorizationError;
   try {
     return toToolResult({ results: (await operation()).map((result) => ({ ...result })) });
@@ -663,22 +675,38 @@ async function executeMutationBatch<T extends object>(
   }
 }
 
-function writeAuthorizationError(env: RuntimeEnv) {
-  if (hasWriteAuthorization(env)) return null;
-  return toolError(
-    "write connection required",
-    { error: "write connection required" },
-    {
-      "mcp/www_authenticate": [
-        mcpWwwAuthenticateChallenge(
-          env,
-          "insufficient_scope",
-          "Write access is required",
-          "mcp:read mcp:write"
-        )
-      ]
-    }
-  );
+function writeAuthorizationError(env: RuntimeEnv, databaseId: string, paths: string[]) {
+  if (!hasWriteAuthorization(env)) {
+    return toolError(
+      "write connection required",
+      { error: "write connection required" },
+      {
+        "mcp/www_authenticate": [
+          mcpWwwAuthenticateChallenge(
+            env,
+            "insufficient_scope",
+            "Write access is required",
+            "mcp:read mcp:write"
+          )
+        ]
+      }
+    );
+  }
+  const authorization = env.KINIC_WIKI_AUTHORIZATION;
+  if (authorization?.identitySource !== "review_service") return null;
+  const configuredDatabaseId = env.MCP_REVIEW_DATABASE_ID?.trim() ?? "";
+  const configuredPrefix = env.MCP_REVIEW_WRITE_PREFIX ?? "";
+  const rejectedPath = paths.find((path) => !reviewWritePathIsAllowed(path, configuredPrefix));
+  if (databaseId === configuredDatabaseId && rejectedPath === undefined) return null;
+  return toolError("review write boundary exceeded", {
+    error: "review_write_boundary_exceeded",
+    database_id: databaseId,
+    ...(rejectedPath ? { path: rejectedPath } : {})
+  });
+}
+
+function mutationAuthorizationPaths(operation: z.infer<typeof batchOperationSchema>): string[] {
+  return operation.type === "move" ? [operation.from_path, operation.to_path] : [operation.path];
 }
 
 function hasWriteAuthorization(env: RuntimeEnv): boolean {

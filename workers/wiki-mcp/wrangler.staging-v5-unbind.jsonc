@@ -47,6 +47,7 @@
     "MCP_PUBLIC_ORIGIN": "https://wiki-mcp-staging.kinic.xyz",
     "MCP_REVIEW_LOGIN_ENABLED": "true",
     "MCP_REVIEW_ACCESS_VERSION": "review-v1",
+    "MCP_REVIEW_WRITE_PREFIX": "/OpenAIReview/scratch",
     "OPENAI_APPS_CHALLENGE_TOKEN": "U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"
   }
 }

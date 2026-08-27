@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cleanupReviewArtifacts,
+  checkReviewerWriteBoundary,
   reviewCompletionError,
   validateFetchedReviewPages,
   validateReviewContext,
@@ -77,6 +78,42 @@ test("requires both stable root folders", () => {
   assert.throws(() => validateReviewRootInventory({
     structured: { entries: [{ path: "/Knowledge" }], metadata: { truncated: false } }
   }), /OpenAIReview/u);
+});
+
+test("requires explicit reviewer boundary errors for every safe smoke probe", async () => {
+  const calls = [];
+  const client = {
+    async callTool(request) {
+      calls.push(request);
+      return {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ error: "review_write_boundary_exceeded" }) }]
+      };
+    }
+  };
+
+  await checkReviewerWriteBoundary(client, "test", "db-review");
+
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0].arguments.nodes[0].path, REVIEW_FILES[0].path);
+  assert.equal(calls[2].arguments.operations[0].from_path.startsWith("/OpenAIReview/scratch/"), true);
+  assert.equal(calls[3].arguments.operations[0].to_path.startsWith("/OpenAIReview/scratch/"), true);
+});
+
+test("fails reviewer boundary smoke on a downstream mutation error", async () => {
+  const client = {
+    async callTool() {
+      return {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ error: "etag_conflict" }) }]
+      };
+    }
+  };
+
+  await assert.rejects(
+    checkReviewerWriteBoundary(client, "test", "db-review"),
+    /must be rejected by the reviewer write boundary/u
+  );
 });
 
 test("recovers and batch-cleans a committed single artifact after response loss", async () => {

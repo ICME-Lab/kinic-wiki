@@ -111,6 +111,18 @@ const privateRequiredEnv = {
   }
 };
 
+const reviewAuthorizedEnv = {
+  ...privateRequiredEnv,
+  MCP_REVIEW_DATABASE_ID: "db_review",
+  MCP_REVIEW_WRITE_PREFIX: "/OpenAIReview/scratch",
+  KINIC_WIKI_IDENTITY: {} as Identity,
+  KINIC_WIKI_AUTHORIZATION: {
+    scopes: ["mcp:read", "mcp:write"],
+    actionPermission: "all" as const,
+    identitySource: "review_service" as const
+  }
+} satisfies RuntimeEnv;
+
 describe("wiki mcp worker", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -449,7 +461,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "write_nodes",
       {
@@ -473,6 +485,229 @@ describe("wiki mcp worker", () => {
     ]);
   });
 
+  it("allows reviewer writes only inside the configured database and prefix", async () => {
+    await callPrivateTool(reviewAuthorizedEnv, "write_nodes", {
+      database_id: "db_review",
+      nodes: [
+        {
+          path: "/OpenAIReview/scratch/page.md",
+          kind: "file",
+          content: "review",
+          metadata_json: "{}"
+        }
+      ]
+    });
+    await callPrivateTool(reviewAuthorizedEnv, "mutate_nodes_batch", {
+      database_id: "db_review",
+      operations: [
+        { type: "mkdir", path: "/OpenAIReview/scratch/folder" },
+        {
+          type: "append",
+          path: "/OpenAIReview/scratch/page.md",
+          content: "more",
+          expected_etag: "etag-append"
+        },
+        {
+          type: "edit",
+          path: "/OpenAIReview/scratch/page.md",
+          old_text: "review",
+          new_text: "updated",
+          expected_etag: "etag-edit"
+        },
+        {
+          type: "multi_edit",
+          path: "/OpenAIReview/scratch/page.md",
+          edits: [{ old_text: "updated", new_text: "reviewed" }],
+          expected_etag: "etag-multi-edit"
+        },
+        {
+          type: "move",
+          from_path: "/OpenAIReview/scratch/page.md",
+          to_path: "/OpenAIReview/scratch/folder/page.md",
+          expected_etag: "etag-1"
+        },
+        {
+          type: "delete",
+          path: "/OpenAIReview/scratch/folder/page.md",
+          expected_etag: "etag-2"
+        }
+      ]
+    });
+
+    expect(mocks.writeNodes).toHaveBeenCalledOnce();
+    expect(mocks.mutateNodesBatch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "stable evidence write",
+      "write_nodes",
+      {
+        database_id: "db_review",
+        nodes: [
+          {
+            path: "/Knowledge/review/release-checklist.md",
+            kind: "file",
+            content: "blocked",
+            metadata_json: "{}"
+          }
+        ]
+      }
+    ],
+    [
+      "stable evidence delete",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          {
+            type: "delete",
+            path: "/Knowledge/review/release-checklist.md",
+            expected_etag: "etag-1"
+          }
+        ]
+      }
+    ],
+    [
+      "mkdir outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [{ type: "mkdir", path: "/OpenAIReview/outside" }]
+      }
+    ],
+    [
+      "append outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          { type: "append", path: "/Knowledge/page.md", content: "blocked", expected_etag: "etag-1" }
+        ]
+      }
+    ],
+    [
+      "edit outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          {
+            type: "edit",
+            path: "/Knowledge/page.md",
+            old_text: "old",
+            new_text: "blocked",
+            expected_etag: "etag-1"
+          }
+        ]
+      }
+    ],
+    [
+      "multi-edit outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          {
+            type: "multi_edit",
+            path: "/Knowledge/page.md",
+            edits: [{ old_text: "old", new_text: "blocked" }],
+            expected_etag: "etag-1"
+          }
+        ]
+      }
+    ],
+    [
+      "move outside scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          {
+            type: "move",
+            from_path: "/OpenAIReview/scratch/page.md",
+            to_path: "/Knowledge/page.md",
+            expected_etag: "etag-1"
+          }
+        ]
+      }
+    ],
+    [
+      "move into scratch",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [
+          {
+            type: "move",
+            from_path: "/Knowledge/page.md",
+            to_path: "/OpenAIReview/scratch/page.md",
+            expected_etag: "etag-1"
+          }
+        ]
+      }
+    ],
+    [
+      "traversal-shaped path",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [{ type: "mkdir", path: "/OpenAIReview/scratch/../Knowledge" }]
+      }
+    ],
+    [
+      "non-canonical path",
+      "mutate_nodes_batch",
+      {
+        database_id: "db_review",
+        operations: [{ type: "mkdir", path: "/OpenAIReview/scratch//folder" }]
+      }
+    ]
+  ])("rejects reviewer boundary violation: %s", async (_caseName, tool, args) => {
+    const result = await callPrivateTool(reviewAuthorizedEnv, tool, args);
+
+    expect(result.result.isError).toBe(true);
+    expect(JSON.parse(result.result.content[0].text)).toMatchObject({
+      error: "review_write_boundary_exceeded",
+      database_id: "db_review"
+    });
+    expect(mocks.writeNodes).not.toHaveBeenCalled();
+    expect(mocks.mutateNodesBatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects reviewer writes to a different database or with missing boundary configuration", async () => {
+    const wrongDatabase = await callPrivateTool(reviewAuthorizedEnv, "write_nodes", {
+      database_id: "db_other",
+      nodes: [
+        {
+          path: "/OpenAIReview/scratch/page.md",
+          kind: "file",
+          content: "blocked",
+          metadata_json: "{}"
+        }
+      ]
+    });
+    const missingConfiguration = await callPrivateTool(
+      { ...reviewAuthorizedEnv, MCP_REVIEW_DATABASE_ID: undefined },
+      "write_nodes",
+      {
+        database_id: "db_review",
+        nodes: [
+          {
+            path: "/OpenAIReview/scratch/page.md",
+            kind: "file",
+            content: "blocked",
+            metadata_json: "{}"
+          }
+        ]
+      }
+    );
+
+    expect(wrongDatabase.result.isError).toBe(true);
+    expect(missingConfiguration.result.isError).toBe(true);
+    expect(mocks.writeNodes).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["write_nodes kind", "write_nodes", { database_id: "db_alpha", nodes: [{ path: "/a.md", content: "a", metadata_json: "{}" }] }],
     ["write_nodes metadata", "write_nodes", { database_id: "db_alpha", nodes: [{ path: "/a.md", kind: "file", content: "a" }] }],
@@ -483,7 +718,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       tool,
       args
@@ -499,7 +734,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const, identitySource: "internet_identity" as const }
       },
       "write_nodes",
       { database_id: "db_alpha", nodes: [{ path: "/Memory/facts.md", kind: "file", content: "blocked", metadata_json: "{}" }] }
@@ -515,7 +750,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read"], actionPermission: "queries" as const, identitySource: "internet_identity" as const }
       },
       "find_databases",
       { limit: 1 }
@@ -531,7 +766,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "mutate_nodes_batch",
       {
@@ -573,7 +808,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "mutate_nodes_batch",
       {
@@ -613,7 +848,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "write_nodes",
       {
@@ -655,7 +890,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "mutate_nodes_batch",
       {
@@ -690,7 +925,7 @@ describe("wiki mcp worker", () => {
       {
         ...privateRequiredEnv,
         KINIC_WIKI_IDENTITY: {} as Identity,
-        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const }
+        KINIC_WIKI_AUTHORIZATION: { scopes: ["mcp:read", "mcp:write"], actionPermission: "all" as const, identitySource: "internet_identity" as const }
       },
       "write_nodes",
       {

@@ -104,11 +104,14 @@ struct BrowseDocumentView: View {
             }
         }
         .task(id: normalizedPath) {
-            if model.documentEditSession?.path == normalizedPath,
-               model.documentEditSession?.databaseId == model.selectedBrowseDatabaseId {
-                documentMode = .edit
-            } else {
+            documentMode = .modeForPathChange(hasMatchingEditSession: hasMatchingEditSession)
+            if !hasMatchingEditSession {
                 model.startLoadBrowseDocument(normalizedPath)
+            }
+        }
+        .onChange(of: hasMatchingEditSession) { _, isMatching in
+            if !isMatching {
+                documentMode = documentMode.modeAfterEditSessionRemoval()
             }
         }
         .onDisappear {
@@ -369,6 +372,10 @@ struct BrowseDocumentView: View {
             return nil
         }
         return editSession
+    }
+
+    private var hasMatchingEditSession: Bool {
+        currentEditSession != nil
     }
 
     private var isEditing: Bool {

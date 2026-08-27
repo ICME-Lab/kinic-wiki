@@ -131,6 +131,56 @@ struct BrowseSearchTests {
 
     @MainActor
     @Test
+    func activatingAnotherFolderRerunsCurrentFolderSearchAndHidesOldResults() async throws {
+        let controlled = ControlledBrowseSearch()
+        let fixture = try BrowseSearchFixture { request, _ in
+            try await controlled.search(request)
+        }
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        model.browseSearchScope = .currentFolder
+        model.searchQuery = "swift"
+
+        model.startSearch(in: "/Knowledge/Project")
+        await waitUntil { await controlled.hasRequest(prefix: "/Knowledge/Project") }
+        await controlled.resolve(
+            prefix: "/Knowledge/Project",
+            hits: [searchHit(path: "/Knowledge/Project/old.md")]
+        )
+        await waitUntil { model.browseSearchPhase == .results }
+        #expect(model.browseSearchResultsMatch(folderPath: "/Knowledge/Project"))
+
+        model.browseFolderDidBecomeActive("/Knowledge")
+
+        #expect(!model.browseSearchResultsMatch(folderPath: "/Knowledge/Project"))
+        #expect(model.searchResults.isEmpty)
+        await waitUntil { await controlled.hasRequest(prefix: "/Knowledge") }
+        await controlled.resolve(prefix: "/Knowledge", hits: [searchHit(path: "/Knowledge/new.md")])
+        await waitUntil { model.browseSearchPhase == .results }
+        #expect(model.browseSearchResultsMatch(folderPath: "/Knowledge"))
+        #expect(model.searchResults.map(\.path) == ["/Knowledge/new.md"])
+    }
+
+    @MainActor
+    @Test
+    func activatingAnotherFolderDoesNotRerunDatabaseSearch() async throws {
+        let probe = BrowseSearchProbe { _ in [] }
+        let fixture = try BrowseSearchFixture(probe: probe)
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        model.searchQuery = "swift"
+
+        model.startSearch(in: "/Knowledge/Project")
+        await waitUntil { model.browseSearchPhase == .empty }
+        model.browseFolderDidBecomeActive("/Knowledge")
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(await probe.requests().count == 1)
+        #expect(model.browseSearchResultsMatch(folderPath: "/Knowledge"))
+    }
+
+    @MainActor
+    @Test
     func changingDatabaseCancelsSearchAndRestoresDatabaseScope() async throws {
         let controlled = ControlledBrowseSearch()
         let fixture = try BrowseSearchFixture { request, _ in
@@ -338,20 +388,39 @@ private actor BrowseSearchProbe {
 }
 
 private actor ControlledBrowseSearch {
-    private var continuations: [String: CheckedContinuation<[SearchNodeHit], any Error>] = [:]
+    private struct RequestKey: Hashable {
+        let query: String
+        let prefix: String?
+    }
+
+    private var continuations: [RequestKey: CheckedContinuation<[SearchNodeHit], any Error>] = [:]
 
     func search(_ request: BrowseSearchRequest) async throws -> [SearchNodeHit] {
         try await withCheckedThrowingContinuation { continuation in
-            continuations[request.query] = continuation
+            continuations[RequestKey(query: request.query, prefix: request.prefix)] = continuation
         }
     }
 
     func hasRequest(query: String) -> Bool {
-        continuations[query] != nil
+        continuations.keys.contains { $0.query == query }
     }
 
     func resolve(query: String, hits: [SearchNodeHit]) {
-        continuations.removeValue(forKey: query)?.resume(returning: hits)
+        guard let key = continuations.keys.first(where: { $0.query == query }) else {
+            return
+        }
+        continuations.removeValue(forKey: key)?.resume(returning: hits)
+    }
+
+    func hasRequest(prefix: String?) -> Bool {
+        continuations.keys.contains { $0.prefix == prefix }
+    }
+
+    func resolve(prefix: String?, hits: [SearchNodeHit]) {
+        guard let key = continuations.keys.first(where: { $0.prefix == prefix }) else {
+            return
+        }
+        continuations.removeValue(forKey: key)?.resume(returning: hits)
     }
 }
 

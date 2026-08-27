@@ -26,6 +26,7 @@ import {
   sessionKeyContext,
   type AuthorizationSessionInput,
   type ClientAuthMethod,
+  type IdentitySource,
   type McpAuthStateV5,
   type OAuthClientRecordV2,
   type TokenIssueResult
@@ -34,6 +35,7 @@ import {
 const CALLBACK_PATH = "/mcp/connect";
 const II_CONNECT_PATH = "/oauth/connect/internet-identity";
 const REVIEW_CONNECT_PATH = "/oauth/connect/reviewer";
+const REVIEW_DATABASE_ID_PATTERN = /^db_[a-z2-7]{12}$/u;
 const CLIENT_PREFIX = "mcl1.";
 const COOKIE_NAME = "__Host-kinic-mcp-connect";
 const SESSION_CAP_MS = 8 * 60 * 60 * 1000;
@@ -148,7 +150,10 @@ export async function authenticateMcpRequest(
   request: Request,
   env: RuntimeEnv,
   requireDelegation: boolean
-): Promise<{ identity?: Identity; scopes: string[]; actionPermission: "queries" | "all" } | { response: Response }> {
+): Promise<
+  | { identity?: Identity; scopes: string[]; actionPermission: "queries" | "all"; identitySource: IdentitySource }
+  | { response: Response }
+> {
   const resource = mcpResource(env);
   const unauthorized = () =>
     json(
@@ -206,7 +211,8 @@ export async function authenticateMcpRequest(
   return {
     ...(identity ? { identity } : {}),
     scopes: authenticated.scope.split(/\s+/u).filter(Boolean),
-    actionPermission: authenticated.actionPermission
+    actionPermission: authenticated.actionPermission,
+    identitySource: authenticated.identitySource
   };
 }
 
@@ -916,13 +922,36 @@ function reviewLoginEnabled(env: RuntimeEnv): boolean {
 }
 
 function reviewLoginConfigured(env: RuntimeEnv): boolean {
+  const reviewDatabaseId = env.MCP_REVIEW_DATABASE_ID?.trim() ?? "";
+  const reviewWritePrefix = env.MCP_REVIEW_WRITE_PREFIX?.trim() ?? "";
   return Boolean(
     env.MCP_REVIEW_LOGIN_RATE_LIMIT &&
     /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_USERNAME_HASH?.trim() ?? "") &&
     /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_PASSWORD_HASH?.trim() ?? "") &&
     env.MCP_REVIEW_IDENTITY_KEY?.trim() &&
     env.MCP_REVIEW_IDENTITY_PRINCIPAL?.trim() &&
-    /^[A-Za-z0-9._-]{1,64}$/u.test(env.MCP_REVIEW_ACCESS_VERSION?.trim() ?? "")
+    /^[A-Za-z0-9._-]{1,64}$/u.test(env.MCP_REVIEW_ACCESS_VERSION?.trim() ?? "") &&
+    REVIEW_DATABASE_ID_PATTERN.test(reviewDatabaseId) &&
+    isCanonicalReviewWritePath(reviewWritePrefix)
+  );
+}
+
+export function isCanonicalReviewWritePath(path: string): boolean {
+  if (!path.startsWith("/") || path === "/" || path.endsWith("/") || path.includes("//")) {
+    return false;
+  }
+  return path
+    .slice(1)
+    .split("/")
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+export function reviewWritePathIsAllowed(path: string, configuredPrefix: string): boolean {
+  const prefix = configuredPrefix.trim();
+  return (
+    isCanonicalReviewWritePath(path) &&
+    isCanonicalReviewWritePath(prefix) &&
+    (path === prefix || path.startsWith(`${prefix}/`))
   );
 }
 

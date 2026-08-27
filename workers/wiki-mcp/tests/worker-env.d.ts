@@ -12,6 +12,8 @@ declare global {
       MCP_REVIEW_IDENTITY_KEY: string;
       MCP_REVIEW_IDENTITY_PRINCIPAL: string;
       MCP_REVIEW_ACCESS_VERSION: string;
+      MCP_REVIEW_DATABASE_ID: string;
+      MCP_REVIEW_WRITE_PREFIX: string;
       MCP_KEY_ENCRYPTION_KEY: string;
       MCP_ACCESS_POLICY: string;
       MCP_WRITE_POLICY: string;

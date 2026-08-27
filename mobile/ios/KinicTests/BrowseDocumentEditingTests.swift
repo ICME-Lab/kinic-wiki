@@ -267,6 +267,43 @@ struct BrowseDocumentEditingTests {
 
     @MainActor
     @Test
+    func delayedDeepLinkParentLoadDoesNotReplaceNewSelectionInSameDatabase() async throws {
+        let reader = ControlledSameDatabaseDeepLinkReader()
+        let fixture = try BrowseEditingFixture(
+            readBrowseNodeRemotely: { databaseId, path, _ in
+                await reader.read(databaseId: databaseId, path: path)
+            },
+            listBrowseChildrenRemotely: { _, _, _ in [] }
+        )
+        defer { fixture.cleanup() }
+        let model = fixture.model
+
+        model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/db/db_shared/Knowledge/A.md")!)
+        model.applyBrowseDeepLink(try #require(model.requestedBrowseDeepLink))
+        try await waitForBlockedSharedParent(reader)
+
+        model.startLoadBrowseDocument("/Knowledge/B.md")
+        for _ in 0..<100 where model.documentNode?.path != "/Knowledge/B.md" {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await reader.releaseParent()
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(model.selectedBrowseNodePath == "/Knowledge/B.md")
+        #expect(model.documentNode?.path == "/Knowledge/B.md")
+        #expect(await reader.readCount(path: "/Knowledge/A.md") == 1)
+    }
+
+    @Test
+    func documentModeResetsForAnotherPathAndWhenEditingEnds() {
+        #expect(BrowseDocumentMode.modeForPathChange(hasMatchingEditSession: true) == .edit)
+        #expect(BrowseDocumentMode.modeForPathChange(hasMatchingEditSession: false) == .preview)
+        #expect(BrowseDocumentMode.edit.modeAfterEditSessionRemoval() == .preview)
+        #expect(BrowseDocumentMode.raw.modeAfterEditSessionRemoval() == .raw)
+    }
+
+    @MainActor
+    @Test
     func databaseSelectionRequiresDiscardAndOnlyLatestRequestCanApply() throws {
         let fixture = try BrowseEditingFixture()
         defer { fixture.cleanup() }
@@ -631,6 +668,63 @@ private actor ControlledBrowseDeepLinkReader {
     }
 }
 
+private actor ControlledSameDatabaseDeepLinkReader {
+    private var requests: [String] = []
+    private var parentContinuation: CheckedContinuation<VFSNode?, Never>?
+
+    func read(databaseId: String, path: String) async -> VFSNode? {
+        guard databaseId == "db_shared" else {
+            return nil
+        }
+        requests.append(path)
+        switch path {
+        case "/Knowledge/A.md":
+            return document(path: path, content: "A")
+        case "/Knowledge/B.md":
+            return document(path: path, content: "B")
+        case "/Knowledge":
+            return await withCheckedContinuation { continuation in
+                parentContinuation = continuation
+            }
+        default:
+            return nil
+        }
+    }
+
+    func hasBlockedParent() -> Bool {
+        parentContinuation != nil
+    }
+
+    func releaseParent() {
+        parentContinuation?.resume(returning: VFSNode(
+            path: "/Knowledge",
+            kind: .folder,
+            content: "",
+            metadataJson: "",
+            etag: "parent-etag",
+            createdAt: 1,
+            updatedAt: 1
+        ))
+        parentContinuation = nil
+    }
+
+    func readCount(path: String) -> Int {
+        requests.count { $0 == path }
+    }
+
+    private func document(path: String, content: String) -> VFSNode {
+        VFSNode(
+            path: path,
+            kind: .file,
+            content: content,
+            metadataJson: "",
+            etag: "\(content)-etag",
+            createdAt: 1,
+            updatedAt: 1
+        )
+    }
+}
+
 private func waitForBlockedOldParent(_ reader: ControlledBrowseDeepLinkReader) async throws {
     for _ in 0..<100 {
         if await reader.hasBlockedOldParent() {
@@ -639,6 +733,16 @@ private func waitForBlockedOldParent(_ reader: ControlledBrowseDeepLinkReader) a
         try await Task.sleep(for: .milliseconds(5))
     }
     Issue.record("Timed out waiting for the old parent read")
+}
+
+private func waitForBlockedSharedParent(_ reader: ControlledSameDatabaseDeepLinkReader) async throws {
+    for _ in 0..<100 {
+        if await reader.hasBlockedParent() {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("Timed out waiting for the shared parent read")
 }
 
 private func browseEditingSession() -> ICAuthSession {

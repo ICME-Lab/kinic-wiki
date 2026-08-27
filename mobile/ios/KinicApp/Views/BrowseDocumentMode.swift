@@ -12,4 +12,12 @@ enum BrowseDocumentMode: String, CaseIterable, Identifiable {
     var id: String {
         rawValue
     }
+
+    static func modeForPathChange(hasMatchingEditSession: Bool) -> BrowseDocumentMode {
+        hasMatchingEditSession ? .edit : .preview
+    }
+
+    func modeAfterEditSessionRemoval() -> BrowseDocumentMode {
+        self == .edit ? .preview : self
+    }
 }

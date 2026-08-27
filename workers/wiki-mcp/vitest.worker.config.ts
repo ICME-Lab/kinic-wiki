@@ -19,7 +19,9 @@ export default defineConfig({
           MCP_REVIEW_PASSWORD_HASH: credentialHash("review-password"),
           MCP_REVIEW_IDENTITY_KEY: JSON.stringify(reviewIdentity.toJSON()),
           MCP_REVIEW_IDENTITY_PRINCIPAL: reviewIdentity.getPrincipal().toText(),
-          MCP_REVIEW_ACCESS_VERSION: "review-v1"
+          MCP_REVIEW_ACCESS_VERSION: "review-v1",
+          MCP_REVIEW_DATABASE_ID: "db_abcdefghijkl",
+          MCP_REVIEW_WRITE_PREFIX: "/OpenAIReview/scratch"
         }
       }
     })
