@@ -55,18 +55,30 @@ struct BrowseDocumentMutationCoordinatorTests {
     func rejectsConcurrentMutationAndOnlyOwnerCanFinish() throws {
         var coordinator = BrowseDocumentMutationCoordinator()
         let currentCandidate = coordinator.begin(
-            mutation: .publish,
+            mutation: .save,
             databaseId: "db_1",
             path: "/Knowledge/Page.md"
         )
         let current = try #require(currentCandidate)
-        let rejected = coordinator.begin(
+        let rejectedSave = coordinator.begin(
+            mutation: .save,
+            databaseId: "db_1",
+            path: "/Knowledge/Page.md"
+        )
+        let rejectedPublish = coordinator.begin(
+            mutation: .publish,
+            databaseId: "db_1",
+            path: "/Knowledge/Page.md"
+        )
+        let rejectedDelete = coordinator.begin(
             mutation: .delete,
             databaseId: "db_1",
             path: "/Knowledge/Page.md"
         )
 
-        #expect(rejected == nil)
+        #expect(rejectedSave == nil)
+        #expect(rejectedPublish == nil)
+        #expect(rejectedDelete == nil)
         #expect(coordinator.owns(current))
 
         coordinator.finish(current)

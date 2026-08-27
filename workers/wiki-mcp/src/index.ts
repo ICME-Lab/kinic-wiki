@@ -13,10 +13,11 @@ import {
   mcpUnauthorizedResponse,
   mcpWwwAuthenticateChallenge,
   readLimitedText,
+  reviewWritePathIsAllowed,
   type AuthenticationMode,
   type McpAccessPolicy
 } from "./auth/oauth.js";
-export { McpAuthStateV4 } from "./auth/state.js";
+export { McpAuthStateV5 } from "./auth/state.js";
 import {
   listDatabases,
   listNodes,
@@ -104,6 +105,7 @@ const searchResultOutputSchema = z.object({
 const fetchedNodeOutputSchema = z.object({
   id: z.string(),
   title: z.string(),
+  text: z.string(),
   url: z.string(),
   metadata: z.object({
     database_id: z.string(),
@@ -169,6 +171,7 @@ const nodeSummaryOutputSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   metadata_json: z.string(),
+  text: z.string(),
   truncated: z.boolean()
 });
 
@@ -386,7 +389,8 @@ export default {
         ...(authenticated.identity ? { KINIC_WIKI_IDENTITY: authenticated.identity } : {}),
         KINIC_WIKI_AUTHORIZATION: {
           scopes: authenticated.scopes,
-          iiPermission: authenticated.iiPermission
+          actionPermission: authenticated.actionPermission,
+          identitySource: authenticated.identitySource
         }
       };
     }
@@ -479,7 +483,7 @@ export function createServer(
   server.registerTool(
     "fetch_many",
     {
-      description: `Fetch full text for up to 10 Kinic Wiki search results. Pass each result's exact id or public url from search. Never pass ChatGPT citation tokens such as turn0file0. If ChatGPT hides an id behind a citation token, construct the public url as ${publicOrigin(env)}/db/{database_id}{path} from that result's metadata. Use after candidate search for broad or list questions, including for a single strongest result. Item-level errors are returned without failing the whole call.`,
+      description: "Fetch full text for up to 10 Kinic Wiki search results. Pass each result's exact id or public url from search. Never pass ChatGPT citation tokens such as turn0file0. If ChatGPT hides an id behind a citation token, construct the public url under the configured Kinic Wiki public origin as /db/{database_id}{path} from that result's metadata. Use after candidate search for broad or list questions, including for a single strongest result. Item-level errors are returned without failing the whole call.",
       inputSchema: {
         ids: z.array(z.string().min(1)).min(1).max(MAX_FETCH_MANY_IDS)
       },
@@ -602,7 +606,7 @@ function registerMutationTools(
     "write_nodes",
     {
       description:
-        "Preferred for every create/full-replacement request, including one node. Create or replace 1 to 100 nodes in order and atomically in one database; any failure rolls back the whole batch.",
+        "Preferred for every create/full-replacement request, including one node. Create or replace 1 to 100 nodes in order and atomically in one database; any failure rolls back the whole batch. Changes to a public database or published node can become publicly visible.",
       inputSchema: {
         database_id: z.string().min(1),
         nodes: z.array(z.object(withoutDatabaseId(writeNodeInputSchema))).min(1).max(MAX_MUTATION_BATCH_ITEMS)
@@ -612,14 +616,19 @@ function registerMutationTools(
       _meta: writeToolMeta
     },
     async ({ database_id, nodes }) =>
-      executeMutationBatch(env, database_id, nodes.map((node) => node.path), () =>
-        writeNodes(env, database_id, nodes.map((node) => ({
-          path: node.path,
-          kind: node.kind,
-          content: node.content,
-          metadataJson: node.metadata_json,
-          expectedEtag: node.expected_etag ?? null
-        })))
+      executeMutationBatch(
+        env,
+        database_id,
+        nodes.map((node) => node.path),
+        nodes.map((node) => node.path),
+        () =>
+          writeNodes(env, database_id, nodes.map((node) => ({
+            path: node.path,
+            kind: node.kind,
+            content: node.content,
+            metadataJson: node.metadata_json,
+            expectedEtag: node.expected_etag ?? null
+          })))
       )
   );
 
@@ -627,7 +636,7 @@ function registerMutationTools(
     "mutate_nodes_batch",
     {
       description:
-        "Preferred for the whole request when any operation is append, edit, multi-edit, mkdir, move, or delete, including one operation. Apply 1 to 100 ordered write, append, edit, multi-edit, mkdir, move, and delete operations atomically in one database; any failure rolls back the whole batch.",
+        "Preferred for the whole request when any operation is append, edit, multi-edit, mkdir, move, or delete, including one operation. Apply 1 to 100 ordered write, append, edit, multi-edit, mkdir, move, and delete operations atomically in one database; any failure rolls back the whole batch. Changes to a public database or published node can become publicly visible.",
       inputSchema: {
         database_id: z.string().min(1),
         operations: z.array(batchOperationSchema).min(1).max(MAX_MUTATION_BATCH_ITEMS)
@@ -638,8 +647,12 @@ function registerMutationTools(
     },
     async ({ database_id, operations }) => {
       const inputs = operations.map(toNodeMutationInput);
-      return executeMutationBatch(env, database_id, inputs.map(mutationPath), () =>
-        mutateNodesBatch(env, database_id, inputs)
+      return executeMutationBatch(
+        env,
+        database_id,
+        inputs.map(mutationPath),
+        operations.flatMap(mutationAuthorizationPaths),
+        () => mutateNodesBatch(env, database_id, inputs)
       );
     }
   );
@@ -649,9 +662,10 @@ async function executeMutationBatch<T extends object>(
   env: RuntimeEnv,
   databaseId: string,
   paths: Array<string | null>,
+  authorizationPaths: string[],
   operation: () => Promise<T[]>
 ) {
-  const authorizationError = writeAuthorizationError(env);
+  const authorizationError = writeAuthorizationError(env, databaseId, authorizationPaths);
   if (authorizationError) return authorizationError;
   try {
     return toToolResult({ results: (await operation()).map((result) => ({ ...result })) });
@@ -661,28 +675,44 @@ async function executeMutationBatch<T extends object>(
   }
 }
 
-function writeAuthorizationError(env: RuntimeEnv) {
-  if (hasWriteAuthorization(env)) return null;
-  return toolError(
-    "write connection required",
-    { error: "write connection required" },
-    {
-      "mcp/www_authenticate": [
-        mcpWwwAuthenticateChallenge(
-          env,
-          "insufficient_scope",
-          "Write access is required",
-          "mcp:read mcp:write"
-        )
-      ]
-    }
-  );
+function writeAuthorizationError(env: RuntimeEnv, databaseId: string, paths: string[]) {
+  if (!hasWriteAuthorization(env)) {
+    return toolError(
+      "write connection required",
+      { error: "write connection required" },
+      {
+        "mcp/www_authenticate": [
+          mcpWwwAuthenticateChallenge(
+            env,
+            "insufficient_scope",
+            "Write access is required",
+            "mcp:read mcp:write"
+          )
+        ]
+      }
+    );
+  }
+  const authorization = env.KINIC_WIKI_AUTHORIZATION;
+  if (authorization?.identitySource !== "review_service") return null;
+  const configuredDatabaseId = env.MCP_REVIEW_DATABASE_ID?.trim() ?? "";
+  const configuredPrefix = env.MCP_REVIEW_WRITE_PREFIX ?? "";
+  const rejectedPath = paths.find((path) => !reviewWritePathIsAllowed(path, configuredPrefix));
+  if (databaseId === configuredDatabaseId && rejectedPath === undefined) return null;
+  return toolError("review write boundary exceeded", {
+    error: "review_write_boundary_exceeded",
+    database_id: databaseId,
+    ...(rejectedPath ? { path: rejectedPath } : {})
+  });
+}
+
+function mutationAuthorizationPaths(operation: z.infer<typeof batchOperationSchema>): string[] {
+  return operation.type === "move" ? [operation.from_path, operation.to_path] : [operation.path];
 }
 
 function hasWriteAuthorization(env: RuntimeEnv): boolean {
   return Boolean(
     env.KINIC_WIKI_IDENTITY &&
-    env.KINIC_WIKI_AUTHORIZATION?.iiPermission === "all" &&
+    env.KINIC_WIKI_AUTHORIZATION?.actionPermission === "all" &&
     env.KINIC_WIKI_AUTHORIZATION.scopes.includes("mcp:write")
   );
 }

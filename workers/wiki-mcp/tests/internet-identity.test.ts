@@ -255,6 +255,18 @@ describe("staging authentication boundary", () => {
     MCP_AUTH_STATE: {} as RuntimeEnv["MCP_AUTH_STATE"],
     MCP_REGISTRATION_RATE_LIMIT: {} as RuntimeEnv["MCP_REGISTRATION_RATE_LIMIT"]
   } satisfies RuntimeEnv;
+  const reviewStagingEnv = {
+    ...stagingEnv,
+    MCP_REVIEW_LOGIN_ENABLED: "true",
+    MCP_REVIEW_LOGIN_RATE_LIMIT: {} as RuntimeEnv["MCP_REVIEW_LOGIN_RATE_LIMIT"],
+    MCP_REVIEW_USERNAME_HASH: "u".repeat(43),
+    MCP_REVIEW_PASSWORD_HASH: "p".repeat(43),
+    MCP_REVIEW_IDENTITY_KEY: "review-key",
+    MCP_REVIEW_IDENTITY_PRINCIPAL: "aaaaa-aa",
+    MCP_REVIEW_ACCESS_VERSION: "review-v1",
+    MCP_REVIEW_DATABASE_ID: "db_abcdefghijkl",
+    MCP_REVIEW_WRITE_PREFIX: "/OpenAIReview/scratch"
+  } satisfies RuntimeEnv;
 
   it("enables required private access only on the canonical staging origin", async () => {
     expect(authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), stagingEnv)).toBe(
@@ -271,6 +283,26 @@ describe("staging authentication boundary", () => {
     await expect(response?.json()).resolves.toEqual({ error: "not found" });
   });
 
+  it("requires a canonical reviewer database boundary when reviewer login is enabled", () => {
+    const request = new Request("https://wiki-mcp-staging.kinic.xyz/mcp");
+    expect(authenticationMode(request, reviewStagingEnv)).toBe("private_required");
+    expect(authenticationMode(request, { ...reviewStagingEnv, MCP_REVIEW_DATABASE_ID: undefined })).toBe(
+      "misconfigured"
+    );
+    expect(authenticationMode(request, { ...reviewStagingEnv, MCP_REVIEW_DATABASE_ID: "db-review" })).toBe(
+      "misconfigured"
+    );
+    expect(authenticationMode(request, { ...reviewStagingEnv, MCP_REVIEW_WRITE_PREFIX: undefined })).toBe(
+      "misconfigured"
+    );
+    expect(
+      authenticationMode(request, {
+        ...reviewStagingEnv,
+        MCP_REVIEW_WRITE_PREFIX: "/OpenAIReview/scratch/../Knowledge"
+      })
+    ).toBe("misconfigured");
+  });
+
   it("fails closed for invalid access policy or private configuration", async () => {
     const misconfiguredMode = authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
       MCP_ACCESS_POLICY: "invalid",
@@ -285,6 +317,18 @@ describe("staging authentication boundary", () => {
       authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
         ...stagingEnv,
         MCP_REGISTRATION_RATE_LIMIT: undefined
+      })
+    ).toBe("misconfigured");
+    expect(
+      authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
+        ...stagingEnv,
+        MCP_REVIEW_LOGIN_ENABLED: "true"
+      })
+    ).toBe("misconfigured");
+    expect(
+      authenticationMode(new Request("https://wiki-mcp-staging.kinic.xyz/mcp"), {
+        ...stagingEnv,
+        MCP_REVIEW_LOGIN_ENABLED: "unexpected"
       })
     ).toBe("misconfigured");
 

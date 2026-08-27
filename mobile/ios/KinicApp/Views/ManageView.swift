@@ -35,7 +35,6 @@ struct ManageView: View {
             guard model.readableDatabases.contains(where: { $0.databaseId == databaseId }) else {
                 return
             }
-            model.selectBrowseDatabase(databaseId)
             model.startLoadCyclesBillingConfigIfNeeded()
         }
     }
@@ -51,7 +50,7 @@ struct ManageView: View {
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 12) {
-                    Picker("Database", selection: $model.selectedBrowseDatabaseId) {
+                    Picker("Database", selection: manageDatabaseSelection) {
                         ForEach(model.managementDatabases) { database in
                             Text(pickerTitle(for: database))
                                 .tag(database.databaseId)
@@ -74,6 +73,15 @@ struct ManageView: View {
 
     private var selectedManageDatabase: DatabaseSummary? {
         model.managementDatabases.first { $0.databaseId == model.selectedBrowseDatabaseId }
+    }
+
+    private var manageDatabaseSelection: Binding<String> {
+        Binding(
+            get: { model.selectedBrowseDatabaseId },
+            set: { databaseId in
+                _ = model.requestBrowseDatabaseSelection(databaseId)
+            }
+        )
     }
 
     private func pickerTitle(for database: DatabaseSummary) -> String {

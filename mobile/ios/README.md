@@ -16,6 +16,7 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
+- Lets signed-in `Owner` and `Writer` members explicitly edit and save existing Markdown documents outside `/Sources`; drafts remain in memory only and optimistic saves preserve the original `etag`.
 - Adds a database-scoped Ask AI tab that retrieves relevant wiki documents, shows its search and evidence-checking activity, and refuses to answer when no supporting document is available.
 - Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Database searches use `https://api.kinic.io/chat` once to route the request and generate up to three diversified queries (literal, paraphrased, and anchor-only), then once more when verified notes are found to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
 - Lets signed-in users delete their Kinic account data from Settings. Sole-owned databases are deleted; shared-database membership, purchased access, and account-scoped local history are removed; Internet Identity and retained transaction records remain.

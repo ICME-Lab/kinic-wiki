@@ -18,7 +18,7 @@
     "bindings": [
       {
         "name": "MCP_AUTH_STATE",
-        "class_name": "McpAuthStateV4"
+        "class_name": "McpAuthStateV5"
       }
     ]
   },
@@ -26,6 +26,14 @@
     {
       "name": "MCP_REGISTRATION_RATE_LIMIT",
       "namespace_id": "7802026",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "MCP_REVIEW_LOGIN_RATE_LIMIT",
+      "namespace_id": "7802028",
       "simple": {
         "limit": 10,
         "period": 60
@@ -51,6 +59,11 @@
       "tag": "v4",
       "new_sqlite_classes": ["McpAuthStateV4"],
       "deleted_classes": ["McpAuthStateV3"]
+    },
+    {
+      "tag": "v5",
+      "new_sqlite_classes": ["McpAuthStateV5"],
+      "deleted_classes": ["McpAuthStateV4"]
     }
   ],
   "vars": {
@@ -61,6 +74,9 @@
     "MCP_ACCESS_POLICY": "private_required",
     "MCP_WRITE_POLICY": "private",
     "MCP_PUBLIC_ORIGIN": "https://wiki-mcp-staging.kinic.xyz",
+    "MCP_REVIEW_LOGIN_ENABLED": "true",
+    "MCP_REVIEW_ACCESS_VERSION": "review-v1",
+    "MCP_REVIEW_WRITE_PREFIX": "/OpenAIReview/scratch",
     "OPENAI_APPS_CHALLENGE_TOKEN": "U3C-sqKN0SbnEf0lSfTGWrkMABESA3cacw1i74cr8oU"
   }
 }

@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://developers.openai.com/plugins/schemas/chatgpt-app-submission.v1.json",
+  "$id": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
   "title": "ChatGPT App Submission Import",
   "description": "A Codex-generated file for filling parts of a ChatGPT App submission form.",
   "type": "object",
   "required": ["$schema", "schema_version", "tools"],
   "properties": {
     "$schema": {
-      "const": "https://developers.openai.com/plugins/schemas/chatgpt-app-submission.v1.json"
+      "const": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json"
     },
     "schema_version": {
       "const": 1

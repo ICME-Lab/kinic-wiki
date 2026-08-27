@@ -36,8 +36,11 @@ export type OAuthClientRecordV2 = {
   clientExpiresAt: number;
 };
 
-export type AuthorizationSessionRecordV4 = {
-  version: 4;
+export type IdentitySource = "internet_identity" | "review_service";
+export type ActionPermission = IiPermission;
+
+export type AuthorizationSessionRecordV5 = {
+  version: 5;
   kind: "authorization_session";
   phase: "pending" | "redeeming" | "authorized" | "active" | "invalid";
   sessionId: string;
@@ -49,8 +52,9 @@ export type AuthorizationSessionRecordV4 = {
   codeChallenge: string;
   connectStateHash: string;
   cookieHash: string;
+  registrationPublicKey: string;
   registrationKey: EncryptedValueV1 | null;
-  sessionKey: EncryptedValueV1;
+  sessionKey: EncryptedValueV1 | null;
   pendingCodeHash: string | null;
   consumedCodeHash: string | null;
   accessTokenHash: string | null;
@@ -62,16 +66,29 @@ export type AuthorizationSessionRecordV4 = {
   connectExpiresAt: number;
   authorizationCodeExpiresAt: number | null;
   sessionExpiresAt: number | null;
-  iiPermission: IiPermission | null;
+  identitySource: IdentitySource | null;
+  actionPermission: ActionPermission | null;
+  reviewAccessVersion: string | null;
   cachedDelegation: EncryptedValueV1 | null;
   cachedDelegationTargetOrigin: string | null;
   cachedDelegationExpiresAt: number | null;
 };
 
-export type AuthStateRecordV4 = OAuthClientRecordV2 | AuthorizationSessionRecordV4;
+export type AuthStateRecordV5 = OAuthClientRecordV2 | AuthorizationSessionRecordV5;
+
+function sessionAccessVersionIsCurrent(
+  record: AuthorizationSessionRecordV5,
+  configuredReviewAccessVersion: string | undefined
+): boolean {
+  if (record.identitySource === "internet_identity") return true;
+  return (
+    record.identitySource === "review_service" &&
+    record.reviewAccessVersion === configuredReviewAccessVersion?.trim()
+  );
+}
 
 export type AuthorizationSessionInput = Omit<
-  AuthorizationSessionRecordV4,
+  AuthorizationSessionRecordV5,
   | "version"
   | "kind"
   | "phase"
@@ -83,7 +100,9 @@ export type AuthorizationSessionInput = Omit<
   | "spentRefreshTokenHashes"
   | "authorizationCodeExpiresAt"
   | "sessionExpiresAt"
-  | "iiPermission"
+  | "identitySource"
+  | "actionPermission"
+  | "reviewAccessVersion"
   | "cachedDelegation"
   | "cachedDelegationTargetOrigin"
   | "cachedDelegationExpiresAt"
@@ -96,7 +115,6 @@ export type TokenIssueResult = {
   sessionExpiresAt: number;
   scope: string;
   resource: string;
-  encryptedSessionKey: EncryptedValueV1;
 };
 
 type TokenOperationResult =
@@ -106,20 +124,27 @@ type TokenOperationResult =
 
 export type AccessTokenAuthentication =
   | { kind: "invalid" }
-  | { kind: "valid"; scope: string; iiPermission: IiPermission; delegation: null }
   | {
       kind: "valid";
       scope: string;
-      iiPermission: IiPermission;
+      actionPermission: ActionPermission;
+      identitySource: IdentitySource;
+      delegation: null;
+    }
+  | {
+      kind: "valid";
+      scope: string;
+      actionPermission: ActionPermission;
+      identitySource: "internet_identity";
       delegation: KinicDelegationMaterialV1;
     }
   | { kind: "temporarily_unavailable"; stage: IiDelegationStage | "delegation_cache" };
 
-export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
+export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
   private readonly delegationMint = new SingleFlight<AccessTokenAuthentication>();
 
   async createClient(record: OAuthClientRecordV2): Promise<boolean> {
-    const existing = await this.ctx.storage.get<AuthStateRecordV4>(RECORD_KEY);
+    const existing = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
     if (existing) {
       return false;
     }
@@ -130,7 +155,7 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
 
   async getClient(now: number): Promise<OAuthClientRecordV2 | null> {
     const result = await this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV4>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV5>(RECORD_KEY);
       if (record?.kind !== "oauth_client") {
         return { client: null, expired: false };
       }
@@ -155,13 +180,13 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
   }
 
   async createSession(input: AuthorizationSessionInput): Promise<boolean> {
-    const existing = await this.ctx.storage.get<AuthStateRecordV4>(RECORD_KEY);
+    const existing = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
     if (existing) {
       return false;
     }
-    const record: AuthorizationSessionRecordV4 = {
+    const record: AuthorizationSessionRecordV5 = {
       ...input,
-      version: 4,
+      version: 5,
       kind: "authorization_session",
       phase: "pending",
       pendingCodeHash: null,
@@ -172,7 +197,9 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
       spentRefreshTokenHashes: [],
       authorizationCodeExpiresAt: null,
       sessionExpiresAt: null,
-      iiPermission: null,
+      identitySource: null,
+      actionPermission: null,
+      reviewAccessVersion: null,
       cachedDelegation: null,
       cachedDelegationTargetOrigin: null,
       cachedDelegationExpiresAt: null
@@ -182,12 +209,12 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     return true;
   }
 
-  async claimConnect(connectState: string, cookie: string, now: number): Promise<AuthorizationSessionRecordV4 | null> {
+  async claimConnect(connectState: string, cookie: string, now: number): Promise<AuthorizationSessionRecordV5 | null> {
     const connectStateHash = await sha256(connectState);
     const cookieHash = await sha256(cookie);
     const consumedHash = await sha256(randomOpaque());
     return this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV4>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV5>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "pending" ||
@@ -205,16 +232,70 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     });
   }
 
+  async inspectPendingConnect(
+    connectState: string,
+    cookie: string,
+    now: number
+  ): Promise<{ sessionId: string; registrationPublicKey: string } | null> {
+    const connectStateHash = await sha256(connectState);
+    const cookieHash = await sha256(cookie);
+    const record = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
+    if (
+      record?.kind !== "authorization_session" ||
+      record.phase !== "pending" ||
+      record.connectExpiresAt <= now ||
+      !hashEquals(record.connectStateHash, connectStateHash) ||
+      !hashEquals(record.cookieHash, cookieHash)
+    ) {
+      return null;
+    }
+    return { sessionId: record.sessionId, registrationPublicKey: record.registrationPublicKey };
+  }
+
   async completeConnect(
     grantExpiresAt: number,
-    iiPermission: IiPermission,
+    actionPermission: ActionPermission,
     now: number,
     expectedSessionId: string
   ): Promise<{ code: string; redirectUri: string; oauthState: string } | null> {
+    return this.completeAuthorization({
+      grantExpiresAt,
+      actionPermission,
+      identitySource: "internet_identity",
+      reviewAccessVersion: null,
+      now,
+      expectedSessionId
+    });
+  }
+
+  async completeReviewConnect(
+    reviewAccessVersion: string,
+    now: number,
+    expectedSessionId: string
+  ): Promise<{ code: string; redirectUri: string; oauthState: string } | null> {
+    return this.completeAuthorization({
+      grantExpiresAt: Number.MAX_SAFE_INTEGER,
+      actionPermission: "all",
+      identitySource: "review_service",
+      reviewAccessVersion,
+      now,
+      expectedSessionId
+    });
+  }
+
+  private async completeAuthorization(input: {
+    grantExpiresAt: number;
+    actionPermission: ActionPermission;
+    identitySource: IdentitySource;
+    reviewAccessVersion: string | null;
+    now: number;
+    expectedSessionId: string;
+  }): Promise<{ code: string; redirectUri: string; oauthState: string } | null> {
+    const { grantExpiresAt, actionPermission, identitySource, reviewAccessVersion, now, expectedSessionId } = input;
     const code = `mkc1.${expectedSessionId}.${randomOpaque()}`;
     const pendingCodeHash = await sha256(code);
     const result = await this.ctx.storage.transaction(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV4>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV5>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "redeeming" ||
@@ -231,10 +312,15 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
       }
       record.pendingCodeHash = pendingCodeHash;
       record.registrationKey = null;
+      if (identitySource === "review_service") {
+        record.sessionKey = null;
+      }
       record.authorizationCodeExpiresAt = Math.min(now + AUTHORIZATION_CODE_TTL_MS, sessionExpiresAt);
       record.sessionExpiresAt = sessionExpiresAt;
-      record.iiPermission = iiPermission;
-      if (iiPermission === "queries") {
+      record.identitySource = identitySource;
+      record.actionPermission = actionPermission;
+      record.reviewAccessVersion = reviewAccessVersion;
+      if (actionPermission === "queries") {
         record.scope = record.scope
           .split(/\s+/)
           .filter((scope) => scope && scope !== "mcp:write")
@@ -270,7 +356,7 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     const verifierChallenge = await sha256(input.codeVerifier);
     const material = await createTokenMaterial(routeId(input.code), input.issueRefreshToken, input.now);
     const result = await this.ctx.storage.transaction<TokenOperationResult>(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV4>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV5>(RECORD_KEY);
       if (record?.kind !== "authorization_session") {
         return { kind: "invalid" };
       }
@@ -297,6 +383,7 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
         record.authorizationCodeExpiresAt <= input.now ||
         !record.sessionExpiresAt ||
         record.sessionExpiresAt <= input.now ||
+        !sessionAccessVersionIsCurrent(record, this.env.MCP_REVIEW_ACCESS_VERSION) ||
         !requestMatchesSession ||
         !hashEquals(record.pendingCodeHash, codeHash)
       ) {
@@ -322,12 +409,13 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     const refreshTokenHash = await sha256(input.refreshToken);
     const material = await createTokenMaterial(routeId(input.refreshToken), true, input.now);
     const result = await this.ctx.storage.transaction<TokenOperationResult>(async (transaction) => {
-      const record = await transaction.get<AuthStateRecordV4>(RECORD_KEY);
+      const record = await transaction.get<AuthStateRecordV5>(RECORD_KEY);
       if (
         record?.kind !== "authorization_session" ||
         record.phase !== "active" ||
         !record.sessionExpiresAt ||
         record.sessionExpiresAt <= input.now ||
+        !sessionAccessVersionIsCurrent(record, this.env.MCP_REVIEW_ACCESS_VERSION) ||
         record.clientId !== input.clientId ||
         record.resource !== input.resource
       ) {
@@ -363,10 +451,10 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
   }
 
   async validateAccessToken(token: string, resource: string, now: number): Promise<{
-    encryptedSessionKey: EncryptedValueV1;
     sessionExpiresAt: number;
     scope: string;
-    iiPermission: IiPermission;
+    actionPermission: ActionPermission;
+    identitySource: IdentitySource;
   } | null> {
     const tokenHash = await sha256(token);
     const record = await this.getSession();
@@ -379,16 +467,18 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
       !record.sessionExpiresAt ||
       record.sessionExpiresAt <= now ||
       record.resource !== resource ||
-      !record.iiPermission ||
+      !record.actionPermission ||
+      !record.identitySource ||
+      !sessionAccessVersionIsCurrent(record, this.env.MCP_REVIEW_ACCESS_VERSION) ||
       !hashEquals(record.accessTokenHash, tokenHash)
     ) {
       return null;
     }
     return {
-      encryptedSessionKey: record.sessionKey,
       sessionExpiresAt: record.sessionExpiresAt,
       scope: record.scope,
-      iiPermission: record.iiPermission
+      actionPermission: record.actionPermission,
+      identitySource: record.identitySource
     };
   }
 
@@ -402,13 +492,20 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     if (!validated) {
       return { kind: "invalid" };
     }
+    if (!requireDelegation || validated.identitySource === "review_service") {
+      return {
+        kind: "valid",
+        scope: validated.scope,
+        actionPermission: validated.actionPermission,
+        identitySource: validated.identitySource,
+        delegation: null
+      };
+    }
     const authorization = {
       scope: validated.scope,
-      iiPermission: validated.iiPermission
+      actionPermission: validated.actionPermission,
+      identitySource: "internet_identity" as const
     };
-    if (!requireDelegation) {
-      return { kind: "valid", ...authorization, delegation: null };
-    }
 
     const targetOrigin = resolveKinicMcpTargetOrigin(
       this.env.KINIC_WIKI_MCP_TARGET_ORIGIN,
@@ -429,7 +526,7 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
   }
 
   async alarm(): Promise<void> {
-    const record = await this.ctx.storage.get<AuthStateRecordV4>(RECORD_KEY);
+    const record = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
     if (!record) {
       await this.ctx.storage.deleteAlarm();
       return;
@@ -442,8 +539,8 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     await this.ctx.storage.setAlarm(deadline);
   }
 
-  private async getSession(): Promise<AuthorizationSessionRecordV4 | null> {
-    const record = await this.ctx.storage.get<AuthStateRecordV4>(RECORD_KEY);
+  private async getSession(): Promise<AuthorizationSessionRecordV5 | null> {
+    const record = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
     return record?.kind === "authorization_session" ? record : null;
   }
 
@@ -472,7 +569,11 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
 
   private async mintAndCacheDelegation(
     targetOrigin: string,
-    authorization: { scope: string; iiPermission: IiPermission },
+    authorization: {
+      scope: string;
+      actionPermission: ActionPermission;
+      identitySource: "internet_identity";
+    },
     now: number
   ): Promise<AccessTokenAuthentication> {
     const record = await this.getSession();
@@ -481,6 +582,9 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     }
     let sessionKey: IiKeyJson;
     try {
+      if (!record.sessionKey || record.identitySource !== "internet_identity") {
+        throw new Error("Internet Identity session key is unavailable");
+      }
       sessionKey = await decryptJson<IiKeyJson>(
         record.sessionKey,
         requiredEncryptionKey(this.env),
@@ -525,7 +629,7 @@ export class McpAuthStateV4 extends DurableObject<RuntimeEnv> {
     }
   }
 
-  private async clearCachedDelegation(record: AuthorizationSessionRecordV4): Promise<void> {
+  private async clearCachedDelegation(record: AuthorizationSessionRecordV5): Promise<void> {
     const current = await this.getSession();
     if (
       !current ||
@@ -556,7 +660,7 @@ function sameEncryptedValue(left: EncryptedValueV1 | null, right: EncryptedValue
 }
 
 export function delegationNeedsRefresh(
-  record: Pick<AuthorizationSessionRecordV4, "cachedDelegationTargetOrigin" | "cachedDelegationExpiresAt">,
+  record: Pick<AuthorizationSessionRecordV5, "cachedDelegationTargetOrigin" | "cachedDelegationExpiresAt">,
   targetOrigin: string,
   now: number
 ): boolean {
@@ -622,7 +726,7 @@ async function createTokenMaterial(sessionId: string | null, issueRefreshToken: 
 
 async function storeInitialTokens(
   transaction: DurableObjectTransaction,
-  record: AuthorizationSessionRecordV4,
+  record: AuthorizationSessionRecordV5,
   material: TokenMaterial,
   issueRefreshToken: boolean
 ): Promise<TokenIssueResult> {
@@ -640,7 +744,7 @@ async function storeInitialTokens(
 
 async function storeRotatedTokens(
   transaction: DurableObjectTransaction,
-  record: AuthorizationSessionRecordV4,
+  record: AuthorizationSessionRecordV5,
   material: TokenMaterial
 ): Promise<TokenIssueResult> {
   record.spentRefreshTokenHashes.push(requiredCurrentRefreshTokenHash(record));
@@ -652,7 +756,7 @@ async function storeRotatedTokens(
 }
 
 function tokenIssueResult(
-  record: AuthorizationSessionRecordV4,
+  record: AuthorizationSessionRecordV5,
   material: TokenMaterial,
   includeRefreshToken: boolean
 ): TokenIssueResult {
@@ -663,11 +767,10 @@ function tokenIssueResult(
     sessionExpiresAt: requiredSessionExpiry(record),
     scope: record.scope,
     resource: record.resource,
-    encryptedSessionKey: record.sessionKey
   };
 }
 
-function recordDeadline(record: AuthStateRecordV4): number | null {
+function recordDeadline(record: AuthStateRecordV5): number | null {
   if (record.kind === "oauth_client") {
     return record.clientExpiresAt;
   }
@@ -683,14 +786,14 @@ function recordDeadline(record: AuthStateRecordV4): number | null {
   return null;
 }
 
-function requiredSessionExpiry(record: AuthorizationSessionRecordV4): number {
+function requiredSessionExpiry(record: AuthorizationSessionRecordV5): number {
   if (record.sessionExpiresAt === null) {
     throw new Error("session expiration is unavailable");
   }
   return record.sessionExpiresAt;
 }
 
-function requiredCurrentRefreshTokenHash(record: AuthorizationSessionRecordV4): string {
+function requiredCurrentRefreshTokenHash(record: AuthorizationSessionRecordV5): string {
   if (!record.currentRefreshTokenHash) {
     throw new Error("refresh token hash is unavailable");
   }

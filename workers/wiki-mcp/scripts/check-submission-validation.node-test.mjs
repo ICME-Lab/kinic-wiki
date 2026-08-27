@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   validateOpenAiConfigYaml,
   validateSkillFiles,
+  validateSubmissionCases,
   validateSubmissionSchema
 } from "./check-submission-cases.mjs";
 
@@ -72,12 +73,38 @@ const invalidSkillContracts = [
   ],
   ["etag discipline", validSkill.replaceAll("expected_etag", "unchecked_etag"), validToolReference],
   [
+    "multi-edit etag discipline",
+    validSkill.replace("append, edit, multi-edit, move", "append, edit, move"),
+    validToolReference
+  ],
+  [
     "overwrite restriction",
     validSkill.replace(
       "Set move `overwrite: true` only when the user explicitly requested",
       "Set move `overwrite: true` whenever needed"
     ),
     validToolReference
+  ],
+  [
+    "overwrite destination etag discipline",
+    validSkill.replaceAll("expected_target_etag", "unchecked_target_etag"),
+    validToolReference
+  ],
+  [
+    "absent overwrite destination rule",
+    validSkill,
+    validToolReference.replace(
+      "if it is absent, omit `expected_target_etag`",
+      "if it is absent, send `expected_target_etag`"
+    )
+  ],
+  [
+    "non-overwrite destination etag restriction",
+    validSkill,
+    validToolReference.replace(
+      "Supplying `expected_target_etag` with `overwrite: false` is invalid",
+      "Supplying `expected_target_etag` with `overwrite: false` is valid"
+    )
   ],
   [
     "delete restriction",
@@ -149,11 +176,21 @@ test("accepts the checked-in submission JSON against the pinned schema", () => {
   assert.doesNotThrow(() => validateSubmissionSchema(validSubmission));
 });
 
+test("accepts the checked-in private review cases", () => {
+  assert.doesNotThrow(() => validateSubmissionCases(validSubmission));
+});
+
+test("rejects a write tool that claims it cannot change public internet state", () => {
+  const submission = structuredClone(validSubmission);
+  submission.tools.write_nodes.annotations.openWorldHint = false;
+  assert.throws(() => validateSubmissionCases(submission), /write_nodes openWorldHint/u);
+});
+
 test("rejects submission JSON with an outdated schema URL", () => {
   assert.throws(() =>
     validateSubmissionSchema({
       ...validSubmission,
-      $schema: "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json"
+      $schema: "https://developers.openai.com/plugins/schemas/chatgpt-app-submission.v1.json"
     })
   );
 });

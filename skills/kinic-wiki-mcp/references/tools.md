@@ -33,6 +33,7 @@ There is no `connect_private` tool and no single-mutation tool. OAuth happens wh
 - Use `mutate_nodes_batch` for the whole request when any operation is `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete`, including a single operation.
 - Each call targets one `database_id`, accepts 1–100 items, executes in the supplied order, and rolls back the whole transaction on failure.
 - Both tools are destructive-capable. Invoke them only for an explicit user request.
+- Both tools can change publicly visible content when the selected database is public or a selected node is already published.
 
 ### `write_nodes`
 
@@ -76,6 +77,8 @@ There is no `connect_private` tool and no single-mutation tool. OAuth happens wh
 ```
 
 `mutate_nodes_batch` also accepts `write` operations with the same node fields as `write_nodes`. A folder delete may additionally require `expected_folder_index_etag`.
+
+For `move`, `expected_etag` protects the source. With `overwrite: true`, read the destination first: if it exists, send its current etag as `expected_target_etag`; if it is absent, omit `expected_target_etag`. Supplying `expected_target_etag` with `overwrite: false` is invalid. Never remove either etag to make a retry pass.
 
 ## Conflict and failure handling
 

@@ -9,13 +9,17 @@ struct BrowseNodeNavigationView: View {
     let databaseId: String
     @Binding var selectedDocumentPath: String?
     @Binding var folderPath: [BrowseFolderRoute]
+    @Binding var isSearchPresented: Bool
+    let requestSearchFolder: (String) -> Void
 
     var body: some View {
         NavigationStack(path: $folderPath) {
             BrowseNodeListView(
                 model: model,
                 folderPath: "/",
-                selectedDocumentPath: $selectedDocumentPath
+                selectedDocumentPath: $selectedDocumentPath,
+                isSearchPresented: $isSearchPresented,
+                openSearchFolder: requestSearchFolder
             )
             .navigationDestination(for: BrowseFolderRoute.self) { route in
                 switch route.kind {
@@ -23,7 +27,9 @@ struct BrowseNodeNavigationView: View {
                     BrowseNodeListView(
                         model: model,
                         folderPath: route.path,
-                        selectedDocumentPath: $selectedDocumentPath
+                        selectedDocumentPath: $selectedDocumentPath,
+                        isSearchPresented: $isSearchPresented,
+                        openSearchFolder: requestSearchFolder
                     )
                 case .document:
                     BrowseDocumentView(model: model, path: route.path)

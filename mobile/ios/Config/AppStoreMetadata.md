@@ -28,7 +28,7 @@ With KinicWiki, you can:
 - Search across your wiki
 - Ask questions using evidence from one selected database
 - See which documents were searched and used for an answer
-- Read Markdown documents
+- Read Markdown documents, and edit existing notes outside Sources when you are an Owner or Writer
 - Choose and manage multiple databases
 - Control who can read or write each database
 

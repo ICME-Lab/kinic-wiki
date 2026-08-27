@@ -29,11 +29,23 @@ enum VFSCandidDecoder {
         }
     }
 
-    static func decodeWriteNodeResult(_ data: Data) throws {
+    static func decodeWriteNodeResult(_ data: Data) throws -> VFSWriteNodeResult {
         let ok = try decodeMutationResult(data)
-        guard case .record = ok else {
+        guard case .record(let fields) = ok else {
             throw VFSCandidError.invalidPayload("expected write_node result")
         }
+        guard case .record(let nodeFields) = try record(fields, "node") else {
+            throw VFSCandidError.invalidPayload("write_node node is not a record")
+        }
+        return VFSWriteNodeResult(
+            created: try bool(fields, "created"),
+            node: VFSNodeMutationAck(
+                path: try text(nodeFields, "path"),
+                kind: try nodeKind(from: variant(nodeFields, "kind")),
+                updatedAt: try int64(nodeFields, "updated_at"),
+                etag: try text(nodeFields, "etag")
+            )
+        )
     }
 
     static func decodeWriteNodesResult(_ data: Data) throws {
@@ -893,4 +905,16 @@ struct VFSNode: Identifiable, Equatable, Sendable {
     var id: String {
         path
     }
+}
+
+struct VFSNodeMutationAck: Equatable, Sendable {
+    let path: String
+    let kind: VFSNodeKind
+    let updatedAt: Int64
+    let etag: String
+}
+
+struct VFSWriteNodeResult: Equatable, Sendable {
+    let created: Bool
+    let node: VFSNodeMutationAck
 }

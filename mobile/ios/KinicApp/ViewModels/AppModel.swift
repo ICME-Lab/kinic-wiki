@@ -40,8 +40,8 @@ extension AppModel: AskAIKnowledgeProviding {
         browseListDatabases.filter { $0.status != .deleted }
     }
 
-    func selectAskAIDatabase(_ databaseId: String) {
-        selectBrowseDatabase(databaseId)
+    func selectAskAIDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
+        requestBrowseDatabaseSelection(databaseId)
     }
 
     func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult {
@@ -246,6 +246,10 @@ final class AppModel {
     private let deleteAskAIHistory: @Sendable (AskAIHistoryScope) async throws -> Void
     private let removeAllSharedURLs: () throws -> Void
     private let removeAllCaptureHistory: () throws -> Void
+    private let writeBrowseDocumentRemotely: @Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult
+    private let searchBrowseNodesRemotely: @Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit]
+    private let readBrowseNodeRemotely: @Sendable (String, String, ICAuthSession?) async throws -> VFSNode?
+    private let listBrowseChildrenRemotely: @Sendable (String, String, ICAuthSession?) async throws -> [ChildNode]
     private var session: ICAuthSession?
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
@@ -255,6 +259,8 @@ final class AppModel {
     private var sourceCaptureHistoryRequestID: Int
     private var sourceCaptureRetryPaths: Set<String>
     private var documentMutationCoordinator: BrowseDocumentMutationCoordinator
+    @ObservationIgnored private var browseSearchTask: Task<Void, Never>?
+    private var activeBrowseSearchRequest: BrowseSearchRequest?
 
     let configuration: AppConfiguration
     var selectedDatabaseId: String
@@ -292,6 +298,9 @@ final class AppModel {
     var tabSelectionRequestID: Int
     var requestedBrowseTarget: BrowseNavigationTarget
     var browseNavigationRequestID: Int
+    var requestedBrowseDeepLink: BrowseDeepLinkRequest?
+    var requestedBrowseDatabaseSelection: BrowseDatabaseSelectionRequest?
+    var browseDatabaseSelectionResolution: BrowseDatabaseSelectionResolution?
     var currentPath: String
     var currentNode: VFSNode?
     var childNodes: [ChildNode]
@@ -299,6 +308,7 @@ final class AppModel {
     var selectedBrowseNodePath: String?
     var documentNode: VFSNode?
     var documentPublicationState: BrowseDocumentPublicationState
+    var documentEditSession: BrowseDocumentEditSession?
     var documentMutation: BrowseDocumentMutation? {
         documentMutationCoordinator.mutation
     }
@@ -316,6 +326,9 @@ final class AppModel {
     var databaseCyclesPendingPurchasesDatabaseId: String?
     var searchQuery: String
     var searchResults: [SearchNodeHit]
+    var browseSearchScope: BrowseSearchScope
+    var browseSearchPhase: BrowseSearchPhase
+    var browseSearchLimit: UInt32
     var pendingDatabaseActivation: PendingDatabaseActivation?
     var statusMessage: String?
     var browseError: String?
@@ -336,7 +349,6 @@ final class AppModel {
     var isLoadingDatabaseMembers: Bool
     var isLoadingDatabaseCycleEntries: Bool
     var isLoadingDatabasePendingPurchases: Bool
-    var isSearching: Bool
     var isSigningIn: Bool
     var isCreatingDatabase: Bool
     var isDeletingAccount: Bool
@@ -410,6 +422,12 @@ final class AppModel {
         return session != nil || publicBrowseDatabaseIds.contains(databaseId) || directBrowseDatabaseIds.contains(databaseId)
     }
 
+    var canLoadMoreBrowseSearchResults: Bool {
+        browseSearchPhase == .results
+            && searchResults.count == Int(browseSearchLimit)
+            && browseSearchLimit < 100
+    }
+
     init(
         configuration: AppConfiguration,
         authService: KinicAuthService,
@@ -421,6 +439,10 @@ final class AppModel {
         deleteAskAIHistory: (@Sendable (AskAIHistoryScope) async throws -> Void)? = nil,
         removeAllSharedURLs: (() throws -> Void)? = nil,
         removeAllCaptureHistory: (() throws -> Void)? = nil,
+        writeBrowseDocumentRemotely: (@Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult)? = nil,
+        searchBrowseNodesRemotely: (@Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit])? = nil,
+        readBrowseNodeRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> VFSNode?)? = nil,
+        listBrowseChildrenRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> [ChildNode])? = nil,
         initialSession: ICAuthSession? = nil
     ) {
         self.configuration = configuration
@@ -440,6 +462,32 @@ final class AppModel {
         }
         self.removeAllCaptureHistory = removeAllCaptureHistory ?? {
             try sourceCaptureHistoryStore?.removeAll()
+        }
+        self.writeBrowseDocumentRemotely = writeBrowseDocumentRemotely ?? { request, session in
+            try await client.writeNode(
+                databaseId: request.databaseId,
+                path: request.path,
+                kind: request.kind,
+                content: request.content,
+                metadataJson: request.metadataJson,
+                expectedEtag: request.expectedEtag,
+                session: session
+            )
+        }
+        self.searchBrowseNodesRemotely = searchBrowseNodesRemotely ?? { request, session in
+            try await client.searchBrowseNodes(
+                databaseId: request.databaseId,
+                query: request.query,
+                prefix: request.prefix,
+                limit: request.limit,
+                session: session
+            )
+        }
+        self.readBrowseNodeRemotely = readBrowseNodeRemotely ?? { databaseId, path, session in
+            try await client.readBrowseNode(databaseId: databaseId, path: path, session: session)
+        }
+        self.listBrowseChildrenRemotely = listBrowseChildrenRemotely ?? { databaseId, path, session in
+            try await client.listBrowseChildren(databaseId: databaseId, path: path, session: session)
         }
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         selectedDatabaseId = settingsStore.databaseId
@@ -461,6 +509,9 @@ final class AppModel {
         tabSelectionRequestID = 0
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID = 0
+        requestedBrowseDeepLink = nil
+        requestedBrowseDatabaseSelection = nil
+        browseDatabaseSelectionResolution = nil
         currentPath = "/"
         currentNode = nil
         childNodes = []
@@ -468,6 +519,7 @@ final class AppModel {
         selectedBrowseNodePath = nil
         documentNode = nil
         documentPublicationState = .unavailable
+        documentEditSession = nil
         documentMutationCoordinator = BrowseDocumentMutationCoordinator()
         documentActionError = nil
         cyclesBillingConfig = nil
@@ -483,6 +535,9 @@ final class AppModel {
         databaseCyclesPendingPurchasesDatabaseId = nil
         searchQuery = ""
         searchResults = []
+        browseSearchScope = .database
+        browseSearchPhase = .idle
+        browseSearchLimit = 20
         pendingDatabaseActivation = nil
         session = initialSession ?? authService.restore()
         browsePathLoadRequestID = 0
@@ -492,6 +547,8 @@ final class AppModel {
         deepLinkResolveRequestID = 0
         sourceCaptureHistoryRequestID = 0
         sourceCaptureRetryPaths = []
+        browseSearchTask = nil
+        activeBrowseSearchRequest = nil
         browseError = nil
         documentError = nil
         cyclesConfigError = nil
@@ -510,7 +567,6 @@ final class AppModel {
         isLoadingDatabaseMembers = false
         isLoadingDatabaseCycleEntries = false
         isLoadingDatabasePendingPurchases = false
-        isSearching = false
         isSigningIn = false
         isCreatingDatabase = false
         isDeletingAccount = false
@@ -679,10 +735,54 @@ final class AppModel {
         openBrowseDeepLink(databaseId: databaseId, nodePath: path)
     }
 
-    func selectBrowseDatabase(_ databaseId: String) {
-        setSelectedBrowseDatabase(databaseId)
-        resetBrowseStateForRoot()
-        startLoadBrowsePath(currentPath)
+    @discardableResult
+    func selectBrowseDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
+        requestBrowseDatabaseSelection(databaseId)
+    }
+
+    @discardableResult
+    func requestBrowseDatabaseSelection(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty,
+              databaseId != selectedBrowseDatabaseId else {
+            return .unchanged
+        }
+
+        cancelRequestedBrowseDeepLink()
+        cancelRequestedBrowseDatabaseSelection()
+        guard documentEditSession?.hasChanges == true else {
+            documentEditSession = nil
+            applySelectedBrowseDatabase(databaseId)
+            return .applied
+        }
+
+        let request = BrowseDatabaseSelectionRequest(id: UUID(), databaseId: databaseId)
+        requestedBrowseDatabaseSelection = request
+        requestTab(.browse)
+        browseNavigationRequestID += 1
+        return .awaitingDiscard(request)
+    }
+
+    func applyBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
+        guard requestedBrowseDatabaseSelection == request else { return }
+        requestedBrowseDatabaseSelection = nil
+        documentEditSession = nil
+        applySelectedBrowseDatabase(request.databaseId)
+        browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
+            requestId: request.id,
+            databaseId: request.databaseId,
+            outcome: .applied
+        )
+    }
+
+    func cancelBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
+        guard requestedBrowseDatabaseSelection == request else { return }
+        requestedBrowseDatabaseSelection = nil
+        browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
+            requestId: request.id,
+            databaseId: request.databaseId,
+            outcome: .cancelled
+        )
     }
 
     func canPublishBrowseDocument(_ path: String) -> Bool {
@@ -695,6 +795,143 @@ final class AppModel {
         session != nil
             && selectedBrowseDatabase?.role.canWrite == true
             && isCurrentMarkdownDocument(path)
+    }
+
+    func canEditBrowseDocument(_ path: String) -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        return session != nil
+            && selectedBrowseDatabase?.canWrite == true
+            && isCurrentMarkdownDocument(normalizedPath)
+            && !Self.isSourceEvidencePath(normalizedPath)
+    }
+
+    func startEditingBrowseDocument(_ path: String) -> Bool {
+        let normalizedPath = Self.normalizedBrowsePath(path)
+        guard canEditBrowseDocument(normalizedPath),
+              let node = documentNode,
+              documentMutation == nil else {
+            return false
+        }
+        documentEditSession = BrowseDocumentEditSession(
+            databaseId: selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines),
+            path: normalizedPath,
+            originalContent: node.content,
+            originalEtag: node.etag,
+            metadataJson: node.metadataJson,
+            draftContent: node.content,
+            state: .editing,
+            writeRestriction: nil
+        )
+        return true
+    }
+
+    func updateBrowseDocumentDraft(_ content: String) {
+        guard var editSession = documentEditSession else { return }
+        editSession.draftContent = content
+        documentEditSession = editSession
+    }
+
+    func discardBrowseDocumentEdits() {
+        documentEditSession = nil
+        clearUnavailableBrowseSelectionIfNeeded()
+    }
+
+    func browseDocumentEditRestrictionMessage(_ path: String) -> String? {
+        guard let editSession = documentEditSession,
+              editSession.databaseId == selectedBrowseDatabaseId,
+              editSession.path == Self.normalizedBrowsePath(path) else {
+            return nil
+        }
+        return browseDocumentWriteRestriction(for: editSession)?.message
+    }
+
+    func saveBrowseDocument() async -> BrowseDocumentSaveOutcome {
+        guard var editSession = documentEditSession,
+              editSession.hasChanges,
+              editSession.state == .editing else {
+            return .stale
+        }
+        if let restriction = browseDocumentWriteRestriction(for: editSession) {
+            return .failed(restriction.message)
+        }
+        guard canEditBrowseDocument(editSession.path), let session else {
+            return .failed(BrowseDocumentWriteRestriction.permissionLost.message)
+        }
+        guard let mutationContext = documentMutationCoordinator.begin(
+                  mutation: .save,
+                  databaseId: editSession.databaseId,
+                  path: editSession.path
+              ) else {
+            return .stale
+        }
+        editSession.state = .saving
+        documentEditSession = editSession
+        defer { documentMutationCoordinator.finish(mutationContext) }
+
+        let request = BrowseDocumentWriteRequest(
+            databaseId: editSession.databaseId,
+            path: editSession.path,
+            kind: .file,
+            content: editSession.draftContent,
+            metadataJson: editSession.metadataJson,
+            expectedEtag: editSession.originalEtag
+        )
+        do {
+            let result = try await writeBrowseDocumentRemotely(request, session)
+            guard shouldApplyDocumentMutation(mutationContext),
+                  documentEditSession?.databaseId == editSession.databaseId,
+                  documentEditSession?.path == editSession.path else {
+                return .stale
+            }
+            guard !result.created,
+                  result.node.path == editSession.path,
+                  result.node.kind == .file,
+                  let currentNode = documentNode,
+                  currentNode.path == editSession.path else {
+                editSession.state = .editing
+                documentEditSession = editSession
+                return .failed("The saved document response was invalid. Refresh the document before editing again.")
+            }
+            documentNode = VFSNode(
+                path: currentNode.path,
+                kind: currentNode.kind,
+                content: editSession.draftContent,
+                metadataJson: currentNode.metadataJson,
+                etag: result.node.etag,
+                createdAt: currentNode.createdAt,
+                updatedAt: result.node.updatedAt
+            )
+            updateLoadedChildAfterSave(result.node, content: editSession.draftContent)
+            documentEditSession = nil
+            return .saved
+        } catch let VFSCandidError.nodeMutationRejected(failure) {
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return .stale
+            }
+            if failure.code == .etagConflict {
+                editSession.state = .conflict(failure)
+                documentEditSession = editSession
+                return .conflict
+            }
+            editSession.state = .editing
+            switch failure.code {
+            case .forbidden:
+                editSession.writeRestriction = .forbidden
+            case .writeUnavailable:
+                editSession.writeRestriction = .writeUnavailable
+            case .etagConflict, .notFound, .invalidOperation:
+                break
+            }
+            documentEditSession = editSession
+            return .failed(Self.documentSaveErrorMessage(failure))
+        } catch {
+            guard shouldApplyDocumentMutation(mutationContext) else {
+                return .stale
+            }
+            editSession.state = .editing
+            documentEditSession = editSession
+            return .failed("The document could not be saved. Your draft was kept. Check your connection and try again.")
+        }
     }
 
     func clearBrowseDocumentActionError() {
@@ -823,31 +1060,58 @@ final class AppModel {
     }
 
     private func openBrowseDeepLink(databaseId: String, nodePath: String) {
-        let normalizedPath = Self.normalizedBrowsePath(nodePath)
-        directBrowseDatabaseIds.insert(databaseId)
-        setSelectedBrowseDatabase(databaseId)
-        resetBrowseStateForRoot()
+        cancelRequestedBrowseDatabaseSelection()
+        requestedBrowseDeepLink = nil
+        deepLinkResolveRequestID += 1
+        requestedBrowseDeepLink = BrowseDeepLinkRequest(
+            databaseId: databaseId,
+            nodePath: Self.normalizedBrowsePath(nodePath)
+        )
         requestTab(.browse)
+        browseNavigationRequestID += 1
+    }
+
+    func applyBrowseDeepLink(_ request: BrowseDeepLinkRequest) {
+        guard requestedBrowseDeepLink == request else { return }
+        requestedBrowseDeepLink = nil
+        documentEditSession = nil
+        directBrowseDatabaseIds.insert(request.databaseId)
+        setSelectedBrowseDatabase(request.databaseId)
+        resetBrowseStateForRoot()
         deepLinkResolveRequestID += 1
         let requestID = deepLinkResolveRequestID
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID += 1
         Task {
-            await resolveBrowseDeepLink(databaseId: databaseId, nodePath: normalizedPath, requestID: requestID)
+            await resolveBrowseDeepLink(
+                databaseId: request.databaseId,
+                nodePath: request.nodePath,
+                requestID: requestID
+            )
         }
     }
 
+    func cancelBrowseDeepLink(_ request: BrowseDeepLinkRequest) {
+        guard requestedBrowseDeepLink == request else { return }
+        requestedBrowseDeepLink = nil
+        deepLinkResolveRequestID += 1
+    }
+
     private func resolveBrowseDeepLink(databaseId: String, nodePath: String, requestID: Int) async {
-        guard deepLinkResolveRequestID == requestID else {
+        guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
             return
         }
         let session = browseSession(for: databaseId)
         do {
-            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: nodePath, session: session) else {
-                await applyMissingBrowseDeepLink(nodePath: nodePath, requestID: requestID)
+            guard let node = try await readBrowseNodeRemotely(databaseId, nodePath, session) else {
+                await applyMissingBrowseDeepLink(
+                    databaseId: databaseId,
+                    nodePath: nodePath,
+                    requestID: requestID
+                )
                 return
             }
-            guard deepLinkResolveRequestID == requestID else {
+            guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
                 return
             }
             if node.kind == .folder {
@@ -859,32 +1123,39 @@ final class AppModel {
                 requestedBrowseTarget = .document(path: node.path, parentPath: parentPath)
                 browseNavigationRequestID += 1
                 await loadBrowsePath(parentPath)
-                await loadBrowseDocument(node.path)
+                guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
+                    return
+                }
             }
         } catch {
-            guard deepLinkResolveRequestID == requestID else {
+            guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
                 return
             }
             let parentPath = Self.parentPath(nodePath)
             requestedBrowseTarget = .folder(parentPath)
             browseNavigationRequestID += 1
             await loadBrowsePath(parentPath)
-            guard deepLinkResolveRequestID == requestID else {
+            guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
                 return
             }
             browseError = error.localizedDescription
         }
     }
 
-    private func applyMissingBrowseDeepLink(nodePath: String, requestID: Int) async {
-        guard deepLinkResolveRequestID == requestID else {
+    private func isCurrentBrowseDeepLink(requestID: Int, databaseId: String) -> Bool {
+        deepLinkResolveRequestID == requestID
+            && selectedBrowseDatabaseId == databaseId
+    }
+
+    private func applyMissingBrowseDeepLink(databaseId: String, nodePath: String, requestID: Int) async {
+        guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
             return
         }
         let parentPath = Self.parentPath(nodePath)
         requestedBrowseTarget = .folder(parentPath)
         browseNavigationRequestID += 1
         await loadBrowsePath(parentPath)
-        guard deepLinkResolveRequestID == requestID else {
+        guard isCurrentBrowseDeepLink(requestID: requestID, databaseId: databaseId) else {
             return
         }
         browseError = "Node not found: \(nodePath)"
@@ -903,7 +1174,7 @@ final class AppModel {
     private func resetBrowseStateForRoot() {
         browsePathLoadRequestID += 1
         documentLoadRequestID += 1
-        searchRequestID += 1
+        resetBrowseSearch(resetScope: true)
         currentPath = "/"
         currentNode = nil
         childNodes = []
@@ -911,13 +1182,11 @@ final class AppModel {
         selectedBrowseNodePath = nil
         documentNode = nil
         documentPublicationState = .unavailable
+        requestedBrowseDeepLink = nil
         documentMutationCoordinator.invalidate()
         documentActionError = nil
         isLoadingBrowsePath = false
         isLoadingDocument = false
-        isSearching = false
-        searchQuery = ""
-        searchResults = []
         browseError = nil
         documentError = nil
     }
@@ -956,6 +1225,30 @@ final class AppModel {
         selectedBrowseDatabaseId = databaseId
     }
 
+    private func applySelectedBrowseDatabase(_ databaseId: String) {
+        setSelectedBrowseDatabase(databaseId)
+        resetBrowseStateForRoot()
+        requestedBrowseTarget = .folder("/")
+        browseNavigationRequestID += 1
+        startLoadBrowsePath(currentPath)
+    }
+
+    private func cancelRequestedBrowseDeepLink() {
+        guard requestedBrowseDeepLink != nil else { return }
+        requestedBrowseDeepLink = nil
+        deepLinkResolveRequestID += 1
+    }
+
+    private func cancelRequestedBrowseDatabaseSelection() {
+        guard let request = requestedBrowseDatabaseSelection else { return }
+        requestedBrowseDatabaseSelection = nil
+        browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
+            requestId: request.id,
+            databaseId: request.databaseId,
+            outcome: .cancelled
+        )
+    }
+
     func startSignIn() {
         statusMessage = nil
         logger.info("Kinic sign in requested authOrigin=\(self.configuration.authOrigin.absoluteString, privacy: .public) callbackDomain=\(self.configuration.callbackDomain, privacy: .public)")
@@ -966,6 +1259,9 @@ final class AppModel {
 
     func signOut() {
         authService.signOut()
+        documentEditSession = nil
+        cancelRequestedBrowseDatabaseSelection()
+        cancelRequestedBrowseDeepLink()
         session = nil
         databases = []
         readableDatabases = []
@@ -1278,18 +1574,58 @@ final class AppModel {
         startLoadBrowsePath(Self.parentPath(currentPath))
     }
 
-    func searchQueryDidChange(from oldQuery: String, to newQuery: String) {
+    func searchQueryDidChange(from oldQuery: String, to newQuery: String, folderPath: String = "/") {
         let previousQuery = oldQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextQuery = newQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if nextQuery.isEmpty || nextQuery != previousQuery {
-            searchResults = []
+        searchQuery = newQuery
+        guard nextQuery != previousQuery else {
+            return
         }
+        guard !nextQuery.isEmpty else {
+            resetBrowseSearch(resetScope: false)
+            return
+        }
+        scheduleBrowseSearch(folderPath: folderPath)
     }
 
-    func startSearch() {
-        Task {
-            await searchBrowseDatabase()
+    func startSearch(in folderPath: String = "/") {
+        startBrowseSearch(folderPath: folderPath, limit: 20, retainingResults: false)
+    }
+
+    func browseSearchScopeDidChange(folderPath: String) {
+        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
         }
+        startBrowseSearch(folderPath: folderPath, limit: 20, retainingResults: false)
+    }
+
+    func browseFolderDidBecomeActive(_ folderPath: String) {
+        guard browseSearchScope == .currentFolder,
+              !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !browseSearchRequestMatches(folderPath: folderPath) else {
+            return
+        }
+        startBrowseSearch(folderPath: folderPath, limit: 20, retainingResults: false)
+    }
+
+    func browseSearchResultsMatch(folderPath: String) -> Bool {
+        browseSearchRequestMatches(folderPath: folderPath)
+    }
+
+    func retryBrowseSearch(folderPath: String) {
+        startBrowseSearch(folderPath: folderPath, limit: browseSearchLimit, retainingResults: !searchResults.isEmpty)
+    }
+
+    func loadMoreBrowseSearchResults(folderPath: String) {
+        guard canLoadMoreBrowseSearchResults else {
+            return
+        }
+        let nextLimit: UInt32 = browseSearchLimit == 20 ? 50 : 100
+        startBrowseSearch(folderPath: folderPath, limit: nextLimit, retainingResults: true)
+    }
+
+    func clearBrowseSearch() {
+        resetBrowseSearch(resetScope: false)
     }
 
     func autoSubmitPendingURL() {
@@ -1307,9 +1643,15 @@ final class AppModel {
             isSigningIn = false
         }
         do {
-            session = try await authService.signIn { [client] candidate in
+            let previousPrincipal = session?.principal
+            let authenticatedSession = try await authService.signIn { [client] candidate in
                 _ = try await client.listReadableDatabases(session: candidate)
             }
+            if let previousPrincipal, previousPrincipal != authenticatedSession.principal {
+                documentEditSession = nil
+                resetBrowseStateForRoot()
+            }
+            session = authenticatedSession
             statusMessage = nil
             logger.info("Kinic sign in succeeded principal=\(self.session?.principal ?? "", privacy: .public)")
             await refreshDatabases()
@@ -1407,6 +1749,7 @@ final class AppModel {
                 purchasedBrowseDatabaseIds = merged.purchasedDatabaseIds
             }
             databases = memberDatabases.filter(\.canWrite)
+            reconcileBrowseDatabaseAccessAfterRefresh()
             settingsStore.writableDatabases = databases
             databaseListLastRefreshed = Date()
             if let activation = pendingDatabaseActivation,
@@ -1418,11 +1761,6 @@ final class AppModel {
                !databases.contains(where: { $0.databaseId == selectedDatabaseId }) {
                 selectedDatabaseId = ""
                 settingsStore.databaseId = ""
-            }
-            if !selectedBrowseDatabaseId.isEmpty,
-               !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }),
-               !directBrowseDatabaseIds.contains(selectedBrowseDatabaseId) {
-                clearBrowseSelectionAndState()
             }
             if selectFirstIfNeeded,
                selectedDatabaseId.isEmpty,
@@ -1461,6 +1799,7 @@ final class AppModel {
     }
 
     private func clearBrowseSelectionAndState() {
+        documentEditSession = nil
         setSelectedBrowseDatabase("")
         resetBrowseStateForRoot()
     }
@@ -1685,7 +2024,11 @@ final class AppModel {
         }
         do {
             if normalizedPath == "/" {
-                let loadedChildren = try await client.listBrowseChildren(databaseId: databaseId, path: normalizedPath, session: session)
+                let loadedChildren = try await listBrowseChildrenRemotely(
+                    databaseId,
+                    normalizedPath,
+                    session
+                )
                 if browsePathLoadRequestID == requestID {
                     currentNode = nil
                     childNodes = loadedChildren
@@ -1693,7 +2036,7 @@ final class AppModel {
                 }
                 return
             }
-            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: normalizedPath, session: session) else {
+            guard let node = try await readBrowseNodeRemotely(databaseId, normalizedPath, session) else {
                 if browsePathLoadRequestID == requestID {
                     currentNode = nil
                     childNodes = []
@@ -1703,7 +2046,7 @@ final class AppModel {
                 return
             }
             let loadedChildren = node.kind == .folder
-                ? try await client.listBrowseChildren(databaseId: databaseId, path: normalizedPath, session: session)
+                ? try await listBrowseChildrenRemotely(databaseId, normalizedPath, session)
                 : []
             if browsePathLoadRequestID == requestID {
                 currentNode = node
@@ -1749,7 +2092,7 @@ final class AppModel {
             }
         }
         do {
-            guard let node = try await client.readBrowseNode(databaseId: databaseId, path: normalizedPath, session: session) else {
+            guard let node = try await readBrowseNodeRemotely(databaseId, normalizedPath, session) else {
                 if isCurrentDocumentLoad(requestID: requestID, databaseId: databaseId, path: normalizedPath) {
                     documentNode = nil
                     documentError = "Node not found: \(normalizedPath)"
@@ -1825,6 +2168,99 @@ final class AppModel {
             && normalizedPath.hasSuffix(".md")
     }
 
+    static func isSourceEvidencePath(_ path: String) -> Bool {
+        let normalizedPath = normalizedBrowsePath(path)
+        return normalizedPath.hasPrefix("/Sources/")
+    }
+
+    func reconcileBrowseDocumentWriteRestriction() {
+        guard var editSession = documentEditSession else { return }
+        editSession.writeRestriction = liveBrowseDocumentWriteRestriction(for: editSession)
+        documentEditSession = editSession
+    }
+
+    func reconcileBrowseDatabaseAccessAfterRefresh() {
+        reconcileBrowseDocumentWriteRestriction()
+        guard !selectedBrowseDatabaseId.isEmpty,
+              !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }),
+              !directBrowseDatabaseIds.contains(selectedBrowseDatabaseId) else {
+            return
+        }
+        guard documentEditSession?.databaseId == selectedBrowseDatabaseId,
+              documentEditSession?.hasChanges == true else {
+            clearBrowseSelectionAndState()
+            return
+        }
+    }
+
+    private func browseDocumentWriteRestriction(
+        for editSession: BrowseDocumentEditSession
+    ) -> BrowseDocumentWriteRestriction? {
+        liveBrowseDocumentWriteRestriction(for: editSession) ?? editSession.writeRestriction
+    }
+
+    private func liveBrowseDocumentWriteRestriction(
+        for editSession: BrowseDocumentEditSession
+    ) -> BrowseDocumentWriteRestriction? {
+        guard session != nil,
+              editSession.databaseId == selectedBrowseDatabaseId else {
+            return .accessRemoved
+        }
+        guard let database = readableDatabases.first(where: { $0.databaseId == editSession.databaseId }) else {
+            return .accessRemoved
+        }
+        guard database.status == .active else {
+            return .databaseInactive
+        }
+        guard database.role.canWrite else {
+            return .permissionLost
+        }
+        return nil
+    }
+
+    private func clearUnavailableBrowseSelectionIfNeeded() {
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty,
+              !readableDatabases.contains(where: { $0.databaseId == databaseId }) else {
+            return
+        }
+        directBrowseDatabaseIds.remove(databaseId)
+        clearBrowseSelectionAndState()
+    }
+
+    private static func documentSaveErrorMessage(_ failure: VFSNodeMutationFailure) -> String {
+        switch failure.code {
+        case .etagConflict:
+            "This document changed elsewhere."
+        case .notFound:
+            "This document no longer exists. Your draft is still available to copy."
+        case .forbidden:
+            "You no longer have permission to edit this document. Your draft was kept."
+        case .writeUnavailable:
+            "This database is temporarily unavailable for writing. Your draft was kept."
+        case .invalidOperation:
+            failure.message
+        }
+    }
+
+    private func updateLoadedChildAfterSave(_ ack: VFSNodeMutationAck, content: String) {
+        guard loadedBrowsePath == Self.parentPath(ack.path),
+              let index = childNodes.firstIndex(where: { $0.path == ack.path }) else {
+            return
+        }
+        let current = childNodes[index]
+        childNodes[index] = ChildNode(
+            path: current.path,
+            name: current.name,
+            kind: ack.kind,
+            updatedAt: ack.updatedAt,
+            etag: ack.etag,
+            sizeBytes: UInt64(content.utf8.count),
+            hasChildren: current.hasChildren,
+            isVirtual: current.isVirtual
+        )
+    }
+
     private func isCurrentDocument(databaseId: String, path: String) -> Bool {
         selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines) == databaseId
             && selectedBrowseNodePath == path
@@ -1837,42 +2273,121 @@ final class AppModel {
             && isCurrentDocument(databaseId: context.databaseId, path: context.path)
     }
 
-    private func searchBrowseDatabase() async {
-        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !databaseId.isEmpty else {
-            browseError = "Select a database to search."
-            return
-        }
-        guard canBrowse else {
-            browseError = "Sign in before searching."
-            return
-        }
-        let session = browseSession(for: databaseId)
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            searchResults = []
-            return
-        }
+    private func scheduleBrowseSearch(folderPath: String) {
+        browseSearchTask?.cancel()
         searchRequestID += 1
         let requestID = searchRequestID
-        isSearching = true
-        browseError = nil
-        defer {
-            if searchRequestID == requestID {
-                isSearching = false
-            }
+        guard let request = makeBrowseSearchRequest(folderPath: folderPath, limit: 20) else {
+            return
         }
+        activeBrowseSearchRequest = request
+        browseSearchLimit = request.limit
+        searchResults = []
+        browseSearchPhase = .debouncing
+        browseSearchTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return
+            }
+            guard let self,
+                  self.isCurrentBrowseSearch(request, requestID: requestID) else {
+                return
+            }
+            self.browseSearchPhase = .loading
+            await self.performBrowseSearch(request, requestID: requestID)
+        }
+    }
+
+    private func startBrowseSearch(folderPath: String, limit: UInt32, retainingResults: Bool) {
+        browseSearchTask?.cancel()
+        searchRequestID += 1
+        let requestID = searchRequestID
+        guard let request = makeBrowseSearchRequest(folderPath: folderPath, limit: limit) else {
+            return
+        }
+        activeBrowseSearchRequest = request
+        browseSearchLimit = request.limit
+        if !retainingResults {
+            searchResults = []
+        }
+        browseSearchPhase = retainingResults && !searchResults.isEmpty ? .loadingMore : .loading
+        browseSearchTask = Task { [weak self] in
+            guard let self else { return }
+            await self.performBrowseSearch(request, requestID: requestID)
+        }
+    }
+
+    private func makeBrowseSearchRequest(folderPath: String, limit: UInt32) -> BrowseSearchRequest? {
+        let databaseId = selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty else {
+            browseSearchPhase = .failure("Select a database to search.")
+            searchResults = []
+            activeBrowseSearchRequest = nil
+            return nil
+        }
+        guard canBrowse else {
+            browseSearchPhase = .failure("This database is not available for searching.")
+            searchResults = []
+            activeBrowseSearchRequest = nil
+            return nil
+        }
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            resetBrowseSearch(resetScope: false)
+            return nil
+        }
+        return BrowseSearchRequest(
+            databaseId: databaseId,
+            query: query,
+            prefix: browseSearchScope.prefix(for: folderPath),
+            limit: limit
+        )
+    }
+
+    private func performBrowseSearch(_ request: BrowseSearchRequest, requestID: Int) async {
+        let session = browseSession(for: request.databaseId)
         do {
-            let hits = try await client.searchBrowseNodes(databaseId: databaseId, query: query, prefix: nil, limit: 20, session: session)
-            if searchRequestID == requestID,
-               selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines) == databaseId,
-               searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == query {
-                searchResults = hits
+            let hits = try await searchBrowseNodesRemotely(request, session)
+            guard isCurrentBrowseSearch(request, requestID: requestID) else {
+                return
             }
+            searchResults = hits
+            browseSearchPhase = hits.isEmpty ? .empty : .results
+        } catch is CancellationError {
+            return
         } catch {
-            if searchRequestID == requestID {
-                browseError = error.localizedDescription
+            guard isCurrentBrowseSearch(request, requestID: requestID) else {
+                return
             }
+            browseSearchPhase = .failure(error.localizedDescription)
+        }
+    }
+
+    private func isCurrentBrowseSearch(_ request: BrowseSearchRequest, requestID: Int) -> Bool {
+        searchRequestID == requestID && activeBrowseSearchRequest == request
+    }
+
+    private func browseSearchRequestMatches(folderPath: String) -> Bool {
+        guard let request = activeBrowseSearchRequest else {
+            return false
+        }
+        return request.databaseId == selectedBrowseDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+            && request.query == searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            && request.prefix == browseSearchScope.prefix(for: folderPath)
+    }
+
+    private func resetBrowseSearch(resetScope: Bool) {
+        browseSearchTask?.cancel()
+        browseSearchTask = nil
+        searchRequestID += 1
+        activeBrowseSearchRequest = nil
+        searchQuery = ""
+        searchResults = []
+        browseSearchLimit = 20
+        browseSearchPhase = .idle
+        if resetScope {
+            browseSearchScope = .database
         }
     }
 

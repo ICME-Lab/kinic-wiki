@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/BrowseDocumentView.swift
-// What: Read-only document detail with native page sharing, publication, export, and deletion actions.
-// Why: Page-level actions belong beside the existing Preview/Raw control without exposing unrelated database content.
+// What: Document detail with Markdown editing, sharing, publication, export, and deletion actions.
+// Why: Page-level editing and actions belong beside the existing Preview/Raw control.
 
 import SafariServices
 import SwiftUI
@@ -13,33 +13,32 @@ struct BrowseDocumentView: View {
     @State private var pendingConfirmation: BrowseDocumentConfirmation?
     @State private var isPublicPreviewPresented = false
     @State private var feedbackMessage: String?
+    @State private var isConfirmingEditDiscard = false
+    @State private var isShowingEditConflict = false
+    @State private var saveErrorMessage: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if model.isLoadingDocument && model.documentNode?.path != normalizedPath {
-                    ProgressView()
-                        .tint(KinicDesign.hotPink)
-                } else if let error = model.documentError {
-                    Text(error)
-                        .foregroundStyle(.red)
-                } else if let node = currentNode {
-                    BrowseDocumentContent(node: node, mode: documentMode)
-                } else {
-                    ContentUnavailableView("Select a node", systemImage: "doc.text")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(KinicDesign.screenPadding)
-        }
+        documentBody
         .background(.white)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                documentMenu
+            if isEditing {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: requestCancelEditing)
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isSaving ? "Saving…" : "Save", action: saveDocument)
+                        .disabled(!canSave)
+                }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    documentMenu
+                }
             }
         }
+        .navigationBarBackButtonHidden(isEditing)
         .overlay(alignment: .bottom) {
             if let feedbackMessage {
                 Text(feedbackMessage)
@@ -72,6 +71,32 @@ struct BrowseDocumentView: View {
         } message: {
             Text(model.documentActionError ?? "The action could not be completed.")
         }
+        .alert("Save failed", isPresented: saveErrorPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveErrorMessage ?? "The document could not be saved.")
+        }
+        .confirmationDialog(
+            "Discard unsaved changes?",
+            isPresented: $isConfirmingEditDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes", role: .destructive, action: discardEdits)
+            Button("Continue Editing", role: .cancel) {}
+        } message: {
+            Text("Your Markdown changes have not been saved.")
+        }
+        .confirmationDialog(
+            "Document changed elsewhere",
+            isPresented: $isShowingEditConflict,
+            titleVisibility: .visible
+        ) {
+            Button("Copy Draft", action: copyDraft)
+            Button("Discard Draft and Reload", role: .destructive, action: discardAndReload)
+            Button("Continue Editing", role: .cancel) {}
+        } message: {
+            Text("Your draft was kept. Copy it before reloading if you want to merge it with the latest version.")
+        }
         .sheet(isPresented: $isPublicPreviewPresented) {
             if let publicURL {
                 SafariView(url: publicURL)
@@ -79,18 +104,79 @@ struct BrowseDocumentView: View {
             }
         }
         .task(id: normalizedPath) {
-            model.startLoadBrowseDocument(normalizedPath)
+            documentMode = .modeForPathChange(hasMatchingEditSession: hasMatchingEditSession)
+            if !hasMatchingEditSession {
+                model.startLoadBrowseDocument(normalizedPath)
+            }
+        }
+        .onChange(of: hasMatchingEditSession) { _, isMatching in
+            if !isMatching {
+                documentMode = documentMode.modeAfterEditSessionRemoval()
+            }
         }
         .onDisappear {
-            model.leaveBrowseDocument(normalizedPath)
+            if model.documentEditSession?.path != normalizedPath {
+                model.leaveBrowseDocument(normalizedPath)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var documentBody: some View {
+        if isEditing, let editSession = currentEditSession {
+            VStack(alignment: .leading, spacing: 12) {
+                if let editRestrictionMessage {
+                    Label(editRestrictionMessage, systemImage: "lock.trianglebadge.exclamationmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .accessibilityAddTraits(.isStaticText)
+                }
+                if case .conflict = editSession.state {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Label("This document changed elsewhere.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Resolve") {
+                            isShowingEditConflict = true
+                        }
+                    }
+                }
+                TextEditor(text: draftBinding)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.sentences)
+                    .scrollContentBackground(.hidden)
+                    .disabled(isSaving)
+                    .accessibilityLabel("Markdown editor")
+            }
+            .padding(KinicDesign.screenPadding)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if model.isLoadingDocument && model.documentNode?.path != normalizedPath {
+                        ProgressView()
+                            .tint(KinicDesign.hotPink)
+                    } else if let error = model.documentError {
+                        Text(error)
+                            .foregroundStyle(.red)
+                    } else if let node = currentNode {
+                        BrowseDocumentContent(node: node, mode: documentMode)
+                    } else {
+                        ContentUnavailableView("Select a node", systemImage: "doc.text")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(KinicDesign.screenPadding)
+            }
         }
     }
 
     private var documentMenu: some View {
         Menu("Document actions", systemImage: "ellipsis.circle") {
             Section("View") {
-                Picker("View", selection: $documentMode) {
-                    ForEach(BrowseDocumentMode.allCases) { mode in
+                Picker("View", selection: documentModeBinding) {
+                    ForEach(availableDocumentModes) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
@@ -260,6 +346,77 @@ struct BrowseDocumentView: View {
         return model.documentNode
     }
 
+    private var availableDocumentModes: [BrowseDocumentMode] {
+        model.canEditBrowseDocument(normalizedPath) ? BrowseDocumentMode.allCases : [.preview, .raw]
+    }
+
+    private var documentModeBinding: Binding<BrowseDocumentMode> {
+        Binding(
+            get: { documentMode },
+            set: { mode in
+                if mode == .edit {
+                    if model.startEditingBrowseDocument(normalizedPath) {
+                        documentMode = .edit
+                    }
+                } else {
+                    documentMode = mode
+                }
+            }
+        )
+    }
+
+    private var currentEditSession: BrowseDocumentEditSession? {
+        guard let editSession = model.documentEditSession,
+              editSession.databaseId == model.selectedBrowseDatabaseId,
+              editSession.path == normalizedPath else {
+            return nil
+        }
+        return editSession
+    }
+
+    private var hasMatchingEditSession: Bool {
+        currentEditSession != nil
+    }
+
+    private var isEditing: Bool {
+        documentMode == .edit && currentEditSession != nil
+    }
+
+    private var isSaving: Bool {
+        currentEditSession?.state == .saving
+    }
+
+    private var canSave: Bool {
+        guard let editSession = currentEditSession else { return false }
+        return editSession.hasChanges
+            && editSession.state == .editing
+            && model.documentMutation == nil
+            && model.canEditBrowseDocument(normalizedPath)
+            && editRestrictionMessage == nil
+    }
+
+    private var editRestrictionMessage: String? {
+        model.browseDocumentEditRestrictionMessage(normalizedPath)
+    }
+
+    private var draftBinding: Binding<String> {
+        Binding(
+            get: { currentEditSession?.draftContent ?? "" },
+            set: { content in model.updateBrowseDocumentDraft(content) }
+        )
+    }
+
+    private var saveErrorPresented: Binding<Bool> {
+        Binding(
+            get: { saveErrorMessage != nil },
+            set: { presented in
+                if !presented {
+                    saveErrorMessage = nil
+                }
+            }
+        )
+    }
+
     private var title: String {
         normalizedPath.split(separator: "/").last.map(String.init) ?? normalizedPath
     }
@@ -291,6 +448,46 @@ struct BrowseDocumentView: View {
     private func copy(_ url: URL, feedback: String) {
         UIPasteboard.general.url = url
         showFeedback(feedback)
+    }
+
+    private func requestCancelEditing() {
+        if currentEditSession?.hasChanges == true {
+            isConfirmingEditDiscard = true
+        } else {
+            discardEdits()
+        }
+    }
+
+    private func discardEdits() {
+        model.discardBrowseDocumentEdits()
+        documentMode = .preview
+    }
+
+    private func saveDocument() {
+        Task {
+            switch await model.saveBrowseDocument() {
+            case .saved:
+                documentMode = .preview
+                showFeedback("Document saved")
+            case .conflict:
+                isShowingEditConflict = true
+            case .failed(let message):
+                saveErrorMessage = message
+            case .stale:
+                break
+            }
+        }
+    }
+
+    private func copyDraft() {
+        UIPasteboard.general.string = currentEditSession?.draftContent
+        showFeedback("Draft copied")
+    }
+
+    private func discardAndReload() {
+        model.discardBrowseDocumentEdits()
+        documentMode = .preview
+        model.startLoadBrowseDocument(normalizedPath)
     }
 
     private func showFeedback(_ message: String) {

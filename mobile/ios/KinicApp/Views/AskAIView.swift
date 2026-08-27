@@ -71,6 +71,11 @@ struct AskAIView: View {
             .onChange(of: appModel.selectedBrowseDatabaseId) {
                 model.syncSelectedDatabase()
             }
+            .onChange(of: appModel.browseDatabaseSelectionResolution) { _, resolution in
+                if let resolution {
+                    model.resolveBrowseDatabaseSelection(resolution)
+                }
+            }
     }
 
     private func resetHistory() {

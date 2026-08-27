@@ -711,19 +711,30 @@ struct ShareInboxTests {
 
     @MainActor
     @Test
-    func browseUniversalLinkSelectsDirectDatabaseAndBrowseTab() {
+    func browseUniversalLinkWaitsForNavigationApproval() throws {
         let model = AppModel.preview()
 
         model.handleOpenURL(URL(string: "https://wiki.kinic.xyz/db/db_next/Knowledge/Page.md")!)
 
         #expect(model.requestedTab == .browse)
         #expect(model.tabSelectionRequestID == 1)
+        #expect(model.selectedBrowseDatabaseId.isEmpty)
+        #expect(!model.directBrowseDatabaseIds.contains("db_next"))
+        let request = try #require(model.requestedBrowseDeepLink)
+        #expect(request == BrowseDeepLinkRequest(
+            databaseId: "db_next",
+            nodePath: "/Knowledge/Page.md"
+        ))
+        #expect(model.browseNavigationRequestID == 1)
+
+        model.applyBrowseDeepLink(request)
+
         #expect(model.selectedBrowseDatabaseId == "db_next")
         #expect(model.directBrowseDatabaseIds.contains("db_next"))
         #expect(model.canListBrowseDatabases == true)
         #expect(model.browseListDatabases.map(\.databaseId) == ["db_next"])
+        #expect(model.requestedBrowseDeepLink == nil)
         #expect(model.requestedBrowseTarget == .folder("/"))
-        #expect(model.browseNavigationRequestID == 1)
         #expect(model.currentPath == "/")
     }
 

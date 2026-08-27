@@ -27,11 +27,14 @@ const packageConfig = JSON.parse(readFileSync(new URL("../package.json", import.
 const productionConfig = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
 const privateConfig = JSON.parse(readFileSync(new URL("../wrangler.private.jsonc", import.meta.url), "utf8"));
 const stagingConfig = JSON.parse(readFileSync(new URL("../wrangler.staging.jsonc", import.meta.url), "utf8"));
-const stagingV4UnbindConfig = JSON.parse(
-  readFileSync(new URL("../wrangler.staging-v4-unbind.jsonc", import.meta.url), "utf8")
+const stagingV5UnbindConfig = JSON.parse(
+  readFileSync(new URL("../wrangler.staging-v5-unbind.jsonc", import.meta.url), "utf8")
 );
-const stagingV4UnbindEntrypoint = readFileSync(
-  new URL("../src/staging-v4-unbind.ts", import.meta.url),
+const privateV5UnbindConfig = JSON.parse(
+  readFileSync(new URL("../wrangler.private-v5-unbind.jsonc", import.meta.url), "utf8")
+);
+const v5UnbindEntrypoint = readFileSync(
+  new URL("../src/v5-unbind.ts", import.meta.url),
   "utf8"
 );
 
@@ -73,18 +76,23 @@ test("keeps public production anonymous and isolates staging auth state", () => 
   assert.equal(productionConfig.durable_objects, undefined);
   assert.equal(stagingConfig.vars.MCP_ACCESS_POLICY, "private_required");
   assert.equal(stagingConfig.durable_objects.bindings[0].name, "MCP_AUTH_STATE");
-  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV4");
+  assert.equal(stagingConfig.durable_objects.bindings[0].class_name, "McpAuthStateV5");
   assert.deepEqual(stagingConfig.ratelimits, [
     {
       name: "MCP_REGISTRATION_RATE_LIMIT",
       namespace_id: "7802026",
       simple: { limit: 10, period: 60 }
+    },
+    {
+      name: "MCP_REVIEW_LOGIN_RATE_LIMIT",
+      namespace_id: "7802028",
+      simple: { limit: 10, period: 60 }
     }
   ]);
   assert.deepEqual(stagingConfig.migrations.at(-1), {
-    tag: "v4",
-    new_sqlite_classes: ["McpAuthStateV4"],
-    deleted_classes: ["McpAuthStateV3"]
+    tag: "v5",
+    new_sqlite_classes: ["McpAuthStateV5"],
+    deleted_classes: ["McpAuthStateV4"]
   });
   assert.notEqual(productionConfig.name, stagingConfig.name);
 });
@@ -110,10 +118,11 @@ test("adds an isolated private production worker without changing the public wor
   assert.equal(privateConfig.vars.MCP_WRITE_POLICY, "private");
   assert.equal(privateConfig.vars.MCP_PUBLIC_ORIGIN, "https://wiki-private-mcp.kinic.xyz");
   assert.deepEqual(privateConfig.durable_objects.bindings, [
-    { name: "MCP_AUTH_STATE", class_name: "McpAuthStateV4" }
+    { name: "MCP_AUTH_STATE", class_name: "McpAuthStateV5" }
   ]);
   assert.deepEqual(privateConfig.migrations, [
-    { tag: "v1", new_sqlite_classes: ["McpAuthStateV4"] }
+    { tag: "v1", new_sqlite_classes: ["McpAuthStateV4"] },
+    { tag: "v2", new_sqlite_classes: ["McpAuthStateV5"], deleted_classes: ["McpAuthStateV4"] }
   ]);
   assert.notEqual(privateConfig.ratelimits[0].namespace_id, stagingConfig.ratelimits[0].namespace_id);
   assert.notEqual(privateConfig.name, productionConfig.name);
@@ -122,7 +131,7 @@ test("adds an isolated private production worker without changing the public wor
   assert.match(packageConfig.scripts["deploy:private"], /build:private.*wrangler\.private\.jsonc/u);
 });
 
-test("keeps the V4 migration unbind configuration aligned with staging", () => {
+test("keeps the V5 migration unbind configurations aligned with their final targets", () => {
   for (const key of [
     "name",
     "compatibility_date",
@@ -133,19 +142,20 @@ test("keeps the V4 migration unbind configuration aligned with staging", () => {
     "ratelimits",
     "vars"
   ]) {
-    assert.deepEqual(stagingV4UnbindConfig[key], stagingConfig[key], `${key} must stay aligned`);
+    assert.deepEqual(stagingV5UnbindConfig[key], stagingConfig[key], `staging ${key} must stay aligned`);
+    assert.deepEqual(privateV5UnbindConfig[key], privateConfig[key], `private ${key} must stay aligned`);
   }
-  assert.equal(stagingV4UnbindConfig.durable_objects, undefined);
-  assert.deepEqual(stagingV4UnbindConfig.migrations, stagingConfig.migrations.slice(0, -1));
-  assert.match(stagingV4UnbindEntrypoint, /McpAuthStateV4 as McpAuthStateV3/u);
+  assert.equal(stagingV5UnbindConfig.durable_objects, undefined);
+  assert.equal(privateV5UnbindConfig.durable_objects, undefined);
+  assert.deepEqual(stagingV5UnbindConfig.migrations, stagingConfig.migrations.slice(0, -1));
+  assert.deepEqual(privateV5UnbindConfig.migrations, privateConfig.migrations.slice(0, -1));
+  assert.match(v5UnbindEntrypoint, /McpAuthStateV5 as McpAuthStateV4/u);
   assert.match(
     packageConfig.scripts["deploy:staging"],
     /check_worker_deploy_source\.mjs.*build:staging.*wrangler deploy/u
   );
-  assert.equal(
-    packageConfig.scripts["deploy:staging:v4-migration"],
-    "node scripts/deploy-staging-v4-migration.mjs"
-  );
+  assert.equal(packageConfig.scripts["deploy:staging:v5-migration"], "node scripts/deploy-v5-migration.mjs staging");
+  assert.equal(packageConfig.scripts["deploy:private:v5-migration"], "node scripts/deploy-v5-migration.mjs private");
 });
 
 test("creates independent high-entropy OAuth states", () => {

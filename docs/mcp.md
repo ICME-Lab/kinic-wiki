@@ -66,6 +66,8 @@ Discovery and OAuth endpoints:
 
 OAuth uses authorization code with mandatory S256 PKCE and DCR. The scopes are `mcp:read`, `mcp:write`, and `offline_access`; each audience is fixed to its exact Private MCP URL. Authorization codes expire after at most ten minutes, access tokens last at most one hour, refresh tokens rotate on every use, and the local session cannot exceed eight hours or the II grant expiration. Reuse of an authorization code or rotated refresh token revokes the active local session. A session also requires a fresh connection after 64 refresh rotations.
 
+The authorization page offers the normal Internet Identity connection and a production-review-only username/password path. Review credentials authorize a dedicated Ed25519 service identity whose private key and expected principal are stored as Cloudflare Secrets; all MCP tools still call the real canister. For that identity, the Worker enforces the environment-specific `MCP_REVIEW_DATABASE_ID` and `MCP_REVIEW_WRITE_PREFIX` before every write, including both sides of a move, while the service principal remains limited to `writer` on `openai-review-fixture`. Reviewer sessions use the same PKCE, code, token, scope, expiration, and refresh-replay controls as II sessions. `MCP_REVIEW_ACCESS_VERSION` is checked before authorization-code exchange, refresh rotation, and access-token use, providing explicit credential-session revocation; earlier version values must not be reused.
+
 DCR applies a best-effort limit of ten registration attempts per connecting IP per minute in each Cloudflare location. Cloudflare's rate limiter is eventually consistent, so concurrent requests can temporarily exceed that limit. A rejected request returns `429` with `Retry-After: 60`; a rate-limiter failure returns `503`. Registered clients expire after 180 days without use and extend that deadline when an unexpired client ID is referenced by an OAuth request.
 
 The II registration grant accepts both `queries` (`Questions only`) and `all` (`Actions & questions`). Browser, CLI, and iOS login flows continue to request the public derivation origin `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io`; the II frontend rewrites that gateway alias to the legacy canonical seed origin. Private production targets `https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app`, while Private staging targets `https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. Direct MCP backend calls pass the environment's configured bare `ic0.app` origin unchanged. A Questions-only grant removes `mcp:write` from the local OAuth session and remains read-only. An Actions & questions grant preserves `mcp:write` and enables content mutations. `initialize`, `tools/list`, and notification-only batches validate OAuth without minting a canister identity. The first `tools/call` mints a per-app delegation, encrypts its app key and chain in the session Durable Object, and reuses it until 30 seconds before its at-most-five-minute expiration. Concurrent cache misses share one mint.
@@ -126,7 +128,7 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
   - A `move` with `overwrite: true` must include `expected_target_etag` when the destination exists. If the destination does not exist, omit it. Supplying it with `overwrite: false` is invalid.
   - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
-Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: false`.
+Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: true`. The open-world hint is required because an authenticated writer can change a public database or the content of an already-published node.
 
 ## Agent Write Workflow
 
@@ -229,7 +231,7 @@ Public search uses `wrangler.jsonc`; Private production uses `wrangler.private.j
 
 `MCP_ACCESS_POLICY` accepts only `public` or `private_required`. `MCP_WRITE_POLICY` accepts only `disabled` or `private`. A missing or unknown value returns `503` instead of guessing another mode.
 
-Both Private deployments require the `MCP_AUTH_STATE` Durable Object and `MCP_REGISTRATION_RATE_LIMIT` bindings. Private production starts directly with `McpAuthStateV4` in its own fresh namespace. The staging V4 migration deletes V3 authorization state instead of absorbing its unversioned delegation cache. Public search remains anonymous and has neither binding.
+Both Private deployments require the `MCP_AUTH_STATE` Durable Object plus separate registration and reviewer-login rate-limit bindings. The V5 migration replaces `McpAuthStateV4` without importing its clients or sessions, so existing Private MCP connections must authenticate again. Public search remains anonymous and has none of these bindings.
 
 `KINIC_WIKI_IC_HOST` is the IC API gateway. `KINIC_WIKI_MCP_TARGET_ORIGIN` is the exact origin used by the II backend to derive the existing Kinic principal; it must be a bare HTTPS `ic0.app` origin for `KINIC_WIKI_CANISTER_ID`. The Worker does not rewrite, discover, or fall back between origins at runtime. The canister's `/.well-known/ii-alternative-origins` remains responsible only for allowing the controlled `wiki.kinic.xyz` frontend to request the public derivation origin.
 
@@ -272,17 +274,20 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
    - a stale etag returns the failed operation index plus current content and etag, and does not partially commit the batch.
 6. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
 
-Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with eight read tools and its existing submission configuration is unchanged.
+Private production has its own OAuth settings, storage, connector registration, and skill URL. Staging OAuth clients, sessions, and tokens are never migrated or shared. Public search remains anonymous with eight read tools and is not the app represented by the current submission file.
 
 `skills/kinic-wiki-mcp/` points only to Private production. Do not attach or republish it in the public search plugin.
 
-For a later public search review submission, keep the Private skill detached and run the public endpoint smoke three times:
+Before submitting the Private app, create the dedicated reviewer fixture described in `docs/openai-private-review.md`, then run the authenticated production review smoke three times:
 
 ```bash
-pnpm --dir workers/wiki-mcp review:smoke -- --mcp-url https://wiki-mcp.kinic.xyz/mcp --repeats 3
+pnpm --dir workers/wiki-mcp review:smoke -- \
+  --mcp-url https://wiki-private-mcp.kinic.xyz/mcp \
+  --repeats 3 \
+  --open
 ```
 
-Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-submission.json` twice in a new ChatGPT web conversation with only the submitted public search plugin attached.
+Then run every positive and negative prompt from `workers/wiki-mcp/chatgpt-app-submission.json` in new ChatGPT web and mobile conversations with only the Private app attached.
 
 ## Review Checklist
 
