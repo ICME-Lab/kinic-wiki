@@ -372,6 +372,19 @@ test("recall preserves new-chat navigation and invalidates other navigation", ()
   assert.match(invalidateRecall, /recallResults\.value = \[\];/);
 });
 
+test("recall cards open their WikiBrowser source without replacing ChatGPT", () => {
+  const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const recallCard = /function RecallCard\(\{ result \}\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(recallCard, "RecallCard function should exist");
+  assert.match(recallCard, /result\.sourceUrl \? \(/);
+  assert.match(recallCard, /href=\{result\.sourceUrl\}/);
+  assert.match(recallCard, /target="_blank"/);
+  assert.match(recallCard, /rel="noopener noreferrer"/);
+  assert.match(recallCard, /aria-label=\{`Open \$\{result\.title\} in WikiBrowser`\}/);
+  assert.match(recallCard, /Open in Wiki <span aria-hidden="true">↗<\/span>/);
+  assert.match(recallCard, /onClick=\{\(\) => addRecallContext\(result\)\}/);
+});
+
 test("settings docs describe automatic database save", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const usage = readFileSync(new URL("../USAGE.md", import.meta.url), "utf8");
