@@ -278,6 +278,7 @@ struct VoiceCaptureTests {
         #expect(maximumDuration == VoiceCaptureMode.voiceMemo.maximumDuration)
         coordinator.stop()
         memoEngine.finishRecording()
+        await waitForTranscription(memoEngine)
 
         #expect(coordinator.phase == .reviewing)
         #expect(coordinator.isTranscribing)
@@ -319,6 +320,7 @@ struct VoiceCaptureTests {
         memoEngine.recordedDuration = 12.25
         coordinator.stop()
         memoEngine.finishRecording()
+        await waitForTranscription(memoEngine)
 
         let saved = try #require(store.load(scope: .guest).first)
         #expect(saved.durationMilliseconds == 12_250)
@@ -346,6 +348,7 @@ struct VoiceCaptureTests {
         )
         coordinator.stop()
         memoEngine.finishRecording()
+        await waitForTranscription(memoEngine)
         memoEngine.emitTranscription("usable partial transcript")
         memoEngine.failTranscription()
 
@@ -370,6 +373,7 @@ struct VoiceCaptureTests {
         await coordinator.start(mode: .voiceMemo, language: .english, scope: .guest, databaseId: "db_1")
         coordinator.stop()
         memoEngine.finishRecording()
+        await waitForTranscription(memoEngine)
         memoEngine.completeTranscription("locally retained memo")
         #expect(coordinator.beginSaving())
         store.failSaves = true
@@ -450,6 +454,48 @@ struct VoiceCaptureTests {
 
     @MainActor
     @Test
+    func coordinatorRecordsVoiceMemoWithoutSpeechPermissionOrRecognitionSupport() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let dictationEngine = VoiceDictationEngineFake()
+        dictationEngine.permission = VoiceCapturePermissionResult(
+            microphoneGranted: true,
+            speechGranted: false
+        )
+        let memoEngine = VoiceMemoEngineFake()
+        memoEngine.supportsOnDevice = false
+        let coordinator = VoiceCaptureCoordinator(
+            store: store,
+            engine: dictationEngine,
+            voiceMemoEngine: memoEngine
+        )
+
+        await coordinator.start(mode: .voiceMemo, language: .english, scope: .guest, databaseId: nil)
+
+        #expect(coordinator.phase == .recording)
+        #expect(dictationEngine.microphonePermissionRequestCount == 1)
+        #expect(dictationEngine.speechPermissionRequestCount == 0)
+        let recorded = try #require(store.load(scope: .guest).first)
+        #expect(recorded.hasAudio)
+
+        coordinator.stop()
+        memoEngine.finishRecording()
+        while dictationEngine.speechPermissionRequestCount == 0 {
+            await Task.yield()
+        }
+        while coordinator.isTranscribing {
+            await Task.yield()
+        }
+
+        #expect(coordinator.phase == .reviewing)
+        #expect(coordinator.draft?.hasAudio == true)
+        #expect(coordinator.errorMessage?.contains("Speech Recognition access is required") == true)
+        #expect(memoEngine.transcribeCount == 0)
+    }
+
+    @MainActor
+    @Test
     func coordinatorCancelsPermissionStartupWhenDismissed() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -514,6 +560,8 @@ private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
     var supportsOnDevice = true
     var holdPermissions = false
     private(set) var permissionRequestCount = 0
+    private(set) var microphonePermissionRequestCount = 0
+    private(set) var speechPermissionRequestCount = 0
     private(set) var cancelCount = 0
     private(set) var startCount = 0
     private var permissionContinuation: CheckedContinuation<VoiceCapturePermissionResult, Never>?
@@ -528,6 +576,14 @@ private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
             }
         }
         return permission
+    }
+    func requestMicrophonePermission() async -> Bool {
+        microphonePermissionRequestCount += 1
+        return permission.microphoneGranted
+    }
+    func requestSpeechPermission() async -> Bool {
+        speechPermissionRequestCount += 1
+        return permission.speechGranted
     }
     func supportsOnDeviceRecognition(locale: Locale) -> Bool { supportsOnDevice }
 
@@ -583,13 +639,15 @@ private func postInterruption(center: NotificationCenter, source: NSObject) {
 private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
     var maximumDuration: TimeInterval?
     var recordedDuration: TimeInterval = 0
+    var supportsOnDevice = true
+    private(set) var transcribeCount = 0
     private var url: URL?
     private var onFinished: (@MainActor (URL) -> Void)?
     private var onFailure: (@MainActor (Error) -> Void)?
     private var onTranscript: (@MainActor (String) -> Void)?
     private var onCompletion: (@MainActor (Result<String, Error>) -> Void)?
 
-    func supportsOnDeviceRecognition(locale: Locale) -> Bool { true }
+    func supportsOnDeviceRecognition(locale: Locale) -> Bool { supportsOnDevice }
 
     func startRecording(
         to url: URL,
@@ -613,6 +671,7 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
         onTranscript: @escaping @MainActor (String) -> Void,
         onCompletion: @escaping @MainActor (Result<String, Error>) -> Void
     ) {
+        transcribeCount += 1
         self.onTranscript = onTranscript
         self.onCompletion = onCompletion
     }
@@ -636,6 +695,13 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
 
     func failRecording() {
         onFailure?(VoiceCaptureError.recordingUnavailable("test recording failure"))
+    }
+}
+
+@MainActor
+private func waitForTranscription(_ engine: VoiceMemoEngineFake) async {
+    while engine.transcribeCount == 0 {
+        await Task.yield()
     }
 }
 

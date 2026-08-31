@@ -71,6 +71,8 @@ protocol VoiceMemoEngineProtocol: AnyObject {
 @MainActor
 protocol VoiceDictationEngineProtocol: AnyObject {
     func requestPermissions() async -> VoiceCapturePermissionResult
+    func requestMicrophonePermission() async -> Bool
+    func requestSpeechPermission() async -> Bool
     func supportsOnDeviceRecognition(locale: Locale) -> Bool
     func start(
         locale: Locale,
@@ -144,7 +146,15 @@ final class VoiceCaptureCoordinator {
         activeMode = mode
         phase = .requestingPermission
         errorMessage = nil
-        let permission = await engine.requestPermissions()
+        let permission: VoiceCapturePermissionResult
+        if mode == .voiceMemo {
+            permission = VoiceCapturePermissionResult(
+                microphoneGranted: await engine.requestMicrophonePermission(),
+                speechGranted: true
+            )
+        } else {
+            permission = await engine.requestPermissions()
+        }
         guard startAttemptID == attemptID, phase == .requestingPermission else { return }
         guard !Task.isCancelled else {
             cancelPendingStart()
@@ -154,15 +164,13 @@ final class VoiceCaptureCoordinator {
             fail(VoiceCaptureError.microphonePermissionDenied)
             return
         }
-        guard permission.speechGranted else {
+        guard mode == .voiceMemo || permission.speechGranted else {
             fail(VoiceCaptureError.speechPermissionDenied)
             return
         }
 
         let locale = Locale(identifier: language.rawValue)
-        let supportsOnDevice = mode == .dictation
-            ? engine.supportsOnDeviceRecognition(locale: locale)
-            : voiceMemoEngine.supportsOnDeviceRecognition(locale: locale)
+        let supportsOnDevice = mode == .voiceMemo || engine.supportsOnDeviceRecognition(locale: locale)
         guard supportsOnDevice else {
             fail(VoiceCaptureError.onDeviceRecognitionUnavailable(language.displayName))
             return
@@ -364,16 +372,32 @@ final class VoiceCaptureCoordinator {
         phase = .reviewing
         isTranscribing = true
         let locale = Locale(identifier: draft.language.rawValue)
-        voiceMemoEngine.transcribe(
-            url: audioURL,
-            locale: locale,
-            onTranscript: { [weak self] transcript in
-                self?.receiveVoiceMemoTranscript(transcript)
-            },
-            onCompletion: { [weak self] result in
-                self?.completeVoiceMemoTranscription(result)
+        let draftID = draft.id
+        Task { [weak self] in
+            guard let self else { return }
+            let speechGranted = await engine.requestSpeechPermission()
+            guard self.phase == .reviewing, self.draft?.id == draftID else { return }
+            guard speechGranted else {
+                self.completeVoiceMemoTranscription(.failure(VoiceCaptureError.speechPermissionDenied))
+                return
             }
-        )
+            guard voiceMemoEngine.supportsOnDeviceRecognition(locale: locale) else {
+                self.completeVoiceMemoTranscription(.failure(
+                    VoiceCaptureError.onDeviceRecognitionUnavailable(draft.language.displayName)
+                ))
+                return
+            }
+            voiceMemoEngine.transcribe(
+                url: audioURL,
+                locale: locale,
+                onTranscript: { [weak self] transcript in
+                    self?.receiveVoiceMemoTranscript(transcript)
+                },
+                onCompletion: { [weak self] result in
+                    self?.completeVoiceMemoTranscription(result)
+                }
+            )
+        }
     }
 
     private func finishVoiceMemoRecording(error: Error) {
@@ -576,7 +600,7 @@ final class VoiceDictationEngine: VoiceDictationEngineProtocol {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    private func requestMicrophonePermission() async -> Bool {
+    func requestMicrophonePermission() async -> Bool {
         await withCheckedContinuation { continuation in
             AVAudioApplication.requestRecordPermission { granted in
                 continuation.resume(returning: granted)
@@ -584,7 +608,7 @@ final class VoiceDictationEngine: VoiceDictationEngineProtocol {
         }
     }
 
-    private func requestSpeechPermission() async -> Bool {
+    func requestSpeechPermission() async -> Bool {
         await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in
                 continuation.resume(returning: status == .authorized)
