@@ -20,7 +20,7 @@ enum VoiceCaptureError: Error, LocalizedError, Equatable {
     case microphonePermissionDenied
     case speechPermissionDenied
     case onDeviceRecognitionUnavailable(String)
-    case alreadyRunning
+    case recordingInterrupted
     case emptyTranscript
     case storageUnavailable(String)
     case recordingUnavailable(String)
@@ -34,8 +34,8 @@ enum VoiceCaptureError: Error, LocalizedError, Equatable {
             "Speech Recognition access is required. Allow it in Settings and try again."
         case let .onDeviceRecognitionUnavailable(language):
             "On-device speech recognition is unavailable for \(language) on this device."
-        case .alreadyRunning:
-            "A voice capture is already running."
+        case .recordingInterrupted:
+            "Recording was interrupted by another audio session."
         case .emptyTranscript:
             "Speak before stopping the voice note."
         case let .storageUnavailable(message):
@@ -121,10 +121,7 @@ final class VoiceCaptureCoordinator {
         scope: VoiceCaptureAccountScope,
         databaseId: String?
     ) async {
-        guard !didStart, phase == .idle || phase == .failed else {
-            fail(VoiceCaptureError.alreadyRunning)
-            return
-        }
+        guard !didStart, phase == .idle || phase == .failed else { return }
         didStart = true
         activeMode = mode
         phase = .requestingPermission
@@ -421,10 +418,15 @@ final class VoiceCaptureCoordinator {
 @MainActor
 final class VoiceDictationEngine: VoiceDictationEngineProtocol {
     private let audioEngine = AVAudioEngine()
+    private let interruptionObserver: VoiceDictationInterruptionObserver
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
     private var inputTapInstalled = false
+
+    init(interruptionObserver: VoiceDictationInterruptionObserver = VoiceDictationInterruptionObserver()) {
+        self.interruptionObserver = interruptionObserver
+    }
 
     func requestPermissions() async -> VoiceCapturePermissionResult {
         async let microphone = requestMicrophonePermission()
@@ -482,9 +484,15 @@ final class VoiceDictationEngine: VoiceDictationEngineProtocol {
                 }
             }
         }
+        interruptionObserver.start { [weak self] in
+            guard let self else { return }
+            self.stop()
+            onFailure(VoiceCaptureError.recordingInterrupted)
+        }
     }
 
     func stop() {
+        interruptionObserver.stop()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -494,6 +502,7 @@ final class VoiceDictationEngine: VoiceDictationEngineProtocol {
     }
 
     func cancel() {
+        interruptionObserver.stop()
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -530,5 +539,47 @@ final class VoiceDictationEngine: VoiceDictationEngineProtocol {
                 continuation.resume(returning: status == .authorized)
             }
         }
+    }
+}
+
+@MainActor
+final class VoiceDictationInterruptionObserver {
+    private let notificationCenter: NotificationCenter
+    private let observedObject: AnyObject?
+    private var token: NSObjectProtocol?
+    private var didNotify = false
+
+    init(
+        notificationCenter: NotificationCenter = .default,
+        observedObject: AnyObject? = AVAudioSession.sharedInstance()
+    ) {
+        self.notificationCenter = notificationCenter
+        self.observedObject = observedObject
+    }
+
+    func start(onInterruption: @escaping @MainActor () -> Void) {
+        stop()
+        didNotify = false
+        token = notificationCenter.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: observedObject,
+            queue: .main
+        ) { [weak self] notification in
+            let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            MainActor.assumeIsolated {
+                guard let self,
+                      !self.didNotify,
+                      typeValue == AVAudioSession.InterruptionType.began.rawValue else { return }
+                self.didNotify = true
+                onInterruption()
+            }
+        }
+    }
+
+    func stop() {
+        if let token {
+            notificationCenter.removeObserver(token)
+        }
+        token = nil
     }
 }

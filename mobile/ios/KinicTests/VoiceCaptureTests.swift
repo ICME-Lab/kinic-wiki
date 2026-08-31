@@ -2,6 +2,7 @@
 // What: Voice draft, Markdown, and capture state regression tests.
 // Why: Audio must remain local while transcript drafts survive interrupted saves.
 
+import AVFAudio
 import Foundation
 import Testing
 @testable import Kinic
@@ -117,7 +118,7 @@ struct VoiceCaptureTests {
 
     @MainActor
     @Test
-    func coordinatorPersistsPartialTranscriptAndRejectsConcurrentStart() async throws {
+    func coordinatorPersistsPartialTranscriptAndIgnoresConcurrentStart() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try VoiceCaptureStore(rootDirectory: directory)
@@ -138,15 +139,10 @@ struct VoiceCaptureTests {
             scope: .principal("aaaaa-aa"),
             databaseId: "db_1"
         )
-        #expect(coordinator.phase == .failed)
+        #expect(coordinator.phase == .recording)
+        #expect(engine.permissionRequestCount == 1)
+        #expect(engine.cancelCount == 0)
 
-        coordinator.discard()
-        await coordinator.start(
-            mode: .dictation,
-            language: .japanese,
-            scope: .principal("aaaaa-aa"),
-            databaseId: "db_1"
-        )
         engine.emit("release checklist", isFinal: false)
         clock.now = clock.now.addingTimeInterval(12)
         coordinator.stop()
@@ -156,6 +152,73 @@ struct VoiceCaptureTests {
         #expect(saved.transcript == "release checklist")
         #expect(saved.durationMilliseconds == 12_000)
         #expect(saved.audioFilename == nil)
+    }
+
+    @MainActor
+    @Test
+    func coordinatorPreservesPartialTranscriptAfterAudioInterruption() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let engine = VoiceDictationEngineFake()
+        let coordinator = VoiceCaptureCoordinator(store: store, engine: engine)
+
+        await coordinator.start(
+            mode: .dictation,
+            language: .japanese,
+            scope: .guest,
+            databaseId: "db_1"
+        )
+        engine.emit("interrupted note", isFinal: false)
+        engine.emitFailure(VoiceCaptureError.recordingInterrupted)
+
+        #expect(coordinator.phase == .reviewing)
+        #expect(coordinator.errorMessage?.contains("Recording stopped") == true)
+        #expect(store.load(scope: .guest).first?.transcript == "interrupted note")
+    }
+
+    @MainActor
+    @Test
+    func coordinatorDoesNotKeepEmptyDraftAfterAudioInterruption() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let engine = VoiceDictationEngineFake()
+        let coordinator = VoiceCaptureCoordinator(store: store, engine: engine)
+
+        await coordinator.start(
+            mode: .dictation,
+            language: .english,
+            scope: .guest,
+            databaseId: nil
+        )
+        engine.emitFailure(VoiceCaptureError.recordingInterrupted)
+
+        #expect(coordinator.phase == .failed)
+        #expect(store.load(scope: .guest).isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func interruptionObserverNotifiesOnceAndStopsObserving() {
+        let center = NotificationCenter()
+        let source = NSObject()
+        let observer = VoiceDictationInterruptionObserver(
+            notificationCenter: center,
+            observedObject: source
+        )
+        var interruptionCount = 0
+        observer.start {
+            interruptionCount += 1
+        }
+
+        postInterruption(center: center, source: source)
+        postInterruption(center: center, source: source)
+        #expect(interruptionCount == 1)
+
+        observer.stop()
+        postInterruption(center: center, source: source)
+        #expect(interruptionCount == 1)
     }
 
     @MainActor
@@ -220,9 +283,15 @@ struct VoiceCaptureTests {
 private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
     var permission = VoiceCapturePermissionResult(microphoneGranted: true, speechGranted: true)
     var supportsOnDevice = true
+    private(set) var permissionRequestCount = 0
+    private(set) var cancelCount = 0
     private var onTranscript: (@MainActor (String, Bool) -> Void)?
+    private var onFailure: (@MainActor (Error) -> Void)?
 
-    func requestPermissions() async -> VoiceCapturePermissionResult { permission }
+    func requestPermissions() async -> VoiceCapturePermissionResult {
+        permissionRequestCount += 1
+        return permission
+    }
     func supportsOnDeviceRecognition(locale: Locale) -> Bool { supportsOnDevice }
 
     func start(
@@ -231,14 +300,32 @@ private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
         onFailure: @escaping @MainActor (Error) -> Void
     ) throws {
         self.onTranscript = onTranscript
+        self.onFailure = onFailure
     }
 
     func stop() {}
-    func cancel() { onTranscript = nil }
+    func cancel() {
+        cancelCount += 1
+        onTranscript = nil
+        onFailure = nil
+    }
 
     func emit(_ transcript: String, isFinal: Bool) {
         onTranscript?(transcript, isFinal)
     }
+
+    func emitFailure(_ error: Error) {
+        onFailure?(error)
+    }
+}
+
+@MainActor
+private func postInterruption(center: NotificationCenter, source: NSObject) {
+    center.post(
+        name: AVAudioSession.interruptionNotification,
+        object: source,
+        userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue]
+    )
 }
 
 @MainActor
