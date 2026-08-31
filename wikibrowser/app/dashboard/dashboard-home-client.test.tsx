@@ -246,7 +246,78 @@ describe("DashboardHomeClient database creation", () => {
     expect(mocks.listDatabasesAuthenticated).toHaveBeenCalledTimes(2);
     expect(mocks.listDatabasesPublic).toHaveBeenCalledTimes(2);
   });
+
+  it("does not navigate to a free database created for a previous principal", async () => {
+    const createResult = deferred<{
+      database_id: string;
+      name: string;
+      status: string;
+      initial_free_grant_applied: boolean;
+    }>();
+    mocks.createDatabaseAuthenticated.mockReturnValue(createResult.promise);
+    const rendered = render(<DashboardHomeClient />);
+
+    fireEvent.click(await enabledButton("Create database"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Database name" }), { target: { value: "Old principal database" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(mocks.createDatabaseAuthenticated).toHaveBeenCalledTimes(1));
+
+    mocks.session.principal = "principal-2";
+    rendered.rerender(<DashboardHomeClient />);
+    createResult.resolve({
+      database_id: "db_old_principal",
+      name: "Old principal database",
+      status: "active",
+      initial_free_grant_applied: true
+    });
+
+    await enabledButton("Create database");
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.purchaseCyclesWithWallet).not.toHaveBeenCalled();
+  });
+
+  it("does not fund a pending database created for a previous principal", async () => {
+    mocks.getInitialFreeDatabaseGrantStatus.mockResolvedValue(USED_GRANT);
+    const wallet = { provider: "plug", connection: { principal: "wallet-a" } };
+    mocks.session.wallet = wallet;
+    mocks.session.walletBalance = "1000000000000";
+    const createResult = deferred<{
+      database_id: string;
+      name: string;
+      status: string;
+      initial_free_grant_applied: boolean;
+    }>();
+    mocks.createDatabaseAuthenticated.mockReturnValue(createResult.promise);
+    const rendered = render(<DashboardHomeClient />);
+
+    fireEvent.click(await enabledButton("Create database"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Database name" }), { target: { value: "Old paid database" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create with wallet" }));
+    await waitFor(() => expect(mocks.createDatabaseAuthenticated).toHaveBeenCalledTimes(1));
+
+    mocks.session.principal = "principal-2";
+    rendered.rerender(<DashboardHomeClient />);
+    createResult.resolve({
+      database_id: "db_old_paid",
+      name: "Old paid database",
+      status: "pending",
+      initial_free_grant_applied: false
+    });
+
+    await enabledButton("Create database");
+    expect(mocks.purchaseCyclesWithWallet).not.toHaveBeenCalled();
+    expect(mocks.refreshWalletBalance).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 async function enabledButton(name: string): Promise<HTMLButtonElement> {
   const button = await screen.findByRole("button", { name }) as HTMLButtonElement;

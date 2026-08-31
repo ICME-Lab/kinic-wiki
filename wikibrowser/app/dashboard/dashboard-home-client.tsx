@@ -43,6 +43,8 @@ export function DashboardHomeClient() {
     walletBalanceLoading,
     walletBusyProvider
   } = useAppSession();
+  const principalRef = useRef(principal);
+  principalRef.current = principal;
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
   const [purchasedDatabaseIds, setPurchasedDatabaseIds] = useState<Set<string>>(() => new Set());
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
@@ -152,7 +154,9 @@ export function DashboardHomeClient() {
   const walletRequiredForCreate = freeGrantStatus?.available === false;
 
   async function createDatabase() {
-    if (!authClient || !canisterId) return;
+    if (!authClient || !canisterId || !principal) return;
+    const principalAtSubmit = principal;
+    const submissionIsCurrent = () => principalRef.current === principalAtSubmit;
     const databaseNameInput = newDatabaseName.trim();
     const validationError = databaseNameError(databaseNameInput);
     if (validationError) {
@@ -178,6 +182,7 @@ export function DashboardHomeClient() {
     try {
       const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
       createdDatabaseId = result.database_id;
+      if (!submissionIsCurrent()) return;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
       const createdActive = result.initial_free_grant_applied || result.status === "active";
@@ -188,6 +193,7 @@ export function DashboardHomeClient() {
             : "Database created active."
         );
         await refreshDatabases(authClient);
+        if (!submissionIsCurrent()) return;
         router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
         return;
       }
@@ -199,15 +205,20 @@ export function DashboardHomeClient() {
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(fundingAtSubmit.wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, fundingAtSubmit.wallet);
+      if (!submissionIsCurrent()) return;
       setWalletMessage(
         `${fundingProviderLabel(fundingAtSubmit.wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
       );
       await refreshWalletBalance(fundingAtSubmit.wallet);
+      if (!submissionIsCurrent()) return;
       await refreshDatabases(authClient);
+      if (!submissionIsCurrent()) return;
       router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
+      if (!submissionIsCurrent()) return;
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
+        if (!submissionIsCurrent()) return;
         setError(createDatabasePurchaseFailureMessage(createdDatabaseId, cause));
         setWalletMessage(null);
       } else {
