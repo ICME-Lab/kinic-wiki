@@ -25,13 +25,16 @@ type AppSessionContext = {
   walletBalanceLoading: boolean;
   walletBusyProvider: HeaderWalletProvider | null;
   walletControlsLocked: boolean;
+  authControlsLocked: boolean;
   walletSessionReady: boolean;
   connectWallet: (provider: HeaderWalletProvider) => Promise<void>;
   disconnectWallet: (provider: HeaderWalletProvider) => void;
   logout: () => Promise<void>;
   login: () => Promise<void>;
+  refreshIdentityLedgerBalanceFor: (identity: Identity, principal: string) => Promise<void>;
   refreshIdentityLedgerBalance: () => Promise<void>;
   refreshWalletBalance: (wallet: ConnectedKinicWallet) => Promise<void>;
+  setAuthControlsLocked: (locked: boolean) => void;
   setWalletControlsLocked: (locked: boolean) => void;
 };
 
@@ -56,10 +59,19 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
   const [walletBusyProvider, setWalletBusyProvider] = useState<HeaderWalletProvider | null>(null);
   const [walletControlsLocked, setWalletControlsLockedState] = useState(false);
+  const [authControlsLocked, setAuthControlsLockedState] = useState(false);
   const [walletSessionReady, setWalletSessionReady] = useState(false);
+  const principalRef = useRef(principal);
+  const walletRef = useRef(wallet);
+  principalRef.current = principal;
+  walletRef.current = wallet;
 
   const setWalletControlsLocked = useCallback((locked: boolean) => {
     setWalletControlsLockedState(locked);
+  }, []);
+
+  const setAuthControlsLocked = useCallback((locked: boolean) => {
+    setAuthControlsLockedState(locked);
   }, []);
 
   const clearStoredWallet = useCallback(() => {
@@ -95,8 +107,9 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const refreshIdentityLedgerBalanceFor = useCallback(
     async (identity: Identity, identityPrincipal: string) => {
+      if (principalRef.current !== identityPrincipal || identity.getPrincipal().toText() !== identityPrincipal) return;
       const balanceSeq = (identityLedgerBalanceSeqRef.current += 1);
-      const isCurrentBalance = () => balanceSeq === identityLedgerBalanceSeqRef.current;
+      const isCurrentBalance = () => balanceSeq === identityLedgerBalanceSeqRef.current && principalRef.current === identityPrincipal;
       setIdentityLedgerBalance(null);
       setIdentityLedgerBalanceLoading(true);
       setIdentityLedgerBalanceError(null);
@@ -125,8 +138,25 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   const refreshWalletBalance = useCallback(
     async (nextWallet: ConnectedKinicWallet) => {
+      const currentWallet = walletRef.current;
+      if (
+        currentWallet === null ||
+        currentWallet.provider !== nextWallet.provider ||
+        connectedWalletPrincipal(currentWallet) !== connectedWalletPrincipal(nextWallet)
+      ) {
+        return;
+      }
       const balanceSeq = (walletBalanceSeqRef.current += 1);
-      const isCurrentBalance = () => balanceSeq === walletBalanceSeqRef.current;
+      const submittedWalletPrincipal = connectedWalletPrincipal(nextWallet);
+      const isCurrentBalance = () => {
+        const currentWallet = walletRef.current;
+        return (
+          balanceSeq === walletBalanceSeqRef.current &&
+          currentWallet !== null &&
+          currentWallet.provider === nextWallet.provider &&
+          connectedWalletPrincipal(currentWallet) === submittedWalletPrincipal
+        );
+      };
       setWalletBalance(null);
       setWalletBalanceLoading(true);
       setWalletBalanceError(null);
@@ -155,6 +185,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
           provider === "oisy"
             ? { provider, connection: await connectOisyWallet() }
             : { provider, connection: await connectPlugWallet() };
+        walletBalanceSeqRef.current += 1;
         setWallet(nextWallet);
         storeWallet(nextWallet);
       } catch (cause) {
@@ -291,13 +322,16 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         walletBalanceLoading,
         walletBusyProvider,
         walletControlsLocked,
+        authControlsLocked,
         walletSessionReady,
         connectWallet,
         disconnectWallet,
         login,
         logout,
+        refreshIdentityLedgerBalanceFor,
         refreshIdentityLedgerBalance,
         refreshWalletBalance,
+        setAuthControlsLocked,
         setWalletControlsLocked
       }}
     >

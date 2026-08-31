@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   preview: vi.fn(),
   purchase: vi.fn(),
   refreshIdentity: vi.fn(),
+  refreshIdentityFor: vi.fn(),
   refreshWallet: vi.fn(),
   session: {} as Record<string, unknown>,
   toastError: vi.fn(),
@@ -70,6 +71,7 @@ beforeEach(() => {
   mocks.preview.mockReset().mockResolvedValue({ listingId: "listing-1", databaseId: "db-1", priceE8s: "50000000", alreadyEntitled: false });
   mocks.purchase.mockReset().mockResolvedValue({ ledgerBlockIndex: "99" });
   mocks.refreshIdentity.mockReset();
+  mocks.refreshIdentityFor.mockReset();
   mocks.refreshWallet.mockReset();
   mocks.toastError.mockReset();
   mocks.toastInfo.mockReset();
@@ -80,6 +82,7 @@ beforeEach(() => {
     identityLedgerBalanceError: null,
     identityLedgerBalanceLoading: false,
     principal: "ii-principal",
+    refreshIdentityLedgerBalanceFor: mocks.refreshIdentityFor,
     refreshIdentityLedgerBalance: mocks.refreshIdentity,
     refreshWalletBalance: mocks.refreshWallet,
     setWalletControlsLocked: vi.fn(),
@@ -107,7 +110,7 @@ describe("Marketplace funding source", () => {
       { provider: "ii", identity: mocks.identity }
     ));
     expect(mocks.preview.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.purchase.mock.invocationCallOrder[0] ?? 0);
-    expect(mocks.refreshIdentity).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshIdentityFor).toHaveBeenCalledWith(mocks.identity, "ii-principal");
     expect(mocks.refreshWallet).not.toHaveBeenCalled();
   });
 
@@ -121,14 +124,43 @@ describe("Marketplace funding source", () => {
     expect(mocks.purchase).not.toHaveBeenCalled();
   });
 
+  it("does not start payment when the principal changes after preview", async () => {
+    const previewResult = deferred<{ listingId: string; databaseId: string; priceE8s: string; alreadyEntitled: boolean }>();
+    const rendered = render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(1));
+    mocks.preview.mockReturnValueOnce(previewResult.promise);
+    const button = await screen.findByRole("button", { name: "Purchase with Internet Identity" }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(mocks.preview).toHaveBeenCalledTimes(2));
+
+    mocks.session.principal = "different-principal";
+    rendered.rerender(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    previewResult.resolve({ listingId: "listing-1", databaseId: "db-1", priceE8s: "50000000", alreadyEntitled: false });
+
+    await waitFor(() => expect(mocks.purchase).not.toHaveBeenCalled());
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the submitted balance when marketplace payment fails", async () => {
+    mocks.purchase.mockRejectedValue(new Error("ambiguous transfer"));
+    render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
+    const button = await screen.findByRole("button", { name: "Purchase with Internet Identity" }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+
+    await waitFor(() => expect(mocks.refreshIdentityFor).toHaveBeenCalledWith(mocks.identity, "ii-principal"));
+    expect(mocks.toastError).toHaveBeenCalledWith("ambiguous transfer");
+  });
+
   it("does not apply a purchase after the principal changes during balance refresh", async () => {
     const refreshResult = deferred<void>();
-    mocks.refreshIdentity.mockReturnValue(refreshResult.promise);
+    mocks.refreshIdentityFor.mockReturnValue(refreshResult.promise);
     const rendered = render(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);
     const button = await screen.findByRole("button", { name: "Purchase with Internet Identity" }) as HTMLButtonElement;
     await waitFor(() => expect(button.disabled).toBe(false));
     fireEvent.click(button);
-    await waitFor(() => expect(mocks.refreshIdentity).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.refreshIdentityFor).toHaveBeenCalledTimes(1));
 
     mocks.session.principal = "different-principal";
     rendered.rerender(<ListingDetailClient canisterId="aaaaa-aa" listingId="listing-1" />);

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   purchaseCyclesWithFundingSource: vi.fn(),
   push: vi.fn(),
   refreshIdentityLedgerBalance: vi.fn(),
+  refreshIdentityLedgerBalanceFor: vi.fn(),
   refreshWalletBalance: vi.fn(),
   replace: vi.fn(),
   session: {} as Record<string, unknown>
@@ -76,7 +77,7 @@ vi.mock("@/app/create-database-dialog", () => ({
     onSubmit: () => void;
   }) => open ? (
     <dialog aria-label="Create database" open>
-      <p>Requires {requiredBalanceLabel}.</p>
+      <p>{fundingRequired ? `Requires ${requiredBalanceLabel}.` : `Includes an initial free grant of ${requiredBalanceLabel}. No KINIC payment is required.`}</p>
       {fundingRequired ? fundingSourceContent : null}
       <input aria-label="Database name" value={databaseName} onChange={(event) => onChange(event.target.value)} />
       <button disabled={createDisabled} type="button" onClick={onSubmit}>{createLabel}</button>
@@ -131,6 +132,7 @@ beforeEach(() => {
   });
   mocks.push.mockReset();
   mocks.refreshIdentityLedgerBalance.mockReset();
+  mocks.refreshIdentityLedgerBalanceFor.mockReset();
   mocks.refreshWalletBalance.mockReset();
   mocks.replace.mockReset();
   mocks.session = {
@@ -141,6 +143,7 @@ beforeEach(() => {
     identityLedgerBalanceError: null,
     identityLedgerBalanceLoading: false,
     principal: "principal-1",
+    refreshIdentityLedgerBalanceFor: mocks.refreshIdentityLedgerBalanceFor,
     refreshIdentityLedgerBalance: mocks.refreshIdentityLedgerBalance,
     refreshWalletBalance: mocks.refreshWalletBalance,
     setWalletControlsLocked: vi.fn(),
@@ -167,6 +170,7 @@ describe("DashboardHomeClient database creation", () => {
     const openButton = await enabledButton("Create database");
     fireEvent.click(openButton);
     expect(screen.queryByText(/Wallet balance:/)).toBeNull();
+    expect(screen.getByText("Includes an initial free grant of 10,000,000,000 cycles. No KINIC payment is required.")).toBeTruthy();
     fireEvent.change(screen.getByRole("textbox", { name: "Database name" }), { target: { value: "Free database" } });
     const createButton = screen.getByRole("button", { name: "Create" }) as HTMLButtonElement;
     expect(createButton.disabled).toBe(false);
@@ -364,7 +368,7 @@ describe("DashboardHomeClient database creation", () => {
       { canisterId: "aaaaa-aa", databaseId: "db_ii_paid", paymentAmountE8s: 99_800_000n },
       { provider: "ii", identity: mocks.identity }
     ));
-    expect(mocks.refreshIdentityLedgerBalance).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshIdentityLedgerBalanceFor).toHaveBeenCalledWith(mocks.identity, "principal-1");
     expect(mocks.refreshWalletBalance).not.toHaveBeenCalled();
   });
 
@@ -378,6 +382,7 @@ describe("DashboardHomeClient database creation", () => {
     });
     mocks.session.identityLedgerBalance = "100000000";
     mocks.purchaseCyclesWithFundingSource.mockRejectedValue(new mocks.AfterApproveError("canister rejected purchase"));
+    mocks.refreshIdentityLedgerBalanceFor.mockRejectedValue(new Error("balance refresh failed"));
     render(<DashboardHomeClient />);
 
     fireEvent.click(await enabledButton("Create database"));
@@ -386,6 +391,7 @@ describe("DashboardHomeClient database creation", () => {
 
     expect(await screen.findByText(/KINIC approval did not activate it/)).toBeTruthy();
     expect(screen.queryByText(/wallet approval did not activate it/)).toBeNull();
+    expect(mocks.refreshIdentityLedgerBalanceFor).toHaveBeenCalledWith(mocks.identity, "principal-1");
   });
 
   it("does not navigate to a free database created for a previous principal", async () => {

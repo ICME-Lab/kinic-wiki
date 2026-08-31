@@ -39,6 +39,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     identityLedgerBalanceError,
     identityLedgerBalanceLoading,
     principal,
+    refreshIdentityLedgerBalanceFor,
     refreshIdentityLedgerBalance,
     refreshWalletBalance,
     setWalletControlsLocked,
@@ -56,7 +57,9 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const fundingChoice = useFundingSourceChoice(wallet !== null, walletSessionReady);
   const principalRef = useRef(principal);
+  const walletRef = useRef(wallet);
   principalRef.current = principal;
+  walletRef.current = wallet;
 
   const listingView = detail?.listing ?? null;
   const listing = listingView?.listing ?? null;
@@ -107,9 +110,20 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     if (!sourceAtSubmit || !selectedBalanceSufficient || selectedBalanceLoading || selectedBalanceError) return;
     const listingAtSubmit = listing;
     const principalAtSubmit = principal;
+    const sourceIsCurrent = () => {
+      if (sourceAtSubmit.provider === "ii") return principalRef.current === principalAtSubmit;
+      const currentWallet = walletRef.current;
+      return currentWallet !== null && currentWallet.provider === sourceAtSubmit.provider && connectedWalletPrincipal(currentWallet) === connectedWalletPrincipal(sourceAtSubmit);
+    };
     setPurchaseState("loading");
+    let order: Awaited<ReturnType<typeof purchaseMarketAccessWithFundingSource>> | null = null;
+    let purchaseError: unknown = null;
     try {
       const preview = await marketPreviewPurchase(canisterId, identityAtSubmit, listingAtSubmit.listingId);
+      if (principalRef.current !== principalAtSubmit) {
+        setPurchaseState("idle");
+        return;
+      }
       if (preview.alreadyEntitled) {
         toast.info("Access is already active.");
         setPurchaseState("success");
@@ -121,17 +135,38 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
         await load();
         return;
       }
-      const order = await purchaseMarketAccessWithFundingSource(
-        { canisterId, listingId: listingAtSubmit.listingId, priceE8s: BigInt(listingAtSubmit.priceE8s), accessPrincipal: principalAtSubmit },
-        sourceAtSubmit
-      );
-      if (principalRef.current !== principalAtSubmit) {
-        setPurchaseState("idle");
+      try {
+        order = await purchaseMarketAccessWithFundingSource(
+          { canisterId, listingId: listingAtSubmit.listingId, priceE8s: BigInt(listingAtSubmit.priceE8s), accessPrincipal: principalAtSubmit },
+          sourceAtSubmit
+        );
+      } catch (cause) {
+        purchaseError = cause;
+      }
+      if (sourceIsCurrent()) {
+        try {
+          if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalanceFor(sourceAtSubmit.identity, principalAtSubmit);
+          else await refreshWalletBalance(sourceAtSubmit);
+        } catch {
+          // Preserve the original purchase error when a balance refresh also fails.
+        }
+      }
+      if (purchaseError !== null) {
+        if (!sourceIsCurrent() || principalRef.current !== principalAtSubmit) {
+          setPurchaseState("idle");
+          return;
+        }
+        const errorText = errorMessage(purchaseError);
+        if (errorText.includes("active entitlement already exists")) {
+          toast.info("Access is already active.");
+          setPurchaseState("success");
+          return;
+        }
+        toast.error(errorText);
+        setPurchaseState("error");
         return;
       }
-      if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalance();
-      else await refreshWalletBalance(sourceAtSubmit);
-      if (principalRef.current !== principalAtSubmit) {
+      if (!order || principalRef.current !== principalAtSubmit || !sourceIsCurrent()) {
         setPurchaseState("idle");
         return;
       }

@@ -36,11 +36,13 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
     authError,
     authLoading,
     authReady,
+    setAuthControlsLocked,
     identityLedgerBalance,
     identityLedgerBalanceError,
     identityLedgerBalanceLoading,
     login,
     principal,
+    refreshIdentityLedgerBalanceFor,
     refreshIdentityLedgerBalance,
     refreshWalletBalance,
     setWalletControlsLocked,
@@ -60,7 +62,9 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const [cyclesConfig, setCyclesConfig] = useState<CyclesBillingConfig | null>(null);
   const fundingChoice = useFundingSourceChoice(wallet !== null, walletSessionReady);
   const principalRef = useRef(principal);
+  const walletRef = useRef(wallet);
   principalRef.current = principal;
+  walletRef.current = wallet;
   const configuredCanisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
@@ -141,6 +145,11 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
     return () => setWalletControlsLocked(false);
   }, [setWalletControlsLocked, status]);
 
+  useEffect(() => {
+    setAuthControlsLocked(status === "running");
+    return () => setAuthControlsLocked(false);
+  }, [setAuthControlsLocked, status]);
+
   function selectDatabase(nextDatabaseId: string) {
     const nextDatabase = fundableDatabases.find((database) => database.databaseId === nextDatabaseId);
     if (!nextDatabase) return;
@@ -157,41 +166,56 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
           : null
         : wallet;
     if (!sourceAtSubmit || !selectedBalanceSufficient || selectedBalanceLoading || selectedBalanceError) return;
+    const sourceIsCurrent = () => {
+      if (sourceAtSubmit.provider === "ii") return principalRef.current === principalAtSubmit;
+      const currentWallet = walletRef.current;
+      return currentWallet !== null && currentWallet.provider === sourceAtSubmit.provider && connectedWalletPrincipal(currentWallet) === connectedWalletPrincipal(sourceAtSubmit);
+    };
     setStatus("running");
     setMessage(null);
+    let result: Awaited<ReturnType<typeof purchaseCyclesWithFundingSource>> | null = null;
+    let purchaseError: unknown = null;
     try {
       const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
-      const result = await purchaseCyclesWithFundingSource(request, sourceAtSubmit);
-      if (principalRef.current !== principalAtSubmit) {
-        setStatus("idle");
-        return;
-      }
-      if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalance();
-      else await refreshWalletBalance(sourceAtSubmit);
-      if (principalRef.current !== principalAtSubmit) {
-        setStatus("idle");
-        return;
-      }
-      const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
-      setMessage(
-        `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
-      );
-      setStatus("success");
-      router.replace(cyclesPurchaseSuccessHref({
-        cycles: result.purchasedCycles,
-        databaseId: parsedTarget.databaseId,
-        kinic: formatTokenAmountFromE8s(result.paymentAmountE8s),
-        provider: result.provider
-      }));
+      result = await purchaseCyclesWithFundingSource(request, sourceAtSubmit);
     } catch (cause) {
-      void cause;
-      if (principalRef.current !== principalAtSubmit) {
+      purchaseError = cause;
+    }
+    if (sourceIsCurrent()) {
+      try {
+        if (sourceAtSubmit.provider === "ii") {
+          if (principalAtSubmit) await refreshIdentityLedgerBalanceFor(sourceAtSubmit.identity, principalAtSubmit);
+        } else {
+          await refreshWalletBalance(sourceAtSubmit);
+        }
+      } catch {
+        // Preserve the purchase result when a balance refresh also fails.
+      }
+    }
+    if (purchaseError !== null) {
+      if (!sourceIsCurrent()) {
         setStatus("idle");
         return;
       }
       setMessage("Cycles purchase did not complete. Review the payment request or try again from Cycles.");
       setStatus("notice");
+      return;
     }
+    if (!result || !sourceIsCurrent()) {
+      setStatus("idle");
+      return;
+    }
+    const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
+    setMessage(
+      `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
+    );
+    setStatus("success");
+    router.replace(cyclesPurchaseSuccessHref({
+      cycles: result.purchasedCycles,
+      databaseId: parsedTarget.databaseId,
+      kinic: formatTokenAmountFromE8s(result.paymentAmountE8s),
+      provider: result.provider
+    }));
   }
 
   return (
@@ -235,7 +259,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             <button
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
               data-tid="cycles-login-button"
-              disabled={!authReady || authLoading}
+              disabled={!authReady || authLoading || status === "running"}
               type="button"
               onClick={() => void login()}
             >
@@ -251,7 +275,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
         {databaseId && principal && databaseLoadState === "ready" && !selectedDatabase ? <Notice tone="info" text="The selected database is not linked to this principal. The URL target is still shown below." /> : null}
         {resolvedDatabaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
 
-        {principal && typeof parsedAmount === "bigint" ? (
+        {typeof parsedAmount === "bigint" ? (
           <KinicFundingSourceSelector
             identityAccount={{
               available: Boolean(authClient && principal),

@@ -55,7 +55,9 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Requires {requiredBalanceLabel}.
+              {fundingRequired
+                ? `Requires ${requiredBalanceLabel}.`
+                : `Includes an initial free grant of ${requiredBalanceLabel}. No KINIC payment is required.`}
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>

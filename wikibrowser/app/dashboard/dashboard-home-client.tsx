@@ -39,6 +39,7 @@ export function DashboardHomeClient() {
     identityLedgerBalanceError,
     identityLedgerBalanceLoading,
     principal,
+    refreshIdentityLedgerBalanceFor,
     refreshIdentityLedgerBalance,
     refreshWalletBalance,
     setWalletControlsLocked,
@@ -65,6 +66,8 @@ export function DashboardHomeClient() {
   const [newDatabaseName, setNewDatabaseName] = useState("");
   const [creating, setCreating] = useState(false);
   const fundingChoice = useFundingSourceChoice(wallet !== null, walletSessionReady);
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
 
   const refreshDatabases = useCallback(
     async (client: AuthClient | null) => {
@@ -192,6 +195,12 @@ export function DashboardHomeClient() {
         fundingAtSubmit = { mode: fundingModeAtSubmit, source: { provider: "ii", identity: identityAtSubmit } };
       }
     }
+    const fundingSourceIsCurrent = () => {
+      if (fundingAtSubmit.mode === "free-grant") return submissionIsCurrent();
+      if (fundingAtSubmit.source.provider === "ii") return submissionIsCurrent();
+      const currentWallet = walletRef.current;
+      return currentWallet !== null && currentWallet.provider === fundingAtSubmit.source.provider && connectedWalletPrincipal(currentWallet) === connectedWalletPrincipal(fundingAtSubmit.source);
+    };
     setCreating(true);
     setError(null);
     setWalletMessage(null);
@@ -221,19 +230,29 @@ export function DashboardHomeClient() {
       }
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(fundingAtSubmit.source.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
-      const purchaseResult = await purchaseCyclesWithFundingSource({ canisterId, databaseId: result.database_id, paymentAmountE8s }, fundingAtSubmit.source);
-      if (!submissionIsCurrent()) return;
+      let purchaseResult: Awaited<ReturnType<typeof purchaseCyclesWithFundingSource>> | null = null;
+      let purchaseError: unknown = null;
+      try {
+        purchaseResult = await purchaseCyclesWithFundingSource({ canisterId, databaseId: result.database_id, paymentAmountE8s }, fundingAtSubmit.source);
+      } catch (cause) {
+        purchaseError = cause;
+      }
+      try {
+        if (fundingAtSubmit.source.provider === "ii") await refreshIdentityLedgerBalanceFor(fundingAtSubmit.source.identity, principalAtSubmit);
+        else await refreshWalletBalance(fundingAtSubmit.source);
+      } catch {
+        // Preserve the original purchase error when a balance refresh also fails.
+      }
+      if (purchaseError !== null) throw purchaseError;
+      if (!purchaseResult || !submissionIsCurrent() || !fundingSourceIsCurrent()) return;
       setWalletMessage(
         `${fundingProviderLabel(fundingAtSubmit.source.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
       );
-      if (fundingAtSubmit.source.provider === "ii") await refreshIdentityLedgerBalance();
-      else await refreshWalletBalance(fundingAtSubmit.source);
-      if (!submissionIsCurrent()) return;
       await refreshDatabases(authClient);
-      if (!submissionIsCurrent()) return;
+      if (!submissionIsCurrent() || !fundingSourceIsCurrent()) return;
       router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
-      if (!submissionIsCurrent()) return;
+      if (!submissionIsCurrent() || !fundingSourceIsCurrent()) return;
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
         if (!submissionIsCurrent()) return;

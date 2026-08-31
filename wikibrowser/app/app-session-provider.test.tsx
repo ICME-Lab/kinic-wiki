@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { Identity } from "@icp-sdk/core/agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSessionProvider, useAppSession } from "@/app/app-session-provider";
 
@@ -37,8 +38,10 @@ function SessionProbe() {
       <span data-testid="balance-error">{session.identityLedgerBalanceError ?? "none"}</span>
       <span data-testid="balance-loading">{String(session.identityLedgerBalanceLoading)}</span>
       <span data-testid="wallet-principal">{session.wallet ? session.wallet.provider === "oisy" ? session.wallet.connection.owner : session.wallet.connection.principal : "none"}</span>
+      <span data-testid="wallet-balance">{session.walletBalance ?? "none"}</span>
       <span data-testid="wallet-session-ready">{String(session.walletSessionReady)}</span>
       <button type="button" onClick={() => void session.refreshIdentityLedgerBalance()}>Refresh II</button>
+      <button type="button" onClick={() => void session.refreshIdentityLedgerBalanceFor(mocks.identity as Identity, "ii-principal")}>Refresh captured II</button>
       <button type="button" onClick={() => void session.logout()}>Logout</button>
     </div>
   );
@@ -98,6 +101,20 @@ describe("AppSessionProvider Internet Identity balance", () => {
     await waitFor(() => expect(screen.getByTestId("balance-loading").textContent).toBe("false"));
     expect(screen.getByTestId("balance").textContent).toBe("300000000");
   });
+
+  it("discards a captured principal response after logout", async () => {
+    render(<AppSessionProvider><SessionProbe /></AppSessionProvider>);
+    await waitFor(() => expect(screen.getByTestId("balance").textContent).toBe("123000000"));
+
+    const captured = deferred<string>();
+    mocks.getPrincipalBalance.mockReturnValueOnce(captured.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh captured II" }));
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    captured.resolve("999000000");
+
+    await waitFor(() => expect(screen.getByTestId("principal").textContent).toBe("none"));
+    expect(screen.getByTestId("balance").textContent).toBe("none");
+  });
 });
 
 describe("AppSessionProvider wallet restoration", () => {
@@ -114,6 +131,20 @@ describe("AppSessionProvider wallet restoration", () => {
 
     await waitFor(() => expect(screen.getByTestId("wallet-session-ready").textContent).toBe("true"));
     expect(screen.getByTestId("wallet-principal").textContent).toBe("wallet-principal");
+  });
+
+  it("discards a wallet balance response after disconnect", async () => {
+    sessionStorage.setItem("kinic-wiki.wallet-session", JSON.stringify({ provider: "plug", principal: "wallet-principal" }));
+    const balance = deferred<string>();
+    mocks.getConnectedWalletBalance.mockReturnValueOnce(balance.promise);
+    render(<AppSessionProvider><SessionProbe /></AppSessionProvider>);
+    await waitFor(() => expect(mocks.getConnectedWalletBalance).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Logout" }));
+    balance.resolve("999000000");
+
+    await waitFor(() => expect(screen.getByTestId("wallet-principal").textContent).toBe("none"));
+    expect(screen.getByTestId("wallet-balance").textContent).toBe("none");
   });
 
   it("ignores an invalid stored wallet and still marks restoration ready", async () => {
