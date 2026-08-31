@@ -114,6 +114,7 @@ private struct VoiceDraftReviewView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var workingDraft: VoiceCaptureDraft
+    @State private var saveCompletion = VoiceDraftReviewSaveCompletion()
 
     init(model: AppModel, draft: VoiceCaptureDraft, onSaved: @escaping () -> Void) {
         self.model = model
@@ -175,7 +176,9 @@ private struct VoiceDraftReviewView: View {
         }
         .interactiveDismissDisabled(isSaving)
         .onDisappear {
-            persistLocalEdits()
+            if saveCompletion.shouldPersistOnDisappear {
+                persistLocalEdits()
+            }
         }
     }
 
@@ -192,7 +195,7 @@ private struct VoiceDraftReviewView: View {
         errorMessage = nil
         Task {
             do {
-                _ = try await model.saveVoiceCaptureDraft(
+                let savedPath = try await model.saveVoiceCaptureDraft(
                     workingDraft,
                     title: title,
                     transcript: transcript,
@@ -202,15 +205,12 @@ private struct VoiceDraftReviewView: View {
                     workingDraft.title = title
                     workingDraft.transcript = transcript
                     workingDraft.databaseId = databaseId
-                    workingDraft.kinicPath = try VoiceCaptureDocument.make(
-                        from: workingDraft,
-                        title: title,
-                        transcript: transcript
-                    ).path
+                    workingDraft.kinicPath = savedPath
                     try model.persistVoiceCaptureDraft(workingDraft)
                 } else {
                     try model.removeVoiceCaptureDraft(workingDraft)
                 }
+                saveCompletion.markCompleted()
                 onSaved()
                 dismiss()
             } catch {
@@ -229,6 +229,18 @@ private struct VoiceDraftReviewView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+struct VoiceDraftReviewSaveCompletion {
+    private(set) var didComplete = false
+
+    var shouldPersistOnDisappear: Bool {
+        !didComplete
+    }
+
+    mutating func markCompleted() {
+        didComplete = true
     }
 }
 

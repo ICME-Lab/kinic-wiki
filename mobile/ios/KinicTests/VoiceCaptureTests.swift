@@ -116,6 +116,16 @@ struct VoiceCaptureTests {
         #expect(store.load(scope: draft.scope).first?.transcript == "Keep this")
     }
 
+    @Test
+    func completedDraftReviewDoesNotPersistAgainOnDisappear() {
+        var completion = VoiceDraftReviewSaveCompletion()
+        #expect(completion.shouldPersistOnDisappear)
+
+        completion.markCompleted()
+
+        #expect(!completion.shouldPersistOnDisappear)
+    }
+
     @MainActor
     @Test
     func coordinatorPersistsPartialTranscriptAndIgnoresConcurrentStart() async throws {
@@ -271,11 +281,76 @@ struct VoiceCaptureTests {
 
         #expect(coordinator.phase == .reviewing)
         #expect(coordinator.isTranscribing)
+        #expect(!coordinator.beginSaving())
+        memoEngine.emitTranscription("途中の文字起こし")
+        #expect(!coordinator.beginSaving())
         memoEngine.completeTranscription("端末内のメモ")
+        #expect(coordinator.beginSaving())
+        coordinator.finishSaving(savedPath: "/Knowledge/Inbox/Voice Notes/memo.md")
         let saved = try #require(store.load(scope: .guest).first)
         #expect(saved.transcript == "端末内のメモ")
         #expect(saved.hasAudio)
+        #expect(saved.kinicPath == "/Knowledge/Inbox/Voice Notes/memo.md")
         #expect(store.audioURL(for: saved) != nil)
+    }
+
+    @MainActor
+    @Test
+    func coordinatorUsesRecordedAudioDurationInsteadOfWallClockTime() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let memoEngine = VoiceMemoEngineFake()
+        let clock = MutableClock(now: Date(timeIntervalSince1970: 1_700_000_000))
+        let coordinator = VoiceCaptureCoordinator(
+            store: store,
+            engine: VoiceDictationEngineFake(),
+            voiceMemoEngine: memoEngine,
+            now: { clock.now }
+        )
+
+        await coordinator.start(
+            mode: .voiceMemo,
+            language: .english,
+            scope: .guest,
+            databaseId: nil
+        )
+        clock.now = clock.now.addingTimeInterval(300)
+        memoEngine.recordedDuration = 12.25
+        coordinator.stop()
+        memoEngine.finishRecording()
+
+        let saved = try #require(store.load(scope: .guest).first)
+        #expect(saved.durationMilliseconds == 12_250)
+        #expect(coordinator.elapsedSeconds == 12)
+    }
+
+    @MainActor
+    @Test
+    func coordinatorAllowsEditingAfterTranscriptionFailure() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let memoEngine = VoiceMemoEngineFake()
+        let coordinator = VoiceCaptureCoordinator(
+            store: store,
+            engine: VoiceDictationEngineFake(),
+            voiceMemoEngine: memoEngine
+        )
+
+        await coordinator.start(
+            mode: .voiceMemo,
+            language: .english,
+            scope: .guest,
+            databaseId: "db_1"
+        )
+        coordinator.stop()
+        memoEngine.finishRecording()
+        memoEngine.emitTranscription("usable partial transcript")
+        memoEngine.failTranscription()
+
+        #expect(!coordinator.isTranscribing)
+        #expect(coordinator.beginSaving())
     }
 }
 
@@ -331,6 +406,7 @@ private func postInterruption(center: NotificationCenter, source: NSObject) {
 @MainActor
 private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
     var maximumDuration: TimeInterval?
+    var recordedDuration: TimeInterval = 0
     private var url: URL?
     private var onFinished: (@MainActor (URL) -> Void)?
     private var onTranscript: (@MainActor (String) -> Void)?
@@ -370,6 +446,14 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
     func completeTranscription(_ value: String) {
         onTranscript?(value)
         onCompletion?(.success(value))
+    }
+
+    func emitTranscription(_ value: String) {
+        onTranscript?(value)
+    }
+
+    func failTranscription() {
+        onCompletion?(.failure(VoiceCaptureError.transcriptionFailed("test failure")))
     }
 }
 

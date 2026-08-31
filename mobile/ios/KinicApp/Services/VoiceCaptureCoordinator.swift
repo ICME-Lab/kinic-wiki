@@ -50,6 +50,7 @@ enum VoiceCaptureError: Error, LocalizedError, Equatable {
 
 @MainActor
 protocol VoiceMemoEngineProtocol: AnyObject {
+    var recordedDuration: TimeInterval { get }
     func supportsOnDeviceRecognition(locale: Locale) -> Bool
     func startRecording(
         to url: URL,
@@ -255,7 +256,7 @@ final class VoiceCaptureCoordinator {
     }
 
     func beginSaving() -> Bool {
-        guard phase == .reviewing else { return false }
+        guard phase == .reviewing, !isTranscribing else { return false }
         phase = .saving
         errorMessage = nil
         return true
@@ -399,6 +400,12 @@ final class VoiceCaptureCoordinator {
     }
 
     private func updateDuration(_ draft: inout VoiceCaptureDraft) {
+        if activeMode == .voiceMemo {
+            let milliseconds = max(0, Int64(voiceMemoEngine.recordedDuration * 1_000))
+            draft.durationMilliseconds = milliseconds
+            elapsedSeconds = Int(milliseconds / 1_000)
+            return
+        }
         guard let startedAt else { return }
         let milliseconds = max(0, Int64(now().timeIntervalSince(startedAt) * 1_000))
         draft.durationMilliseconds = milliseconds

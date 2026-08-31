@@ -17,6 +17,12 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
     private var notificationTokens: [NSObjectProtocol] = []
     private var wasRecordingBeforeInterruption = false
     private var didFinish = false
+    private var lastRecordedDuration: TimeInterval = 0
+    private var maximumDuration: TimeInterval = 0
+
+    var recordedDuration: TimeInterval {
+        recorder?.currentTime ?? lastRecordedDuration
+    }
 
     func supportsOnDeviceRecognition(locale: Locale) -> Bool {
         SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition == true
@@ -33,6 +39,8 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
         self.onFailure = onFailure
         recordingURL = url
         didFinish = false
+        lastRecordedDuration = 0
+        self.maximumDuration = maximumDuration
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
@@ -59,11 +67,13 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
     }
 
     func stopRecording() {
+        captureRecordedDuration()
         recorder?.stop()
     }
 
     func cancelRecording(deleteFile: Bool) {
         recorder?.delegate = nil
+        captureRecordedDuration()
         recorder?.stop()
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -76,6 +86,10 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
         onFinished = nil
         onFailure = nil
         didFinish = false
+        maximumDuration = 0
+        if deleteFile {
+            lastRecordedDuration = 0
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -140,6 +154,7 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
         guard !didFinish, let recordingURL else { return }
         didFinish = true
         removeAudioSessionObservers()
+        captureRecordedDuration()
         recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         onFinished?(recordingURL)
@@ -149,10 +164,15 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
         guard !didFinish else { return }
         didFinish = true
         removeAudioSessionObservers()
+        captureRecordedDuration()
         recorder?.stop()
         recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         onFailure?(error)
+    }
+
+    private func captureRecordedDuration() {
+        lastRecordedDuration = max(lastRecordedDuration, recorder?.currentTime ?? 0)
     }
 
     private func observeAudioSession() {
@@ -196,7 +216,11 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
             recorder?.pause()
         case .ended:
             let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionValue).contains(.shouldResume)
-            if wasRecordingBeforeInterruption, shouldResume, recorder?.record() == true {
+            let remainingDuration = max(0, maximumDuration - recordedDuration)
+            if wasRecordingBeforeInterruption,
+               shouldResume,
+               remainingDuration > 0,
+               recorder?.record(forDuration: remainingDuration) == true {
                 wasRecordingBeforeInterruption = false
             } else {
                 stopRecording()

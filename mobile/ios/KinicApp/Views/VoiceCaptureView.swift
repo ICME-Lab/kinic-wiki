@@ -157,6 +157,7 @@ private struct VoiceCaptureSessionView: View {
                 .frame(minHeight: 220)
                 .padding(8)
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                .disabled(coordinator.isTranscribing)
 
             Text(reviewPrivacyLabel)
                 .font(.footnote)
@@ -178,7 +179,7 @@ private struct VoiceCaptureSessionView: View {
 
             Button("Save to Kinic", systemImage: "square.and.arrow.down", action: save)
                 .buttonStyle(KinicPrimaryButtonStyle())
-                .disabled(!canSave || coordinator.phase == .saving)
+                .disabled(!canSave || coordinator.phase == .saving || coordinator.isTranscribing)
 
             Button("Discard Draft", role: .destructive) {
                 coordinator.discard()
@@ -258,7 +259,7 @@ private struct VoiceCaptureSessionView: View {
     }
 
     private var canSave: Bool {
-        guard model.isSignedIn, let draft = coordinator.draft else { return false }
+        guard model.isSignedIn, !coordinator.isTranscribing, let draft = coordinator.draft else { return false }
         return !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !draft.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && draft.databaseId?.isEmpty == false
