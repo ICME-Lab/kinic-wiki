@@ -70,7 +70,9 @@ private struct VoiceCaptureSessionView: View {
             )
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active, coordinator.phase == .recording {
+            if phase != .active,
+               request.mode == .dictation,
+               coordinator.phase == .recording {
                 coordinator.preserveForDismissal()
             }
         }
@@ -111,7 +113,7 @@ private struct VoiceCaptureSessionView: View {
             Text(durationLabel)
                 .font(.title2.monospacedDigit().weight(.semibold))
 
-            Text("On-device only · \(model.wikiOutputLanguage.displayName)")
+            Text(recordingPrivacyLabel)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -156,9 +158,17 @@ private struct VoiceCaptureSessionView: View {
                 .padding(8)
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
 
-            Text("Saves to \(VoiceCaptureDocument.directoryPath). Audio is not retained.")
+            Text(reviewPrivacyLabel)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            if coordinator.isTranscribing {
+                HStack {
+                    ProgressView()
+                    Text("Transcribing on this device…")
+                }
+                .font(.footnote)
+            }
 
             if let message = coordinator.errorMessage {
                 Text(message)
@@ -254,6 +264,20 @@ private struct VoiceCaptureSessionView: View {
             && draft.databaseId?.isEmpty == false
     }
 
+    private var recordingPrivacyLabel: String {
+        if request.mode == .voiceMemo {
+            return "Recording locally · \(model.wikiOutputLanguage.displayName)"
+        }
+        return "On-device only · \(model.wikiOutputLanguage.displayName)"
+    }
+
+    private var reviewPrivacyLabel: String {
+        if request.mode == .voiceMemo {
+            return "Saves only the transcript to \(VoiceCaptureDocument.directoryPath). Audio stays on this device."
+        }
+        return "Saves to \(VoiceCaptureDocument.directoryPath). Audio is not retained."
+    }
+
     private var durationLabel: String {
         let seconds = coordinator.elapsedSeconds
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
@@ -278,7 +302,7 @@ private struct VoiceCaptureSessionView: View {
                     transcript: draft.transcript,
                     databaseId: databaseId
                 )
-                coordinator.finishSaving()
+                coordinator.finishSaving(savedPath: path)
                 savedPath = path
                 savedDatabaseId = databaseId
             } catch {

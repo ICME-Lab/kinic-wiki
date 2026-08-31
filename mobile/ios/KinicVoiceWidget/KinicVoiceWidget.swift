@@ -74,10 +74,13 @@ private struct VoiceWidgetEntryView: View {
                         Label("Start Voice Note", systemImage: "mic.fill")
                             .font(.subheadline.weight(.semibold))
                     }
+                    Link(destination: WidgetVoiceCaptureLink.voiceMemo) {
+                        Label("Start Voice Memo", systemImage: "waveform")
+                            .font(.subheadline.weight(.semibold))
+                    }
                 }
                 Spacer(minLength: 0)
             }
-            .widgetURL(WidgetVoiceCaptureLink.dictation)
         default:
             VStack(spacing: 12) {
                 widgetMark
@@ -101,6 +104,24 @@ private struct VoiceWidgetEntryView: View {
 }
 
 #Preview(as: .systemSmall) {
+    KinicVoiceWidget()
+} timeline: {
+    VoiceTimelineEntry(date: .now)
+}
+
+#Preview(as: .systemMedium) {
+    KinicVoiceWidget()
+} timeline: {
+    VoiceTimelineEntry(date: .now)
+}
+
+#Preview(as: .accessoryCircular) {
+    KinicVoiceWidget()
+} timeline: {
+    VoiceTimelineEntry(date: .now)
+}
+
+#Preview(as: .accessoryRectangular) {
     KinicVoiceWidget()
 } timeline: {
     VoiceTimelineEntry(date: .now)

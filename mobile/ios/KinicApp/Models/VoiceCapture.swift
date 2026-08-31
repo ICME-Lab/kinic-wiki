@@ -69,6 +69,7 @@ struct VoiceCaptureDraft: Codable, Identifiable, Equatable, Sendable {
     var durationMilliseconds: Int64
     var databaseId: String?
     var audioFilename: String?
+    var kinicPath: String?
 
     var hasAudio: Bool {
         audioFilename?.isEmpty == false

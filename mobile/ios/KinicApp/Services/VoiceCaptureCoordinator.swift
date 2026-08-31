@@ -23,6 +23,8 @@ enum VoiceCaptureError: Error, LocalizedError, Equatable {
     case alreadyRunning
     case emptyTranscript
     case storageUnavailable(String)
+    case recordingUnavailable(String)
+    case transcriptionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -38,8 +40,31 @@ enum VoiceCaptureError: Error, LocalizedError, Equatable {
             "Speak before stopping the voice note."
         case let .storageUnavailable(message):
             "Voice draft storage is unavailable: \(message)"
+        case let .recordingUnavailable(message):
+            "Voice memo recording is unavailable: \(message)"
+        case let .transcriptionFailed(message):
+            "The audio was kept on this device, but transcription failed: \(message)"
         }
     }
+}
+
+@MainActor
+protocol VoiceMemoEngineProtocol: AnyObject {
+    func supportsOnDeviceRecognition(locale: Locale) -> Bool
+    func startRecording(
+        to url: URL,
+        maximumDuration: TimeInterval,
+        onFinished: @escaping @MainActor (URL) -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void
+    ) throws
+    func stopRecording()
+    func cancelRecording(deleteFile: Bool)
+    func transcribe(
+        url: URL,
+        locale: Locale,
+        onTranscript: @escaping @MainActor (String) -> Void,
+        onCompletion: @escaping @MainActor (Result<String, Error>) -> Void
+    )
 }
 
 @MainActor
@@ -65,23 +90,28 @@ struct VoiceCapturePermissionResult: Equatable, Sendable {
 final class VoiceCaptureCoordinator {
     private let store: VoiceCaptureStore
     private let engine: VoiceDictationEngineProtocol
+    private let voiceMemoEngine: VoiceMemoEngineProtocol
     private let now: () -> Date
     private var timerTask: Task<Void, Never>?
     private var startedAt: Date?
     private var didStart = false
+    private var activeMode: VoiceCaptureMode?
 
     private(set) var phase: VoiceCapturePhase = .idle
     private(set) var draft: VoiceCaptureDraft?
     private(set) var elapsedSeconds: Int = 0
     private(set) var errorMessage: String?
+    private(set) var isTranscribing = false
 
     init(
         store: VoiceCaptureStore,
         engine: VoiceDictationEngineProtocol = VoiceDictationEngine(),
+        voiceMemoEngine: VoiceMemoEngineProtocol = VoiceMemoEngine(),
         now: @escaping () -> Date = Date.init
     ) {
         self.store = store
         self.engine = engine
+        self.voiceMemoEngine = voiceMemoEngine
         self.now = now
     }
 
@@ -96,6 +126,7 @@ final class VoiceCaptureCoordinator {
             return
         }
         didStart = true
+        activeMode = mode
         phase = .requestingPermission
         errorMessage = nil
         let permission = await engine.requestPermissions()
@@ -109,7 +140,10 @@ final class VoiceCaptureCoordinator {
         }
 
         let locale = Locale(identifier: language.rawValue)
-        guard engine.supportsOnDeviceRecognition(locale: locale) else {
+        let supportsOnDevice = mode == .dictation
+            ? engine.supportsOnDeviceRecognition(locale: locale)
+            : voiceMemoEngine.supportsOnDeviceRecognition(locale: locale)
+        guard supportsOnDevice else {
             fail(VoiceCaptureError.onDeviceRecognitionUnavailable(language.displayName))
             return
         }
@@ -126,21 +160,39 @@ final class VoiceCaptureCoordinator {
             language: language,
             durationMilliseconds: 0,
             databaseId: databaseId,
-            audioFilename: nil
+            audioFilename: nil,
+            kinicPath: nil
         )
         startedAt = capturedAt
         elapsedSeconds = 0
 
         do {
-            try engine.start(
-                locale: locale,
-                onTranscript: { [weak self] transcript, isFinal in
-                    self?.receiveTranscript(transcript, isFinal: isFinal)
-                },
-                onFailure: { [weak self] error in
-                    self?.stopAfterFailure(error)
-                }
-            )
+            switch mode {
+            case .dictation:
+                try engine.start(
+                    locale: locale,
+                    onTranscript: { [weak self] transcript, isFinal in
+                        self?.receiveTranscript(transcript, isFinal: isFinal)
+                    },
+                    onFailure: { [weak self] error in
+                        self?.stopAfterFailure(error)
+                    }
+                )
+            case .voiceMemo:
+                let audioURL = try store.makeAudioURL(id: id, scope: scope)
+                try voiceMemoEngine.startRecording(
+                    to: audioURL,
+                    maximumDuration: mode.maximumDuration,
+                    onFinished: { [weak self] url in
+                        self?.finishVoiceMemoRecording(audioURL: url)
+                    },
+                    onFailure: { [weak self] error in
+                        self?.finishVoiceMemoRecording(error: error)
+                    }
+                )
+                draft?.audioFilename = audioURL.lastPathComponent
+                if let draft { try store.save(draft) }
+            }
             phase = .recording
             scheduleTimer(maximumDuration: mode.maximumDuration)
         } catch {
@@ -150,10 +202,14 @@ final class VoiceCaptureCoordinator {
 
     func stop() {
         guard phase == .recording else { return }
-        engine.stop()
         timerTask?.cancel()
         timerTask = nil
         updateDuration()
+        if activeMode == .voiceMemo {
+            voiceMemoEngine.stopRecording()
+            return
+        }
+        engine.stop()
         guard let draft,
               !draft.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             fail(VoiceCaptureError.emptyTranscript)
@@ -169,10 +225,15 @@ final class VoiceCaptureCoordinator {
 
     func preserveForDismissal() {
         if phase == .recording {
-            engine.stop()
             timerTask?.cancel()
             timerTask = nil
             updateDuration()
+            if activeMode == .voiceMemo {
+                voiceMemoEngine.stopRecording()
+                if let draft { try? store.save(draft) }
+                return
+            }
+            engine.stop()
         }
         guard let draft,
               !draft.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -203,12 +264,18 @@ final class VoiceCaptureCoordinator {
         return true
     }
 
-    func finishSaving() {
-        guard let draft else { return }
-        try? store.remove(draft)
+    func finishSaving(savedPath: String) {
+        guard var draft else { return }
+        if draft.mode == .voiceMemo {
+            draft.kinicPath = savedPath
+            try? store.save(draft)
+        } else {
+            try? store.remove(draft)
+        }
         self.draft = nil
         phase = .idle
         didStart = false
+        activeMode = nil
     }
 
     func savingFailed(_ error: Error) {
@@ -221,6 +288,7 @@ final class VoiceCaptureCoordinator {
 
     func discard() {
         engine.cancel()
+        voiceMemoEngine.cancelRecording(deleteFile: true)
         timerTask?.cancel()
         timerTask = nil
         if let draft {
@@ -230,6 +298,7 @@ final class VoiceCaptureCoordinator {
         phase = .idle
         errorMessage = nil
         didStart = false
+        activeMode = nil
     }
 
     private func receiveTranscript(_ transcript: String, isFinal: Bool) {
@@ -254,6 +323,60 @@ final class VoiceCaptureCoordinator {
             errorMessage = "Recording stopped: \(error.localizedDescription)"
         } else {
             fail(error)
+        }
+    }
+
+    private func finishVoiceMemoRecording(audioURL: URL) {
+        guard activeMode == .voiceMemo, phase == .recording, var draft else { return }
+        timerTask?.cancel()
+        timerTask = nil
+        updateDuration(&draft)
+        draft.audioFilename = audioURL.lastPathComponent
+        self.draft = draft
+        try? store.save(draft)
+        phase = .reviewing
+        isTranscribing = true
+        let locale = Locale(identifier: draft.language.rawValue)
+        voiceMemoEngine.transcribe(
+            url: audioURL,
+            locale: locale,
+            onTranscript: { [weak self] transcript in
+                self?.receiveVoiceMemoTranscript(transcript)
+            },
+            onCompletion: { [weak self] result in
+                self?.completeVoiceMemoTranscription(result)
+            }
+        )
+    }
+
+    private func finishVoiceMemoRecording(error: Error) {
+        guard activeMode == .voiceMemo, var draft else { return }
+        timerTask?.cancel()
+        timerTask = nil
+        updateDuration(&draft)
+        self.draft = draft
+        try? store.save(draft)
+        phase = .reviewing
+        isTranscribing = false
+        errorMessage = VoiceCaptureError.recordingUnavailable(error.localizedDescription).localizedDescription
+    }
+
+    private func receiveVoiceMemoTranscript(_ transcript: String) {
+        guard var draft else { return }
+        draft.transcript = transcript
+        self.draft = draft
+        try? store.save(draft)
+    }
+
+    private func completeVoiceMemoTranscription(_ result: Result<String, Error>) {
+        isTranscribing = false
+        switch result {
+        case let .success(transcript):
+            receiveVoiceMemoTranscript(transcript)
+            errorMessage = nil
+        case let .failure(error):
+            errorMessage = VoiceCaptureError.transcriptionFailed(error.localizedDescription).localizedDescription
+            if let draft { try? store.save(draft) }
         }
     }
 
@@ -287,6 +410,7 @@ final class VoiceCaptureCoordinator {
 
     private func fail(_ error: Error) {
         engine.cancel()
+        voiceMemoEngine.cancelRecording(deleteFile: draft?.hasAudio != true)
         timerTask?.cancel()
         timerTask = nil
         phase = .failed
