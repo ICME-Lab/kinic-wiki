@@ -97,6 +97,7 @@ final class VoiceCaptureCoordinator {
     private var startedAt: Date?
     private var didStart = false
     private var activeMode: VoiceCaptureMode?
+    private var startAttemptID: UUID?
 
     private(set) var phase: VoiceCapturePhase = .idle
     private(set) var draft: VoiceCaptureDraft?
@@ -123,11 +124,18 @@ final class VoiceCaptureCoordinator {
         databaseId: String?
     ) async {
         guard !didStart, phase == .idle || phase == .failed else { return }
+        let attemptID = UUID()
+        startAttemptID = attemptID
         didStart = true
         activeMode = mode
         phase = .requestingPermission
         errorMessage = nil
         let permission = await engine.requestPermissions()
+        guard startAttemptID == attemptID, phase == .requestingPermission else { return }
+        guard !Task.isCancelled else {
+            cancelPendingStart()
+            return
+        }
         guard permission.microphoneGranted else {
             fail(VoiceCaptureError.microphonePermissionDenied)
             return
@@ -191,6 +199,7 @@ final class VoiceCaptureCoordinator {
                 draft?.audioFilename = audioURL.lastPathComponent
                 if let draft { try store.save(draft) }
             }
+            startAttemptID = nil
             phase = .recording
             scheduleTimer(maximumDuration: mode.maximumDuration)
         } catch {
@@ -222,6 +231,10 @@ final class VoiceCaptureCoordinator {
     }
 
     func preserveForDismissal() {
+        if phase == .requestingPermission {
+            cancelPendingStart()
+            return
+        }
         if phase == .recording {
             timerTask?.cancel()
             timerTask = nil
@@ -285,6 +298,7 @@ final class VoiceCaptureCoordinator {
     }
 
     func discard() {
+        startAttemptID = nil
         engine.cancel()
         voiceMemoEngine.cancelRecording(deleteFile: true)
         timerTask?.cancel()
@@ -413,12 +427,27 @@ final class VoiceCaptureCoordinator {
     }
 
     private func fail(_ error: Error) {
+        startAttemptID = nil
         engine.cancel()
         voiceMemoEngine.cancelRecording(deleteFile: draft?.hasAudio != true)
         timerTask?.cancel()
         timerTask = nil
         phase = .failed
         errorMessage = error.localizedDescription
+    }
+
+    private func cancelPendingStart() {
+        startAttemptID = nil
+        engine.cancel()
+        timerTask?.cancel()
+        timerTask = nil
+        startedAt = nil
+        draft = nil
+        elapsedSeconds = 0
+        phase = .idle
+        errorMessage = nil
+        didStart = false
+        activeMode = nil
     }
 }
 

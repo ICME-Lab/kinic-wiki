@@ -352,19 +352,86 @@ struct VoiceCaptureTests {
         #expect(!coordinator.isTranscribing)
         #expect(coordinator.beginSaving())
     }
+
+    @MainActor
+    @Test
+    func coordinatorCancelsPermissionStartupWhenDismissed() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let engine = VoiceDictationEngineFake()
+        engine.holdPermissions = true
+        let coordinator = VoiceCaptureCoordinator(store: store, engine: engine)
+
+        let startTask = Task {
+            await coordinator.start(
+                mode: .dictation,
+                language: .japanese,
+                scope: .guest,
+                databaseId: nil
+            )
+        }
+        await waitForPermissionRequest(engine)
+        #expect(coordinator.phase == .requestingPermission)
+
+        coordinator.preserveForDismissal()
+        coordinator.preserveForDismissal()
+        engine.resolvePermissions()
+        await startTask.value
+
+        #expect(coordinator.phase == .idle)
+        #expect(coordinator.draft == nil)
+        #expect(coordinator.elapsedSeconds == 0)
+        #expect(engine.startCount == 0)
+        #expect(store.load(scope: .guest).isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func coordinatorCanRetryAfterPermissionStartupCancellation() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let engine = VoiceDictationEngineFake()
+        engine.holdPermissions = true
+        let coordinator = VoiceCaptureCoordinator(store: store, engine: engine)
+
+        let cancelledStart = Task {
+            await coordinator.start(mode: .dictation, language: .english, scope: .guest, databaseId: nil)
+        }
+        await waitForPermissionRequest(engine)
+        coordinator.discard()
+        engine.resolvePermissions()
+        await cancelledStart.value
+
+        engine.holdPermissions = false
+        await coordinator.start(mode: .dictation, language: .english, scope: .guest, databaseId: nil)
+
+        #expect(coordinator.phase == .recording)
+        #expect(engine.permissionRequestCount == 2)
+        #expect(engine.startCount == 1)
+    }
 }
 
 @MainActor
 private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
     var permission = VoiceCapturePermissionResult(microphoneGranted: true, speechGranted: true)
     var supportsOnDevice = true
+    var holdPermissions = false
     private(set) var permissionRequestCount = 0
     private(set) var cancelCount = 0
+    private(set) var startCount = 0
+    private var permissionContinuation: CheckedContinuation<VoiceCapturePermissionResult, Never>?
     private var onTranscript: (@MainActor (String, Bool) -> Void)?
     private var onFailure: (@MainActor (Error) -> Void)?
 
     func requestPermissions() async -> VoiceCapturePermissionResult {
         permissionRequestCount += 1
+        if holdPermissions {
+            return await withCheckedContinuation { continuation in
+                permissionContinuation = continuation
+            }
+        }
         return permission
     }
     func supportsOnDeviceRecognition(locale: Locale) -> Bool { supportsOnDevice }
@@ -374,6 +441,7 @@ private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
         onTranscript: @escaping @MainActor (String, Bool) -> Void,
         onFailure: @escaping @MainActor (Error) -> Void
     ) throws {
+        startCount += 1
         self.onTranscript = onTranscript
         self.onFailure = onFailure
     }
@@ -391,6 +459,19 @@ private final class VoiceDictationEngineFake: VoiceDictationEngineProtocol {
 
     func emitFailure(_ error: Error) {
         onFailure?(error)
+    }
+
+    func resolvePermissions() {
+        holdPermissions = false
+        permissionContinuation?.resume(returning: permission)
+        permissionContinuation = nil
+    }
+}
+
+@MainActor
+private func waitForPermissionRequest(_ engine: VoiceDictationEngineFake) async {
+    while engine.permissionRequestCount == 0 {
+        await Task.yield()
     }
 }
 
