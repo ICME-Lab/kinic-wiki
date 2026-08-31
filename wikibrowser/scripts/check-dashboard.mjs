@@ -12,6 +12,34 @@ const adminShell = readProjectFile("../components/admin-shell.tsx");
 const profile = readProjectFile("../app/profile/profile-client.tsx");
 const metrics = readProjectFile("../app/metrics/metrics-client.tsx");
 
+function sourceSection(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(start, -1, `Missing source section start: ${startMarker}`);
+  assert.notEqual(end, -1, `Missing source section end: ${endMarker}`);
+  return source.slice(start, end);
+}
+
+function assertOrdered(source, markers) {
+  let cursor = 0;
+  for (const marker of markers) {
+    const index = source.indexOf(marker, cursor);
+    assert.notEqual(index, -1, `Missing or out-of-order source marker: ${marker}`);
+    cursor = index + marker.length;
+  }
+}
+
+const refreshDatabasesSource = sourceSection(
+  dashboardHome,
+  "const refreshDatabases = useCallback",
+  "useEffect(() => {"
+);
+const createDatabaseSource = sourceSection(
+  dashboardHome,
+  "async function createDatabase()",
+  "const myDatabases ="
+);
+
 assert.match(dashboardClient, /const canViewCyclesHistory = \(database\?\.role === "writer" \|\| database\?\.role === "owner"\) && isActiveDatabase/);
 assert.match(dashboardUi, /canViewCyclesHistory/);
 assert.match(dashboardClient, /setActiveTab\("access"\)/);
@@ -23,6 +51,9 @@ assert.doesNotMatch(dashboardUi.match(/export function CyclesHistoryPanel[\s\S]*
 
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
+assert.match(dashboardHome, /freeGrantError/);
+assert.match(dashboardHome, /Initial free database grant status unavailable/);
+assert.match(dashboardHome, /Retry free grant check/);
 assert.match(dashboardHome, /Free grant available/);
 assert.match(dashboardHome, /Wallet payment required/);
 assert.match(dashboardHome, /wallet approval is not required/);
@@ -34,6 +65,31 @@ assert.doesNotMatch(dashboardHome, /fundingSuccessMessage \? <StatusPanel/);
 assert.match(dashboardHome, /result\.initial_free_grant_applied \|\| result\.status === "active"/);
 assert.match(dashboardHome, /Database created pending\. Fund it from Cycles before opening \/Knowledge\./);
 assert.doesNotMatch(dashboardHome, /if \(freeGrantAvailable\) \{/);
+assert.doesNotMatch(dashboardHome, /if \(!freeGrantAvailable && \(!wallet \|\| !walletPaymentAvailable\)\) return/);
+assert.match(dashboardHome, /const fundingModeAtSubmit = freeGrantStatus\.available \? "free-grant" : "wallet"/);
+assert.match(createDatabaseSource, /} else {\s*if \(walletBusyProvider !== null \|\| !wallet \|\| !walletPaymentAvailable\) return;\s*fundingAtSubmit = \{ mode: fundingModeAtSubmit, wallet \};/);
+assert.match(createDatabaseSource, /if \(fundingAtSubmit\.mode === "free-grant"\) \{/);
+assert.match(dashboardHome, /walletRequiredForCreate && walletBusyProvider !== null/);
+assertOrdered(refreshDatabasesSource, [
+  "await Promise.allSettled",
+  "if (!isCurrentRefresh()) return;",
+  "setFreeGrantStatus(",
+  'if (freeGrantResult.status === "rejected")',
+  "setFreeGrantError(",
+  "setCreateDialogOpen(false);",
+  "setFreeGrantError(null);",
+  'if (publicResult.status === "rejected" && memberResult.status === "rejected")'
+]);
+assertOrdered(createDatabaseSource, [
+  'const fundingModeAtSubmit = freeGrantStatus.available ? "free-grant" : "wallet";',
+  "walletBusyProvider !== null || !wallet || !walletPaymentAvailable",
+  "fundingAtSubmit = { mode: fundingModeAtSubmit, wallet };",
+  "const result = await createDatabaseAuthenticated",
+  'if (fundingAtSubmit.mode === "free-grant")',
+  "await refreshDatabases(authClient);",
+  "return;",
+  "purchaseCyclesWithWallet"
+]);
 assert.match(dashboardHome, /KinicAfterApproveError/);
 assert.match(dashboardHome, /purchase_database_cycles failed/);
 assert.match(dashboardHome, /Retry cycles purchase for the same database from Cycles/);

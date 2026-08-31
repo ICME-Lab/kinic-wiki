@@ -25,6 +25,29 @@ testWithII.beforeEach(async ({ iiPage }) => {
   await iiPage.waitReady({ url: II_PROVIDER_URL, timeout: 60_000 });
 });
 
+testWithII("creates the initial free database without a wallet and gates the second create", async ({ page }) => {
+  await installVirtualAuthenticator(page);
+  await page.goto("/dashboard");
+  await createLocalIdentity(page);
+  await expect(page.getByRole("heading", { name: "My databases", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem("kinic-wiki.wallet-session"))).toBeNull();
+
+  await page.getByRole("button", { name: "Create database", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "Create database" });
+  await expect(dialog.getByText("Free grant available: wallet approval is not required.", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Database name" }).fill(`Free database e2e ${Date.now()}`);
+  await expect(dialog.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/db\/db_[a-z0-9]+\/Knowledge$/);
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Create database", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Create database" });
+  await expect(dialog.getByText("Wallet payment required: wallet approval pays directly from ledger balance.", { exact: false })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Database name" }).fill(`Paid database e2e ${Date.now()}`);
+  await expect(dialog.getByRole("button", { name: "Create with wallet", exact: true })).toBeDisabled();
+});
+
 testWithII("reads a private database after Internet Identity login", async ({ page, browser }, testInfo) => {
   await installVirtualAuthenticator(page);
   await page.goto("/dashboard");

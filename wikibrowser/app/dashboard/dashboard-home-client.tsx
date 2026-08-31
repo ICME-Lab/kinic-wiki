@@ -47,6 +47,7 @@ export function DashboardHomeClient() {
   const [purchasedDatabaseIds, setPurchasedDatabaseIds] = useState<Set<string>>(() => new Set());
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [freeGrantStatus, setFreeGrantStatus] = useState<InitialFreeDatabaseGrantStatus | null>(null);
+  const [freeGrantError, setFreeGrantError] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
@@ -69,6 +70,7 @@ export function DashboardHomeClient() {
       setError(null);
       setPublicError(null);
       setWarning(null);
+      setFreeGrantError(null);
       try {
         const identity = client?.getIdentity() ?? null;
         const [cyclesResult, freeGrantResult, publicResult, memberResult, entitlementResult] = await Promise.allSettled([
@@ -78,6 +80,14 @@ export function DashboardHomeClient() {
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
           identity ? listPurchasedDatabaseIds(canisterId, identity) : Promise.resolve(new Set<string>())
         ]);
+        if (!isCurrentRefresh()) return;
+        setFreeGrantStatus(freeGrantResult.status === "fulfilled" ? freeGrantResult.value : null);
+        if (freeGrantResult.status === "rejected") {
+          setFreeGrantError(`Initial free database grant status unavailable: ${errorMessage(freeGrantResult.reason)}`);
+          setCreateDialogOpen(false);
+        } else {
+          setFreeGrantError(null);
+        }
         if (publicResult.status === "rejected" && memberResult.status === "rejected") {
           throw new Error(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
         }
@@ -85,11 +95,9 @@ export function DashboardHomeClient() {
         const memberDatabases = memberResult.status === "fulfilled" ? memberResult.value : [];
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         const nextPurchasedDatabaseIds = entitlementResult.status === "fulfilled" ? entitlementResult.value : new Set<string>();
-        if (!isCurrentRefresh()) return;
         setDatabases(nextDatabases);
         setPurchasedDatabaseIds(nextPurchasedDatabaseIds);
         setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
-        setFreeGrantStatus(freeGrantResult.status === "fulfilled" ? freeGrantResult.value : null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
         setWarning(listWarning(memberResult, entitlementResult));
         setLoadState("ready");
@@ -128,6 +136,7 @@ export function DashboardHomeClient() {
       setCyclesBillingConfig(null);
       setPurchasedDatabaseIds(new Set());
       setFreeGrantStatus(null);
+      setFreeGrantError(null);
       setCreateDialogOpen(false);
       setNewDatabaseName("");
       setWalletMessage(null);
@@ -140,6 +149,7 @@ export function DashboardHomeClient() {
   const walletReadyToFundCreate = balanceCanFundCreate(walletBalance, createDatabaseWalletRequiredBalanceE8s());
   const walletPaymentAvailable = walletReadyToFundCreate;
   const freeGrantAvailable = freeGrantStatus?.available === true;
+  const walletRequiredForCreate = freeGrantStatus?.available === false;
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
@@ -150,7 +160,17 @@ export function DashboardHomeClient() {
       setLoadState("error");
       return;
     }
-    if (!freeGrantAvailable && (!wallet || !walletPaymentAvailable)) return;
+    if (!freeGrantStatus || freeGrantError) return;
+    const fundingModeAtSubmit = freeGrantStatus.available ? "free-grant" : "wallet";
+    let fundingAtSubmit:
+      | { mode: "free-grant" }
+      | { mode: "wallet"; wallet: NonNullable<typeof wallet> };
+    if (fundingModeAtSubmit === "free-grant") {
+      fundingAtSubmit = { mode: fundingModeAtSubmit };
+    } else {
+      if (walletBusyProvider !== null || !wallet || !walletPaymentAvailable) return;
+      fundingAtSubmit = { mode: fundingModeAtSubmit, wallet };
+    }
     setCreating(true);
     setError(null);
     setWalletMessage(null);
@@ -171,18 +191,18 @@ export function DashboardHomeClient() {
         router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
         return;
       }
-      if (!wallet || !walletPaymentAvailable) {
+      if (fundingAtSubmit.mode === "free-grant") {
         setWalletMessage("Database created pending. Fund it from Cycles before opening /Knowledge.");
         await refreshDatabases(authClient);
         return;
       }
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
-      setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
-      const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
+      setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(fundingAtSubmit.wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
+      const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, fundingAtSubmit.wallet);
       setWalletMessage(
-        `${fundingProviderLabel(wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
+        `${fundingProviderLabel(fundingAtSubmit.wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
       );
-      await refreshWalletBalance(wallet);
+      await refreshWalletBalance(fundingAtSubmit.wallet);
       await refreshDatabases(authClient);
       router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
@@ -205,13 +225,17 @@ export function DashboardHomeClient() {
   const publicDatabases = databases.filter((database) => !database.member && database.publicReadable);
   const trimmedDatabaseName = newDatabaseName.trim();
   const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
-  const createUnavailable = !principal || loadState === "loading" || walletBusyProvider !== null;
-  const selectedPaymentReady = freeGrantAvailable || walletPaymentAvailable;
+  const createUnavailable =
+    !principal ||
+    loadState === "loading" ||
+    freeGrantStatus === null ||
+    freeGrantError !== null ||
+    (walletRequiredForCreate && walletBusyProvider !== null);
   const createDisabled =
     creating ||
     createUnavailable ||
-    (!freeGrantAvailable && walletBalanceLoading) ||
-    !selectedPaymentReady ||
+    (walletRequiredForCreate && walletBalanceLoading) ||
+    (walletRequiredForCreate && !walletPaymentAvailable) ||
     databaseNameValidationError !== null;
   const createButtonLabel = databaseCreateButtonLabel({
     creating,
@@ -244,6 +268,24 @@ export function DashboardHomeClient() {
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {walletBalanceError ? <StatusPanel tone="error" message={walletBalanceError} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
+        {freeGrantError ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <StatusPanel tone="error" message={freeGrantError} />
+            </div>
+            <button
+              className="self-start rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-60 sm:self-auto"
+              disabled={!authClient || loadState === "loading"}
+              type="button"
+              onClick={() => {
+                if (!authClient) return;
+                void refreshDatabases(authClient);
+              }}
+            >
+              Retry free grant check
+            </button>
+          </div>
+        ) : null}
         {walletMessage ? <StatusPanel tone="info" message={walletMessage} /> : null}
         <CreateDatabaseDialog
           createDisabled={createDisabled}
