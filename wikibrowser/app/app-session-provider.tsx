@@ -4,9 +4,10 @@
 // What: shares Internet Identity and wallet session state across dashboard and cycles pages.
 // Why: funding can move between pages without losing local wallet context.
 import { AuthClient } from "@icp-sdk/auth/client";
+import type { Identity } from "@icp-sdk/core/agent";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
+import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, getPrincipalKinicLedgerBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import type { HeaderWalletProvider } from "./home-ui";
 
 type AppSessionContext = {
@@ -14,6 +15,9 @@ type AppSessionContext = {
   authError: string | null;
   authLoading: boolean;
   authReady: boolean;
+  identityLedgerBalance: string | null;
+  identityLedgerBalanceError: string | null;
+  identityLedgerBalanceLoading: boolean;
   principal: string | null;
   wallet: ConnectedKinicWallet | null;
   walletBalance: string | null;
@@ -21,10 +25,12 @@ type AppSessionContext = {
   walletBalanceLoading: boolean;
   walletBusyProvider: HeaderWalletProvider | null;
   walletControlsLocked: boolean;
+  walletSessionReady: boolean;
   connectWallet: (provider: HeaderWalletProvider) => Promise<void>;
   disconnectWallet: (provider: HeaderWalletProvider) => void;
   logout: () => Promise<void>;
   login: () => Promise<void>;
+  refreshIdentityLedgerBalance: () => Promise<void>;
   refreshWalletBalance: (wallet: ConnectedKinicWallet) => Promise<void>;
   setWalletControlsLocked: (locked: boolean) => void;
 };
@@ -34,18 +40,23 @@ const AppSession = createContext<AppSessionContext | null>(null);
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
   const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
+  const identityLedgerBalanceSeqRef = useRef(0);
   const walletBalanceSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
+  const [identityLedgerBalance, setIdentityLedgerBalance] = useState<string | null>(null);
+  const [identityLedgerBalanceError, setIdentityLedgerBalanceError] = useState<string | null>(null);
+  const [identityLedgerBalanceLoading, setIdentityLedgerBalanceLoading] = useState(false);
   const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
   const [walletBusyProvider, setWalletBusyProvider] = useState<HeaderWalletProvider | null>(null);
   const [walletControlsLocked, setWalletControlsLockedState] = useState(false);
+  const [walletSessionReady, setWalletSessionReady] = useState(false);
 
   const setWalletControlsLocked = useCallback((locked: boolean) => {
     setWalletControlsLockedState(locked);
@@ -74,6 +85,43 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setWalletBusyProvider(null);
     clearStoredWallet();
   }, [clearStoredWallet]);
+
+  const clearIdentityLedgerBalance = useCallback(() => {
+    identityLedgerBalanceSeqRef.current += 1;
+    setIdentityLedgerBalance(null);
+    setIdentityLedgerBalanceLoading(false);
+    setIdentityLedgerBalanceError(null);
+  }, []);
+
+  const refreshIdentityLedgerBalanceFor = useCallback(
+    async (identity: Identity, identityPrincipal: string) => {
+      const balanceSeq = (identityLedgerBalanceSeqRef.current += 1);
+      const isCurrentBalance = () => balanceSeq === identityLedgerBalanceSeqRef.current;
+      setIdentityLedgerBalance(null);
+      setIdentityLedgerBalanceLoading(true);
+      setIdentityLedgerBalanceError(null);
+      try {
+        const balance = await getPrincipalKinicLedgerBalance(canisterId, identityPrincipal);
+        if (!isCurrentBalance()) return;
+        setIdentityLedgerBalance(balance);
+      } catch (cause) {
+        if (!isCurrentBalance()) return;
+        setIdentityLedgerBalance(null);
+        setIdentityLedgerBalanceError(`Internet Identity KINIC balance unavailable: ${errorMessage(cause)}`);
+      } finally {
+        if (isCurrentBalance()) setIdentityLedgerBalanceLoading(false);
+      }
+    },
+    [canisterId]
+  );
+
+  const refreshIdentityLedgerBalance = useCallback(async () => {
+    if (!authClient || !principal) {
+      clearIdentityLedgerBalance();
+      return;
+    }
+    await refreshIdentityLedgerBalanceFor(authClient.getIdentity(), principal);
+  }, [authClient, clearIdentityLedgerBalance, principal, refreshIdentityLedgerBalanceFor]);
 
   const refreshWalletBalance = useCallback(
     async (nextWallet: ConnectedKinicWallet) => {
@@ -159,13 +207,14 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     try {
       await authClient.logout();
       setPrincipal(null);
+      clearIdentityLedgerBalance();
       clearWallet();
     } catch (cause) {
       setAuthError(errorMessage(cause));
     } finally {
       setAuthLoading(false);
     }
-  }, [authClient, clearWallet]);
+  }, [authClient, clearIdentityLedgerBalance, clearWallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,6 +223,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       const storedWallet = readStoredWallet();
       if (storedWallet) setWallet(storedWallet);
+      setWalletSessionReady(true);
     });
 
     AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
@@ -198,6 +248,21 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [syncAuth]);
 
   useEffect(() => {
+    if (!authClient || !principal) {
+      clearIdentityLedgerBalance();
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void refreshIdentityLedgerBalanceFor(authClient.getIdentity(), principal);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authClient, clearIdentityLedgerBalance, principal, refreshIdentityLedgerBalanceFor]);
+
+  useEffect(() => {
     if (!wallet) return;
     let cancelled = false;
     queueMicrotask(() => {
@@ -216,6 +281,9 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         authError,
         authLoading,
         authReady,
+        identityLedgerBalance,
+        identityLedgerBalanceError,
+        identityLedgerBalanceLoading,
         principal,
         wallet,
         walletBalance,
@@ -223,10 +291,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         walletBalanceLoading,
         walletBusyProvider,
         walletControlsLocked,
+        walletSessionReady,
         connectWallet,
         disconnectWallet,
         login,
         logout,
+        refreshIdentityLedgerBalance,
         refreshWalletBalance,
         setWalletControlsLocked
       }}

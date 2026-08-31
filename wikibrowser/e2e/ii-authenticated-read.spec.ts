@@ -2,9 +2,12 @@ import { expect, testWithII } from "@dfinity/internet-identity-playwright";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { CDPSession, Page } from "@playwright/test";
 import { mkdir, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   createDatabaseAuthenticated,
+  getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
   mkdirNodeAuthenticated,
   writeNodeAuthenticated
@@ -18,6 +21,7 @@ const E2E_TITLE = "E2E Private Note";
 const E2E_LINKED_TITLE = "E2E Linked Note";
 const E2E_TOKEN = `e2e-private-token-${Date.now()}`;
 const IMPORT_ROOT_NAME = "folder-import-fixture";
+const execFile = promisify(execFileCallback);
 
 testWithII.skip(!CANISTER_ID, "VITE_KINIC_WIKI_CANISTER_ID is required.");
 
@@ -25,16 +29,20 @@ testWithII.beforeEach(async ({ iiPage }) => {
   await iiPage.waitReady({ url: II_PROVIDER_URL, timeout: 60_000 });
 });
 
-testWithII("creates the initial free database without a wallet and gates the second create", async ({ page }) => {
+testWithII("creates and activates a paid second database from Internet Identity without a wallet", async ({ page }) => {
   await installVirtualAuthenticator(page);
   await page.goto("/dashboard");
   await createLocalIdentity(page);
   await expect(page.getByRole("heading", { name: "My databases", exact: true })).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem("kinic-wiki.wallet-session"))).toBeNull();
+  const principalLabel = await page.locator('[aria-label^="Principal "]').getAttribute("aria-label");
+  const principal = principalLabel?.slice("Principal ".length) ?? "";
+  expect(principal).not.toEqual("");
+  await seedLocalKinic(principal, 200_000_000n);
 
   await page.getByRole("button", { name: "Create database", exact: true }).click();
   let dialog = page.getByRole("dialog", { name: "Create database" });
-  await expect(dialog.getByText("Free grant available: wallet approval is not required.", { exact: false })).toBeVisible();
+  await expect(dialog.getByText(/^Requires [0-9,]+ cycles\.$/)).toBeVisible();
   await dialog.getByRole("textbox", { name: "Database name" }).fill(`Free database e2e ${Date.now()}`);
   await expect(dialog.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
@@ -43,9 +51,16 @@ testWithII("creates the initial free database without a wallet and gates the sec
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Create database", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "Create database" });
-  await expect(dialog.getByText("Wallet payment required: wallet approval pays directly from ledger balance.", { exact: false })).toBeVisible();
+  await expect(dialog.getByText("Requires 1.000 KINIC.", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Payment source", { exact: true })).toBeVisible();
+  await expect(dialog.locator('input[value="ii"]')).toBeChecked();
+  await expect(dialog.getByText("Required balance", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Refresh balance", exact: true }).click();
+  await expect(dialog.getByText("2.000 KINIC", { exact: true })).toBeVisible();
   await dialog.getByRole("textbox", { name: "Database name" }).fill(`Paid database e2e ${Date.now()}`);
-  await expect(dialog.getByRole("button", { name: "Create with wallet", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Create with Internet Identity", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Create with Internet Identity", exact: true }).click();
+  await expect(page).toHaveURL(/\/db\/db_[a-z0-9]+\/Knowledge$/);
 });
 
 testWithII("reads a private database after Internet Identity login", async ({ page, browser }, testInfo) => {
@@ -327,6 +342,23 @@ testWithII("publishes one node without exposing the private database", async ({ 
   await expect(anonymousPage.getByRole("heading", { name: "Not found" })).toBeVisible();
   await anonymousContext.close();
 });
+
+async function seedLocalKinic(recipientPrincipal: string, amountE8s: bigint): Promise<void> {
+  const config = await getCyclesBillingConfig(CANISTER_ID);
+  const argument = `(record {
+    to = record { owner = principal "${recipientPrincipal}"; subaccount = null };
+    fee = null;
+    memo = null;
+    from_subaccount = null;
+    created_at_time = null;
+    amount = ${amountE8s} : nat
+  })`;
+  await execFile(
+    "icp",
+    ["canister", "call", config.kinicLedgerCanisterId, "icrc1_transfer", argument, "-e", process.env.ICP_ENVIRONMENT ?? "local-wiki", "-o", "candid"],
+    { maxBuffer: 1024 * 1024 }
+  );
+}
 
 async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
   const seedIdentity = Ed25519KeyIdentity.generate();

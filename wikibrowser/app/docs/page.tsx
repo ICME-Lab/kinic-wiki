@@ -51,6 +51,16 @@ export default function DocsPage() {
         </section>
 
         <AdminPanel className="min-w-0" padding="lg">
+          <h2 className="text-lg font-semibold text-ink">Browser KINIC payments</h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
+            Database creation, Cycles, and Marketplace purchases can use either the KINIC default account of the logged-in Internet Identity or a connected OISY/Plug wallet. Choose one payment source for each purchase; balances are kept separate and are never combined or used as an automatic fallback.
+          </p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
+            The selected account must cover the payment and two ledger fees: paid database creation requires 1.000 KINIC, while Cycles and Marketplace require the entered amount or listing price plus 0.002 KINIC.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel className="min-w-0" padding="lg">
           <div className="flex items-center gap-2">
             <Boxes aria-hidden className="text-accent" size={18} />
             <h2 className="text-lg font-semibold text-ink">Skill workflows</h2>

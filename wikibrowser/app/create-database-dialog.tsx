@@ -3,15 +3,16 @@
 // Home dashboard database creation dialog: collect the display name before creating a DB.
 
 import { Plus, X } from "lucide-react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { useModalDialog } from "@/components/use-modal-dialog";
 export function CreateDatabaseDialog({
   createDisabled,
   createLabel,
   creating,
   databaseName,
+  fundingSourceContent,
+  fundingRequired,
   open,
-  paymentNote,
   requiredBalanceLabel,
   validationError,
   onCancel,
@@ -22,8 +23,9 @@ export function CreateDatabaseDialog({
   createLabel: string;
   creating: boolean;
   databaseName: string;
+  fundingSourceContent: ReactNode;
+  fundingRequired: boolean;
   open: boolean;
-  paymentNote: string;
   requiredBalanceLabel: string;
   validationError: string | null;
   onCancel: () => void;
@@ -53,7 +55,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Create requires {requiredBalanceLabel}. {paymentNote}
+              Requires {requiredBalanceLabel}.
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
@@ -77,6 +79,7 @@ export function CreateDatabaseDialog({
           <p className="text-xs leading-5 text-muted">Use 1..80 characters. The name can be changed later.</p>
           {databaseName.trim().length > 0 && validationError ? <p className="text-xs text-red-700">{validationError}</p> : null}
         </div>
+        {fundingRequired ? <div className="mt-5">{fundingSourceContent}</div> : null}
         <div className="mt-5 flex justify-end gap-2">
           <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
             Cancel

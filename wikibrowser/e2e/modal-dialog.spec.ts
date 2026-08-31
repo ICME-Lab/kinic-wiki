@@ -34,9 +34,16 @@ test("create database dialog is modal and restores focus", async ({ page }) => {
           createLabel: "Create",
           creating,
           databaseName: "",
+          fundingRequired: true,
+          fundingSourceContent: React.createElement(
+            "section",
+            { "aria-label": "Payment source" },
+            React.createElement("p", null, "Internet Identity · 1.000 KINIC"),
+            React.createElement("p", null, "Required balance · 1.000 KINIC"),
+            React.createElement("button", { disabled: creating, type: "button" }, creating ? "Refreshing..." : "Refresh balance")
+          ),
           open,
-          paymentNote: "Test payment.",
-          requiredBalanceLabel: "1 cycle",
+          requiredBalanceLabel: "1.000 KINIC",
           validationError: null,
           onCancel: () => {
             cancelCount.current += 1;
@@ -56,6 +63,9 @@ test("create database dialog is modal and restores focus", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "Create database" });
   await expect(dialog).toBeVisible();
   await expect(page.locator("dialog:modal")).toHaveCount(1);
+  await expect(dialog.getByText("Internet Identity · 1.000 KINIC", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Required balance · 1.000 KINIC", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Refresh balance" })).toBeEnabled();
   await expect(page.locator("#database-name-input")).toBeFocused();
 
   await page.evaluate(() => document.querySelector<HTMLElement>("#open-test-modal")?.focus());
@@ -73,6 +83,7 @@ test("create database dialog is modal and restores focus", async ({ page }) => {
   await trigger.click();
   await page.evaluate(() => globalThis.__kinicModalTest?.setCreating(true));
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Refreshing..." })).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeVisible();
   expect(await modalCancelCount(page)).toBe(1);

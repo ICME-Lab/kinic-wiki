@@ -2,13 +2,16 @@
 
 import { AppLink as Link } from "@/components/app-link";
 import { CheckCircle, Database, FileText, GitBranch, ShoppingCart, Tag, User } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "@/components/ui/toast";
 import { useAppSession } from "@/app/app-session-provider";
+import { connectedWalletPrincipal } from "@/app/app-session-provider";
+import { balanceCanFund, KinicFundingSourceSelector, useFundingSourceChoice } from "@/app/kinic-funding-source-selector";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
+import { requiredKinicBalanceE8s } from "@/lib/cycles";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { purchaseMarketAccessWithWallet } from "@/lib/kinic-wallet";
+import { purchaseMarketAccessWithFundingSource, type KinicFundingSource } from "@/lib/kinic-wallet";
 import { hrefForPath } from "@/lib/paths";
 import { marketSellerPath } from "@/lib/marketplace-routes";
 import { marketGetListing, marketPreviewPurchase } from "@/lib/vfs-client";
@@ -30,17 +33,41 @@ type PageGraphNode = {
 };
 
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
-  const { authClient, principal, refreshWalletBalance, wallet, walletBusyProvider } = useAppSession();
+  const {
+    authClient,
+    identityLedgerBalance,
+    identityLedgerBalanceError,
+    identityLedgerBalanceLoading,
+    principal,
+    refreshIdentityLedgerBalance,
+    refreshWalletBalance,
+    setWalletControlsLocked,
+    wallet,
+    walletBalance,
+    walletBalanceError,
+    walletBalanceLoading,
+    walletBusyProvider,
+    walletSessionReady
+  } = useAppSession();
   const [detail, setDetail] = useState<MarketListingDetail | null>(null);
   const [state, setState] = useState<ActionState>("loading");
   const [purchaseState, setPurchaseState] = useState<ActionState>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
+  const fundingChoice = useFundingSourceChoice(wallet !== null, walletSessionReady);
+  const principalRef = useRef(principal);
+  principalRef.current = principal;
 
   const listingView = detail?.listing ?? null;
   const listing = listingView?.listing ?? null;
   const metadata = listingView?.databaseMetadata ?? null;
   const tags = useMemo(() => parseJsonArray(metadata?.tagsJson ?? "[]"), [metadata]);
+  const requiredBalanceE8s = listing ? requiredKinicBalanceE8s(BigInt(listing.priceE8s)) : 0n;
+  const selectedBalance = fundingChoice.selected === "ii" ? identityLedgerBalance : walletBalance;
+  const selectedBalanceError = fundingChoice.selected === "ii" ? identityLedgerBalanceError : walletBalanceError;
+  const selectedBalanceLoading = fundingChoice.selected === "ii" ? identityLedgerBalanceLoading : walletBalanceLoading;
+  const selectedSourceAvailable = fundingChoice.selected === "ii" ? Boolean(authClient && principal) : Boolean(wallet);
+  const selectedBalanceSufficient = listing !== null && balanceCanFund(selectedBalance, requiredBalanceE8s);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -74,30 +101,47 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       setPurchaseState("error");
       return;
     }
-    if (!wallet) {
-      toast.error("Connect OISY or Plug first");
-      setPurchaseState("error");
-      return;
-    }
+    const identityAtSubmit = authClient.getIdentity();
+    const sourceAtSubmit: KinicFundingSource | null =
+      fundingChoice.selected === "ii" ? { provider: "ii", identity: identityAtSubmit } : wallet;
+    if (!sourceAtSubmit || !selectedBalanceSufficient || selectedBalanceLoading || selectedBalanceError) return;
+    const listingAtSubmit = listing;
+    const principalAtSubmit = principal;
     setPurchaseState("loading");
     try {
-      const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listing.listingId);
+      const preview = await marketPreviewPurchase(canisterId, identityAtSubmit, listingAtSubmit.listingId);
       if (preview.alreadyEntitled) {
         toast.info("Access is already active.");
         setPurchaseState("success");
         return;
       }
-      if (preview.priceE8s !== listing.priceE8s) {
+      if (preview.priceE8s !== listingAtSubmit.priceE8s) {
         toast.error("Listing price changed. Reload the listing before purchasing.");
         setPurchaseState("error");
         await load();
         return;
       }
-      const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s), accessPrincipal: principal }, wallet);
+      const order = await purchaseMarketAccessWithFundingSource(
+        { canisterId, listingId: listingAtSubmit.listingId, priceE8s: BigInt(listingAtSubmit.priceE8s), accessPrincipal: principalAtSubmit },
+        sourceAtSubmit
+      );
+      if (principalRef.current !== principalAtSubmit) {
+        setPurchaseState("idle");
+        return;
+      }
+      if (sourceAtSubmit.provider === "ii") await refreshIdentityLedgerBalance();
+      else await refreshWalletBalance(sourceAtSubmit);
+      if (principalRef.current !== principalAtSubmit) {
+        setPurchaseState("idle");
+        return;
+      }
       toast.success(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
-      await refreshWalletBalance(wallet);
       setPurchaseState("success");
     } catch (cause) {
+      if (principalRef.current !== principalAtSubmit) {
+        setPurchaseState("idle");
+        return;
+      }
       const message = errorMessage(cause);
       if (message.includes("active entitlement already exists")) {
         toast.info("Access is already active.");
@@ -122,6 +166,11 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadPurchasePreview]);
+
+  useEffect(() => {
+    setWalletControlsLocked(purchaseState === "loading");
+    return () => setWalletControlsLocked(false);
+  }, [purchaseState, setWalletControlsLocked]);
 
   return (
     <div className="min-w-0 text-ink">
@@ -157,15 +206,52 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                   </div>
                   {purchaseState === "success" ? <CheckCircle aria-hidden className="mt-1 text-green-700" size={20} /> : null}
                 </div>
+                <KinicFundingSourceSelector
+                  identityAccount={{
+                    available: Boolean(authClient && principal),
+                    balance: identityLedgerBalance,
+                    balanceError: identityLedgerBalanceError,
+                    balanceLoading: identityLedgerBalanceLoading,
+                    label: "Internet Identity",
+                    principal,
+                    refreshDisabled: !principal || identityLedgerBalanceLoading || purchaseState === "loading",
+                    onRefresh: () => void refreshIdentityLedgerBalance()
+                  }}
+                  onSelect={fundingChoice.select}
+                  requiredBalanceE8s={requiredBalanceE8s}
+                  selected={fundingChoice.selected}
+                  selectionDisabled={purchaseState === "loading"}
+                  walletAccount={{
+                    available: Boolean(wallet),
+                    balance: walletBalance,
+                    balanceError: walletBalanceError,
+                    balanceLoading: walletBalanceLoading,
+                    label: wallet ? (wallet.provider === "oisy" ? "OISY" : "Plug") : "OISY / Plug",
+                    principal: wallet ? connectedWalletPrincipal(wallet) : null,
+                    refreshDisabled: !wallet || walletBalanceLoading || walletBusyProvider !== null || purchaseState === "loading",
+                    onRefresh: () => {
+                      if (wallet) void refreshWalletBalance(wallet);
+                    }
+                  }}
+                />
                 <div className="grid gap-3">
                   <button
                     className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
-                    disabled={!principal || !wallet || walletBusyProvider !== null || purchaseState === "loading" || purchaseState === "success"}
+                    disabled={
+                      !principal ||
+                      !selectedSourceAvailable ||
+                      !selectedBalanceSufficient ||
+                      selectedBalanceLoading ||
+                      Boolean(selectedBalanceError) ||
+                      (fundingChoice.selected === "wallet" && walletBusyProvider !== null) ||
+                      purchaseState === "loading" ||
+                      purchaseState === "success"
+                    }
                     type="button"
                     onClick={() => void purchase()}
                   >
                     <ShoppingCart aria-hidden size={17} />
-                    <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
+                    <span>{purchaseState === "success" ? "Purchased" : `Purchase with ${fundingChoice.selected === "ii" ? "Internet Identity" : wallet?.provider === "plug" ? "Plug" : "OISY"}`}</span>
                   </button>
                   {purchaseState === "success" ? (
                     <Link
@@ -176,7 +262,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                     </Link>
                   ) : null}
                   {!principal ? <span className="text-sm leading-5 text-muted">Login with Internet Identity to purchase</span> : null}
-                  {principal && !wallet ? <span className="text-sm leading-5 text-muted">Connect OISY or Plug to approve payment</span> : null}
+                  {selectedBalanceError ? <span className="text-sm leading-5 text-red-700">{selectedBalanceError}</span> : null}
                 </div>
               </aside>
             </section>
