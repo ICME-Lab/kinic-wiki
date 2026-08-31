@@ -12,7 +12,7 @@ import { AdminField, AdminIconButton, AdminNotice, AdminPanel } from "@/componen
 import { KINIC_LEDGER_FEE_E8S, kinicBaseUnitsPerToken } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { getPrincipalKinicLedgerBalance, transferKinicFromIdentity } from "@/lib/kinic-wallet";
+import { transferKinicFromIdentity } from "@/lib/kinic-wallet";
 import { marketListEntitlements, marketListSellerListings } from "@/lib/vfs-client";
 import { errorMessage } from "@/lib/wiki-helpers";
 
@@ -21,13 +21,20 @@ type ProfileClientProps = {
 };
 
 export function ProfileClient({ canisterId }: ProfileClientProps) {
-  const { authClient, authLoading, authReady, login, principal } = useAppSession();
+  const {
+    authClient,
+    authLoading,
+    authReady,
+    identityLedgerBalance: ledgerBalance,
+    identityLedgerBalanceError: ledgerError,
+    identityLedgerBalanceLoading: ledgerLoading,
+    login,
+    principal,
+    refreshIdentityLedgerBalance
+  } = useAppSession();
   const [profileStats, setProfileStats] = useState<ProfileStats | null>(null);
-  const [ledgerBalance, setLedgerBalance] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [recipientPrincipal, setRecipientPrincipal] = useState("");
   const [transferAmount, setTransferAmount] = useState("");
   const [transferStatus, setTransferStatus] = useState<TransferStatus>("idle");
@@ -48,17 +55,12 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
   const loadProfile = useCallback(async () => {
     if (!authClient || !principal) {
       setProfileStats(null);
-      setLedgerBalance(null);
       setProfileError(null);
-      setLedgerError(null);
       setProfileLoading(false);
-      setLedgerLoading(false);
       return;
     }
     setProfileLoading(true);
-    setLedgerLoading(true);
     setProfileError(null);
-    setLedgerError(null);
     try {
       const identity = authClient.getIdentity();
       const [purchasedDatabases, sales] = await Promise.all([
@@ -75,14 +77,6 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       setProfileError(errorMessage(cause));
     } finally {
       setProfileLoading(false);
-    }
-    try {
-      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
-    } catch (cause) {
-      setLedgerBalance(null);
-      setLedgerError(errorMessage(cause));
-    } finally {
-      setLedgerLoading(false);
     }
   }, [authClient, canisterId, principal]);
 
@@ -115,13 +109,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       setTransferStatus("error");
       return;
     }
-    try {
-      setLedgerError(null);
-      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
-    } catch (cause) {
-      setLedgerBalance(null);
-      setLedgerError(errorMessage(cause));
-    }
+    await refreshIdentityLedgerBalance();
   }
 
   function useMaxTransferAmount() {
@@ -139,7 +127,11 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
             <div>
               <h1 className="text-2xl font-semibold text-ink">My Profile</h1>
             </div>
-            <AdminIconButton label="Refresh profile" title="Refresh" onClick={() => void loadProfile()}>
+            <AdminIconButton
+              label="Refresh profile"
+              title="Refresh"
+              onClick={() => void Promise.all([loadProfile(), refreshIdentityLedgerBalance()])}
+            >
               <RefreshCw aria-hidden size={16} />
             </AdminIconButton>
           </div>
@@ -163,7 +155,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
                 <AdminField mono label="Ledger KINIC balance" value={balanceLabel} />
               </section>
 
-              {ledgerError ? <AdminNotice tone="error" message={`Ledger balance unavailable: ${ledgerError}`} /> : null}
+              {ledgerError ? <AdminNotice tone="error" message={ledgerError} /> : null}
 
               <section className="grid gap-3">
                 <h2 className="text-sm font-semibold uppercase text-muted">Send KINIC</h2>

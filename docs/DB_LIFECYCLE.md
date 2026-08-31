@@ -105,7 +105,7 @@ Normal operator flow:
 
 1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.
 2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.
-3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
+3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. The browser can sign this directly with the logged-in Internet Identity delegation identity or with a connected OISY/Plug wallet. These are separate default ledger accounts: the user selects one payment source and balances are never combined, split, or used as an automatic fallback. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the selected ledger account.
 4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 5. Successful DB updates consume DB cycles balance.
 6. DB delete discards any remaining cycles.
@@ -113,6 +113,8 @@ Normal operator flow:
 source capture and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. source capture source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
 Treasury sweep, DB-specific ledger subaccounts, repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented.
+
+For browser preflight, a paid DB creation requires `1.000 KINIC` in the selected account and sends `0.998 KINIC` as the purchase amount; the remaining `0.002 KINIC` conservatively covers the approve and transfer fees. Cycles purchases and Marketplace purchases require the entered amount or listing price plus `0.002 KINIC`. The purchase action stays disabled while the selected balance is loading, unavailable, or below that threshold. A successful purchase refreshes only the account that signed it.
 
 DB cycle purchase credits internal cycles only after `icrc2_transfer_from` returns `Ok(block_index)` and local activation/apply both finish. Explicit ledger errors cancel the `in_flight` operation without credit. Ambiguous inter-canister call or response decoding stores `operation_status = "ambiguous"` without credit and returns an error containing the `operation_id`. If ledger transfer succeeds but local DB activation or cycle application fails, the canister stores `operation_status = "completed"` with the ledger block index, does not credit cycles, and returns a local apply error containing the `operation_id` and ledger block index.
 

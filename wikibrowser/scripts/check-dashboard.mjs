@@ -6,11 +6,40 @@ const dashboardUi = readProjectFile("../app/dashboard/dashboard-ui.tsx");
 const dashboardHome = readProjectFile("../app/dashboard/dashboard-home-client.tsx");
 const databaseDangerZone = readProjectFile("../app/dashboard/database-danger-zone.tsx");
 const createDialog = readProjectFile("../app/create-database-dialog.tsx");
+const fundingSelector = readProjectFile("../app/kinic-funding-source-selector.tsx");
 const modalDialog = readProjectFile("../components/use-modal-dialog.ts");
 const appSession = readProjectFile("../app/app-session-provider.tsx");
 const adminShell = readProjectFile("../components/admin-shell.tsx");
 const profile = readProjectFile("../app/profile/profile-client.tsx");
 const metrics = readProjectFile("../app/metrics/metrics-client.tsx");
+
+function sourceSection(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.notEqual(start, -1, `Missing source section start: ${startMarker}`);
+  assert.notEqual(end, -1, `Missing source section end: ${endMarker}`);
+  return source.slice(start, end);
+}
+
+function assertOrdered(source, markers) {
+  let cursor = 0;
+  for (const marker of markers) {
+    const index = source.indexOf(marker, cursor);
+    assert.notEqual(index, -1, `Missing or out-of-order source marker: ${marker}`);
+    cursor = index + marker.length;
+  }
+}
+
+const refreshDatabasesSource = sourceSection(
+  dashboardHome,
+  "const refreshDatabases = useCallback",
+  "useEffect(() => {"
+);
+const createDatabaseSource = sourceSection(
+  dashboardHome,
+  "async function createDatabase()",
+  "const myDatabases ="
+);
 
 assert.match(dashboardClient, /const canViewCyclesHistory = \(database\?\.role === "writer" \|\| database\?\.role === "owner"\) && isActiveDatabase/);
 assert.match(dashboardUi, /canViewCyclesHistory/);
@@ -21,27 +50,60 @@ assert.match(dashboardUi, /Previous page/);
 assert.match(dashboardUi, /Next page/);
 assert.doesNotMatch(dashboardUi.match(/export function CyclesHistoryPanel[\s\S]*?function DashboardTabButton/)?.[0] ?? "", /onLoadMore|Load more/);
 
-assert.match(dashboardHome, /Create with wallet/);
+assert.match(dashboardHome, /Create with \$\{fundingProviderLabel/);
 assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
-assert.match(dashboardHome, /Free grant available/);
-assert.match(dashboardHome, /Wallet payment required/);
-assert.match(dashboardHome, /wallet approval is not required/);
-assert.match(dashboardHome, /wallet approval pays directly from ledger balance/);
-assert.match(dashboardHome, /purchaseCyclesWithWallet/);
+assert.match(dashboardHome, /freeGrantError/);
+assert.match(dashboardHome, /Initial free database grant status unavailable/);
+assert.match(dashboardHome, /Retry free grant check/);
+assert.match(dashboardHome, /CREATE_DATABASE_REQUIRED_KINIC = "1"/);
+assert.match(dashboardHome, /createDatabaseFundingRequiredBalanceE8s\(\) - KINIC_LEDGER_FEE_E8S \* 2n/);
+assert.match(dashboardHome, /requiredBalanceE8s=\{requiredFundingBalanceE8s\}/);
+assert.match(dashboardHome, /void refreshWalletBalance\(wallet\)/);
+assert.doesNotMatch(dashboardHome, /paymentNote|Wallet payment required|wallet approval pays directly from ledger balance/);
+assert.match(dashboardHome, /purchaseCyclesWithFundingSource/);
 assert.match(dashboardHome, /toast\.success\(fundingSuccessMessage\)/);
 assert.match(dashboardHome, /router\.replace\("\/dashboard"\)/);
 assert.doesNotMatch(dashboardHome, /fundingSuccessMessage \? <StatusPanel/);
 assert.match(dashboardHome, /result\.initial_free_grant_applied \|\| result\.status === "active"/);
 assert.match(dashboardHome, /Database created pending\. Fund it from Cycles before opening \/Knowledge\./);
 assert.doesNotMatch(dashboardHome, /if \(freeGrantAvailable\) \{/);
+assert.doesNotMatch(dashboardHome, /if \(!freeGrantAvailable && \(!wallet \|\| !walletPaymentAvailable\)\) return/);
+assert.match(dashboardHome, /const fundingModeAtSubmit = freeGrantStatus\.available \? "free-grant" : "paid"/);
+assert.match(createDatabaseSource, /source: \{ provider: "ii", identity: identityAtSubmit \}/);
+assert.match(createDatabaseSource, /if \(fundingAtSubmit\.mode === "free-grant"\) \{/);
+assert.match(dashboardHome, /fundingRequiredForCreate && selectedFundingBusy/);
+assertOrdered(refreshDatabasesSource, [
+  "await Promise.allSettled",
+  "if (!isCurrentRefresh()) return;",
+  "setFreeGrantStatus(",
+  'if (freeGrantResult.status === "rejected")',
+  "setFreeGrantError(",
+  "setCreateDialogOpen(false);",
+  "setFreeGrantError(null);",
+  'if (publicResult.status === "rejected" && memberResult.status === "rejected")'
+]);
+assertOrdered(createDatabaseSource, [
+  'const fundingModeAtSubmit = freeGrantStatus.available ? "free-grant" : "paid";',
+  "walletBusyProvider !== null || !wallet || !walletPaymentAvailable",
+  'source: { provider: "ii", identity: identityAtSubmit }',
+  "const result = await createDatabaseAuthenticated",
+  'if (fundingAtSubmit.mode === "free-grant")',
+  "await refreshDatabases(authClient);",
+  "return;",
+  "purchaseCyclesWithFundingSource"
+]);
 assert.match(dashboardHome, /KinicAfterApproveError/);
 assert.match(dashboardHome, /purchase_database_cycles failed/);
 assert.match(dashboardHome, /Retry cycles purchase for the same database from Cycles/);
 assert.doesNotMatch(dashboardHome, /setLoadState\("idle"\)/);
 assertNoAppBalanceSurface(dashboardHome);
-assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
+assert.doesNotMatch(dashboardHome, /refreshKinicBalance|walletBalanceDetail/);
 assertNoAppBalanceSurface(createDialog);
-assert.doesNotMatch(createDialog, /app-balance|Payment source|CreateDatabasePaymentSource|PaymentSourceOption|paymentSource|paymentSources|onPaymentSourceChange/);
+assert.match(createDialog, /fundingSourceContent/);
+assert.match(fundingSelector, /Payment source/);
+assert.match(fundingSelector, /Required balance/);
+assert.match(fundingSelector, /Refresh balance/);
+assert.match(fundingSelector, /Connect OISY or Plug from the header/);
 assert.doesNotMatch(createDialog, /<dialog\s+open/);
 assert.doesNotMatch(dashboardUi, /<dialog\s+open/);
 assert.doesNotMatch(databaseDangerZone, /<dialog\s+open/);
@@ -49,6 +111,8 @@ assert.match(modalDialog, /dialog\.showModal\(\)/);
 assert.match(modalDialog, /previousFocus\?\.isConnected/);
 
 assert.match(appSession, /getConnectedWalletKinicBalance/);
+assert.match(appSession, /getPrincipalKinicLedgerBalance/);
+assert.match(appSession, /refreshIdentityLedgerBalance/);
 assertNoAppBalanceSurface(appSession);
 assert.doesNotMatch(appSession, /kinicBalance|refreshKinicBalance/);
 assertNoAppBalanceSurface(adminShell);
