@@ -64,6 +64,7 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Stores Ask AI conversation history on the device.
 - Stores unfinished voice-note transcripts as device-local drafts, separated by signed-in principal or guest scope and excluded from backup.
 - Performs voice-note transcription on device. Dictation audio is neither retained nor uploaded; only Markdown approved by the user is written to Kinic.
+- Keeps Voice Memo AAC recordings in Application Support on the recording device, excluded from backup. Voice Memo audio is never sent to Kinic or an external service; only reviewed transcript Markdown can be synced.
 - Sends Ask AI questions, the selected database name, up to six recent conversation messages, and relevant document excerpts to Kinic's AI service to generate answers.
 - Discards Ask AI request bodies after processing and does not retain them in logs, caches, databases, analytics, or training datasets.
 - Does not send Ask AI data to a third-party AI provider.
@@ -80,6 +81,7 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Tracking: No.
 - Ask AI request data is transient and is not retained after real-time processing.
 - Microphone and Speech Recognition access are used only after the user starts voice capture. Recognition is on device and has no network fallback.
+- Background audio is used only to continue a Voice Memo that the user explicitly started while the app was in the foreground.
 
 ## Review Notes
 
@@ -90,5 +92,7 @@ Public databases are shown by default. Open Browse and select the pre-populated 
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
 
 To test voice notes, add the Kinic Voice Note widget or run the "Start Voice Note" shortcut. The action opens KinicWiki in the foreground. Grant Microphone and Speech Recognition access, speak, stop, review the title and transcript, select a writable database, and save. The app requires on-device recognition and does not retain dictation audio. Unsent transcripts remain under Settings > On-device voice drafts until the user retries or deletes them.
+
+To test device-local Voice Memos, use the Medium widget's "Start Voice Memo" action or the matching shortcut. Lock the device or switch apps while recording, then stop in KinicWiki. The AAC recording stays only on the device; playback, seeking, transcription retry, editing, re-save, audio-only deletion, and full deletion are available under Settings > On-device voice drafts. Only the reviewed transcript Markdown is sent to Kinic.
 
 To test account deletion, sign in, open Settings, and choose "Delete Account" under Account Deletion. The confirmation explains that sole-owned databases are permanently deleted, shared databases remain while the current user's access is removed, purchased access is revoked, and local account history is erased. Internet Identity itself and transaction records required for settlement and duplicate-grant prevention are not deleted. After successful deletion, the app signs out automatically.

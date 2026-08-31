@@ -726,10 +726,11 @@ final class AppModel {
         if firstSegment == "ios-voice-capture" {
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let modeValue = components?.queryItems?.first(where: { $0.name == "mode" })?.value
-            guard modeValue == VoiceCaptureMode.dictation.rawValue else {
+            guard let modeValue,
+                  let mode = VoiceCaptureMode(rawValue: modeValue) else {
                 return .home("Choose a supported voice capture mode.")
             }
-            return .voiceCapture(.dictation)
+            return .voiceCapture(mode)
         }
         if firstSegment == "db",
            let databaseId = segments.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1423,6 +1424,19 @@ final class AppModel {
 
     func removeVoiceCaptureDraft(_ draft: VoiceCaptureDraft) throws {
         try voiceCaptureStore?.remove(draft)
+    }
+
+    func persistVoiceCaptureDraft(_ draft: VoiceCaptureDraft) throws {
+        try voiceCaptureStore?.save(draft)
+    }
+
+    func voiceCaptureAudioURL(for draft: VoiceCaptureDraft) -> URL? {
+        voiceCaptureStore?.audioURL(for: draft)
+    }
+
+    func removeVoiceCaptureAudio(from draft: VoiceCaptureDraft) throws -> VoiceCaptureDraft {
+        guard let voiceCaptureStore else { return draft }
+        return try voiceCaptureStore.removeAudio(from: draft)
     }
 
     func removeAllVisibleVoiceCaptureDrafts() throws {

@@ -72,7 +72,9 @@ private struct VoiceCaptureSessionView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background, coordinator.phase == .requestingPermission {
                 coordinator.preserveForDismissal()
-            } else if phase != .active, coordinator.phase == .recording {
+            } else if phase != .active,
+               request.mode == .dictation,
+               coordinator.phase == .recording {
                 coordinator.preserveForDismissal()
             }
         }
@@ -116,7 +118,7 @@ private struct VoiceCaptureSessionView: View {
             Text(durationLabel)
                 .font(.title2.monospacedDigit().weight(.semibold))
 
-            Text("On-device only · \(model.wikiOutputLanguage.displayName)")
+            Text(recordingPrivacyLabel)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -160,10 +162,19 @@ private struct VoiceCaptureSessionView: View {
                 .frame(minHeight: 220)
                 .padding(8)
                 .background(.background, in: RoundedRectangle(cornerRadius: 12))
+                .disabled(coordinator.isTranscribing)
 
-            Text("Saves to \(VoiceCaptureDocument.directoryPath). Audio is not retained.")
+            Text(reviewPrivacyLabel)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            if coordinator.isTranscribing {
+                HStack {
+                    ProgressView()
+                    Text("Transcribing on this device…")
+                }
+                .font(.footnote)
+            }
 
             if let message = coordinator.errorMessage {
                 Text(message)
@@ -173,7 +184,7 @@ private struct VoiceCaptureSessionView: View {
 
             Button("Save to Kinic", systemImage: "square.and.arrow.down", action: save)
                 .buttonStyle(KinicPrimaryButtonStyle())
-                .disabled(!canSave || coordinator.phase == .saving)
+                .disabled(!canSave || coordinator.phase == .saving || coordinator.isTranscribing)
 
             Button("Discard Draft", role: .destructive) {
                 coordinator.discard()
@@ -253,10 +264,24 @@ private struct VoiceCaptureSessionView: View {
     }
 
     private var canSave: Bool {
-        guard model.isSignedIn, let draft = coordinator.draft else { return false }
+        guard model.isSignedIn, !coordinator.isTranscribing, let draft = coordinator.draft else { return false }
         return !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !draft.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && draft.databaseId?.isEmpty == false
+    }
+
+    private var recordingPrivacyLabel: String {
+        if request.mode == .voiceMemo {
+            return "Recording locally · \(model.wikiOutputLanguage.displayName)"
+        }
+        return "On-device only · \(model.wikiOutputLanguage.displayName)"
+    }
+
+    private var reviewPrivacyLabel: String {
+        if request.mode == .voiceMemo {
+            return "Saves only the transcript to \(VoiceCaptureDocument.directoryPath). Audio stays on this device."
+        }
+        return "Saves to \(VoiceCaptureDocument.directoryPath). Audio is not retained."
     }
 
     private var durationLabel: String {
@@ -283,7 +308,7 @@ private struct VoiceCaptureSessionView: View {
                     transcript: draft.transcript,
                     databaseId: databaseId
                 )
-                coordinator.finishSaving()
+                try coordinator.finishSaving(savedPath: path)
                 savedPath = path
                 savedDatabaseId = databaseId
             } catch {

@@ -498,7 +498,7 @@ struct ShareInboxTests {
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/ios-voice-capture?mode=voice_memo")!,
             callbackDomain: "wiki.kinic.xyz"
-        ) == .home("Choose a supported voice capture mode."))
+        ) == .voiceCapture(.voiceMemo))
         #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/db/db_1")!,
             callbackDomain: "wiki.kinic.xyz"

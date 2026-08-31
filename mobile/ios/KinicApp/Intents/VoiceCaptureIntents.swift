@@ -13,6 +13,15 @@ struct StartVoiceNoteIntent: AppIntent {
     }
 }
 
+struct StartVoiceMemoIntent: AppIntent {
+    static let title: LocalizedStringResource = "Start Voice Memo"
+    static let description = IntentDescription("Open KinicWiki and record an audio memo kept on this device.")
+
+    func perform() async throws -> some IntentResult & OpensIntent {
+        .result(opensIntent: OpenURLIntent(VoiceCaptureLink.url(mode: .voiceMemo)))
+    }
+}
+
 struct KinicVoiceAppShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -23,6 +32,15 @@ struct KinicVoiceAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Voice Note",
             systemImageName: "mic.fill"
+        )
+        AppShortcut(
+            intent: StartVoiceMemoIntent(),
+            phrases: [
+                "Start a voice memo in \(.applicationName)",
+                "Record a memo in \(.applicationName)"
+            ],
+            shortTitle: "Voice Memo",
+            systemImageName: "waveform"
         )
     }
 }
