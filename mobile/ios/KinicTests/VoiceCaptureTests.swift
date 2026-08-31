@@ -286,7 +286,7 @@ struct VoiceCaptureTests {
         #expect(!coordinator.beginSaving())
         memoEngine.completeTranscription("端末内のメモ")
         #expect(coordinator.beginSaving())
-        coordinator.finishSaving(savedPath: "/Knowledge/Inbox/Voice Notes/memo.md")
+        try coordinator.finishSaving(savedPath: "/Knowledge/Inbox/Voice Notes/memo.md")
         let saved = try #require(store.load(scope: .guest).first)
         #expect(saved.transcript == "端末内のメモ")
         #expect(saved.hasAudio)
@@ -351,6 +351,101 @@ struct VoiceCaptureTests {
 
         #expect(!coordinator.isTranscribing)
         #expect(coordinator.beginSaving())
+    }
+
+    @MainActor
+    @Test
+    func coordinatorRetainsVoiceMemoWhenLocalSaveFinalizationFails() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let baseStore = try VoiceCaptureStore(rootDirectory: directory)
+        let store = VoiceCaptureStoreFake(base: baseStore)
+        let memoEngine = VoiceMemoEngineFake()
+        let coordinator = VoiceCaptureCoordinator(
+            store: store,
+            engine: VoiceDictationEngineFake(),
+            voiceMemoEngine: memoEngine
+        )
+
+        await coordinator.start(mode: .voiceMemo, language: .english, scope: .guest, databaseId: "db_1")
+        coordinator.stop()
+        memoEngine.finishRecording()
+        memoEngine.completeTranscription("locally retained memo")
+        #expect(coordinator.beginSaving())
+        store.failSaves = true
+
+        do {
+            try coordinator.finishSaving(savedPath: "/Knowledge/Inbox/Voice Notes/saved.md")
+            Issue.record("Expected local finalization to fail")
+        } catch {
+            coordinator.savingFailed(error)
+        }
+
+        let retained = try #require(coordinator.draft)
+        #expect(coordinator.phase == .reviewing)
+        #expect(retained.hasAudio)
+        #expect(retained.kinicPath == "/Knowledge/Inbox/Voice Notes/saved.md")
+        #expect(baseStore.audioURL(for: retained) != nil)
+    }
+
+    @MainActor
+    @Test
+    func coordinatorIndexesPartialAACBeforeRecordingFailure() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try VoiceCaptureStore(rootDirectory: directory)
+        let memoEngine = VoiceMemoEngineFake()
+        let coordinator = VoiceCaptureCoordinator(
+            store: store,
+            engine: VoiceDictationEngineFake(),
+            voiceMemoEngine: memoEngine
+        )
+
+        await coordinator.start(mode: .voiceMemo, language: .english, scope: .guest, databaseId: nil)
+        let indexedBeforeFailure = try #require(store.load(scope: .guest).first)
+        #expect(indexedBeforeFailure.hasAudio)
+        #expect(store.audioURL(for: indexedBeforeFailure) != nil)
+
+        memoEngine.recordedDuration = 4.5
+        memoEngine.failRecording()
+
+        let retained = try #require(store.load(scope: .guest).first)
+        #expect(coordinator.phase == .reviewing)
+        #expect(retained.audioFilename == indexedBeforeFailure.audioFilename)
+        #expect(retained.durationMilliseconds == 4_500)
+        #expect(store.audioURL(for: retained) != nil)
+    }
+
+    @MainActor
+    @Test
+    func voiceMemoResumeReactivatesAudioSessionBeforeRecording() throws {
+        var events: [String] = []
+
+        try VoiceMemoEngine.resumeAfterInterruption(
+            activateAudioSession: { events.append("activate") },
+            resumeRecording: {
+                events.append("record")
+                return true
+            }
+        )
+
+        #expect(events == ["activate", "record"])
+
+        events = []
+        do {
+            try VoiceMemoEngine.resumeAfterInterruption(
+                activateAudioSession: {
+                    events.append("activate")
+                    throw VoiceCaptureError.recordingUnavailable("activation failed")
+                },
+                resumeRecording: {
+                    events.append("record")
+                    return true
+                }
+            )
+            Issue.record("Expected audio session activation to fail")
+        } catch {}
+        #expect(events == ["activate"])
     }
 
     @MainActor
@@ -490,6 +585,7 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
     var recordedDuration: TimeInterval = 0
     private var url: URL?
     private var onFinished: (@MainActor (URL) -> Void)?
+    private var onFailure: (@MainActor (Error) -> Void)?
     private var onTranscript: (@MainActor (String) -> Void)?
     private var onCompletion: (@MainActor (Result<String, Error>) -> Void)?
 
@@ -505,6 +601,7 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
         self.url = url
         self.maximumDuration = maximumDuration
         self.onFinished = onFinished
+        self.onFailure = onFailure
     }
 
     func stopRecording() {}
@@ -535,6 +632,34 @@ private final class VoiceMemoEngineFake: VoiceMemoEngineProtocol {
 
     func failTranscription() {
         onCompletion?(.failure(VoiceCaptureError.transcriptionFailed("test failure")))
+    }
+
+    func failRecording() {
+        onFailure?(VoiceCaptureError.recordingUnavailable("test recording failure"))
+    }
+}
+
+private final class VoiceCaptureStoreFake: VoiceCaptureStoring {
+    let base: VoiceCaptureStore
+    var failSaves = false
+
+    init(base: VoiceCaptureStore) {
+        self.base = base
+    }
+
+    func save(_ draft: VoiceCaptureDraft) throws {
+        if failSaves {
+            throw VoiceCaptureError.storageUnavailable("test save failure")
+        }
+        try base.save(draft)
+    }
+
+    func remove(_ draft: VoiceCaptureDraft, includingAudio: Bool) throws {
+        try base.remove(draft, includingAudio: includingAudio)
+    }
+
+    func makeAudioURL(id: UUID, scope: VoiceCaptureAccountScope) throws -> URL {
+        try base.makeAudioURL(id: id, scope: scope)
     }
 }
 

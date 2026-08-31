@@ -86,10 +86,24 @@ struct VoiceCapturePermissionResult: Equatable, Sendable {
     let speechGranted: Bool
 }
 
+protocol VoiceCaptureStoring {
+    func save(_ draft: VoiceCaptureDraft) throws
+    func remove(_ draft: VoiceCaptureDraft, includingAudio: Bool) throws
+    func makeAudioURL(id: UUID, scope: VoiceCaptureAccountScope) throws -> URL
+}
+
+extension VoiceCaptureStore: VoiceCaptureStoring {}
+
+extension VoiceCaptureStoring {
+    func remove(_ draft: VoiceCaptureDraft) throws {
+        try remove(draft, includingAudio: true)
+    }
+}
+
 @MainActor
 @Observable
 final class VoiceCaptureCoordinator {
-    private let store: VoiceCaptureStore
+    private let store: any VoiceCaptureStoring
     private let engine: VoiceDictationEngineProtocol
     private let voiceMemoEngine: VoiceMemoEngineProtocol
     private let now: () -> Date
@@ -106,7 +120,7 @@ final class VoiceCaptureCoordinator {
     private(set) var isTranscribing = false
 
     init(
-        store: VoiceCaptureStore,
+        store: any VoiceCaptureStoring,
         engine: VoiceDictationEngineProtocol = VoiceDictationEngine(),
         voiceMemoEngine: VoiceMemoEngineProtocol = VoiceMemoEngine(),
         now: @escaping () -> Date = Date.init
@@ -275,13 +289,14 @@ final class VoiceCaptureCoordinator {
         return true
     }
 
-    func finishSaving(savedPath: String) {
+    func finishSaving(savedPath: String) throws {
         guard var draft else { return }
+        draft.kinicPath = savedPath
+        self.draft = draft
         if draft.mode == .voiceMemo {
-            draft.kinicPath = savedPath
-            try? store.save(draft)
+            try store.save(draft)
         } else {
-            try? store.remove(draft)
+            try store.remove(draft)
         }
         self.draft = nil
         phase = .idle

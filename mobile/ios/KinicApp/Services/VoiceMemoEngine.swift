@@ -217,16 +217,40 @@ final class VoiceMemoEngine: NSObject, VoiceMemoEngineProtocol, AVAudioRecorderD
         case .ended:
             let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionValue).contains(.shouldResume)
             let remainingDuration = max(0, maximumDuration - recordedDuration)
-            if wasRecordingBeforeInterruption,
-               shouldResume,
-               remainingDuration > 0,
-               recorder?.record(forDuration: remainingDuration) == true {
+            guard wasRecordingBeforeInterruption, shouldResume, remainingDuration > 0 else {
                 wasRecordingBeforeInterruption = false
-            } else {
                 stopRecording()
+                return
+            }
+            do {
+                try Self.resumeAfterInterruption(
+                    activateAudioSession: {
+                        try AVAudioSession.sharedInstance().setActive(
+                            true,
+                            options: .notifyOthersOnDeactivation
+                        )
+                    },
+                    resumeRecording: { [weak self] in
+                        self?.recorder?.record(forDuration: remainingDuration) == true
+                    }
+                )
+                wasRecordingBeforeInterruption = false
+            } catch {
+                wasRecordingBeforeInterruption = false
+                failOnce(error)
             }
         @unknown default:
             stopRecording()
+        }
+    }
+
+    static func resumeAfterInterruption(
+        activateAudioSession: () throws -> Void,
+        resumeRecording: () -> Bool
+    ) throws {
+        try activateAudioSession()
+        guard resumeRecording() else {
+            throw VoiceCaptureError.recordingUnavailable("Recording could not resume after interruption.")
         }
     }
 

@@ -308,7 +308,7 @@ private struct VoiceCaptureSessionView: View {
                     transcript: draft.transcript,
                     databaseId: databaseId
                 )
-                coordinator.finishSaving(savedPath: path)
+                try coordinator.finishSaving(savedPath: path)
                 savedPath = path
                 savedDatabaseId = databaseId
             } catch {
