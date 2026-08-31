@@ -69,6 +69,7 @@ final class VoiceCaptureCoordinator {
     private var timerTask: Task<Void, Never>?
     private var startedAt: Date?
     private var didStart = false
+    private var startAttemptID: UUID?
 
     private(set) var phase: VoiceCapturePhase = .idle
     private(set) var draft: VoiceCaptureDraft?
@@ -92,10 +93,17 @@ final class VoiceCaptureCoordinator {
         databaseId: String?
     ) async {
         guard !didStart, phase == .idle || phase == .failed else { return }
+        let attemptID = UUID()
+        startAttemptID = attemptID
         didStart = true
         phase = .requestingPermission
         errorMessage = nil
         let permission = await engine.requestPermissions()
+        guard startAttemptID == attemptID, phase == .requestingPermission else { return }
+        guard !Task.isCancelled else {
+            cancelPendingStart()
+            return
+        }
         guard permission.microphoneGranted else {
             fail(VoiceCaptureError.microphonePermissionDenied)
             return
@@ -138,6 +146,7 @@ final class VoiceCaptureCoordinator {
                     self?.stopAfterFailure(error)
                 }
             )
+            startAttemptID = nil
             phase = .recording
             scheduleTimer(maximumDuration: mode.maximumDuration)
         } catch {
@@ -165,6 +174,10 @@ final class VoiceCaptureCoordinator {
     }
 
     func preserveForDismissal() {
+        if phase == .requestingPermission {
+            cancelPendingStart()
+            return
+        }
         if phase == .recording {
             engine.stop()
             timerTask?.cancel()
@@ -217,6 +230,7 @@ final class VoiceCaptureCoordinator {
     }
 
     func discard() {
+        startAttemptID = nil
         engine.cancel()
         timerTask?.cancel()
         timerTask = nil
@@ -283,11 +297,25 @@ final class VoiceCaptureCoordinator {
     }
 
     private func fail(_ error: Error) {
+        startAttemptID = nil
         engine.cancel()
         timerTask?.cancel()
         timerTask = nil
         phase = .failed
         errorMessage = error.localizedDescription
+    }
+
+    private func cancelPendingStart() {
+        startAttemptID = nil
+        engine.cancel()
+        timerTask?.cancel()
+        timerTask = nil
+        startedAt = nil
+        draft = nil
+        elapsedSeconds = 0
+        phase = .idle
+        errorMessage = nil
+        didStart = false
     }
 }
 

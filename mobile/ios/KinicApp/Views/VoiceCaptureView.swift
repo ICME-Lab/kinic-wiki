@@ -70,9 +70,14 @@ private struct VoiceCaptureSessionView: View {
             )
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active, coordinator.phase == .recording {
+            if phase == .background, coordinator.phase == .requestingPermission {
+                coordinator.preserveForDismissal()
+            } else if phase != .active, coordinator.phase == .recording {
                 coordinator.preserveForDismissal()
             }
+        }
+        .onDisappear {
+            coordinator.preserveForDismissal()
         }
     }
 
