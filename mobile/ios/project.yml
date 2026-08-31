@@ -43,6 +43,8 @@ targets:
       - package: Textual
       - target: KinicShareExtension
         embed: true
+      - target: KinicVoiceWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_APP_BUNDLE_ID)"
@@ -113,6 +115,20 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)"
         INFOPLIST_FILE: KinicShareExtension/Info.plist
         CODE_SIGN_ENTITLEMENTS: KinicShareExtension/KinicShareExtension.entitlements
+        SKIP_INSTALL: true
+  KinicVoiceWidget:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicVoiceWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_WIDGET_BUNDLE_ID)"
+        INFOPLIST_FILE: KinicVoiceWidget/Info.plist
+        APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: true
   KinicTests:
     type: bundle.unit-test

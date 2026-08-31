@@ -53,6 +53,9 @@ struct HomeView: View {
         .onChange(of: model.tabSelectionRequestID) {
             selectedTab = model.requestedTab
         }
+        .sheet(item: $model.requestedVoiceCapture) { request in
+            VoiceCaptureView(model: model, request: request)
+        }
     }
 }
 

@@ -155,9 +155,24 @@ enum AppOpenURLDestination: Equatable {
     case ignore
     case authCallback
     case shareHandoff
+    case voiceCapture(VoiceCaptureMode)
     case browse(databaseId: String, nodePath: String)
     case manage
     case home(String?)
+}
+
+enum VoiceCaptureSaveError: Error, LocalizedError, Equatable {
+    case signInRequired
+    case writableDatabaseRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .signInRequired:
+            "Sign in before saving this voice note to Kinic."
+        case .writableDatabaseRequired:
+            "Select an active database where you are an Owner or Writer."
+        }
+    }
 }
 
 enum DatabaseMetadataValidationError: Error, LocalizedError, Equatable {
@@ -240,6 +255,7 @@ final class AppModel {
     private let askAIRetrievalVerifier = AskAIRetrievalVerifier()
     private let shareInbox: ShareInbox
     private let sourceCaptureHistoryStore: SourceCaptureHistoryStore?
+    let voiceCaptureStore: VoiceCaptureStore?
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
     private let deleteAccountRemotely: @Sendable (ICAuthSession) async throws -> Void
@@ -247,6 +263,7 @@ final class AppModel {
     private let removeAllSharedURLs: () throws -> Void
     private let removeAllCaptureHistory: () throws -> Void
     private let writeBrowseDocumentRemotely: @Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult
+    private let writeVoiceCaptureDocumentRemotely: @Sendable (String, VoiceCaptureDocument, ICAuthSession) async throws -> VFSWriteNodeResult
     private let searchBrowseNodesRemotely: @Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit]
     private let readBrowseNodeRemotely: @Sendable (String, String, ICAuthSession?) async throws -> VFSNode?
     private let listBrowseChildrenRemotely: @Sendable (String, String, ICAuthSession?) async throws -> [ChildNode]
@@ -299,6 +316,7 @@ final class AppModel {
     var requestedBrowseTarget: BrowseNavigationTarget
     var browseNavigationRequestID: Int
     var requestedBrowseDeepLink: BrowseDeepLinkRequest?
+    var requestedVoiceCapture: VoiceCaptureRequest?
     var requestedBrowseDatabaseSelection: BrowseDatabaseSelectionRequest?
     var browseDatabaseSelectionResolution: BrowseDatabaseSelectionResolution?
     var currentPath: String
@@ -369,6 +387,14 @@ final class AppModel {
         session != nil
     }
 
+    var voiceCaptureScope: VoiceCaptureAccountScope {
+        session.map { .principal($0.principal) } ?? .guest
+    }
+
+    var voiceCaptureDatabaseCandidates: [DatabaseSummary] {
+        databases.filter(\.canWrite)
+    }
+
     var canSubmit: Bool {
         guard session != nil,
               let item = pendingURLs.first,
@@ -435,11 +461,13 @@ final class AppModel {
         shareInbox: ShareInbox,
         settingsStore: SharedDefaultsStore,
         sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil,
+        voiceCaptureStore: VoiceCaptureStore? = nil,
         deleteAccountRemotely: (@Sendable (ICAuthSession) async throws -> Void)? = nil,
         deleteAskAIHistory: (@Sendable (AskAIHistoryScope) async throws -> Void)? = nil,
         removeAllSharedURLs: (() throws -> Void)? = nil,
         removeAllCaptureHistory: (() throws -> Void)? = nil,
         writeBrowseDocumentRemotely: (@Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult)? = nil,
+        writeVoiceCaptureDocumentRemotely: (@Sendable (String, VoiceCaptureDocument, ICAuthSession) async throws -> VFSWriteNodeResult)? = nil,
         searchBrowseNodesRemotely: (@Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit])? = nil,
         readBrowseNodeRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> VFSNode?)? = nil,
         listBrowseChildrenRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> [ChildNode])? = nil,
@@ -450,6 +478,7 @@ final class AppModel {
         self.client = client
         self.shareInbox = shareInbox
         self.sourceCaptureHistoryStore = sourceCaptureHistoryStore
+        self.voiceCaptureStore = voiceCaptureStore
         self.settingsStore = settingsStore
         self.deleteAccountRemotely = deleteAccountRemotely ?? { session in
             try await client.deleteAccount(session: session)
@@ -471,6 +500,17 @@ final class AppModel {
                 content: request.content,
                 metadataJson: request.metadataJson,
                 expectedEtag: request.expectedEtag,
+                session: session
+            )
+        }
+        self.writeVoiceCaptureDocumentRemotely = writeVoiceCaptureDocumentRemotely ?? { databaseId, document, session in
+            try await client.writeNode(
+                databaseId: databaseId,
+                path: document.path,
+                kind: .file,
+                content: document.content,
+                metadataJson: document.metadataJson,
+                expectedEtag: nil,
                 session: session
             )
         }
@@ -510,6 +550,7 @@ final class AppModel {
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID = 0
         requestedBrowseDeepLink = nil
+        requestedVoiceCapture = nil
         requestedBrowseDatabaseSelection = nil
         browseDatabaseSelectionResolution = nil
         currentPath = "/"
@@ -587,7 +628,8 @@ final class AppModel {
                 client: KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: configuration.appGroupId, strict: strictAppGroup),
                 settingsStore: settingsStore,
-                sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: configuration.appGroupId, strict: strictAppGroup)
+                sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: configuration.appGroupId, strict: strictAppGroup),
+                voiceCaptureStore: try VoiceCaptureStore.live()
             )
         } catch {
             fatalError(error.localizedDescription)
@@ -654,6 +696,8 @@ final class AppModel {
             requestTab(.home)
             refreshInbox()
             autoSubmitPendingURL()
+        case let .voiceCapture(mode):
+            requestedVoiceCapture = VoiceCaptureRequest(mode: mode)
         case let .browse(databaseId, nodePath):
             openBrowseDeepLink(databaseId: databaseId, nodePath: nodePath)
         case .manage:
@@ -678,6 +722,14 @@ final class AppModel {
         }
         if firstSegment == "ios-auth-callback" {
             return .authCallback
+        }
+        if firstSegment == "ios-voice-capture" {
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let modeValue = components?.queryItems?.first(where: { $0.name == "mode" })?.value
+            guard modeValue == VoiceCaptureMode.dictation.rawValue else {
+                return .home("Choose a supported voice capture mode.")
+            }
+            return .voiceCapture(.dictation)
         }
         if firstSegment == "db",
            let databaseId = segments.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1286,6 +1338,7 @@ final class AppModel {
         isLoadingSourceCaptureHistory = false
         statusMessage = nil
         accountDeletionError = nil
+        requestedVoiceCapture = nil
         if showPublicBrowseDatabases {
             startRefreshDatabases()
         }
@@ -1334,6 +1387,11 @@ final class AppModel {
         } catch {
             localCleanupFailureCount += 1
         }
+        do {
+            try voiceCaptureStore?.removeAll(scope: .principal(session.principal))
+        } catch {
+            localCleanupFailureCount += 1
+        }
         pendingURLs = []
         sourceCaptureHistory = []
         signOut()
@@ -1348,6 +1406,54 @@ final class AppModel {
         Task {
             await submitNextPendingURL()
         }
+    }
+
+    func dismissVoiceCapture() {
+        requestedVoiceCapture = nil
+    }
+
+    func voiceCaptureDrafts(includeGuest: Bool = true) -> [VoiceCaptureDraft] {
+        guard let voiceCaptureStore else { return [] }
+        var result = voiceCaptureStore.load(scope: voiceCaptureScope)
+        if includeGuest, voiceCaptureScope != .guest {
+            result.append(contentsOf: voiceCaptureStore.load(scope: .guest))
+        }
+        return result.sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    func removeVoiceCaptureDraft(_ draft: VoiceCaptureDraft) throws {
+        try voiceCaptureStore?.remove(draft)
+    }
+
+    func removeAllVisibleVoiceCaptureDrafts() throws {
+        guard let voiceCaptureStore else { return }
+        try voiceCaptureStore.removeAll(scope: voiceCaptureScope)
+        if voiceCaptureScope != .guest {
+            try voiceCaptureStore.removeAll(scope: .guest)
+        }
+    }
+
+    func saveVoiceCaptureDraft(
+        _ draft: VoiceCaptureDraft,
+        title: String,
+        transcript: String,
+        databaseId: String
+    ) async throws -> String {
+        guard let session else {
+            throw VoiceCaptureSaveError.signInRequired
+        }
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard voiceCaptureDatabaseCandidates.contains(where: { $0.databaseId == databaseId }) else {
+            throw VoiceCaptureSaveError.writableDatabaseRequired
+        }
+        let document = try VoiceCaptureDocument.make(from: draft, title: title, transcript: transcript)
+        _ = try await writeVoiceCaptureDocumentRemotely(databaseId, document, session)
+        return document.path
+    }
+
+    func openVoiceCaptureDocument(databaseId: String, path: String) {
+        requestedVoiceCapture = nil
+        openBrowseDeepLink(databaseId: databaseId, nodePath: path)
     }
 
     func startRefreshDatabases() {
