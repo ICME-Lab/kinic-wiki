@@ -13,6 +13,41 @@ export default {
     if (request.method === "GET" && url.pathname === "/healthz") {
       return jsonResponse({ ok: true }, 200);
     }
+    if (request.method === "GET" && url.pathname === "/nns-audit/status") {
+      const authError = await workerAuthError(request, env);
+      if (authError) return authError;
+      try {
+        return await env.NNS_PROPOSAL_REVIEW_SERVICE.fetch("https://nns-proposal-review.internal/status");
+      } catch (error) {
+        return jsonResponse({ error: errorMessage(error) }, 500);
+      }
+    }
+    if (request.method === "POST" && url.pathname === "/nns-audit/run") {
+      const authError = await workerAuthError(request, env);
+      if (authError) return authError;
+      let retryFailed = false;
+      try {
+        const text = await request.text();
+        if (text.trim()) {
+          const body: unknown = JSON.parse(text);
+          if (!isObject(body) || (body.retryFailed !== undefined && typeof body.retryFailed !== "boolean")) {
+            return jsonResponse({ error: "retryFailed must be a boolean" }, 400);
+          }
+          retryFailed = body.retryFailed === true;
+        }
+      } catch {
+        return jsonResponse({ error: "invalid JSON body" }, 400);
+      }
+      try {
+        return await env.NNS_PROPOSAL_REVIEW_SERVICE.fetch("https://nns-proposal-review.internal/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ retryFailed })
+        });
+      } catch (error) {
+        return jsonResponse({ error: errorMessage(error) }, 500);
+      }
+    }
     if (request.method === "POST" && url.pathname === "/source-capture") {
       const authError = await workerAuthError(request, env);
       if (authError) return authError;
@@ -204,4 +239,8 @@ function retryForUnhandled(error: unknown, attempts: number): QueueDisposition {
     code: "queue_handler_unhandled",
     message: errorMessage(error)
   };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

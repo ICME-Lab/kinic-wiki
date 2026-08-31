@@ -42,6 +42,7 @@ test("special and reserved IPv4 host forms are rejected after URL normalization"
 test("safe redirects are followed manually", async () => {
   await withMockFetch(async (input, init) => {
     assert.equal(init?.redirect, "manual");
+    assert.ok(init?.signal instanceof AbortSignal);
     const url = inputUrl(input);
     if (url === "https://example.com/start") {
       return new Response(null, { status: 302, headers: { location: "/final#frag" } });

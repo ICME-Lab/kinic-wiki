@@ -1,0 +1,54 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-nns-proposal-review",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
+  "main": "src/nns-index.ts",
+  "compatibility_date": "2026-05-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_IC_HOST": "https://icp0.io",
+    "KINIC_NNS_API_BASE_URL": "https://ic-api.internetcomputer.org/api/v3",
+    "KINIC_NNS_REVIEW_MODEL": "deepseek-v4-flash",
+    "KINIC_NNS_MAX_RAW_CHARS": "120000",
+    "KINIC_NNS_MAX_FETCHED_BYTES": "5000000",
+    "KINIC_NNS_MAX_SOURCE_CHARS": "300000",
+    "KINIC_NNS_MAX_OUTPUT_TOKENS": "6000"
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kinic-nns-proposal-review",
+      "migrations_dir": "nns-migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "NNS_PROPOSAL_REVIEW_QUEUE",
+        "queue": "kinic-nns-proposal-review"
+      },
+      {
+        "binding": "NNS_PROPOSAL_REVIEW_DLQ",
+        "queue": "kinic-nns-proposal-review-failures"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "kinic-nns-proposal-review",
+        "max_batch_size": 4,
+        "max_batch_timeout": 1,
+        "max_concurrency": 5,
+        "max_retries": 5
+      }
+    ]
+  }
+}

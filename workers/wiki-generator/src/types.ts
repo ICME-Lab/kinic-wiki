@@ -107,6 +107,32 @@ export type LinkPreviewQueueMessage = {
   requestedAt: string;
 };
 
+export type NnsProposalReviewQueueMessage = {
+  kind: "nns_proposal_review";
+  databaseId: string;
+  proposalId: number;
+};
+
+export type NnsProposalReviewFailureMessage = {
+  messageId: string;
+  messageKind: "nns_proposal_review" | "invalid";
+  databaseId?: string;
+  proposalId?: number;
+  attempt: number;
+  errorCode: string;
+  failedAt: string;
+};
+
+export type NnsWorkerConfig = {
+  canisterId: string;
+  icHost: string;
+  model: string;
+  maxRawChars: number;
+  maxFetchedBytes: number;
+  maxSourceChars: number;
+  maxOutputTokens: number;
+};
+
 export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage | LinkPreviewQueueMessage;
 
 export type PublicDatabaseSummary = {
