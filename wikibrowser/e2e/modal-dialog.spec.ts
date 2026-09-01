@@ -43,7 +43,7 @@ test("create database dialog is modal and restores focus", async ({ page }) => {
             React.createElement("button", { disabled: creating, type: "button" }, creating ? "Refreshing..." : "Refresh balance")
           ),
           open,
-          requiredBalanceLabel: "1.000 KINIC",
+          requiredBalanceLabel: "1 KINIC",
           validationError: null,
           onCancel: () => {
             cancelCount.current += 1;
