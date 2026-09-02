@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/tests/current-tab-export.test.mjs
-// What: Unit tests for direct ChatGPT API export.
+// What: Unit tests for provider conversation export.
 // Why: Export must avoid tab navigation while keeping stable progress and logs.
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -10,6 +10,7 @@ import {
   exportTarget,
   fetchConversationCapture,
   fetchRecentConversationTargets,
+  isConversationLocation,
   isValidState,
   mapWithConcurrency,
   providerFromLocation,
@@ -160,6 +161,22 @@ test("fetchRecentConversationTargets includes the current conversation when hist
   ]);
 });
 
+test("fetchRecentConversationTargets returns only the current Gemini conversation", async () => {
+  const targets = await fetchRecentConversationTargets(
+    10,
+    async () => {
+      throw new Error("Gemini DOM capture must not fetch a history API");
+    },
+    { origin: "https://gemini.google.com", href: "https://gemini.google.com/u/0/app/current" },
+    "gemini"
+  );
+  assert.deepEqual(targets, [{
+    id: "current",
+    title: "Current conversation",
+    url: "https://gemini.google.com/u/0/app/current"
+  }]);
+});
+
 test("fetchRecentConversationTargets reports empty history details", async () => {
   await assert.rejects(
     () =>
@@ -172,11 +189,84 @@ test("fetchRecentConversationTargets reports empty history details", async () =>
   );
 });
 
+test("isConversationLocation accepts current ChatGPT and Claude chats only", () => {
+  assert.equal(isConversationLocation({ origin: "https://chatgpt.com", href: "https://chatgpt.com/c/chatgpt-current" }), true);
+  assert.equal(isConversationLocation({ origin: "https://claude.ai", href: "https://claude.ai/chat/claude-current" }), true);
+  assert.equal(isConversationLocation({ origin: "https://chatgpt.com", href: "https://chatgpt.com/" }), false);
+  assert.equal(isConversationLocation({ origin: "https://claude.ai", href: "https://claude.ai/" }), false);
+  assert.equal(isConversationLocation({ origin: "https://gemini.google.com", href: "https://gemini.google.com/u/0/app/gemini-current" }), true);
+  assert.equal(isConversationLocation({ origin: "https://gemini.google.com", href: "https://gemini.google.com/app" }), false);
+});
+
 test("fetchRecentConversationTargets surfaces API errors", async () => {
   await assert.rejects(
     () => fetchRecentConversationTargets(1, chatGptFetch(async () => jsonResponse({}, false, 500)), { origin: "https://chatgpt.com" }),
     /ChatGPT API failed: 500/
   );
+});
+
+test("fetchConversationCapture converts the current Gemini DOM", async () => {
+  const previousDocument = globalThis.document;
+  const previousLocation = globalThis.location;
+  globalThis.location = {
+    href: "https://gemini.google.com/app/abc",
+    origin: "https://gemini.google.com"
+  };
+  globalThis.document = {
+    title: "Gemini project | Gemini",
+    querySelectorAll() {
+      return [{
+        tagName: "user-query",
+        innerText: "Question",
+        querySelector() {
+          return { innerText: "Question" };
+        }
+      }, {
+        tagName: "model-response",
+        innerText: "Answer",
+        querySelector() {
+          return { innerText: "Answer" };
+        }
+      }];
+    }
+  };
+  try {
+    const result = await fetchConversationCapture({
+      provider: "gemini",
+      id: "abc",
+      title: "Current conversation",
+      url: "https://gemini.google.com/app/abc"
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.capture.provider, "gemini");
+    assert.deepEqual(result.capture.messages, [
+      { role: "user", content: "Question" },
+      { role: "assistant", content: "Answer" }
+    ]);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.location = previousLocation;
+  }
+});
+
+test("fetchConversationCapture rejects a Gemini navigation during export", async () => {
+  const previousLocation = globalThis.location;
+  globalThis.location = {
+    href: "https://gemini.google.com/app/other",
+    origin: "https://gemini.google.com"
+  };
+  try {
+    const result = await fetchConversationCapture({
+      provider: "gemini",
+      id: "abc",
+      title: "Current conversation",
+      url: "https://gemini.google.com/app/abc"
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /conversation changed during export/);
+  } finally {
+    globalThis.location = previousLocation;
+  }
 });
 
 test("fetchConversationCapture converts payloads and rejects empty messages", async () => {
@@ -451,6 +541,19 @@ test("validateSaveSource accepts Claude captures from Claude tabs", () => {
   assert.doesNotThrow(() => validateSaveSource(VALID_CLAUDE_CAPTURE, VALID_CLAUDE_SENDER));
 });
 
+test("validateSaveSource accepts Gemini DOM captures from Gemini tabs", () => {
+  assert.doesNotThrow(() => validateSaveSource(
+    {
+      provider: "gemini",
+      conversationTitle: "Gemini Project",
+      url: "https://gemini.google.com/u/0/app/gemini-abc",
+      capturedAt: "2026-05-01T00:00:00.000Z",
+      messages: [{ role: "user", content: "Hello" }]
+    },
+    { tab: { url: "https://gemini.google.com/u/0/app/gemini-abc" } }
+  ));
+});
+
 test("validateSaveSource rejects unsupported senders and capture urls", () => {
   assert.throws(
     () => validateSaveSource(VALID_CAPTURE, { tab: { url: "https://evil.test/c/abc" } }),
@@ -528,6 +631,7 @@ test("validateSaveSource rejects wrong provider and malformed messages", () => {
 test("providerFromLocation detects supported AI hosts", () => {
   assert.equal(providerFromLocation({ href: "https://chatgpt.com/", origin: "https://chatgpt.com" }), "chatgpt");
   assert.equal(providerFromLocation({ href: "https://claude.ai/new", origin: "https://claude.ai" }), "claude");
+  assert.equal(providerFromLocation({ href: "https://gemini.google.com/app/current", origin: "https://gemini.google.com" }), "gemini");
   assert.equal(providerFromLocation({ href: "https://example.com/", origin: "https://example.com" }), "");
 });
 
@@ -628,7 +732,25 @@ test("load-config leaves databaseId empty until saved", async () => {
     assert.equal(response.config.canisterId, "6emaw-iyaaa-aaaay-aacka-cai");
     assert.equal(response.config.databaseId, "");
     assert.equal(response.config.host, "https://icp0.io");
+    assert.equal(response.config.showSaveControls, true);
     assert.equal("generatorUrl" in response.config, false);
+  } finally {
+    restore();
+  }
+});
+
+test("save-config persists save-control visibility and preserves it across partial updates", async () => {
+  const syncStorage = memoryStorage();
+  const restore = installChromeStorage(syncStorage, memoryStorage());
+  try {
+    await handleMessage({ type: "save-config", config: { showSaveControls: false } }, null);
+    await handleMessage({ type: "save-config", config: { databaseId: "team_wiki" } }, null);
+    const hidden = await handleMessage({ type: "load-config" }, null);
+    assert.equal(hidden.config.showSaveControls, false);
+
+    await handleMessage({ type: "save-config", config: { showSaveControls: true } }, null);
+    const shown = await handleMessage({ type: "load-config" }, null);
+    assert.equal(shown.config.showSaveControls, true);
   } finally {
     restore();
   }

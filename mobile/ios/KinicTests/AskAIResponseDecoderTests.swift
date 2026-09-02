@@ -54,7 +54,7 @@ struct AskAIResponseDecoderTests {
 
     @Test
     func rejectsSourcesWithoutAnswer() {
-        #expect(throws: AskAIResponseError.emptyAnswer) {
+        #expect(throws: AskAIResponseError.invalidSources) {
             try AskAIResponseDecoder.decode(
                 "<sources>S1</sources><answer>  </answer>",
                 validSourceIDs: ["S1"]

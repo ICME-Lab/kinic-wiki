@@ -41,6 +41,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     kind: NodeKind,
     path: idl.Text
   });
+  const NodeMutationErrorCode = idl.Variant({
+    EtagConflict: idl.Null,
+    NotFound: idl.Null,
+    Forbidden: idl.Null,
+    WriteUnavailable: idl.Null,
+    InvalidOperation: idl.Null
+  });
+  const NodeMutationError = idl.Record({
+    code: NodeMutationErrorCode,
+    message: idl.Text,
+    failed_index: idl.Opt(idl.Nat32),
+    conflict_path: idl.Opt(idl.Text)
+  });
   const SearchPreviewField = idl.Variant({ Path: idl.Null, Content: idl.Null });
   const SearchPreviewMode = idl.Variant({ Light: idl.Null, ContentStart: idl.Null, None: idl.Null });
   const SearchPreview = idl.Record({
@@ -117,8 +130,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
-  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
-  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
+  const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
+  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: NodeMutationError });
   const ResultExportSnapshot = idl.Variant({ Ok: ExportSnapshotResponse, Err: idl.Text });
   const ResultFetchUpdates = idl.Variant({ Ok: FetchUpdatesResponse, Err: idl.Text });
   const ResultUnit = idl.Variant({ Ok: idl.Null, Err: idl.Text });

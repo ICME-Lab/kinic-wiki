@@ -12,19 +12,19 @@ const vfsClientFiles = [
 ];
 const client = vfsClientFiles.map((p) => readProjectFile(p)).join("\n");
 const types = readProjectFile("../lib/types.ts");
-const idl = readProjectFile("../lib/vfs-idl.ts");
+const idl = readProjectFile("../../packages/vfs-candid/index.ts");
 
 assert.match(listingDetail, /whitespace-pre-wrap/);
 assert.match(listingDetail, /Purchase complete\. Ledger block \$\{order\.ledgerBlockIndex\}\./);
 assert.doesNotMatch(listingDetail, /Order \$\{order\.orderId\}/);
 assert.match(listingDetail, /setPurchaseState\(preview\.alreadyEntitled \? "success" : "idle"\)/);
 assert.doesNotMatch(listingDetail, /setPurchaseState\("success"\);[\s\S]{0,120}void loadPurchasePreview\(\);/);
-assert.match(listingDetail, /purchaseMarketAccessWithWallet/);
-assert.match(listingDetail, /marketPreviewPurchase\(canisterId, authClient\.getIdentity\(\), listing\.listingId\)/);
+assert.match(listingDetail, /purchaseMarketAccessWithFundingSource/);
+assert.match(listingDetail, /marketPreviewPurchase\(canisterId, identityAtSubmit, listingAtSubmit\.listingId\)/);
 assert.match(listingDetail, /Listing price changed\. Reload the listing before purchasing\./);
-assert.match(listingDetail, /accessPrincipal: principal/);
+assert.match(listingDetail, /accessPrincipal: principalAtSubmit/);
 assert.doesNotMatch(listingDetail, /localStorage|storeMarketPurchase|readStoredMarketPurchase|PURCHASED_MARKET_LISTING/);
-assert.doesNotMatch(listingDetail, /connectedWalletPrincipal|walletPrincipal|order\.buyerPrincipal/);
+assert.doesNotMatch(listingDetail, /walletPrincipal|order\.buyerPrincipal/);
 assert.doesNotMatch(listingDetail, /String\(cause\)/);
 assertNoAppBalanceSurface(listingDetail);
 assert.doesNotMatch(listingDetail, /marketPurchaseAccess|refreshKinicBalance|KINIC balance updated|buyerBalanceE8s/);
@@ -32,7 +32,8 @@ assert.doesNotMatch(listingDetail, /marketPurchaseAccess|refreshKinicBalance|KIN
 assert.match(wallet, /runOisyAllowanceCall[\s\S]*wallet\.approve\(/);
 assert.match(wallet, /runPlugAllowanceCall[\s\S]*icrc2_approve/);
 assert.match(wallet, /market_purchase_access/);
-assert.match(wallet, /purchaseMarketAccessWithWallet/);
+assert.match(wallet, /purchaseMarketAccessWithFundingSource/);
+assert.match(wallet, /purchaseMarketAccessWithIdentity/);
 assert.match(wallet, /access_principal: request\.accessPrincipal/);
 assert.match(wallet, /payout_principal/);
 assert.match(wallet, /Purchase did not complete after KINIC approval/);

@@ -27,8 +27,9 @@ use vfs_types::{
     ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
     MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
     MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
-    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node,
+    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind, NodeMutation,
+    NodeMutationError, NodeMutationResult, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
     SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest,
@@ -46,9 +47,10 @@ use crate::{
         load_outgoing_links, sync_node_links,
     },
     fs_search::{
-        SearchCandidate, build_previews_for_hits, build_search_query_plan, finalize_hits,
-        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
-        path_match_score, rerank_candidates, sort_candidates,
+        SearchCandidate, build_previews_for_hits, build_search_query_plan,
+        filter_candidates_on_short_terms, finalize_hits, load_content_substring_candidates,
+        load_path_candidates, load_ranked_fts_candidates, path_match_score, rerank_candidates,
+        sort_candidates,
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
@@ -61,6 +63,7 @@ const WIKI_ROOT_PATH: &str = "/Knowledge";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
+const MUTATE_NODES_BATCH_LIMIT_MAX: usize = 100;
 const MARKETPLACE_PREVIEW_NODE_LIMIT: i64 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
@@ -243,23 +246,63 @@ impl FsStore {
         &self,
         request: WriteNodeRequest,
         now: i64,
-    ) -> Result<WriteNodeResult, String> {
-        let mut results = self.write_nodes(request.into_write_nodes_request(), now)?;
-        results
-            .pop()
-            .ok_or_else(|| "write_node batch returned no result".to_string())
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        self.write_node_with_publication_commit(request, now, None)
+    }
+
+    pub fn write_node_with_publication_commit(
+        &self,
+        request: WriteNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        let WriteNodeRequest {
+            database_id,
+            path,
+            kind,
+            content,
+            metadata_json,
+            expected_etag,
+        } = request;
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            write_node_item_in_tx(
+                tx,
+                &database_id,
+                WriteNodeItem {
+                    path,
+                    kind,
+                    content,
+                    metadata_json,
+                    expected_etag,
+                },
+                now,
+            )
+        })
     }
 
     pub fn write_nodes(
         &self,
         request: WriteNodesRequest,
         now: i64,
-    ) -> Result<Vec<WriteNodeResult>, String> {
-        validate_write_nodes_count(request.nodes.len())?;
-        self.write_conn(|tx| {
+    ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
+        self.write_nodes_with_publication_commit(request, now, None)
+    }
+
+    pub fn write_nodes_with_publication_commit(
+        &self,
+        request: WriteNodesRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
+        validate_write_nodes_count(request.nodes.len())
+            .map_err(NodeMutationError::invalid_operation)?;
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
             let mut results = Vec::with_capacity(request.nodes.len());
-            for item in request.nodes {
-                results.push(write_node_item_in_tx(tx, &request.database_id, item, now)?);
+            for (index, item) in request.nodes.into_iter().enumerate() {
+                results.push(
+                    write_node_item_in_tx(tx, &request.database_id, item, now)
+                        .map_err(|error| error.with_failed_index(index))?,
+                );
             }
             Ok(results)
         })
@@ -269,206 +312,71 @@ impl FsStore {
         &self,
         request: AppendNodeRequest,
         now: i64,
-    ) -> Result<WriteNodeResult, String> {
-        let path = normalize_node_path(&request.path, false)?;
-        self.write_conn(|tx| {
-            let existing = load_stored_node(tx, &path)?;
-            if existing
-                .as_ref()
-                .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
-            {
-                return Err(format!("cannot append to folder: {path}"));
-            }
-            let created = existing.is_none();
-            let mut node = match existing.as_ref() {
-                Some(current) => append_existing_node(current.node.clone(), request, now)?,
-                None => create_appended_node(path, request, now)?,
-            };
-            let revision = record_change(tx, &node)?;
-            update_path_state(tx, &node.path, revision)?;
-            node.etag = compute_node_etag(&node);
-            ensure_missing_store_root_for_path(tx, &node.path, now)?;
-            let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
-            sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
-            sync_node_links(tx, &node)?;
-            Ok(WriteNodeResult {
-                node: node_ack(&node),
-                created,
-            })
-        })
+    ) -> Result<WriteNodeResult, NodeMutationError> {
+        self.write_mutation_conn(|tx| append_node_in_tx(tx, request, now))
     }
 
-    pub fn edit_node(&self, request: EditNodeRequest, now: i64) -> Result<EditNodeResult, String> {
-        if request.old_text.is_empty() {
-            return Err("old_text must not be empty".to_string());
-        }
-        let path = normalize_node_path(&request.path, false)?;
-        self.write_conn(|tx| {
-            let current = load_stored_node(tx, &path)?
-                .ok_or_else(|| format!("node does not exist: {path}"))?;
-            if current.node.kind == NodeKind::Folder {
-                return Err(format!("cannot edit folder: {path}"));
-            }
-            if current.node.etag != request.expected_etag.unwrap_or_default() {
-                return Err(format!("expected_etag does not match current etag: {path}"));
-            }
-            let (content, replacement_count) = replace_text(
-                &current.node.content,
-                &request.old_text,
-                &request.new_text,
-                request.replace_all,
-            )?;
-            let mut node = current.node.clone();
-            node.content = content;
-            node.updated_at = now;
-            let revision = record_change(tx, &node)?;
-            update_path_state(tx, &node.path, revision)?;
-            node.etag = compute_node_etag(&node);
-            save_node(tx, Some(current.row_id), &node)?;
-            sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))?;
-            sync_node_links(tx, &node)?;
-            Ok(EditNodeResult {
-                node: node_ack(&node),
-                replacement_count,
-            })
-        })
+    pub fn edit_node(
+        &self,
+        request: EditNodeRequest,
+        now: i64,
+    ) -> Result<EditNodeResult, NodeMutationError> {
+        self.write_mutation_conn(|tx| edit_node_in_tx(tx, request, now))
     }
 
     pub fn mkdir_node(
         &self,
         request: MkdirNodeRequest,
         now: i64,
-    ) -> Result<MkdirNodeResult, String> {
-        let path = normalize_node_path(&request.path, false)?;
-        self.write_conn(|tx| {
-            if let Some(existing) = load_stored_node(tx, &path)? {
-                if existing.node.kind == NodeKind::Folder {
-                    return Ok(MkdirNodeResult {
-                        path,
-                        created: false,
-                    });
-                }
-                return Err(format!("node already exists and is not a folder: {path}"));
-            }
-            if is_protected_root_folder(&path) {
-                ensure_store_root_folder(tx, &path, now)?;
-                return Ok(MkdirNodeResult {
-                    path,
-                    created: true,
-                });
-            }
-            let mut node = Node {
-                path: path.clone(),
-                kind: NodeKind::Folder,
-                content: String::new(),
-                created_at: now,
-                updated_at: now,
-                etag: String::new(),
-                metadata_json: "{}".to_string(),
-            };
-            let revision = record_change(tx, &node)?;
-            update_path_state(tx, &node.path, revision)?;
-            node.etag = compute_node_etag(&node);
-            ensure_missing_store_root_for_path(tx, &node.path, now)?;
-            save_node(tx, None, &node)?;
-            Ok(MkdirNodeResult {
-                path,
-                created: true,
-            })
+    ) -> Result<MkdirNodeResult, NodeMutationError> {
+        self.write_mutation_conn(|tx| mkdir_node_in_tx(tx, request, now))
+    }
+
+    pub fn move_node(
+        &self,
+        request: MoveNodeRequest,
+        now: i64,
+    ) -> Result<MoveNodeResult, NodeMutationError> {
+        self.move_node_with_publication_commit(request, now, None)
+    }
+
+    pub fn move_node_with_publication_commit(
+        &self,
+        request: MoveNodeRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<MoveNodeResult, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            move_node_in_tx(tx, request, now)
         })
     }
 
-    pub fn move_node(&self, request: MoveNodeRequest, now: i64) -> Result<MoveNodeResult, String> {
-        let from_path = normalize_node_path(&request.from_path, false)?;
-        let to_path = normalize_node_path(&request.to_path, false)?;
-        if from_path == to_path {
-            return Err("from_path and to_path must differ".to_string());
-        }
-        self.write_conn(|tx| {
-            let current = load_stored_node(tx, &from_path)?
-                .ok_or_else(|| format!("node does not exist: {from_path}"))?;
-            if current.node.etag != request.expected_etag.unwrap_or_default() {
-                return Err(format!(
-                    "expected_etag does not match current etag: {from_path}"
-                ));
-            }
-            if current.node.kind == NodeKind::Folder {
-                if is_protected_root_folder(&from_path) {
-                    return Err(format!("cannot move protected folder: {from_path}"));
-                }
-                if to_path.starts_with(&format!("{from_path}/")) {
-                    return Err("cannot move folder into itself".to_string());
-                }
-            }
-            let target = load_stored_node(tx, &to_path)?;
-            let overwrote = target.is_some();
-            if current.node.kind == NodeKind::Folder && overwrote {
-                return Err(format!("target node already exists: {to_path}"));
-            }
-            if overwrote && !request.overwrite {
-                return Err(format!("target node already exists: {to_path}"));
-            }
-            if target
-                .as_ref()
-                .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
-            {
-                return Err(format!("cannot overwrite folder: {to_path}"));
-            }
-            if current.node.kind == NodeKind::Folder {
-                let subtree = load_stored_subtree(tx, &from_path)?;
-                for stored in &subtree {
-                    let next_path = rebase_path(&stored.node.path, &from_path, &to_path)?;
-                    if next_path != stored.node.path && load_stored_node(tx, &next_path)?.is_some()
-                    {
-                        return Err(format!("target node already exists: {next_path}"));
-                    }
-                }
-                for stored in subtree {
-                    let mut moved = stored.node.clone();
-                    let old_path = moved.path.clone();
-                    moved.path = rebase_path(&old_path, &from_path, &to_path)?;
-                    moved.updated_at = now;
-                    ensure_missing_store_root_for_path(tx, &moved.path, now)?;
-                    let from_revision = record_path_removal(tx, &old_path)?;
-                    update_path_state(tx, &old_path, from_revision)?;
-                    let to_revision = record_change(tx, &moved)?;
-                    update_path_state(tx, &moved.path, to_revision)?;
-                    moved.etag = compute_node_etag(&moved);
-                    save_moved_node(tx, stored.row_id, &moved)?;
-                    sync_node_fts(tx, Some(&stored), Some((stored.row_id, &moved)))?;
-                    delete_source_links(tx, &old_path)?;
-                    sync_node_links(tx, &moved)?;
-                }
-                let moved = load_node(tx, &to_path)?
-                    .ok_or_else(|| format!("node does not exist: {to_path}"))?;
-                return Ok(MoveNodeResult {
-                    node: node_ack(&moved),
-                    from_path,
-                    overwrote: false,
-                });
-            }
-            if let Some(target) = target.as_ref() {
-                delete_source_links(tx, &target.node.path)?;
-                delete_node_row(tx, target)?;
-            }
-            let mut moved = current.node.clone();
-            moved.path = to_path.clone();
-            moved.updated_at = now;
-            ensure_missing_store_root_for_path(tx, &moved.path, now)?;
-            let from_revision = record_path_removal(tx, &from_path)?;
-            update_path_state(tx, &from_path, from_revision)?;
-            let to_revision = record_change(tx, &moved)?;
-            update_path_state(tx, &to_path, to_revision)?;
-            moved.etag = compute_node_etag(&moved);
-            save_moved_node(tx, current.row_id, &moved)?;
-            sync_node_fts(tx, Some(&current), Some((current.row_id, &moved)))?;
-            delete_source_links(tx, &from_path)?;
-            sync_node_links(tx, &moved)?;
-            Ok(MoveNodeResult {
-                node: node_ack(&moved),
-                from_path,
-                overwrote,
-            })
+    pub fn mutate_nodes_batch(
+        &self,
+        request: MutateNodesBatchRequest,
+        now: i64,
+    ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+        self.mutate_nodes_batch_with_publication_commit(request, now, None)
+    }
+
+    pub fn mutate_nodes_batch_with_publication_commit(
+        &self,
+        request: MutateNodesBatchRequest,
+        now: i64,
+        publication_operation_id: Option<i64>,
+    ) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+        validate_mutate_nodes_batch_count(request.operations.len())
+            .map_err(NodeMutationError::invalid_operation)?;
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            request
+                .operations
+                .into_iter()
+                .enumerate()
+                .map(|(index, operation)| {
+                    mutate_node_in_tx(tx, &request.database_id, operation, now)
+                        .map_err(|error| error.with_failed_index(index))
+                })
+                .collect()
         })
     }
 
@@ -511,86 +419,49 @@ impl FsStore {
         &self,
         request: MultiEditNodeRequest,
         now: i64,
-    ) -> Result<MultiEditNodeResult, String> {
-        let path = normalize_node_path(&request.path, false)?;
-        if request.edits.is_empty() {
-            return Err("edits must not be empty".to_string());
-        }
-        self.write_conn(|tx| {
-            let current = load_stored_node(tx, &path)?
-                .ok_or_else(|| format!("node does not exist: {path}"))?;
-            if current.node.kind == NodeKind::Folder {
-                return Err(format!("cannot edit folder: {path}"));
-            }
-            if current.node.etag != request.expected_etag.unwrap_or_default() {
-                return Err(format!("expected_etag does not match current etag: {path}"));
-            }
-            let (content, replacement_count) =
-                apply_multi_edit(&current.node.content, &request.edits)?;
-            let mut node = current.node.clone();
-            node.content = content;
-            node.updated_at = now;
-            let revision = record_change(tx, &node)?;
-            update_path_state(tx, &node.path, revision)?;
-            node.etag = compute_node_etag(&node);
-            save_node(tx, Some(current.row_id), &node)?;
-            sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))?;
-            sync_node_links(tx, &node)?;
-            Ok(MultiEditNodeResult {
-                node: node_ack(&node),
-                replacement_count,
-            })
-        })
+    ) -> Result<MultiEditNodeResult, NodeMutationError> {
+        self.write_mutation_conn(|tx| multi_edit_node_in_tx(tx, request, now))
     }
 
     pub fn delete_node(
         &self,
         request: DeleteNodeRequest,
         _now: i64,
-    ) -> Result<DeleteNodeResult, String> {
-        let path = normalize_node_path(&request.path, false)?;
+    ) -> Result<DeleteNodeResult, NodeMutationError> {
+        self.delete_node_with_publication_commit(request, None)
+    }
+
+    pub fn delete_node_with_publication_commit(
+        &self,
+        request: DeleteNodeRequest,
+        publication_operation_id: Option<i64>,
+    ) -> Result<DeleteNodeResult, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(publication_operation_id, |tx| {
+            delete_node_in_tx(tx, request)
+        })
+    }
+
+    pub fn publication_mutation_committed(&self, operation_id: i64) -> Result<bool, String> {
+        self.read_conn(|conn| {
+            conn.query_row(
+                "SELECT 1 FROM publication_mutation_commits WHERE operation_id = ?1",
+                params![operation_id],
+                |row| crate::sqlite::row_get::<i64>(row, 0),
+            )
+            .optional()
+            .map(|row| row.is_some())
+            .map_err(|error| error.to_string())
+        })
+    }
+
+    pub fn clear_publication_mutation_commit(&self, operation_id: i64) -> Result<(), String> {
         self.write_conn(|tx| {
-            let current = load_stored_node(tx, &path)?
-                .ok_or_else(|| format!("node does not exist: {path}"))?;
-            if current.node.etag != request.expected_etag.unwrap_or_default() {
-                return Err(format!("expected_etag does not match current etag: {path}"));
-            }
-            if current.node.kind == NodeKind::Folder {
-                if is_protected_root_folder(&path) {
-                    return Err(format!("cannot delete protected folder: {path}"));
-                }
-                let index_path = folder_index_path(&path);
-                let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
-                if has_visible_folder_children(tx, current.row_id, &index_path)? {
-                    return Err(format!("folder is not empty: {path}"));
-                }
-                match index_node {
-                    Some(index_node) => {
-                        let expected_index_etag = request
-                            .expected_folder_index_etag
-                            .as_deref()
-                            .ok_or_else(|| {
-                                format!("expected_folder_index_etag is required: {index_path}")
-                            })?;
-                        if index_node.node.etag != expected_index_etag {
-                            return Err(format!(
-                                "expected_folder_index_etag does not match current etag: {index_path}"
-                            ));
-                        }
-                        delete_node_with_history(tx, &index_node)?;
-                    }
-                    None if request.expected_folder_index_etag.is_some() => {
-                        return Err(format!("folder index node does not exist: {index_path}"));
-                    }
-                    None => {}
-                }
-            } else if request.expected_folder_index_etag.is_some() {
-                return Err(format!(
-                    "expected_folder_index_etag is only valid for folder deletes: {path}"
-                ));
-            }
-            delete_node_with_history(tx, &current)?;
-            Ok(DeleteNodeResult { path })
+            tx.execute(
+                "DELETE FROM publication_mutation_commits WHERE operation_id = ?1",
+                params![operation_id],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
         })
     }
 
@@ -651,6 +522,7 @@ impl FsStore {
                     candidates.entry(candidate.row_id).or_insert(candidate);
                 }
             }
+            filter_candidates_on_short_terms(conn, &mut candidates, &plan)?;
             let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
                 load_path_candidates(conn, &plan.path_terms, prefix.as_deref(), top_k)?
             } else {
@@ -779,9 +651,558 @@ impl FsStore {
         }
     }
 
+    fn write_mutation_conn<T>(
+        &self,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        self.write_mutation_conn_with_publication_commit(None, f)
+    }
+
+    fn write_mutation_conn_with_publication_commit<T>(
+        &self,
+        publication_operation_id: Option<i64>,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, NodeMutationError>,
+    ) -> Result<T, NodeMutationError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut conn = self.open().map_err(NodeMutationError::write_unavailable)?;
+            let tx = conn
+                .transaction()
+                .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
+            let value = f(&tx)?;
+            if let Some(operation_id) = publication_operation_id {
+                record_publication_mutation_commit(&tx, operation_id)
+                    .map_err(NodeMutationError::write_unavailable)?;
+            }
+            tx.commit()
+                .map_err(|error| NodeMutationError::write_unavailable(error.to_string()))?;
+            Ok(value)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut mutation_error = None;
+            let result = self.handle.update(|tx| {
+                match f(tx).and_then(|value| {
+                    if let Some(operation_id) = publication_operation_id {
+                        record_publication_mutation_commit(tx, operation_id)
+                            .map_err(NodeMutationError::write_unavailable)?;
+                    }
+                    Ok(value)
+                }) {
+                    Ok(value) => Ok(value),
+                    Err(error) => {
+                        mutation_error = Some(error);
+                        Err(DbError::Sqlite(1, "node mutation aborted".to_string()))
+                    }
+                }
+            });
+            if let Some(error) = mutation_error {
+                return Err(error);
+            }
+            result.map_err(|error| NodeMutationError::write_unavailable(error.to_string()))
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn open(&self) -> Result<Connection, String> {
         Connection::open(&self.database_path).map_err(|error| error.to_string())
+    }
+}
+
+fn append_node_in_tx(
+    tx: &Transaction<'_>,
+    request: AppendNodeRequest,
+    now: i64,
+) -> Result<WriteNodeResult, NodeMutationError> {
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
+    let existing = load_stored_node(tx, &path).map_err(NodeMutationError::write_unavailable)?;
+    if existing
+        .as_ref()
+        .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
+    {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot append to folder: {path}"
+        )));
+    }
+    let created = existing.is_none();
+    let mut node = match existing.as_ref() {
+        Some(current) => append_existing_node(current.node.clone(), request, now)?,
+        None if request.expected_etag.is_some() => {
+            return Err(NodeMutationError::not_found(&path));
+        }
+        None => create_appended_node(path, request, now)
+            .map_err(NodeMutationError::invalid_operation)?,
+    };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
+    node.etag = compute_node_etag(&node);
+    let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_links(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    Ok(WriteNodeResult {
+        node: node_ack(&node),
+        created,
+    })
+}
+
+fn edit_node_in_tx(
+    tx: &Transaction<'_>,
+    request: EditNodeRequest,
+    now: i64,
+) -> Result<EditNodeResult, NodeMutationError> {
+    if request.old_text.is_empty() {
+        return Err(NodeMutationError::invalid_operation(
+            "old_text must not be empty",
+        ));
+    }
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
+    let current = load_stored_node(tx, &path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| NodeMutationError::not_found(&path))?;
+    if current.node.kind == NodeKind::Folder {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot edit folder: {path}"
+        )));
+    }
+    if current.node.etag != request.expected_etag.unwrap_or_default() {
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {path}"),
+            path,
+        ));
+    }
+    let (content, replacement_count) = replace_text(
+        &current.node.content,
+        &request.old_text,
+        &request.new_text,
+        request.replace_all,
+    )
+    .map_err(NodeMutationError::invalid_operation)?;
+    let mut node = current.node.clone();
+    node.content = content;
+    node.updated_at = now;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
+    node.etag = compute_node_etag(&node);
+    save_node(tx, Some(current.row_id), &node).map_err(NodeMutationError::write_unavailable)?;
+    sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_links(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    Ok(EditNodeResult {
+        node: node_ack(&node),
+        replacement_count,
+    })
+}
+
+fn mkdir_node_in_tx(
+    tx: &Transaction<'_>,
+    request: MkdirNodeRequest,
+    now: i64,
+) -> Result<MkdirNodeResult, NodeMutationError> {
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
+    if let Some(existing) =
+        load_stored_node(tx, &path).map_err(NodeMutationError::write_unavailable)?
+    {
+        if existing.node.kind == NodeKind::Folder {
+            return Ok(MkdirNodeResult {
+                path,
+                created: false,
+            });
+        }
+        return Err(NodeMutationError::invalid_operation(format!(
+            "node already exists and is not a folder: {path}"
+        )));
+    }
+    if is_protected_root_folder(&path) {
+        ensure_store_root_folder(tx, &path, now).map_err(NodeMutationError::write_unavailable)?;
+        return Ok(MkdirNodeResult {
+            path,
+            created: true,
+        });
+    }
+    let mut node = Node {
+        path: path.clone(),
+        kind: NodeKind::Folder,
+        content: String::new(),
+        created_at: now,
+        updated_at: now,
+        etag: String::new(),
+        metadata_json: "{}".to_string(),
+    };
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
+    node.etag = compute_node_etag(&node);
+    save_node(tx, None, &node).map_err(NodeMutationError::write_unavailable)?;
+    Ok(MkdirNodeResult {
+        path,
+        created: true,
+    })
+}
+
+fn multi_edit_node_in_tx(
+    tx: &Transaction<'_>,
+    request: MultiEditNodeRequest,
+    now: i64,
+) -> Result<MultiEditNodeResult, NodeMutationError> {
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
+    if request.edits.is_empty() {
+        return Err(NodeMutationError::invalid_operation(
+            "edits must not be empty",
+        ));
+    }
+    let current = load_stored_node(tx, &path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| NodeMutationError::not_found(&path))?;
+    if current.node.kind == NodeKind::Folder {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot edit folder: {path}"
+        )));
+    }
+    if current.node.etag != request.expected_etag.unwrap_or_default() {
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {path}"),
+            path,
+        ));
+    }
+    let (content, replacement_count) = apply_multi_edit(&current.node.content, &request.edits)
+        .map_err(NodeMutationError::invalid_operation)?;
+    let mut node = current.node.clone();
+    node.content = content;
+    node.updated_at = now;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
+    node.etag = compute_node_etag(&node);
+    save_node(tx, Some(current.row_id), &node).map_err(NodeMutationError::write_unavailable)?;
+    sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_links(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    Ok(MultiEditNodeResult {
+        node: node_ack(&node),
+        replacement_count,
+    })
+}
+
+fn delete_node_in_tx(
+    tx: &Transaction<'_>,
+    request: DeleteNodeRequest,
+) -> Result<DeleteNodeResult, NodeMutationError> {
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
+    let current = load_stored_node(tx, &path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| NodeMutationError::not_found(&path))?;
+    if current.node.etag != request.expected_etag.unwrap_or_default() {
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {path}"),
+            path.clone(),
+        ));
+    }
+    if current.node.kind == NodeKind::Folder {
+        if is_protected_root_folder(&path) {
+            return Err(NodeMutationError::invalid_operation(format!(
+                "cannot delete protected folder: {path}"
+            )));
+        }
+        let index_path = folder_index_path(&path);
+        let index_node = load_folder_index_child(tx, current.row_id, &index_path)
+            .map_err(NodeMutationError::write_unavailable)?;
+        if has_visible_folder_children(tx, current.row_id, &index_path)
+            .map_err(NodeMutationError::write_unavailable)?
+        {
+            return Err(NodeMutationError::invalid_operation(format!(
+                "folder is not empty: {path}"
+            )));
+        }
+        match index_node {
+            Some(index_node) => {
+                let expected_index_etag = request
+                    .expected_folder_index_etag
+                    .as_deref()
+                    .ok_or_else(|| {
+                        NodeMutationError::invalid_operation(format!(
+                            "expected_folder_index_etag is required: {index_path}"
+                        ))
+                    })?;
+                if index_node.node.etag != expected_index_etag {
+                    return Err(NodeMutationError::etag_conflict(
+                        format!(
+                            "expected_folder_index_etag does not match current etag: {index_path}"
+                        ),
+                        index_path,
+                    ));
+                }
+                delete_node_with_history(tx, &index_node)
+                    .map_err(NodeMutationError::write_unavailable)?;
+            }
+            None if request.expected_folder_index_etag.is_some() => {
+                return Err(NodeMutationError::not_found(&index_path));
+            }
+            None => {}
+        }
+    } else if request.expected_folder_index_etag.is_some() {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "expected_folder_index_etag is only valid for folder deletes: {path}"
+        )));
+    }
+    delete_node_with_history(tx, &current).map_err(NodeMutationError::write_unavailable)?;
+    Ok(DeleteNodeResult { path })
+}
+
+fn move_node_in_tx(
+    tx: &Transaction<'_>,
+    request: MoveNodeRequest,
+    now: i64,
+) -> Result<MoveNodeResult, NodeMutationError> {
+    let from_path = normalize_node_path(&request.from_path, false)
+        .map_err(NodeMutationError::invalid_operation)?;
+    let to_path = normalize_node_path(&request.to_path, false)
+        .map_err(NodeMutationError::invalid_operation)?;
+    if from_path == to_path {
+        return Err(NodeMutationError::invalid_operation(
+            "from_path and to_path must differ",
+        ));
+    }
+    let current = load_stored_node(tx, &from_path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| NodeMutationError::not_found(&from_path))?;
+    if current.node.etag != request.expected_etag.unwrap_or_default() {
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {from_path}"),
+            from_path.clone(),
+        ));
+    }
+    if current.node.kind == NodeKind::Folder {
+        if is_protected_root_folder(&from_path) {
+            return Err(NodeMutationError::invalid_operation(format!(
+                "cannot move protected folder: {from_path}"
+            )));
+        }
+        if to_path.starts_with(&format!("{from_path}/")) {
+            return Err(NodeMutationError::invalid_operation(
+                "cannot move folder into itself",
+            ));
+        }
+    }
+    ensure_missing_store_root_for_path(tx, &to_path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &to_path)?;
+    let target = load_stored_node(tx, &to_path).map_err(NodeMutationError::write_unavailable)?;
+    let overwrote = target.is_some();
+    if !request.overwrite && request.expected_target_etag.is_some() {
+        return Err(NodeMutationError::invalid_operation_with_path(
+            "expected_target_etag requires overwrite=true",
+            to_path,
+        ));
+    }
+    if current.node.kind == NodeKind::Folder && overwrote {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "target node already exists: {to_path}"
+        )));
+    }
+    if overwrote && !request.overwrite {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "target node already exists: {to_path}"
+        )));
+    }
+    match (target.as_ref(), request.expected_target_etag.as_deref()) {
+        (Some(target), Some(expected_target_etag))
+            if request.overwrite && target.node.etag != expected_target_etag =>
+        {
+            return Err(NodeMutationError::etag_conflict(
+                format!("expected_target_etag does not match current etag: {to_path}"),
+                to_path,
+            ));
+        }
+        (Some(_), None) if request.overwrite => {
+            return Err(NodeMutationError::invalid_operation_with_path(
+                format!("expected_target_etag is required to overwrite target: {to_path}"),
+                to_path,
+            ));
+        }
+        (None, Some(_)) if request.overwrite => {
+            return Err(NodeMutationError::not_found_with_path(
+                format!("target node does not exist: {to_path}"),
+                to_path,
+            ));
+        }
+        _ => {}
+    }
+    if target
+        .as_ref()
+        .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
+    {
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot overwrite folder: {to_path}"
+        )));
+    }
+    if current.node.kind == NodeKind::Folder {
+        let subtree =
+            load_stored_subtree(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
+        for stored in &subtree {
+            let next_path = rebase_path(&stored.node.path, &from_path, &to_path)
+                .map_err(NodeMutationError::invalid_operation)?;
+            if next_path != stored.node.path
+                && load_stored_node(tx, &next_path)
+                    .map_err(NodeMutationError::write_unavailable)?
+                    .is_some()
+            {
+                return Err(NodeMutationError::invalid_operation(format!(
+                    "target node already exists: {next_path}"
+                )));
+            }
+        }
+        for stored in subtree {
+            let mut moved = stored.node.clone();
+            let old_path = moved.path.clone();
+            moved.path = rebase_path(&old_path, &from_path, &to_path)
+                .map_err(NodeMutationError::invalid_operation)?;
+            moved.updated_at = now;
+            let from_revision =
+                record_path_removal(tx, &old_path).map_err(NodeMutationError::write_unavailable)?;
+            update_path_state(tx, &old_path, from_revision)
+                .map_err(NodeMutationError::write_unavailable)?;
+            let to_revision =
+                record_change(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
+            update_path_state(tx, &moved.path, to_revision)
+                .map_err(NodeMutationError::write_unavailable)?;
+            moved.etag = compute_node_etag(&moved);
+            save_moved_node(tx, stored.row_id, &moved)
+                .map_err(NodeMutationError::write_unavailable)?;
+            sync_node_fts(tx, Some(&stored), Some((stored.row_id, &moved)))
+                .map_err(NodeMutationError::write_unavailable)?;
+            delete_source_links(tx, &old_path).map_err(NodeMutationError::write_unavailable)?;
+            sync_node_links(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
+        }
+        let moved = load_node(tx, &to_path)
+            .map_err(NodeMutationError::write_unavailable)?
+            .ok_or_else(|| {
+                NodeMutationError::write_unavailable(format!(
+                    "node does not exist after move: {to_path}"
+                ))
+            })?;
+        return Ok(MoveNodeResult {
+            node: node_ack(&moved),
+            from_path,
+            overwrote: false,
+        });
+    }
+    if let Some(target) = target.as_ref() {
+        delete_source_links(tx, &target.node.path).map_err(NodeMutationError::write_unavailable)?;
+        delete_node_row(tx, target).map_err(NodeMutationError::write_unavailable)?;
+    }
+    let mut moved = current.node.clone();
+    moved.path = to_path.clone();
+    moved.updated_at = now;
+    let from_revision =
+        record_path_removal(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &from_path, from_revision)
+        .map_err(NodeMutationError::write_unavailable)?;
+    let to_revision = record_change(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &to_path, to_revision).map_err(NodeMutationError::write_unavailable)?;
+    moved.etag = compute_node_etag(&moved);
+    save_moved_node(tx, current.row_id, &moved).map_err(NodeMutationError::write_unavailable)?;
+    sync_node_fts(tx, Some(&current), Some((current.row_id, &moved)))
+        .map_err(NodeMutationError::write_unavailable)?;
+    delete_source_links(tx, &from_path).map_err(NodeMutationError::write_unavailable)?;
+    sync_node_links(tx, &moved).map_err(NodeMutationError::write_unavailable)?;
+    Ok(MoveNodeResult {
+        node: node_ack(&moved),
+        from_path,
+        overwrote,
+    })
+}
+
+fn mutate_node_in_tx(
+    tx: &Transaction<'_>,
+    database_id: &str,
+    operation: NodeMutation,
+    now: i64,
+) -> Result<NodeMutationResult, NodeMutationError> {
+    match operation {
+        NodeMutation::Write(item) => {
+            write_node_item_in_tx(tx, database_id, item, now).map(NodeMutationResult::Write)
+        }
+        NodeMutation::Append(item) => append_node_in_tx(
+            tx,
+            AppendNodeRequest {
+                database_id: database_id.to_string(),
+                path: item.path,
+                content: item.content,
+                expected_etag: item.expected_etag,
+                separator: item.separator,
+                metadata_json: item.metadata_json,
+                kind: item.kind,
+            },
+            now,
+        )
+        .map(NodeMutationResult::Append),
+        NodeMutation::Edit(item) => edit_node_in_tx(
+            tx,
+            EditNodeRequest {
+                database_id: database_id.to_string(),
+                path: item.path,
+                old_text: item.old_text,
+                new_text: item.new_text,
+                expected_etag: item.expected_etag,
+                replace_all: item.replace_all,
+            },
+            now,
+        )
+        .map(NodeMutationResult::Edit),
+        NodeMutation::MultiEdit(item) => multi_edit_node_in_tx(
+            tx,
+            MultiEditNodeRequest {
+                database_id: database_id.to_string(),
+                path: item.path,
+                edits: item.edits,
+                expected_etag: item.expected_etag,
+            },
+            now,
+        )
+        .map(NodeMutationResult::MultiEdit),
+        NodeMutation::Mkdir(path) => mkdir_node_in_tx(
+            tx,
+            MkdirNodeRequest {
+                database_id: database_id.to_string(),
+                path,
+            },
+            now,
+        )
+        .map(NodeMutationResult::Mkdir),
+        NodeMutation::Move(item) => move_node_in_tx(
+            tx,
+            MoveNodeRequest {
+                database_id: database_id.to_string(),
+                from_path: item.from_path,
+                to_path: item.to_path,
+                expected_etag: item.expected_etag,
+                expected_target_etag: item.expected_target_etag,
+                overwrite: item.overwrite,
+            },
+            now,
+        )
+        .map(NodeMutationResult::Move),
+        NodeMutation::Delete(item) => delete_node_in_tx(
+            tx,
+            DeleteNodeRequest {
+                database_id: database_id.to_string(),
+                path: item.path,
+                expected_etag: item.expected_etag,
+                expected_folder_index_etag: item.expected_folder_index_etag,
+            },
+        )
+        .map(NodeMutationResult::Delete),
     }
 }
 
@@ -794,12 +1215,25 @@ fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
     crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
 }
 
+fn record_publication_mutation_commit(
+    tx: &Transaction<'_>,
+    operation_id: i64,
+) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO publication_mutation_commits (operation_id) VALUES (?1)",
+        params![operation_id],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 fn write_node_in_tx(
     tx: &Transaction<'_>,
     request: WriteNodeRequest,
     now: i64,
-) -> Result<WriteNodeResult, String> {
-    let path = normalize_node_path(&request.path, false)?;
+) -> Result<WriteNodeResult, NodeMutationError> {
+    let path =
+        normalize_node_path(&request.path, false).map_err(NodeMutationError::invalid_operation)?;
     if request.kind == NodeKind::Folder {
         return write_folder_in_tx(
             tx,
@@ -810,25 +1244,36 @@ fn write_node_in_tx(
             now,
         );
     }
-    let existing = load_stored_node(tx, &path)?;
+    let existing = load_stored_node(tx, &path).map_err(NodeMutationError::write_unavailable)?;
     if existing
         .as_ref()
         .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
     {
-        return Err(format!("cannot overwrite folder with file node: {path}"));
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot overwrite folder with file node: {path}"
+        )));
     }
     let created = existing.is_none();
     let mut node = match existing.as_ref() {
         Some(current) => update_existing_node(current.node.clone(), request, now)?,
-        None => create_new_node(path, request, now)?,
+        None if request.expected_etag.is_some() => {
+            return Err(NodeMutationError::not_found(&path));
+        }
+        None => {
+            create_new_node(path, request, now).map_err(NodeMutationError::invalid_operation)?
+        }
     };
-    let revision = record_change(tx, &node)?;
-    update_path_state(tx, &node.path, revision)?;
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)?;
-    let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
-    sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
-    sync_node_links(tx, &node)?;
+    let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))
+        .map_err(NodeMutationError::write_unavailable)?;
+    sync_node_links(tx, &node).map_err(NodeMutationError::write_unavailable)?;
     Ok(WriteNodeResult {
         node: node_ack(&node),
         created,
@@ -851,7 +1296,7 @@ fn write_node_item_in_tx(
     database_id: &str,
     item: WriteNodeItem,
     now: i64,
-) -> Result<WriteNodeResult, String> {
+) -> Result<WriteNodeResult, NodeMutationError> {
     write_node_in_tx(tx, write_node_request_from_item(database_id, item), now)
 }
 
@@ -862,33 +1307,42 @@ fn write_folder_in_tx(
     metadata_json: String,
     expected_etag: Option<String>,
     now: i64,
-) -> Result<WriteNodeResult, String> {
+) -> Result<WriteNodeResult, NodeMutationError> {
     if expected_etag.is_some() {
-        return Err(format!(
+        return Err(NodeMutationError::invalid_operation(format!(
             "expected_etag must be None for folder item: {path}"
-        ));
+        )));
     }
     if !content.is_empty() {
-        return Err(format!("folder item content must be empty: {path}"));
+        return Err(NodeMutationError::invalid_operation(format!(
+            "folder item content must be empty: {path}"
+        )));
     }
     if metadata_json.trim() != "{}" {
-        return Err(format!(
+        return Err(NodeMutationError::invalid_operation(format!(
             "folder item metadata_json must be empty object: {path}"
-        ));
+        )));
     }
-    if let Some(existing) = load_stored_node(tx, &path)? {
+    if let Some(existing) =
+        load_stored_node(tx, &path).map_err(NodeMutationError::write_unavailable)?
+    {
         if existing.node.kind == NodeKind::Folder {
             return Ok(WriteNodeResult {
                 node: node_ack(&existing.node),
                 created: false,
             });
         }
-        return Err(format!("node already exists and is not a folder: {path}"));
+        return Err(NodeMutationError::invalid_operation(format!(
+            "node already exists and is not a folder: {path}"
+        )));
     }
     if is_protected_root_folder(&path) {
-        ensure_store_root_folder(tx, &path, now)?;
-        let stored = load_stored_node(tx, &path)?
-            .ok_or_else(|| format!("folder was not created: {path}"))?;
+        ensure_store_root_folder(tx, &path, now).map_err(NodeMutationError::write_unavailable)?;
+        let stored = load_stored_node(tx, &path)
+            .map_err(NodeMutationError::write_unavailable)?
+            .ok_or_else(|| {
+                NodeMutationError::write_unavailable(format!("folder was not created: {path}"))
+            })?;
         return Ok(WriteNodeResult {
             node: node_ack(&stored.node),
             created: true,
@@ -903,11 +1357,13 @@ fn write_folder_in_tx(
         etag: String::new(),
         metadata_json: "{}".to_string(),
     };
-    let revision = record_change(tx, &node)?;
-    update_path_state(tx, &node.path, revision)?;
+    ensure_missing_store_root_for_path(tx, &node.path, now)
+        .map_err(NodeMutationError::write_unavailable)?;
+    require_parent_folder_for_mutation(tx, &node.path)?;
+    let revision = record_change(tx, &node).map_err(NodeMutationError::write_unavailable)?;
+    update_path_state(tx, &node.path, revision).map_err(NodeMutationError::write_unavailable)?;
     node.etag = compute_node_etag(&node);
-    ensure_missing_store_root_for_path(tx, &node.path, now)?;
-    save_node(tx, None, &node)?;
+    save_node(tx, None, &node).map_err(NodeMutationError::write_unavailable)?;
     Ok(WriteNodeResult {
         node: node_ack(&node),
         created: true,
@@ -918,6 +1374,15 @@ fn validate_write_nodes_count(count: usize) -> Result<(), String> {
     if count == 0 || count > WRITE_NODES_BATCH_LIMIT_MAX {
         return Err(format!(
             "write_nodes node count must be between 1 and {WRITE_NODES_BATCH_LIMIT_MAX}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mutate_nodes_batch_count(count: usize) -> Result<(), String> {
+    if count == 0 || count > MUTATE_NODES_BATCH_LIMIT_MAX {
+        return Err(format!(
+            "mutate_nodes_batch operation count must be between 1 and {MUTATE_NODES_BATCH_LIMIT_MAX}"
         ));
     }
     Ok(())
@@ -1418,15 +1883,19 @@ fn append_existing_node(
     mut current: Node,
     request: AppendNodeRequest,
     now: i64,
-) -> Result<Node, String> {
+) -> Result<Node, NodeMutationError> {
     if current.etag != request.expected_etag.unwrap_or_default() {
-        return Err(format!(
-            "expected_etag does not match current etag: {}",
-            current.path
+        let path = current.path.clone();
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {path}"),
+            path,
         ));
     }
     if current.kind == NodeKind::Folder {
-        return Err(format!("cannot append to folder: {}", current.path));
+        return Err(NodeMutationError::invalid_operation(format!(
+            "cannot append to folder: {}",
+            current.path
+        )));
     }
     let separator = request.separator.unwrap_or_default();
     current.content = format!("{}{}{}", current.content, separator, request.content);
@@ -1481,11 +1950,12 @@ fn update_existing_node(
     mut current: Node,
     request: WriteNodeRequest,
     now: i64,
-) -> Result<Node, String> {
+) -> Result<Node, NodeMutationError> {
     if current.etag != request.expected_etag.unwrap_or_default() {
-        return Err(format!(
-            "expected_etag does not match current etag: {}",
-            current.path
+        let path = current.path.clone();
+        return Err(NodeMutationError::etag_conflict(
+            format!("expected_etag does not match current etag: {path}"),
+            path,
         ));
     }
     current.kind = request.kind;
@@ -1595,6 +2065,32 @@ fn parent_fields_for_path(
         return Err(format!("parent path is not a folder: {parent_path}"));
     }
     Ok((Some(parent.0), name))
+}
+
+fn require_parent_folder_for_mutation(
+    tx: &Transaction<'_>,
+    path: &str,
+) -> Result<(), NodeMutationError> {
+    let (parent_path, _) =
+        split_parent_path_and_name(path).map_err(NodeMutationError::invalid_operation)?;
+    let Some(parent_path) = parent_path else {
+        return Ok(());
+    };
+    let parent = load_parent_folder_candidate(tx, &parent_path)
+        .map_err(NodeMutationError::write_unavailable)?
+        .ok_or_else(|| {
+            NodeMutationError::not_found_with_path(
+                format!("parent folder does not exist: {parent_path}"),
+                parent_path.clone(),
+            )
+        })?;
+    if parent.1 != NodeKind::Folder {
+        return Err(NodeMutationError::invalid_operation_with_path(
+            format!("parent path is not a folder: {parent_path}"),
+            parent_path,
+        ));
+    }
+    Ok(())
 }
 
 fn load_parent_folder_candidate(

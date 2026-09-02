@@ -19,6 +19,7 @@ import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as IosShareRouteImport } from './routes/ios-share'
 import { Route as IosAuthCallbackRouteImport } from './routes/ios-auth-callback'
+import { Route as IosRouteImport } from './routes/ios'
 import { Route as FaviconDoticoRouteImport } from './routes/favicon[.]ico'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DashboardRouteImport } from './routes/dashboard'
@@ -31,10 +32,14 @@ import { Route as SkillsDatabaseIdRouteImport } from './routes/skills.$databaseI
 import { Route as PPublicIdRouteImport } from './routes/p.$publicId'
 import { Route as MarketplaceListingIdRouteImport } from './routes/marketplace.$listingId'
 import { Route as DocsSkillsRouteImport } from './routes/docs.skills'
+import { Route as DocsIosRouteImport } from './routes/docs.ios'
+import { Route as DocsClipperRouteImport } from './routes/docs.clipper'
 import { Route as DocsCliRouteImport } from './routes/docs.cli'
 import { Route as DocsCanisterApiRouteImport } from './routes/docs.canister-api'
 import { Route as DbDatabaseIdRouteImport } from './routes/db.$databaseId'
+import { Route as DotwellKnownIiAuthCallbacksRouteImport } from './routes/[.]well-known.ii-auth-callbacks'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known.apple-app-site-association'
+import { Route as DocsSkillsIndexRouteImport } from './routes/docs.skills.index'
 import { Route as DbDatabaseIdIndexRouteImport } from './routes/db.$databaseId.index'
 import { Route as MarketplaceSellerPrincipalRouteImport } from './routes/marketplace.seller.$principal'
 import { Route as DocsSkillsSlugRouteImport } from './routes/docs.skills.$slug'
@@ -94,6 +99,11 @@ const IosShareRoute = IosShareRouteImport.update({
 const IosAuthCallbackRoute = IosAuthCallbackRouteImport.update({
   id: '/ios-auth-callback',
   path: '/ios-auth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IosRoute = IosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FaviconDoticoRoute = FaviconDoticoRouteImport.update({
@@ -156,6 +166,16 @@ const DocsSkillsRoute = DocsSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsIosRoute = DocsIosRouteImport.update({
+  id: '/ios',
+  path: '/ios',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsClipperRoute = DocsClipperRouteImport.update({
+  id: '/clipper',
+  path: '/clipper',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsCliRoute = DocsCliRouteImport.update({
   id: '/cli',
   path: '/cli',
@@ -171,12 +191,23 @@ const DbDatabaseIdRoute = DbDatabaseIdRouteImport.update({
   path: '/db/$databaseId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DotwellKnownIiAuthCallbacksRoute =
+  DotwellKnownIiAuthCallbacksRouteImport.update({
+    id: '/.well-known/ii-auth-callbacks',
+    path: '/.well-known/ii-auth-callbacks',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DotwellKnownAppleAppSiteAssociationRoute =
   DotwellKnownAppleAppSiteAssociationRouteImport.update({
     id: '/.well-known/apple-app-site-association',
     path: '/.well-known/apple-app-site-association',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DocsSkillsIndexRoute = DocsSkillsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsSkillsRoute,
+} as any)
 const DbDatabaseIdIndexRoute = DbDatabaseIdIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -238,6 +269,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/marketplace': typeof MarketplaceRouteWithChildren
@@ -249,9 +281,12 @@ export interface FileRoutesByFullPath {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
+  '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
@@ -269,11 +304,13 @@ export interface FileRoutesByFullPath {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId/': typeof DbDatabaseIdIndexRoute
+  '/docs/skills/': typeof DocsSkillsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cycles': typeof CyclesRoute
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/metrics': typeof MetricsRoute
@@ -284,9 +321,11 @@ export interface FileRoutesByTo {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
-  '/docs/skills': typeof DocsSkillsRouteWithChildren
+  '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
   '/skills/$databaseId': typeof SkillsDatabaseIdRoute
@@ -303,6 +342,7 @@ export interface FileRoutesByTo {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId': typeof DbDatabaseIdIndexRoute
+  '/docs/skills': typeof DocsSkillsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -311,6 +351,7 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/favicon.ico': typeof FaviconDoticoRoute
+  '/ios': typeof IosRoute
   '/ios-auth-callback': typeof IosAuthCallbackRoute
   '/ios-share': typeof IosShareRoute
   '/marketplace': typeof MarketplaceRouteWithChildren
@@ -322,9 +363,12 @@ export interface FileRoutesById {
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/support': typeof SupportRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/ii-auth-callbacks': typeof DotwellKnownIiAuthCallbacksRoute
   '/db/$databaseId': typeof DbDatabaseIdRouteWithChildren
   '/docs/canister-api': typeof DocsCanisterApiRoute
   '/docs/cli': typeof DocsCliRoute
+  '/docs/clipper': typeof DocsClipperRoute
+  '/docs/ios': typeof DocsIosRoute
   '/docs/skills': typeof DocsSkillsRouteWithChildren
   '/marketplace/$listingId': typeof MarketplaceListingIdRoute
   '/p/$publicId': typeof PPublicIdRoute
@@ -342,6 +386,7 @@ export interface FileRoutesById {
   '/docs/skills/$slug': typeof DocsSkillsSlugRoute
   '/marketplace/seller/$principal': typeof MarketplaceSellerPrincipalRoute
   '/db/$databaseId/': typeof DbDatabaseIdIndexRoute
+  '/docs/skills/': typeof DocsSkillsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -351,6 +396,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/docs'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/marketplace'
@@ -362,9 +408,12 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
+    | '/docs/clipper'
+    | '/docs/ios'
     | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
@@ -382,11 +431,13 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId/'
+    | '/docs/skills/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/cycles'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/metrics'
@@ -397,9 +448,11 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/docs/canister-api'
     | '/docs/cli'
-    | '/docs/skills'
+    | '/docs/clipper'
+    | '/docs/ios'
     | '/marketplace/$listingId'
     | '/p/$publicId'
     | '/skills/$databaseId'
@@ -416,6 +469,7 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId'
+    | '/docs/skills'
   id:
     | '__root__'
     | '/'
@@ -423,6 +477,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/docs'
     | '/favicon.ico'
+    | '/ios'
     | '/ios-auth-callback'
     | '/ios-share'
     | '/marketplace'
@@ -434,9 +489,12 @@ export interface FileRouteTypes {
     | '/sitemap.xml'
     | '/support'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/ii-auth-callbacks'
     | '/db/$databaseId'
     | '/docs/canister-api'
     | '/docs/cli'
+    | '/docs/clipper'
+    | '/docs/ios'
     | '/docs/skills'
     | '/marketplace/$listingId'
     | '/p/$publicId'
@@ -454,6 +512,7 @@ export interface FileRouteTypes {
     | '/docs/skills/$slug'
     | '/marketplace/seller/$principal'
     | '/db/$databaseId/'
+    | '/docs/skills/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -462,6 +521,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
   FaviconDoticoRoute: typeof FaviconDoticoRoute
+  IosRoute: typeof IosRoute
   IosAuthCallbackRoute: typeof IosAuthCallbackRoute
   IosShareRoute: typeof IosShareRoute
   MarketplaceRoute: typeof MarketplaceRouteWithChildren
@@ -473,6 +533,7 @@ export interface RootRouteChildren {
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   SupportRoute: typeof SupportRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
+  DotwellKnownIiAuthCallbacksRoute: typeof DotwellKnownIiAuthCallbacksRoute
   DbDatabaseIdRoute: typeof DbDatabaseIdRouteWithChildren
   PPublicIdRoute: typeof PPublicIdRoute
   SkillsDatabaseIdRoute: typeof SkillsDatabaseIdRoute
@@ -551,6 +612,13 @@ declare module '@tanstack/react-router' {
       path: '/ios-auth-callback'
       fullPath: '/ios-auth-callback'
       preLoaderRoute: typeof IosAuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ios': {
+      id: '/ios'
+      path: '/ios'
+      fullPath: '/ios'
+      preLoaderRoute: typeof IosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/favicon.ico': {
@@ -637,6 +705,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsSkillsRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/ios': {
+      id: '/docs/ios'
+      path: '/ios'
+      fullPath: '/docs/ios'
+      preLoaderRoute: typeof DocsIosRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/clipper': {
+      id: '/docs/clipper'
+      path: '/clipper'
+      fullPath: '/docs/clipper'
+      preLoaderRoute: typeof DocsClipperRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/cli': {
       id: '/docs/cli'
       path: '/cli'
@@ -658,12 +740,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DbDatabaseIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/.well-known/ii-auth-callbacks': {
+      id: '/.well-known/ii-auth-callbacks'
+      path: '/.well-known/ii-auth-callbacks'
+      fullPath: '/.well-known/ii-auth-callbacks'
+      preLoaderRoute: typeof DotwellKnownIiAuthCallbacksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/.well-known/apple-app-site-association': {
       id: '/.well-known/apple-app-site-association'
       path: '/.well-known/apple-app-site-association'
       fullPath: '/.well-known/apple-app-site-association'
       preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/docs/skills/': {
+      id: '/docs/skills/'
+      path: '/'
+      fullPath: '/docs/skills/'
+      preLoaderRoute: typeof DocsSkillsIndexRouteImport
+      parentRoute: typeof DocsSkillsRoute
     }
     '/db/$databaseId/': {
       id: '/db/$databaseId/'
@@ -754,10 +850,12 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
 
 interface DocsSkillsRouteChildren {
   DocsSkillsSlugRoute: typeof DocsSkillsSlugRoute
+  DocsSkillsIndexRoute: typeof DocsSkillsIndexRoute
 }
 
 const DocsSkillsRouteChildren: DocsSkillsRouteChildren = {
   DocsSkillsSlugRoute: DocsSkillsSlugRoute,
+  DocsSkillsIndexRoute: DocsSkillsIndexRoute,
 }
 
 const DocsSkillsRouteWithChildren = DocsSkillsRoute._addFileChildren(
@@ -767,6 +865,8 @@ const DocsSkillsRouteWithChildren = DocsSkillsRoute._addFileChildren(
 interface DocsRouteChildren {
   DocsCanisterApiRoute: typeof DocsCanisterApiRoute
   DocsCliRoute: typeof DocsCliRoute
+  DocsClipperRoute: typeof DocsClipperRoute
+  DocsIosRoute: typeof DocsIosRoute
   DocsSkillsRoute: typeof DocsSkillsRouteWithChildren
   DocsIndexRoute: typeof DocsIndexRoute
 }
@@ -774,6 +874,8 @@ interface DocsRouteChildren {
 const DocsRouteChildren: DocsRouteChildren = {
   DocsCanisterApiRoute: DocsCanisterApiRoute,
   DocsCliRoute: DocsCliRoute,
+  DocsClipperRoute: DocsClipperRoute,
+  DocsIosRoute: DocsIosRoute,
   DocsSkillsRoute: DocsSkillsRouteWithChildren,
   DocsIndexRoute: DocsIndexRoute,
 }
@@ -820,6 +922,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
   FaviconDoticoRoute: FaviconDoticoRoute,
+  IosRoute: IosRoute,
   IosAuthCallbackRoute: IosAuthCallbackRoute,
   IosShareRoute: IosShareRoute,
   MarketplaceRoute: MarketplaceRouteWithChildren,
@@ -832,6 +935,7 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
+  DotwellKnownIiAuthCallbacksRoute: DotwellKnownIiAuthCallbacksRoute,
   DbDatabaseIdRoute: DbDatabaseIdRouteWithChildren,
   PPublicIdRoute: PPublicIdRoute,
   SkillsDatabaseIdRoute: SkillsDatabaseIdRoute,

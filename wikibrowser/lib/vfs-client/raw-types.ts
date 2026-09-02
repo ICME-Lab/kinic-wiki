@@ -339,6 +339,13 @@ export type RawWriteNodeResult = {
   node: RawRecent;
 };
 
+export type RawWriteNodeItem = Omit<RawWriteNodeRequest, "database_id">;
+
+export type RawWriteNodesRequest = {
+  database_id: string;
+  nodes: RawWriteNodeItem[];
+};
+
 export type RawWriteSourceForGenerationRequest = {
   database_id: string;
   path: string;
@@ -379,6 +386,7 @@ export type RawMoveNodeRequest = {
   from_path: string;
   to_path: string;
   expected_etag: [] | [string];
+  expected_target_etag: [] | [string];
   overwrite: boolean;
 };
 
@@ -450,6 +458,13 @@ export type RawSourceEvidence = {
   refs: RawSourceEvidenceRef[];
 };
 
+export type RawNodeMutationError = {
+  code: Variant;
+  message: string;
+  failed_index: [] | [number];
+  conflict_path: [] | [string];
+};
+
 export type RawQueryContext = {
   namespace: string;
   task: string;
@@ -472,7 +487,7 @@ export type VfsActor = {
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
-  delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
+  delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: RawNodeMutationError }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
   get_initial_free_database_grant_status: () => Promise<{ Ok: RawInitialFreeDatabaseGrantStatus } | { Err: string }>;
   get_node_publication: (request: { database_id: string; path: string }) => Promise<{ Ok: [] | [RawNodePublication] } | { Err: string }>;
@@ -493,8 +508,8 @@ export type VfsActor = {
   market_publish_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_purchase_access: (request: RawMarketPurchaseRequest) => Promise<{ Ok: RawMarketOrder } | { Err: string }>;
   market_update_listing: (request: RawMarketUpdateListingRequest) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
-  mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
-  move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
+  mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: RawNodeMutationError }>;
+  move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: RawNodeMutationError }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
@@ -536,8 +551,9 @@ export type VfsActor = {
     top_k: number;
     preview_mode: [] | [Variant];
   }) => Promise<{ Ok: RawSearchHit[] } | { Err: string }>;
-  write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
+  write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: RawNodeMutationError }>;
+  write_nodes: (request: RawWriteNodesRequest) => Promise<{ Ok: RawWriteNodeResult[] } | { Err: RawNodeMutationError }>;
   write_source_for_generation: (request: RawWriteSourceForGenerationRequest) => Promise<
-    { Ok: RawWriteSourceForGenerationResult } | { Err: string }
+    { Ok: RawWriteSourceForGenerationResult } | { Err: RawNodeMutationError }
   >;
 };

@@ -384,6 +384,30 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
     .expect("member count should load")
 }
 
+fn principal_row_count(root: &std::path::Path, table: &str, column: &str, principal: &str) -> i64 {
+    assert!(
+        [
+            ("database_members", "principal"),
+            ("database_free_cycle_grants", "principal"),
+            ("market_listings", "seller_principal"),
+            ("market_orders", "buyer_principal"),
+            ("market_entitlements", "buyer_principal"),
+            ("source_capture_trigger_sessions", "principal"),
+            ("ops_answer_sessions", "principal"),
+            ("source_run_sessions", "principal"),
+        ]
+        .contains(&(table, column)),
+        "test helper must only read principal-bearing columns"
+    );
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+        params![principal],
+        |row| row.get(0),
+    )
+    .expect("principal row count should load")
+}
+
 fn market_row_count(root: &std::path::Path, table: &str, database_id: &str) -> i64 {
     assert!(
         ["market_listings", "market_orders", "market_entitlements"].contains(&table),
@@ -588,7 +612,7 @@ fn fresh_index_schema_records_current_migration_chain_without_legacy_tables() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
     assert!(table_exists(&root, "market_listings"));
@@ -813,7 +837,7 @@ fn index_migrations_create_current_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
 
@@ -829,7 +853,7 @@ fn index_migrations_create_current_schema_once() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
 }
@@ -1143,7 +1167,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
             100,
         )
         .expect_err("reader should not write source for generation");
-    assert!(reader.contains("lacks required database role"));
+    assert!(reader.message.contains("lacks required database role"));
 
     let written = service
         .write_source_for_generation(
@@ -1277,7 +1301,11 @@ fn source_for_generation_requires_default_llm_writer() {
             102,
         )
         .expect_err("revoked LLM writer should fail source write authorization");
-    assert!(write.contains("LLM writer principal lacks writer access"));
+    assert!(
+        write
+            .message
+            .contains("LLM writer principal lacks writer access")
+    );
 }
 
 #[test]
@@ -1477,7 +1505,7 @@ fn database_create_returns_generated_id_and_name() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:003_iap_cycle_grants"),
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
 
@@ -1942,7 +1970,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 fn pending_database_activation_retry_reuses_staged_mount_after_migration_failure() {
     let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database("Retry activation", "owner", 1)
+        .reserve_pending_generated_database("Retry activation", "owner", 1_701_234_567_890)
         .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
@@ -2040,12 +2068,13 @@ fn pending_database_activation_seeds_all_store_roots() {
                 from_path: "/Sources/source-capture-requests".to_string(),
                 to_path: "/Sources/source-capture-requests-renamed".to_string(),
                 expected_etag: Some(request_root.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             10,
         )
         .expect_err("source capture request root move should fail");
-    assert!(move_error.contains("cannot move protected folder"));
+    assert!(move_error.message.contains("cannot move protected folder"));
     let delete_error = service
         .delete_node(
             "owner",
@@ -2058,7 +2087,11 @@ fn pending_database_activation_seeds_all_store_roots() {
             11,
         )
         .expect_err("source capture request root delete should fail");
-    assert!(delete_error.contains("cannot delete protected folder"));
+    assert!(
+        delete_error
+            .message
+            .contains("cannot delete protected folder")
+    );
 }
 
 #[test]
@@ -2518,6 +2551,198 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
     assert_eq!(database_member_count(&root, "funded"), 0);
     assert_eq!(database_pending_operation_count(&root, "funded"), 0);
     assert!(database_ledger_kinds(&root, "funded").is_empty());
+}
+
+#[test]
+fn delete_account_removes_active_access_and_preserves_shared_and_transaction_state() {
+    const ACCOUNT: &str = MARKET_BUYER_PRINCIPAL;
+    let (service, root) = service_with_root();
+    service
+        .create_database("sole", ACCOUNT, 1)
+        .expect("sole-owned database should create");
+    cycle_database(&service, "sole", ACCOUNT, 100_000_000, 1, 2);
+    service
+        .mark_initial_free_database_grant_used_for_test(ACCOUNT, "sole", 3)
+        .expect("initial free grant use should record");
+
+    service
+        .create_database("shared", ACCOUNT, 4)
+        .expect("shared database should create");
+    service
+        .grant_database_access("shared", ACCOUNT, "co-owner", DatabaseRole::Owner, 5)
+        .expect("second owner should grant");
+    let shared_listing = service
+        .market_create_listing(ACCOUNT, market_listing_request("shared", 100), 6)
+        .expect("shared listing should create");
+    service
+        .market_purchase_access(
+            "payer",
+            market_purchase_request(&shared_listing, MARKET_SECOND_BUYER_PRINCIPAL),
+            7,
+        )
+        .expect("other buyer entitlement should create");
+
+    service
+        .create_database("member", "other-owner", 8)
+        .expect("other-owned database should create");
+    service
+        .grant_database_access("member", "other-owner", ACCOUNT, DatabaseRole::Writer, 9)
+        .expect("account writer access should grant");
+
+    service
+        .create_database("purchased", "seller", 10)
+        .expect("purchased database should create");
+    let purchased_listing = service
+        .market_create_listing("seller", market_listing_request("purchased", 200), 11)
+        .expect("purchased listing should create");
+    service
+        .market_purchase_access(
+            "payer",
+            market_purchase_request(&purchased_listing, ACCOUNT),
+            12,
+        )
+        .expect("account entitlement should create");
+
+    Connection::open(root.join("index.sqlite3"))
+        .expect("index should open")
+        .execute_batch(&format!(
+            "INSERT INTO source_capture_trigger_sessions
+               (database_id, session_nonce, principal, expires_at_ms, created_at_ms, refreshed_at_ms)
+             VALUES ('shared', 'capture', '{ACCOUNT}', 100, 1, 1);
+             INSERT INTO ops_answer_sessions
+               (database_id, session_nonce, principal, expires_at_ms, created_at_ms, refreshed_at_ms)
+             VALUES ('shared', 'answer', '{ACCOUNT}', 100, 1, 1);
+             INSERT INTO source_run_sessions
+               (database_id, source_path, source_etag, session_nonce, principal,
+                expires_at_ms, created_at_ms, refreshed_at_ms)
+             VALUES ('shared', '/Sources/source.md', 'etag', 'run', '{ACCOUNT}', 100, 1, 1);"
+        ))
+        .expect("account sessions should insert");
+
+    let outcome = service
+        .delete_account(ACCOUNT, 13)
+        .expect("account deletion should succeed");
+
+    assert_eq!(outcome.deleted_database_file_names.len(), 1);
+    assert!(!database_index_row_exists(&root, "sole"));
+    assert!(database_index_row_exists(&root, "shared"));
+    assert!(database_index_row_exists(&root, "member"));
+    assert!(database_index_row_exists(&root, "purchased"));
+    assert_eq!(
+        principal_row_count(&root, "database_members", "principal", ACCOUNT),
+        0
+    );
+    assert_eq!(
+        principal_row_count(&root, "database_free_cycle_grants", "principal", ACCOUNT),
+        1
+    );
+    assert!(!database_ledger_kinds(&root, "sole").is_empty());
+    assert_eq!(
+        principal_row_count(&root, "market_listings", "seller_principal", ACCOUNT),
+        0
+    );
+    assert_eq!(
+        principal_row_count(&root, "market_entitlements", "buyer_principal", ACCOUNT),
+        0
+    );
+    assert_eq!(
+        principal_row_count(&root, "market_orders", "buyer_principal", ACCOUNT),
+        1
+    );
+    assert_eq!(
+        principal_row_count(
+            &root,
+            "market_entitlements",
+            "buyer_principal",
+            MARKET_SECOND_BUYER_PRINCIPAL
+        ),
+        1
+    );
+    for table in [
+        "source_capture_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
+    ] {
+        assert_eq!(principal_row_count(&root, table, "principal", ACCOUNT), 0);
+    }
+    let shared_members = service
+        .list_database_members("shared", "co-owner")
+        .expect("remaining owner should list members");
+    assert!(
+        shared_members
+            .iter()
+            .any(|member| { member.principal == "co-owner" && member.role == DatabaseRole::Owner })
+    );
+    assert!(
+        !service
+            .initial_free_database_grant_status(ACCOUNT)
+            .expect("grant status should load")
+            .available
+    );
+
+    let second = service
+        .delete_account(ACCOUNT, 14)
+        .expect("account deletion should be idempotent");
+    assert!(second.deleted_database_file_names.is_empty());
+}
+
+#[test]
+fn delete_account_rejects_pending_operations_before_mutation() {
+    const ACCOUNT: &str = MARKET_BUYER_PRINCIPAL;
+    let (service, root) = service_with_root();
+    service
+        .create_database("pending-cycles", ACCOUNT, 1)
+        .expect("database should create");
+    service
+        .begin_database_cycles_purchase("pending-cycles", ACCOUNT, 1_000_000, 2)
+        .expect("cycles purchase should begin");
+
+    let error = service
+        .delete_account(ACCOUNT, 3)
+        .expect_err("pending cycles operation should block deletion");
+    assert!(error.contains("pending cycles operation"));
+    assert!(database_index_row_exists(&root, "pending-cycles"));
+    assert_eq!(
+        principal_row_count(&root, "database_members", "principal", ACCOUNT),
+        1
+    );
+
+    let (market_service, market_root) = service_with_root();
+    market_service
+        .create_database("pending-market", "seller", 1)
+        .expect("market database should create");
+    let listing = market_service
+        .market_create_listing("seller", market_listing_request("pending-market", 100), 2)
+        .expect("listing should create");
+    market_service
+        .begin_market_purchase_with_ledger_details(
+            "payer",
+            market_purchase_request(&listing, ACCOUNT),
+            ledger_details("payer", "aaaaa-aa", 0, 3),
+            3,
+        )
+        .expect("market purchase should begin");
+    market_service
+        .grant_database_access("pending-market", "seller", ACCOUNT, DatabaseRole::Reader, 4)
+        .expect("account membership should grant");
+
+    let error = market_service
+        .delete_account(ACCOUNT, 5)
+        .expect_err("pending market operation should block deletion");
+    assert!(error.contains("pending marketplace operation"));
+    assert_eq!(
+        principal_row_count(&market_root, "database_members", "principal", ACCOUNT),
+        1
+    );
+}
+
+#[test]
+fn delete_account_rejects_anonymous_principal() {
+    let service = service();
+    let error = service
+        .delete_account("2vxsx-fae", 1)
+        .expect_err("anonymous account deletion should fail");
+    assert!(error.contains("anonymous caller"));
 }
 
 #[test]
@@ -3154,6 +3379,7 @@ fn write_node_preserves_metadata_json() {
                 from_path: "/Wiki/project/manual.md".to_string(),
                 to_path: "/Wiki/project/moved.md".to_string(),
                 expected_etag: Some(manual.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             12,
@@ -3283,6 +3509,7 @@ fn logical_size_refreshes_after_node_mutations() {
                 from_path: "/Knowledge/a.md".to_string(),
                 to_path: "/Knowledge/b.md".to_string(),
                 expected_etag: Some(edited.node.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             5,
@@ -3570,6 +3797,7 @@ fn move_node_keeps_source_kind_without_schema_validation() {
                 from_path: "/Sources/web/abc.md".to_string(),
                 to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some(source.node.etag.clone()),
+                expected_target_etag: None,
                 overwrite: false,
             },
             4,

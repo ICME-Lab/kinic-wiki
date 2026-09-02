@@ -6,12 +6,18 @@ import SwiftUI
 
 struct HomeView: View {
     @Bindable var model: AppModel
+    @State private var askAIModel: AskAIModel
     @State private var selectedTab = AppTab.home
+
+    init(model: AppModel) {
+        self.model = model
+        _askAIModel = State(initialValue: AskAIModel(appModel: model))
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                CaptureView(model: model)
+                CaptureView(model: model, askAIModel: askAIModel)
             }
             .tabItem {
                 Label("Home", systemImage: "house")
@@ -25,7 +31,7 @@ struct HomeView: View {
             .tag(AppTab.browse)
 
             NavigationStack {
-                AskAIView(appModel: model)
+                AskAIView(appModel: model, model: askAIModel)
             }
             .tabItem {
                 Label("Ask AI", systemImage: "sparkles")
@@ -52,6 +58,7 @@ struct HomeView: View {
 
 private struct CaptureView: View {
     @Bindable var model: AppModel
+    let askAIModel: AskAIModel
     @State private var isShowingIngest = false
     @State private var isShowingSettings = false
 
@@ -111,7 +118,7 @@ private struct CaptureView: View {
         }
         .sheet(isPresented: $isShowingSettings) {
             NavigationStack {
-                AppSettingsView(model: model)
+                AppSettingsView(model: model, askAIModel: askAIModel)
             }
         }
         .task {

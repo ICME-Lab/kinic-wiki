@@ -18,7 +18,8 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, PublishNodeRequest,
+    MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind, NodeKind, NodeMutation,
+    NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest, PublishNodeRequest,
     QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
     UpdateDatabaseMetadataRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
@@ -32,8 +33,8 @@ use super::{
     SERVICE, TransferFromError, append_node, check_cycles_top_up, check_database_write_cycles,
     clear_cycles_top_up_state_for_test, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database,
-    cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
-    fail_next_apply_database_cycles_purchase_apply_for_test,
+    cycles_top_up_launcher_call_count_for_test, delete_account, delete_node, edit_node,
+    export_snapshot, fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, get_cycles_billing_config,
     get_initial_free_database_grant_status, get_node_publication, glob_nodes,
     grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
@@ -42,7 +43,7 @@ use super::{
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
     mark_initial_free_database_grant_used_for_test, market_create_listing, market_get_listing,
     market_list_seller_listings, market_pause_listing, market_purchase_access, memory_manifest,
-    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    mkdir_node, move_node, multi_edit_node, mutate_nodes_batch, outgoing_links,
     parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
     query_database_sql_json, query_index_sql_json, read_node, read_node_context, rename_database,
     revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
@@ -2279,6 +2280,39 @@ fn write_nodes_records_instruction_charge_and_writes_nodes() {
 }
 
 #[test]
+fn mutate_nodes_batch_records_one_charge_and_returns_ordered_results() {
+    install_test_service();
+    set_update_charge_units_for_test(vec![20_000, 20_456]);
+
+    let results = mutate_nodes_batch(MutateNodesBatchRequest {
+        database_id: "default".to_string(),
+        operations: vec![
+            NodeMutation::Mkdir("/Memory".to_string()),
+            NodeMutation::Write(WriteNodeItem {
+                path: "/Memory/context.md".to_string(),
+                kind: NodeKind::File,
+                content: "remember this".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            }),
+        ],
+    })
+    .expect("heterogeneous batch should succeed");
+
+    assert!(matches!(results[0], NodeMutationResult::Mkdir(_)));
+    assert!(matches!(results[1], NodeMutationResult::Write(_)));
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("charge entry should exist");
+    assert_eq!(charge.amount_cycles, -20_000_456);
+    assert_eq!(charge.method.as_deref(), Some("mutate_nodes_batch"));
+}
+
+#[test]
 fn write_nodes_creates_folder_items() {
     install_test_service();
 
@@ -2438,7 +2472,8 @@ fn failed_update_keeps_original_error_when_instruction_counter_decreases() {
     })
     .expect_err("stale etag write should fail");
 
-    assert!(error.contains("etag"));
+    assert_eq!(error.code, NodeMutationErrorCode::NotFound);
+    assert!(error.message.contains("/Knowledge/stale.md"));
     let entries = list_database_cycle_entries("default".to_string(), None, 20)
         .expect("database cycles ledger should load")
         .entries;
@@ -2470,8 +2505,10 @@ fn write_nodes_rejects_low_database_cycles_balance() {
     })
     .expect_err("low balance database should reject batch write");
 
-    assert!(single.contains("database cycles are suspended"));
-    assert!(error.contains("database cycles are suspended"));
+    assert!(single.message.contains("database cycles are suspended"));
+    assert!(error.message.contains("database cycles are suspended"));
+    assert_eq!(single.code, NodeMutationErrorCode::WriteUnavailable);
+    assert_eq!(error.code, NodeMutationErrorCode::WriteUnavailable);
     assert!(
         read_node(
             "default".to_string(),
@@ -2511,8 +2548,8 @@ fn suspended_database_rejects_metered_mutations() {
     })
     .expect_err("suspended database should reject mkdir");
 
-    assert!(batch.contains("database cycles are suspended"));
-    assert!(mkdir.contains("database cycles are suspended"));
+    assert!(batch.message.contains("database cycles are suspended"));
+    assert!(mkdir.message.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -2577,8 +2614,8 @@ fn metered_update_checks_access_before_cycles_state() {
     })
     .expect_err("non-member should fail before cycles state");
 
-    assert!(error.contains("principal has no access"));
-    assert!(!error.contains("database cycles are suspended"));
+    assert!(error.message.contains("principal has no access"));
+    assert!(!error.message.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -2688,7 +2725,12 @@ fn write_nodes_rejects_reader_role() {
     })
     .expect_err("reader should not write");
 
-    assert!(error.contains("principal lacks required database role"));
+    assert!(
+        error
+            .message
+            .contains("principal lacks required database role")
+    );
+    assert_eq!(error.code, NodeMutationErrorCode::Forbidden);
 }
 
 #[test]
@@ -2993,6 +3035,18 @@ fn revoke_database_access_validates_and_canonicalizes_principal() {
     .expect("valid principal should grant");
     revoke_database_access("default".to_string(), "aaaaa-aa".to_string())
         .expect("valid principal should revoke");
+}
+
+#[test]
+fn delete_account_requires_authentication_and_is_retryable() {
+    install_test_service();
+
+    let error = delete_account().expect_err("anonymous caller should be rejected");
+    assert!(error.contains("anonymous caller"));
+
+    let _caller = AuthenticatedCallerGuard::install();
+    delete_account().expect("authenticated empty account should delete");
+    delete_account().expect("repeated account deletion should succeed");
 }
 
 #[test]

@@ -25,10 +25,18 @@ import {
 
 test("settings popup omits fixed runtime inputs", () => {
   const html = readFileSync(new URL("../popup/popup.html", import.meta.url), "utf8");
+  const popupJs = readFileSync(new URL("../popup/popup.js", import.meta.url), "utf8");
   assert.match(html, /<select id="database-id">/);
   assert.match(html, /<form id="create-database-form"/);
   assert.match(html, /Database name/);
   assert.match(html, /id="create-database"/);
+  assert.match(html, /id="recall-enabled"/);
+  assert.match(html, /Recall beta/);
+  assert.match(html, /id="show-save-controls"/);
+  assert.match(html, /Show save controls/);
+  assert.match(html, /ChatGPT, Claude, and Gemini/);
+  assert.match(popupJs, /config: \{ showSaveControls: Boolean\(showSaveControls\) \}/);
+  assert.match(popupJs, /Save controls hidden/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
   assert.doesNotMatch(html, /Database title/);
@@ -43,6 +51,7 @@ test("settings popup omits fixed runtime inputs", () => {
 test("settings and ChatGPT export use Kinic brand colors", () => {
   const popupCss = readFileSync(new URL("../popup/popup.css", import.meta.url), "utf8");
   const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const recallContext = readFileSync(new URL("../src/recall-context.js", import.meta.url), "utf8");
   const storeAssets = readFileSync(new URL("../scripts/generate-store-assets.mjs", import.meta.url), "utf8");
   assert.match(popupCss, /margin: 0 auto/);
   assert.match(popupCss, /width: min\(380px, calc\(100vw - 28px\)\)/);
@@ -76,16 +85,35 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assertExportLockBeforeClearingLogs(startExportFunction(contentUi));
   assert.match(startExportFunction(contentUi), /exportStartInFlight\.value = true/);
   assert.match(startExportFunction(contentUi), /finally \{\s+exportStartInFlight\.value = false;\s+\}/);
+  const quickSave = namedFunction(contentUi, "quickSave");
+  assert.match(quickSave, /await configLoadPromise;[\s\S]*const nextConfig = normalizedConfig\(\)/);
+  assert.match(quickSave, /const requestedDatabaseId = nextConfig\.databaseId[\s\S]*await refreshDatabases\(\{ repairSelection: false \}\)/);
   assert.match(contentUi, /databaseOptionLabel/);
-  assert.match(contentUi, /exportProviderLabel/);
+  assert.doesNotMatch(contentUi, /<span class="pill">/);
   assert.match(contentUi, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
   assert.match(contentUi, /onMouseUp=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(storeAssets, /#ff2686/);
   assert.match(storeAssets, /icons\/icon-128\.png/);
   assert.match(contentUi, /Kinic Wiki Clipper/);
-  assert.match(contentUi, /providerLabel/);
   assert.doesNotMatch(contentUi, /Database ID/);
-  assert.doesNotMatch(contentUi, /Kinic Memory/);
+  assert.match(contentUi, /Kinic Memory/);
+  assert.match(contentUi, /type: "recall-search"/);
+  assert.match(recallContext, /type: "recall-fetch"/);
+  assert.match(contentUi, /chrome\.storage\?\.onChanged/);
+  assert.match(contentUi, /showSaveControls/);
+  assert.match(contentUi, /configLoaded/);
+  assert.match(contentUi, /configLoaded\.value && config\.value\.showSaveControls/);
+  assert.match(contentUi, /saveControlsVisible\.value && panelOpen\.value/);
+  assert.match(contentUi, /panelOpen\.value = false/);
+  assert.equal(
+    contentUi.match(/configWithDefaults\(\{ \.\.\.config\.value, \.\.\.\(nextState\.config \|\| \{\}\) \}\)/g)?.length,
+    2
+  );
+  assert.match(contentUi, /applyRecallStorageChanges/);
+  assert.match(contentUi, /invalidateRecall/);
+  assert.match(contentUi, /isGeminiProvider/);
+  assert.match(contentUi, /Export current/);
+  assert.match(contentUi, /isGeminiProvider\.value \? 1/);
   assert.doesNotMatch(loadConfigFunction(contentUi), /refreshDatabases/);
 });
 
@@ -116,18 +144,19 @@ test("manifest exposes settings as options page without popup", () => {
   assert.equal(manifest.permissions.includes("tabs"), false);
   assert.ok(manifest.host_permissions.includes("https://wiki.kinic.xyz/*"));
   assert.ok(manifest.host_permissions.includes("https://claude.ai/*"));
+  assert.ok(manifest.host_permissions.includes("https://gemini.google.com/*"));
   assert.equal(manifest.host_permissions.includes("https://*.icp0.io/*"), false);
   assert.equal(manifest.host_permissions.includes("http://127.0.0.1/*"), false);
   assert.equal(manifest.host_permissions.includes("http://localhost/*"), false);
   assert.deepEqual(manifest.web_accessible_resources, [
     {
       resources: ["icons/icon-32.png"],
-      matches: ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*"]
+      matches: ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]
     }
   ]);
   assert.deepEqual(
     manifest.content_scripts.map((script) => script.matches),
-    [["https://chatgpt.com/*", "https://chat.openai.com/*"], ["https://claude.ai/*"]]
+    [["https://chatgpt.com/*", "https://chat.openai.com/*"], ["https://claude.ai/*"], ["https://gemini.google.com/*"]]
   );
   assert.equal(manifest.icons["128"], "icons/icon-128.png");
   assert.equal(manifest.action.default_icon["128"], "icons/icon-128.png");
@@ -304,10 +333,56 @@ test("CLI login helpers use mainnet Internet Identity and canonical derivation o
   );
 });
 
-test("ChatGPT export confirmation references Internet Identity principal", () => {
+test("conversation export starts without a mainnet confirmation dialog", () => {
   const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
-  assert.match(contentUi, /Internet Identity principal/);
-  assert.doesNotMatch(contentUi, /anonymous extension actor/);
+  assert.match(contentUi, /Save to Kinic/);
+  assert.match(contentUi, /Open save options/);
+  assert.match(contentUi, /isConversationLocation/);
+  assert.match(contentUi, /Already saved to Kinic/);
+  assert.doesNotMatch(contentUi, /confirmMainnetExport/);
+  assert.doesNotMatch(contentUi, /Continue\?/);
+  assert.doesNotMatch(contentUi, /globalThis\.confirm/);
+});
+
+test("recall preserves new-chat navigation and invalidates other navigation", () => {
+  const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const runRecall = /async function runRecall\(query\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(runRecall, "runRecall function should exist");
+  assert.match(runRecall, /const generation = \+\+recallRequestGeneration;/);
+  assert.ok(
+    runRecall.indexOf("const generation = ++recallRequestGeneration;") < runRecall.indexOf("await configLoadPromise;"),
+    "generation must be captured before awaiting config load"
+  );
+  assert.ok(
+    runRecall.indexOf("await configLoadPromise;") < runRecall.indexOf("const conversationUrl = location.href;"),
+    "the current conversation URL must be captured after config load"
+  );
+  const navigationHandler = /onNavigate: \(nextUrl, previousUrl, navigation\) => \{([\s\S]*?)\n  \}/.exec(contentUi)?.[0];
+  assert.ok(navigationHandler, "navigation handler should exist");
+  assert.match(navigationHandler, /if \(preservesChatGptRecallNavigation\(previousUrl, nextUrl, navigation\)\) return;/);
+  assert.match(navigationHandler, /invalidateRecall\(\);/);
+  assert.ok(
+    navigationHandler.indexOf("preservesChatGptRecallNavigation") < navigationHandler.indexOf("invalidateRecall();"),
+    "preserved navigation must return before Recall is invalidated"
+  );
+  const invalidateRecall = /function invalidateRecall\(\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(invalidateRecall, "invalidateRecall function should exist");
+  assert.match(invalidateRecall, /recallListeners\.cancelPending\(\)/);
+  assert.match(invalidateRecall, /recallRequestGeneration \+= 1;/);
+  assert.match(invalidateRecall, /recallResults\.value = \[\];/);
+});
+
+test("recall cards open their WikiBrowser source without replacing ChatGPT", () => {
+  const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
+  const recallCard = /function RecallCard\(\{ result \}\) \{([\s\S]*?)\n\}/.exec(contentUi)?.[0];
+  assert.ok(recallCard, "RecallCard function should exist");
+  assert.match(recallCard, /result\.sourceUrl \? \(/);
+  assert.match(recallCard, /href=\{result\.sourceUrl\}/);
+  assert.match(recallCard, /target="_blank"/);
+  assert.match(recallCard, /rel="noopener noreferrer"/);
+  assert.match(recallCard, /aria-label=\{`Open \$\{result\.title\} in WikiBrowser`\}/);
+  assert.match(recallCard, /Open in Wiki <span aria-hidden="true">↗<\/span>/);
+  assert.match(recallCard, /onClick=\{\(\) => addRecallContext\(result\)\}/);
 });
 
 test("settings docs describe automatic database save", () => {

@@ -6,7 +6,26 @@ import { publicDatabasePath } from "@/lib/share-links";
 import { listDatabasesPublic } from "@/lib/vfs-client";
 
 const SITE_ORIGIN = "https://wiki.kinic.xyz";
-const STATIC_PATHS = ["/", "/docs", "/docs/cli", "/docs/canister-api", "/docs/skills", "/marketplace", "/privacy-policy", "/support"];
+const STATIC_PATHS = [
+  "/",
+  "/ios",
+  "/docs",
+  "/docs/ios",
+  "/docs/clipper",
+  "/docs/cli",
+  "/docs/canister-api",
+  "/docs/skills",
+  "/docs/skills/query",
+  "/docs/skills/edit",
+  "/docs/skills/mcp",
+  "/docs/skills/ingest",
+  "/docs/skills/lint",
+  "/docs/skills/context-pack",
+  "/docs/skills/registry",
+  "/marketplace",
+  "/privacy-policy",
+  "/support"
+];
 
 export const dynamic = "force-dynamic";
 

@@ -69,6 +69,19 @@ test("buildEvidenceSource keeps a stable path for Claude conversations", () => {
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
+test("buildEvidenceSource keeps a stable path for Gemini conversations", () => {
+  const raw = buildEvidenceSource({
+    provider: "gemini",
+    conversationTitle: "Gemini Project",
+    url: "https://gemini.google.com/u/0/app/gemini-abc",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.match(raw.path, /^\/Sources\/gemini\/gemini-project-[a-f0-9]{8}\.md$/);
+  assert.equal(JSON.parse(raw.metadataJson).conversation_id, "gemini-abc");
+});
+
 test("buildEvidenceSource truncates long conversation ids to a canonical source filename", () => {
   const longId = `conversation-${"a".repeat(220)}`;
   const raw = buildEvidenceSource({

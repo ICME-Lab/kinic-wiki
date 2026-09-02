@@ -14,7 +14,8 @@ CREATE TABLE fs_nodes (
 CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
     path,
     title,
-    content
+    content,
+    tokenize = 'trigram case_sensitive 0'
 );
 
 CREATE TABLE fs_change_log (
@@ -56,3 +57,7 @@ ON fs_links (target_path, source_path);
 
 CREATE INDEX fs_links_source_path_idx
 ON fs_links (source_path, target_path);
+
+CREATE TABLE publication_mutation_commits (
+    operation_id INTEGER PRIMARY KEY
+);

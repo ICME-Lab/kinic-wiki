@@ -58,6 +58,7 @@ export type MoveNodeRequest = {
   fromPath: string;
   toPath: string;
   expectedEtag: string | null;
+  expectedTargetEtag: string | null;
   overwrite: boolean;
 };
 

@@ -624,6 +624,7 @@ fn cycles_gate_covers_content_mutation_commands_only() {
             from_path: "/Knowledge/a.md".to_string(),
             to_path: "/Knowledge/b.md".to_string(),
             expected_etag: None,
+            expected_target_etag: None,
             overwrite: false,
             json: false,
         }

@@ -1,9 +1,17 @@
 // Where: workers/wiki-generator/src/link-preview.ts
 // What: Renders database link preview PNGs from queued jobs.
 // Why: WikiBrowser must stay under the Free Worker bundle limit while new DB previews are generated asynchronously.
-import React from "react";
-import { ImageResponse } from "@vercel/og";
+// Why: satori (SVG layout) + @resvg/resvg-wasm (rasterize) are used directly instead of next/og or @vercel/og,
+//      both of which load a default font via `new URL(..., import.meta.url)` at module scope and cannot
+//      initialize in the Workers runtime, where `import.meta.url` is undefined.
+import satori from "satori";
+import type { Resvg as ResvgClass } from "@resvg/resvg-wasm";
 import type { PublicDatabaseSummary } from "./types.js";
+import {
+  decodeBase64,
+  FALLBACK_FONT_BASE64,
+  PLACEHOLDER_PNG_BASE64
+} from "./assets.js";
 
 export const LINK_PREVIEW_SIZE = {
   width: 1200,
@@ -11,6 +19,9 @@ export const LINK_PREVIEW_SIZE = {
 };
 export const LINK_PREVIEW_CONTENT_TYPE = "image/png";
 export const LINK_PREVIEW_CACHE_CONTROL = "public, max-age=300, s-maxage=86400";
+
+const PREVIEW_FONT_URL = "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-jp/files/noto-sans-jp-japanese-400-normal.woff";
+const PREVIEW_FONT_NAME = "Kinic";
 
 type RenderInput = {
   eyebrow?: string;
@@ -42,7 +53,12 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
   const title = input.title ?? "Browse, search, edit, and manage wiki databases.";
   const description = input.description ?? "A focused browser and operator UI for Kinic Wiki canisters.";
   const tags = input.tags ?? ["/Knowledge", "/Sources", "Access", "Query"];
-  return new ImageResponse(
+  const fontData = await previewFontData();
+  const fonts: { name: string; data: ArrayBuffer; weight: 400; style: "normal" }[] = fontData
+    ? [{ name: PREVIEW_FONT_NAME, data: fontData, weight: 400, style: "normal" }]
+    : [];
+  try {
+    const svg = await satori(
     element(
       "div",
       {
@@ -52,7 +68,8 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
           display: "flex",
           background: "#161616",
           color: "#ffffff",
-          fontFamily: "Arial, Helvetica, sans-serif"
+          fontFamily: PREVIEW_FONT_NAME,
+          fontStyle: "normal"
         }
       },
       element(
@@ -109,11 +126,30 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
         )
       )
     ),
-    LINK_PREVIEW_SIZE
-  );
+    { ...LINK_PREVIEW_SIZE, fonts }
+    );
+    const { Resvg } = (await resvgLoader()) as Rasterizer;
+    const png = new Resvg(svg, { fitTo: { mode: "width", value: LINK_PREVIEW_SIZE.width } }).render().asPng();
+    return previewResponse(png);
+  } catch (error) {
+    // The preview is best-effort. A transient CDN font failure, wasm load
+    // failure, or layout error must not 500 the worker; serve a static
+    // placeholder instead.
+    console.error("link preview render failed, serving placeholder", error);
+    return previewResponse(decodeBase64(PLACEHOLDER_PNG_BASE64));
+  }
 }
 
-function kinicPreviewMark(): ReturnType<typeof React.createElement> {
+function previewResponse(bytes: Uint8Array | ArrayBuffer): Response {
+  return new Response(bytes, {
+    headers: {
+      "content-type": LINK_PREVIEW_CONTENT_TYPE,
+      "cache-control": LINK_PREVIEW_CACHE_CONTROL
+    }
+  });
+}
+
+function kinicPreviewMark(): PreviewElement {
   return element(
     "div",
     {
@@ -152,12 +188,69 @@ function kinicPreviewMark(): ReturnType<typeof React.createElement> {
   );
 }
 
-function element(type: string, props: Record<string, unknown> | null, ...children: React.ReactNode[]): ReturnType<typeof React.createElement> {
-  return React.createElement(type, props, ...children);
+type PreviewElement = {
+  type: string;
+  props: { style?: Record<string, unknown>; [key: string]: unknown };
+  key: null;
+};
+
+function element(type: string, props: Record<string, unknown> | null, ...children: (PreviewElement | string)[]): PreviewElement {
+  const normalizedChildren = children.length === 0 ? undefined : children.length === 1 ? children[0] : children;
+  return { type, props: normalizedChildren === undefined ? { ...(props ?? {}) } : { ...(props ?? {}), children: normalizedChildren }, key: null };
 }
 
 function shortenPreviewText(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+let resvgPromise: Promise<{ Resvg: typeof ResvgClass }> | null = null;
+let previewFontPromise: Promise<ArrayBuffer | null> | null = null;
+let fetchImpl: typeof fetch = globalThis.fetch;
+let resvgLoader: () => Promise<unknown> = loadResvg;
+
+export type Rasterizer = {
+  Resvg: new (svg: string, options?: unknown) => { render(): { asPng(): Uint8Array } };
+};
+
+export function setLinkPreviewDepsForTest(deps: { fetch?: typeof fetch; loadResvg?: () => Promise<unknown> } = {}) {
+  fetchImpl = deps.fetch || globalThis.fetch;
+  resvgLoader = deps.loadResvg || loadResvg;
+  previewFontPromise = null;
+}
+
+type ResvgModule = { Resvg: typeof ResvgClass; initWasm: (input: unknown) => Promise<void> };
+
+async function loadResvg(): Promise<{ Resvg: typeof ResvgClass }> {
+  if (!resvgPromise) {
+    resvgPromise = (async () => {
+      const [resvg, wasm] = await Promise.all([
+        import("@resvg/resvg-wasm"),
+        import("@resvg/resvg-wasm/index_bg.wasm")
+      ]);
+      const module = resvg as unknown as ResvgModule;
+      await module.initWasm((wasm as { default: unknown }).default);
+      return { Resvg: module.Resvg };
+    })();
+  }
+  return resvgPromise;
+}
+
+async function previewFontData(): Promise<ArrayBuffer | null> {
+  if (!previewFontPromise) {
+    previewFontPromise = (async () => {
+      try {
+        const response = await fetchImpl(PREVIEW_FONT_URL);
+        if (response.ok) return await response.arrayBuffer();
+      } catch {
+        // Fall through to the bundled fallback font.
+      }
+      // The fallback font is bundled at build time, so previews render even when
+      // the CDN is unreachable. It covers Latin text; Japanese glyphs degrade to
+      // the layout engine's missing-glyph box until the CDN is reachable again.
+      return decodeBase64(FALLBACK_FONT_BASE64);
+    })();
+  }
+  return previewFontPromise;
 }

@@ -122,7 +122,7 @@ kinic-vfs-cli database create "My agent memory"
 kinic-vfs-cli database create "Team skills"
 ```
 `database purchase-cycles <database-id> <kinic>` pulls the KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the fixed ledger transfer fee.
-`database cycles <database-id>` prints and opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. The database ID must match `[a-zA-Z0-9_-]+`, matching the browser `/cycles` route. This command does not use the CLI identity or contact the canister, so it can still print the payment URL when the local replica is stopped. Pass `--browser-origin` or set `KINIC_WIKI_BROWSER_ORIGIN` for local or staging browser hosts. The purchase amount is entered in the browser flow. The browser flow is limited to the configured canonical wiki canister, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
+`database cycles <database-id>` prints and opens `https://wiki.kinic.xyz/cycles?...` for browser funding from the logged-in Internet Identity account or a connected OISY/Plug wallet. The database ID must match `[a-zA-Z0-9_-]+`, matching the browser `/cycles` route. This command does not use the CLI identity or contact the canister, so it can still print the payment URL when the local replica is stopped. Pass `--browser-origin` or set `KINIC_WIKI_BROWSER_ORIGIN` for local or staging browser hosts. The purchase amount and payment source are selected in the browser flow; balances remain separate and are never combined or used as an automatic fallback. The browser flow is limited to the configured canonical wiki canister, requires the purchase amount plus `0.002 KINIC`, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The selected account also pays the approve transaction fee. The first successful purchase activates a pending DB.
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
@@ -337,6 +337,7 @@ Common read and write commands:
 - `delete-node --path /Knowledge/file.md`
 - `delete-tree --path /Knowledge/obsolete-scope --json`
 - `move-node --from-path /Knowledge/a.md --to-path /Knowledge/b.md`
+- `move-node --from-path /Knowledge/a.md --to-path /Knowledge/b.md --overwrite --expected-target-etag <etag>`
 - `glob-nodes "**/*.md" --path /Knowledge --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
@@ -356,6 +357,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ```
 
 `kind` is `file`, `source`, or `folder`. `metadata_json` and `expected_etag` may be omitted. Source nodes are allowed under safe `/Sources/...` paths; canonical `/Sources/<provider>/<id>.md` shape is not required. Folder writes are create-only and idempotent; use empty `content`, `metadata_json: "{}"`, and omit `expected_etag`.
+For `move-node --overwrite`, pass `--expected-target-etag` when the destination currently exists. Omit it when the destination is absent. The flag is rejected without `--overwrite`, so callers must read and preserve both the source and destination etags before replacing a live destination.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --limit 100 --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

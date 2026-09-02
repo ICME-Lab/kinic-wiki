@@ -11,12 +11,12 @@ import {
   LINK_PREVIEW_CONTENT_TYPE
 } from "./link-preview.js";
 import { DeepSeekRequestError, DeepSeekResponseError, DraftValidationError, generateDraft, validateDraftSources } from "./openai.js";
-import { DEFAULT_OUTPUT_LANGUAGE, parseOutputLanguage } from "./output-language.js";
+import { parseOutputLanguage } from "./output-language.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { sourceIdFromPath, validateSourceRootPath } from "./source-path.js";
 import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, triggerSourceCaptureRequest } from "./source-capture.js";
 import { createAnonymousVfsClient, createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { LinkPreviewQueueMessage, ManualRunInput, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
+import type { LinkPreviewQueueMessage, ManualRunInput, OutputLanguage, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export type ManualRunContext = {
@@ -200,7 +200,7 @@ async function processSourceQueueMessage(
             requestPath: message.requestPath,
             sessionNonce: message.sessionNonce,
           }),
-        message.outputLanguage ?? DEFAULT_OUTPUT_LANGUAGE
+        message.outputLanguage
       );
       const content = generated.content;
       if (new TextEncoder().encode(content).byteLength > 256 * 1024) {
@@ -225,7 +225,12 @@ async function processSourceQueueMessage(
       }
       await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
       const providerError = error instanceof DeepSeekRequestError ? error : null;
-      return retryDisposition(providerError?.code ?? "source_generation_transient", errorMessage(error), execution.attempts, providerError?.retryAfterSeconds);
+      return retryDisposition(
+        providerError?.code ?? "source_generation_transient",
+        errorMessage(error),
+        execution.attempts,
+        deepSeekRetryDelaySeconds(providerError, execution.attempts)
+      );
     }
   }
 
@@ -400,8 +405,8 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if ("requestPath" in value && value.requestPath !== undefined && !nonEmptyString(value.requestPath)) return null;
     if (typeof value.requestPath === "string" && !isSourceCaptureRequestPath(value.requestPath)) return null;
     if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
-    const outputLanguage = parseOutputLanguage(value.outputLanguage);
-    if (!outputLanguage) return null;
+    const outputLanguage = value.outputLanguage == null ? undefined : parseOutputLanguage(value.outputLanguage);
+    if (outputLanguage === null) return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
@@ -470,7 +475,7 @@ async function generateFromSource(
   databaseId: string,
   source: WikiNode,
   beforeDeepSeek?: () => Promise<void>,
-  outputLanguage = DEFAULT_OUTPUT_LANGUAGE
+  outputLanguage?: OutputLanguage
 ): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
   await beforeDeepSeek?.();
@@ -706,13 +711,32 @@ function retryDisposition(code: string, message: string, attempts: number, retry
   };
 }
 
+export function deepSeekRetryDelaySeconds(
+  error: DeepSeekRequestError | null,
+  attempts: number,
+  randomUnit = secureRandomUnit()
+): number | undefined {
+  if (!error) return undefined;
+  if (error.retryAfterSeconds !== undefined) return error.retryAfterSeconds;
+  if (error.code !== "deepseek_http_503") return undefined;
+
+  const ceiling = Math.min(300, 60 * 2 ** Math.max(0, attempts - 1));
+  const floor = Math.ceil(ceiling / 2);
+  const boundedRandom = Math.min(1, Math.max(0, randomUnit));
+  return Math.min(ceiling, floor + Math.floor(boundedRandom * (ceiling - floor + 1)));
+}
+
 function errorCode(error: unknown): string {
   return error instanceof DeepSeekRequestError ? error.code : "source_generation_transient";
 }
 
 function exponentialBackoff(attempts: number): number {
   const ceiling = Math.min(300, 15 * 2 ** Math.max(0, attempts - 1));
+  return Math.max(1, Math.floor(secureRandomUnit() * ceiling));
+}
+
+function secureRandomUnit(): number {
   const random = new Uint32Array(1);
   crypto.getRandomValues(random);
-  return Math.max(1, Math.floor((random[0]! / 0xffffffff) * ceiling));
+  return random[0]! / 0xffffffff;
 }

@@ -3,17 +3,20 @@
 // Why: skill docs need stable, deep-linkable pages without touching the Skill Registry UI.
 import { AppLink as Link } from "@/components/app-link";
 import { notFound } from "@tanstack/react-router";
-import { ArrowLeft, ShieldCheck, TerminalSquare, Workflow } from "lucide-react";
-import { CliGuideBlock } from "@/app/docs/cli/cli-guide-block";
+import { ArrowLeft, Workflow } from "lucide-react";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
 import { findSkillDoc } from "../../docs-data";
+import { findSkillMarkdown, findSkillMarkdownReferences } from "../../skill-markdown";
+import { SkillMarkdownBlock } from "./skill-markdown-block";
 
 type SkillDocPageProps = { slug: string };
 
 export default function SkillDocPage({ slug }: SkillDocPageProps) {
   const doc = findSkillDoc(slug);
-  if (!doc) throw notFound();
+  const skillMarkdown = findSkillMarkdown(slug);
+  const skillMarkdownReferences = findSkillMarkdownReferences(slug);
+  if (!doc || !skillMarkdown) throw notFound();
 
   return (
     <AdminContent>
@@ -30,35 +33,7 @@ export default function SkillDocPage({ slug }: SkillDocPageProps) {
           <h1 className="mt-3 text-2xl font-semibold text-ink">{doc.title}</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">{doc.summary}</p>
         </AdminPanel>
-
-        <div className="grid gap-4 lg:grid-cols-[1fr_0.95fr]">
-          <CliGuideBlock icon={<TerminalSquare aria-hidden size={18} />} title="Common commands" commands={doc.commandLines}>
-            Use these as entry examples. Add <code>--canister-id</code>, <code>--identity-mode</code>, or workspace database config when the target environment requires it.
-          </CliGuideBlock>
-          <AdminPanel className="min-w-0" padding="lg">
-            <div className="flex items-center gap-2">
-              <ShieldCheck aria-hidden className="text-accent" size={18} />
-              <h2 className="text-lg font-semibold text-ink">Safety</h2>
-            </div>
-            <ul className="mt-4 grid gap-2 text-sm leading-6 text-muted">
-              {doc.safety.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </AdminPanel>
-        </div>
-
-        <AdminPanel className="min-w-0" padding="lg">
-          <div className="flex items-center gap-2">
-            <Workflow aria-hidden className="text-accent" size={18} />
-            <h2 className="text-lg font-semibold text-ink">Responsibilities</h2>
-          </div>
-          <ul className="mt-4 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
-            {doc.responsibilities.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </AdminPanel>
+        <SkillMarkdownBlock markdown={skillMarkdown} references={skillMarkdownReferences} />
       </div>
     </AdminContent>
   );

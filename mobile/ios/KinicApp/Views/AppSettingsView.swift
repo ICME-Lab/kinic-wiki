@@ -6,8 +6,10 @@ import SwiftUI
 
 struct AppSettingsView: View {
     @Bindable var model: AppModel
+    let askAIModel: AskAIModel
     @Environment(\.dismiss) private var dismiss
     @State private var didCopyPrincipal = false
+    @State private var showsDeleteAccountConfirmation = false
 
     private var account: InternetIdentityPresentation {
         InternetIdentityPresentation(principal: model.isSignedIn ? model.principalText : nil)
@@ -54,7 +56,7 @@ struct AppSettingsView: View {
             } header: {
                 Text("Generation")
             } footer: {
-                Text("New captures generate wiki pages in this language.")
+                Text("New captures and Ask AI answers use this language.")
             }
 
             Section("Browse") {
@@ -71,13 +73,47 @@ struct AppSettingsView: View {
             Section("Privacy") {
                 Link("Privacy Policy", destination: AppConfiguration.privacyPolicyURL)
             }
+
+            if model.isSignedIn {
+                Section {
+                    Button("Delete Account", role: .destructive) {
+                        showsDeleteAccountConfirmation = true
+                    }
+                    .disabled(model.isDeletingAccount)
+
+                    if model.isDeletingAccount {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Deleting account…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let error = model.accountDeletionError {
+                        Text(error)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Account Deletion")
+                } footer: {
+                    Text("Permanently removes your KinicWiki account data and access. Your Internet Identity is not deleted.")
+                }
+            }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done", action: close)
+                    .disabled(model.isDeletingAccount)
             }
+        }
+        .interactiveDismissDisabled(model.isDeletingAccount)
+        .alert("Delete Account?", isPresented: $showsDeleteAccountConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete Account", role: .destructive, action: deleteAccount)
+        } message: {
+            Text("Databases you solely own will be permanently deleted. Shared databases will remain, but your access and purchased access will be removed. Ask AI history, capture history, and queued URLs on this device will be erased. Your Internet Identity will not be deleted. This cannot be undone.")
         }
     }
 
@@ -93,10 +129,21 @@ struct AppSettingsView: View {
         UIPasteboard.general.string = principal
         didCopyPrincipal = true
     }
+
+    private func deleteAccount() {
+        Task {
+            if await model.deleteAccount(
+                coordinatedHistoryDeletion: askAIModel.deleteStoredHistoryForAccountDeletion
+            ) {
+                dismiss()
+            }
+        }
+    }
 }
 
 #Preview {
+    let appModel = AppModel.preview()
     NavigationStack {
-        AppSettingsView(model: .preview())
+        AppSettingsView(model: appModel, askAIModel: AskAIModel(appModel: appModel))
     }
 }

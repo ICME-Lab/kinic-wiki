@@ -7,7 +7,9 @@ import {
   authStatus,
   handleOffscreenMessage,
   listWritableDatabases,
+  fetchRecall,
   saveEvidenceSource,
+  searchRecall,
   setOffscreenDepsForTest,
   triggerSourceGeneration,
   webSourceExists
@@ -63,12 +65,318 @@ test("saveEvidenceSource writes with authenticated identity", async () => {
   }
 });
 
+test("searchRecall searches Knowledge and Sources and ranks normalized hits", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.prefix[0] === "/Knowledge") {
+         return { Ok: [rawRecallHit("/Knowledge/mcp.md", ["title_fts"], -10_000)] };
+       }
+       return { Ok: [rawRecallHit("/Sources/chatgpt/mcp.md", ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.deepEqual(calls.map((request) => request.prefix[0]).sort(), ["/Knowledge", "/Sources"]);
+    assert.equal(calls[0].preview_mode[0].Light, null);
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/mcp.md", "/Sources/chatgpt/mcp.md"]);
+    assert.match(result[0].sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall runs one fallback query only when literal results are insufficient", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.query_text === "memory agent MCP") {
+          return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
+        }
+        assert.equal(request.query_text, "MCP");
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/fallback.md" : "/Sources/literal.md", ["title_fts"], -5_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("MCP agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(calls.length, 4);
+    assert.deepEqual([...new Set(calls.map((request) => request.query_text))], ["memory agent MCP", "MCP"]);
+    assert.deepEqual(result.map((entry) => entry.path), [
+      "/Knowledge/literal.md",
+      "/Knowledge/fallback.md",
+      "/Sources/literal.md"
+    ]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall preserves literal results when fallback search fails", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        calls.push(request);
+        if (request.query_text === "MCP") throw new Error("fallback unavailable");
+        return { Ok: [rawRecallHit(request.prefix[0] === "/Knowledge" ? "/Knowledge/literal.md" : "/Sources/literal.md", ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("MCP agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(calls.length, 4);
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/literal.md", "/Sources/literal.md"]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall reads a bounded start window for explicit context insertion", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node(databaseId, path) {
+        assert.equal(databaseId, "team-db");
+        assert.equal(path, "/Knowledge/mcp.md");
+        return { Ok: [{ content: "memory".repeat(2_500), metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/mcp.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.equal(result.content.length, 3_000);
+    assert.match(result.sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall centers the context window on a match far beyond the preview", async () => {
+  const content = `${"before\n".repeat(2_000)}TARGET_WORD\n${"after\n".repeat(2_000)}`;
+  const targetIndex = content.indexOf("TARGET_WORD");
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node() {
+        return { Ok: [{ content, metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/long.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    }, { charOffset: targetIndex });
+    assert.equal(result.content.length, 3_000);
+    assert.ok(result.content.includes("TARGET_WORD"), "context window should include the matched location");
+    assert.equal(result.content.indexOf("TARGET_WORD"), 1_500);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("fetchRecall falls back to the start window when the offset is absent", async () => {
+  const content = `${"head\n".repeat(1_000)}TAIL_MATCH\n${"tail\n".repeat(5_000)}`;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node() {
+        return { Ok: [{ content, metadata_json: "{}" }] };
+      }
+    })
+  });
+  try {
+    const result = await fetchRecall("/Knowledge/long.md", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    }, {});
+    assert.equal(result.content.length, 3_000);
+    assert.ok(result.content.startsWith("head"));
+    assert.ok(!result.content.includes("TAIL_MATCH"));
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall preserves real VFS content_substring CJK hits", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        return { Ok: [rawRecallHit("/Knowledge/メモ.md", ["content_substring"], -100_000_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("検索改善", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/メモ.md"]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall builds source URLs with per-segment encoding", async () => {
+  const rawPath = "/Knowledge/a#b?c% d日本語.md";
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes() {
+        return { Ok: [rawRecallHit(rawPath, ["content_fts"], -10_000)] };
+      }
+    })
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", {
+      canisterId: "aaaaa-aa",
+      databaseId: "team-db",
+      host: "https://icp0.io"
+    });
+    const expectedSuffix = rawPath
+      .split("/")
+      .filter(Boolean)
+      .map(encodeURIComponent)
+      .join("/");
+    assert.equal(result[0].sourceUrl, `https://wiki.kinic.xyz/db/team-db/${expectedSuffix}`);
+    assert.ok(!result[0].sourceUrl.includes("#"), "fragment marker must be encoded");
+    assert.ok(!result[0].sourceUrl.includes(" "), "spaces must be encoded");
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("saveEvidenceSource rejects unauthenticated sessions", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
     await assert.rejects(() => saveEvidenceSource(evidenceSource(), config()), /UNAUTHENTICATED/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveEvidenceSource surfaces structured folder mutation errors", async () => {
+  let writeCalled = false;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return { Ok: [] };
+      },
+      async mkdir_node() {
+        return { Err: nodeMutationError("A file already occupies /Sources") };
+      },
+      async write_source_for_generation() {
+        writeCalled = true;
+        throw new Error("write should not be called");
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => saveEvidenceSource(evidenceSource(), config()),
+      /A file already occupies \/Sources/
+    );
+    assert.equal(writeCalled, false);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveEvidenceSource surfaces structured source mutation errors", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return { Ok: [] };
+      },
+      async mkdir_node(request) {
+        return { Ok: { created: true, path: request.path } };
+      },
+      async write_source_for_generation() {
+        return { Err: nodeMutationError("expected_etag does not match current etag") };
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => saveEvidenceSource(evidenceSource(), config()),
+      /expected_etag does not match current etag/
+    );
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveEvidenceSource refuses a different web URL that occupied the path after lookup", async () => {
+  let writeCalled = false;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async read_node() {
+        return {
+          Ok: [{ etag: "etag-other", metadata_json: JSON.stringify({ final_url: "https://example.com/other" }) }]
+        };
+      },
+      async write_source_for_generation() {
+        writeCalled = true;
+        throw new Error("write should not be called");
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () =>
+        saveEvidenceSource(
+          {
+            path: "/Sources/web/abc.md",
+            sourceId: "web-abc",
+            content: "# Web source",
+            metadataJson: JSON.stringify({
+              source_type: "url",
+              url: "https://example.com/page",
+              final_url: "https://example.com/page"
+            })
+          },
+          config()
+        ),
+      /WEB_SOURCE_PATH_CONFLICT/
+    );
+    assert.equal(writeCalled, false);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -93,6 +401,7 @@ test("webSourceExists returns false when evidence source is missing", async () =
       target: "offscreen",
       type: "web-source-exists",
       sourcePath: "/Sources/web/abc.md",
+      expectedUrl: "https://example.com/page",
       config: config()
     });
 
@@ -111,12 +420,14 @@ test("webSourceExists returns true when evidence source exists", async () => {
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
       async read_node() {
-        return { Ok: [{ etag: "etag-source" }] };
+        return {
+          Ok: [{ etag: "etag-source", metadata_json: JSON.stringify({ final_url: "https://example.com/page" }) }]
+        };
       }
     })
   });
   try {
-    const result = await webSourceExists("/Sources/web/abc.md", config());
+    const result = await webSourceExists("/Sources/web/abc.md", "https://example.com/page#section", config());
 
     assert.deepEqual(result, { exists: true, path: "/Sources/web/abc.md", etag: "etag-source" });
   } finally {
@@ -129,11 +440,36 @@ test("webSourceExists rejects unauthenticated sessions", async () => {
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => webSourceExists("/Sources/web/abc.md", config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => webSourceExists("/Sources/web/abc.md", "https://example.com/page", config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
 });
+
+for (const [label, metadataJson] of [
+  ["a different URL", JSON.stringify({ final_url: "https://example.com/other" })],
+  ["missing URL metadata", JSON.stringify({ source_type: "url" })],
+  ["invalid metadata JSON", "not-json"]
+]) {
+  test(`webSourceExists rejects ${label} at an occupied path`, async () => {
+    setOffscreenDepsForTest({
+      authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+      createVfsActor: async () => ({
+        async read_node() {
+          return { Ok: [{ etag: "etag-source", metadata_json: metadataJson }] };
+        }
+      })
+    });
+    try {
+      await assert.rejects(
+        () => webSourceExists("/Sources/web/abc.md", "https://example.com/page", config()),
+        /WEB_SOURCE_PATH_CONFLICT/
+      );
+    } finally {
+      setOffscreenDepsForTest();
+    }
+  });
+}
 
 test("saveEvidenceSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
   const calls = [];
@@ -322,6 +658,7 @@ test("run-source-capture-task accepts immediately and later sends success notifi
     assert.equal(runtimeMessages[0].ok, true);
     assert.equal(runtimeMessages[0].result.sourcePath, "/Sources/chatgpt/abc.md");
     assert.equal(runtimeMessages[0].result.generationQueued, true);
+    assert.equal(runtimeMessages[0].databaseId, "team-db");
     assert.equal(runtimeMessages[0].inFlightKey, "team-db:https://example.com/");
   } finally {
     setOffscreenDepsForTest();
@@ -348,6 +685,7 @@ test("run-source-capture-task sends error notification when source save fails", 
 
     assert.equal(runtimeMessages[0].ok, false);
     assert.equal(runtimeMessages[0].url, "https://example.com/");
+    assert.equal(runtimeMessages[0].databaseId, "team-db");
     assert.equal(runtimeMessages[0].error, "source lookup failed");
   } finally {
     setOffscreenDepsForTest();
@@ -591,6 +929,15 @@ function sourceWriteActor({ write = null } = {}) {
   };
 }
 
+function nodeMutationError(message) {
+  return {
+    code: { InvalidOperation: null },
+    message,
+    failed_index: [],
+    conflict_path: []
+  };
+}
+
 function sourceCaptureTaskMessage() {
   return {
     target: "offscreen",
@@ -667,5 +1014,16 @@ function rawDatabaseWithoutMetadata(databaseId, name, role, status) {
   return {
     ...rawDatabase(databaseId, name, role, status),
     metadata: []
+  };
+}
+
+function rawRecallHit(path, matchReasons, score) {
+  return {
+    path,
+    kind: { File: null },
+    match_reasons: matchReasons,
+    score,
+    preview: [{ field: { Content: null }, char_offset: 0, match_reason: matchReasons[0], excerpt: ["recall excerpt"] }],
+    snippet: ["recall excerpt"]
   };
 }

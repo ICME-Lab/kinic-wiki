@@ -104,6 +104,16 @@ struct ShareInbox: @unchecked Sendable {
         try? fileManager.removeItem(at: fileURL)
     }
 
+    func removeAll() throws {
+        let files = try fileManager.contentsOfDirectory(
+            at: queueDirectory,
+            includingPropertiesForKeys: nil
+        )
+        for fileURL in files {
+            try fileManager.removeItem(at: fileURL)
+        }
+    }
+
     private static func isSafeRecordId(_ id: String) -> Bool {
         SourceCaptureRequestBuilder.isSafeStorageSegment(id)
     }

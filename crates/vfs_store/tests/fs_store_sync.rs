@@ -440,6 +440,7 @@ fn fetch_updates_reports_old_path_when_node_is_moved() {
                 from_path: "/Knowledge/alpha.md".to_string(),
                 to_path: "/Knowledge/archive/alpha.md".to_string(),
                 expected_etag: Some(alpha),
+                expected_target_etag: None,
                 overwrite: false,
             },
             11,
@@ -512,6 +513,7 @@ fn folder_move_updates_sync_export_search_and_links() {
                 from_path: "/Knowledge/project".to_string(),
                 to_path: "/Knowledge/archive/project".to_string(),
                 expected_etag: Some(folder.etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             13,
@@ -725,6 +727,7 @@ fn fetch_updates_rejects_scope_change_after_move() {
                 from_path: "/Knowledge/a.md".to_string(),
                 to_path: "/Knowledge/archive/a.md".to_string(),
                 expected_etag: Some(source),
+                expected_target_etag: None,
                 overwrite: false,
             },
             11,
@@ -762,7 +765,7 @@ fn fetch_updates_rejects_scope_change_after_move() {
 fn fetch_updates_reports_move_overwrite_of_live_target() {
     let (_dir, store) = new_store();
     let source = write_node(&store, "/Knowledge/source.md", "source", None, 10);
-    write_node(&store, "/Knowledge/target.md", "target", None, 11);
+    let target = write_node(&store, "/Knowledge/target.md", "target", None, 11);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
@@ -781,6 +784,7 @@ fn fetch_updates_reports_move_overwrite_of_live_target() {
                 from_path: "/Knowledge/source.md".to_string(),
                 to_path: "/Knowledge/target.md".to_string(),
                 expected_etag: Some(source),
+                expected_target_etag: Some(target),
                 overwrite: true,
             },
             12,

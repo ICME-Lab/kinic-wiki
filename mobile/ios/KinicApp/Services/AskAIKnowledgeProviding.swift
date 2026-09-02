@@ -8,10 +8,11 @@ import Foundation
 protocol AskAIKnowledgeProviding: AnyObject {
     var selectedAskAIDatabaseId: String { get }
     var selectedAskAIDatabaseTitle: String { get }
+    var askAIOutputLanguage: WikiOutputLanguage { get }
     var canAskAI: Bool { get }
     var askAIDatabaseCandidates: [DatabaseSummary] { get }
 
-    func selectAskAIDatabase(_ databaseId: String)
+    func selectAskAIDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition
     func retrieveAskAISources(databaseId: String, queryPlan: AskAIQueryPlan) async throws -> AskAIRetrievalResult
     func openAskAISource(databaseId: String, path: String)
 }

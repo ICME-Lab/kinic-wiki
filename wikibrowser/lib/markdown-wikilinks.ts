@@ -3,6 +3,14 @@
 // Why: react-markdown only parses CommonMark/GFM links, while stored notes may use [[target|label]].
 
 export function renderWikilinksAsMarkdown(content: string): string {
+  return walkLinesSkippingCode(content, renderLineWikilinks);
+}
+
+export function renderWikilinksAsText(content: string): string {
+  return walkLinesSkippingCode(content, renderLineWikilinksText);
+}
+
+function walkLinesSkippingCode(content: string, transform: (line: string) => string): string {
   const lines = content.split("\n");
   let fence: MarkdownFence | null = null;
   return lines.map((line) => {
@@ -20,7 +28,7 @@ export function renderWikilinksAsMarkdown(content: string): string {
     if (isIndentedCodeLine(line)) {
       return line;
     }
-    return renderLineWikilinks(line);
+    return transform(line);
   }).join("\n");
 }
 
@@ -43,6 +51,19 @@ function escapeMarkdownDestination(value: string): string {
 }
 
 function renderLineWikilinks(line: string): string {
+  return transformLineWikilinks(line, (raw) => {
+    return renderWikilink(raw);
+  }, { embeds: false });
+}
+
+function renderLineWikilinksText(line: string): string {
+  return transformLineWikilinks(line, (raw) => {
+    const parsed = parseWikilink(raw);
+    return parsed ? escapeForPlainText(parsed.label) : null;
+  }, { embeds: true });
+}
+
+function transformLineWikilinks(line: string, render: (raw: string) => string | null, { embeds }: { embeds: boolean }): string {
   let output = "";
   let index = 0;
   while (index < line.length) {
@@ -54,14 +75,17 @@ function renderLineWikilinks(line: string): string {
         continue;
       }
     }
-    if (line.startsWith("[[", index) && line[index - 1] !== "!") {
-      const close = line.indexOf("]]", index + 2);
+    const isEmbed = embeds && line.startsWith("![[", index);
+    const isLink = line.startsWith("[[", index) && (embeds || line[index - 1] !== "!");
+    if (isEmbed || isLink) {
+      const contentStart = isEmbed ? index + 3 : index + 2;
+      const close = line.indexOf("]]", contentStart);
       if (close === -1) {
         output += line.slice(index);
         break;
       }
-      const raw = line.slice(index + 2, close);
-      const rendered = renderWikilink(raw);
+      const raw = line.slice(contentStart, close);
+      const rendered = render(raw);
       output += rendered ?? line.slice(index, close + 2);
       index = close + 2;
       continue;
@@ -70,6 +94,22 @@ function renderLineWikilinks(line: string): string {
     index += 1;
   }
   return output;
+}
+
+function escapeForPlainText(value: string): string {
+  let output = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    output += isAsciiPunctuation(codePoint) ? `&#${codePoint};` : character;
+  }
+  return output;
+}
+
+function isAsciiPunctuation(codePoint: number): boolean {
+  return (codePoint >= 33 && codePoint <= 47)
+    || (codePoint >= 58 && codePoint <= 64)
+    || (codePoint >= 91 && codePoint <= 96)
+    || (codePoint >= 123 && codePoint <= 126);
 }
 
 function renderWikilink(raw: string): string | null {

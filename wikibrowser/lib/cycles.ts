@@ -10,6 +10,10 @@ export function kinicBaseUnitsPerToken(): bigint {
   return 10n ** BigInt(KINIC_DECIMALS);
 }
 
+export function requiredKinicBalanceE8s(paymentAmountE8s: bigint): bigint {
+  return paymentAmountE8s + KINIC_LEDGER_FEE_E8S * 2n;
+}
+
 export function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
   const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
   if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");

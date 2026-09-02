@@ -6,9 +6,10 @@ use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
     DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewField,
-    SearchPreviewMode, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MutateNodesBatchRequest, NodeEntryKind,
+    NodeKind, NodeMutation, NodeMutationErrorCode, OutgoingLinksRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewField, SearchPreviewMode, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 fn assert_v5_snapshot_revision_without_state_hash(snapshot_revision: &str) {
@@ -136,7 +137,8 @@ fn fs_migrations_create_tables() {
         .expect("fts sql lookup should succeed");
     assert!(fts_sql.contains("fts5(\n    path,"));
     assert!(fts_sql.contains("title,"));
-    assert!(fts_sql.contains("content\n"));
+    assert!(fts_sql.contains("content,"));
+    assert!(fts_sql.contains("trigram"));
 
     let versions: Vec<String> = conn
         .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
@@ -145,7 +147,14 @@ fn fs_migrations_create_tables() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
+        ]
+    );
 
     {
         let table = "fs_links";
@@ -636,6 +645,86 @@ fn write_nodes_creates_files_and_sources_atomically() {
 }
 
 #[test]
+fn full_replacement_preserves_explicit_source_kind_and_metadata_across_write_apis() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Sources/preserved/source.md", 9);
+    let metadata = r#"{"source_url":"https://example.com"}"#;
+    let created = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Sources/preserved/source.md".to_string(),
+                kind: NodeKind::Source,
+                content: "one".to_string(),
+                metadata_json: metadata.to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("source should create");
+    let batch = store
+        .write_nodes(
+            WriteNodesRequest {
+                database_id: "default".to_string(),
+                nodes: vec![WriteNodeItem {
+                    path: "/Sources/preserved/source.md".to_string(),
+                    kind: NodeKind::Source,
+                    content: "two".to_string(),
+                    metadata_json: metadata.to_string(),
+                    expected_etag: Some(created.node.etag),
+                }],
+            },
+            11,
+        )
+        .expect("source should be replaced");
+    let mutation = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".to_string(),
+                operations: vec![NodeMutation::Write(WriteNodeItem {
+                    path: "/Sources/preserved/source.md".to_string(),
+                    kind: NodeKind::Source,
+                    content: "three".to_string(),
+                    metadata_json: metadata.to_string(),
+                    expected_etag: Some(batch[0].node.etag.clone()),
+                })],
+            },
+            12,
+        )
+        .expect("batch mutation should replace source");
+
+    assert_eq!(mutation.len(), 1);
+    let node = store
+        .read_node("/Sources/preserved/source.md")
+        .expect("source should read")
+        .expect("source should exist");
+    assert_eq!(node.kind, NodeKind::Source);
+    assert_eq!(node.metadata_json, metadata);
+    assert_eq!(node.content, "three");
+}
+
+#[test]
+fn mutation_errors_do_not_classify_expected_etag_from_a_missing_path() {
+    let (_dir, store) = new_store();
+    let error = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Memory/expected_etag.md".to_string(),
+                kind: NodeKind::File,
+                content: "missing".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some("stale".to_string()),
+            },
+            10,
+        )
+        .expect_err("a conditional write cannot create a missing node");
+
+    assert_eq!(error.code, NodeMutationErrorCode::NotFound);
+    assert_eq!(error.conflict_path, None);
+}
+
+#[test]
 fn write_nodes_rolls_back_when_later_item_fails() {
     let (_dir, store) = new_store();
     let existing = write_file(&store, "/Knowledge/existing.md", None, 9);
@@ -665,7 +754,8 @@ fn write_nodes_rolls_back_when_later_item_fails() {
         )
         .expect_err("stale item should fail");
 
-    assert!(error.contains("expected_etag"));
+    assert_eq!(error.failed_index, Some(1));
+    assert!(error.message.contains("expected_etag"));
     assert!(
         store
             .read_node("/Knowledge/new-before-error.md")
@@ -832,10 +922,25 @@ fn write_node_rejects_invalid_folder_requests() {
         )
         .expect_err("folder over file should reject");
 
-    assert!(non_empty.contains("folder item content must be empty"));
-    assert!(metadata.contains("folder item metadata_json must be empty object"));
-    assert!(etag.contains("expected_etag must be None for folder item"));
-    assert!(collision.contains("node already exists and is not a folder"));
+    assert!(
+        non_empty
+            .message
+            .contains("folder item content must be empty")
+    );
+    assert!(
+        metadata
+            .message
+            .contains("folder item metadata_json must be empty object")
+    );
+    assert!(
+        etag.message
+            .contains("expected_etag must be None for folder item")
+    );
+    assert!(
+        collision
+            .message
+            .contains("node already exists and is not a folder")
+    );
 }
 
 #[test]
@@ -1015,7 +1120,7 @@ fn delete_folder_with_index_and_visible_child_keeps_all_nodes() {
         )
         .expect_err("visible child should block folder delete");
 
-    assert!(error.contains("folder is not empty"));
+    assert!(error.message.contains("folder is not empty"));
     for path in [
         "/Knowledge/topic",
         "/Knowledge/topic/index.md",
@@ -1061,7 +1166,12 @@ fn delete_folder_with_stale_index_etag_keeps_folder_and_index() {
         )
         .expect_err("stale index etag should fail");
 
-    assert!(error.contains("expected_folder_index_etag"));
+    assert!(error.message.contains("expected_folder_index_etag"));
+    assert_eq!(error.code, NodeMutationErrorCode::EtagConflict);
+    assert_eq!(
+        error.conflict_path.as_deref(),
+        Some("/Knowledge/topic/index.md")
+    );
     assert!(
         store
             .read_node("/Knowledge/topic")
@@ -1130,7 +1240,7 @@ fn delete_file_rejects_folder_index_etag() {
         )
         .expect_err("file delete should reject folder index etag");
 
-    assert!(error.contains("expected_folder_index_etag"));
+    assert!(error.message.contains("expected_folder_index_etag"));
     assert!(
         store
             .read_node("/Knowledge/file.md")
@@ -1157,7 +1267,14 @@ fn fs_migrations_are_idempotent() {
         .expect("version query should run")
         .collect::<Result<Vec<_>, _>>()
         .expect("versions should collect");
-    assert_eq!(versions, vec!["vfs_store:001_initial".to_string()]);
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
+        ]
+    );
 
     let tracked_paths = conn
         .query_row("SELECT COUNT(*) FROM fs_path_state", [], |row| {
@@ -1165,6 +1282,229 @@ fn fs_migrations_are_idempotent() {
         })
         .expect("path state count should succeed");
     assert_eq!(tracked_paths, 10);
+}
+
+#[test]
+fn fs_migration_003_rebuilds_fts_with_trigram() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/日本語/検索改善メモ.md", 1_799);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/日本語/検索改善メモ.md".to_string(),
+                kind: NodeKind::File,
+                content: "検索精度改善の作業メモ".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_800,
+        )
+        .expect("write should succeed");
+
+    // Simulate the pre-003 state: the FTS index is the old unicode61 shape and
+    // the 003 marker is absent, so the next migration run must rebuild it with
+    // the trigram tokenizer and preserve searchable content.
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "DROP TABLE fs_nodes_fts;
+         CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(path, title, content);
+         INSERT INTO fs_nodes_fts(rowid, path, title, content)
+            SELECT id, path, COALESCE(name, ''), content FROM fs_nodes;
+         DELETE FROM schema_migrations WHERE version = 'vfs_store:003_fts_trigram';",
+    )
+    .expect("old schema setup should succeed");
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("003 fts trigram migration should apply");
+
+    let conn = Connection::open(store.database_path()).expect("db should reopen");
+    let versions: Vec<String> = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .expect("version query should prepare")
+        .query_map([], |row| row.get(0))
+        .expect("version query should run")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("versions should collect");
+    assert_eq!(
+        versions,
+        vec![
+            "vfs_store:001_initial".to_string(),
+            "vfs_store:002_publication_mutation_commits".to_string(),
+            "vfs_store:003_fts_trigram".to_string(),
+        ]
+    );
+
+    // "精度改善" is a 4-char substring of the node content. The unicode61
+    // tokenizer treated the whole CJK run as one token and could not match it;
+    // trigram matches substrings, so content search must work after migration.
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "精度改善".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Knowledge/日本語/検索改善メモ.md"),
+        "trigram migration should restore Japanese content substring search"
+    );
+}
+
+#[test]
+fn search_matches_short_ascii_terms_in_content_case_insensitively() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/AI-agent-notes.md", 1_799);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Knowledge/AI-agent-notes.md".to_string(),
+                kind: NodeKind::File,
+                content: "AI agent memory design notes".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_800,
+        )
+        .expect("write should succeed");
+
+    for query in ["ai", "AI", "ai agent"] {
+        let hits = store
+            .search_nodes(SearchNodesRequest {
+                database_id: "default".to_string(),
+                query_text: query.to_string(),
+                prefix: Some("/Knowledge".to_string()),
+                top_k: 5,
+                preview_mode: Some(SearchPreviewMode::None),
+            })
+            .expect("search should succeed");
+        assert!(
+            hits.iter()
+                .any(|hit| hit.path == "/Knowledge/AI-agent-notes.md"),
+            "query {query:?} should match content case-insensitively"
+        );
+    }
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "ai".to_string(),
+            prefix: Some("/Knowledge".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::Light),
+        })
+        .expect("search should succeed");
+    let hit = hits
+        .iter()
+        .find(|hit| hit.path == "/Knowledge/AI-agent-notes.md")
+        .expect("hit should exist");
+    assert!(
+        hit.match_reasons
+            .iter()
+            .any(|reason| reason == "content_substring"),
+        "short ascii term should match via content substring fallback"
+    );
+}
+
+#[test]
+fn search_scores_are_negative_and_sorted_best_first() {
+    let (_dir, store) = new_store();
+    ensure_parent_folders(&store, "/Knowledge/score/note-00.md", 999);
+    for index in 0..50 {
+        let path = format!("/Knowledge/score/note-{index:02}.md");
+        let content = if index == 0 {
+            "needle appears exactly once here".to_string()
+        } else if index % 5 == 0 {
+            format!("needle repeated in note {index} to increase frequency")
+        } else {
+            format!("unrelated note body {index}")
+        };
+        store
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path,
+                    kind: NodeKind::File,
+                    content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_000 + index as i64,
+            )
+            .expect("write should succeed");
+    }
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            database_id: "default".to_string(),
+            query_text: "needle".to_string(),
+            prefix: Some("/Knowledge/score".to_string()),
+            top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
+        })
+        .expect("search should succeed");
+    assert!(!hits.is_empty());
+    // Every canister hit score must be finite and negative. Consumers such as
+    // the Wiki Clipper recall feature rank by this value and must not assume a
+    // fixed magnitude floor, because bm25 magnitude shrinks as a term becomes
+    // common in the store.
+    for hit in &hits {
+        assert!(
+            hit.score.is_finite() && hit.score < 0.0,
+            "score must be negative: {hit:?}"
+        );
+    }
+    let mut sorted = hits.clone();
+    sorted.sort_by(|left, right| left.score.total_cmp(&right.score));
+    assert_eq!(
+        hits, sorted,
+        "search results should already be sorted by score"
+    );
+}
+
+#[test]
+fn fs_migrations_apply_publication_commit_marker_once() {
+    let (_dir, store) = new_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute("DROP TABLE publication_mutation_commits", [])
+        .expect("publication commit table should drop");
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE version = ?1",
+        ["vfs_store:002_publication_mutation_commits"],
+    )
+    .expect("publication commit migration marker should delete");
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("001 to 002 migration should apply");
+    store
+        .run_fs_migrations()
+        .expect("002 migration should apply only once");
+
+    let conn = Connection::open(store.database_path()).expect("db should reopen");
+    let table_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'publication_mutation_commits'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("publication commit table should exist");
+    assert_eq!(table_count, 1);
+    let marker_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+            ["vfs_store:002_publication_mutation_commits"],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("publication commit marker should exist");
+    assert_eq!(marker_count, 1);
 }
 
 #[test]
@@ -1263,6 +1603,7 @@ fn move_node_creates_missing_store_root_on_current_schema() {
                 from_path: "/Memory/move-source.md".to_string(),
                 to_path: "/Knowledge/moved.md".to_string(),
                 expected_etag: Some(source_etag),
+                expected_target_etag: None,
                 overwrite: false,
             },
             41,
@@ -1434,7 +1775,12 @@ fn write_update_delete_and_recreate_follow_etag_rules() {
             11,
         )
         .expect_err("stale write should fail");
-    assert!(stale_error.contains("expected_etag"));
+    assert!(stale_error.message.contains("expected_etag"));
+    assert_eq!(stale_error.code, NodeMutationErrorCode::EtagConflict);
+    assert_eq!(
+        stale_error.conflict_path.as_deref(),
+        Some("/Knowledge/foo.md")
+    );
 
     let second = store
         .write_node(
@@ -1479,7 +1825,7 @@ fn write_update_delete_and_recreate_follow_etag_rules() {
             14,
         )
         .expect_err("stale delete should fail");
-    assert!(stale_delete.contains("node does not exist"));
+    assert!(stale_delete.message.contains("node does not exist"));
     assert!(
         store
             .read_node("/Knowledge/foo.md")

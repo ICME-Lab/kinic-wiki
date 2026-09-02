@@ -22,7 +22,14 @@ const expectedTypes = selectCandidShapes(sharedTypes, [
   "CreateDatabaseRequest",
   "CreateDatabaseResult",
   "NodeKind",
+  "NodeMutationErrorCode",
+  "NodeMutationError",
   "Node",
+  "SearchPreviewField",
+  "SearchPreviewMode",
+  "SearchPreview",
+  "SearchNodeHit",
+  "SearchNodesRequest",
   "WriteSourceForGenerationRequest",
   "MkdirNodeRequest",
   "MkdirNodeResult",
@@ -36,6 +43,7 @@ const expectedMethods = selectCandidShapes(sharedMethods, [
   "list_databases",
   "mkdir_node",
   "read_node",
+  "search_nodes",
   "write_source_for_generation"
 ]);
 const idlResultAliases = {
@@ -43,10 +51,11 @@ const idlResultAliases = {
   CyclesBillingConfig: "ResultCyclesBillingConfig",
   CreateDatabaseResult: "ResultCreateDatabase",
   "vec DatabaseSummary": "ResultDatabases",
-  MkdirNodeResult: "ResultMkdirNode",
+  "MkdirNodeResult|NodeMutationError": "ResultMkdirNode",
   "opt Node": "ResultNode",
+  "vec SearchNodeHit": "ResultSearch",
   WriteNodeResult: "ResultWriteNode",
-  WriteSourceForGenerationResult: "ResultWriteSourceForGeneration"
+  "WriteSourceForGenerationResult|NodeMutationError": "ResultWriteSourceForGeneration"
 };
 
 const failures = checkCandidSubset({

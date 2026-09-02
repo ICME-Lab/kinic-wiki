@@ -1,7 +1,7 @@
 // Where: extensions/wiki-clipper/src/history-links.js
 // What: Normalize user-supplied recent export limits.
 // Why: Direct API export still needs bounded user input.
-export const DEFAULT_EXPORT_LIMIT = 10;
+export const DEFAULT_EXPORT_LIMIT = 1;
 export const MAX_EXPORT_LIMIT = 100;
 
 export function normalizeExportLimit(value) {

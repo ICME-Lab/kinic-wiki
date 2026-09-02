@@ -110,6 +110,43 @@ select {
   font: inherit;
 }
 
+.settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--kinic-line);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--kinic-paper);
+}
+
+.settings-toggle input {
+  width: auto;
+  margin-top: 3px;
+  accent-color: var(--kinic-hot-pink);
+}
+
+.settings-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-toggle small {
+  color: var(--kinic-body);
+  font-weight: 400;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--kinic-body);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 input:focus,
 select:focus {
   border-color: var(--kinic-hot-pink);

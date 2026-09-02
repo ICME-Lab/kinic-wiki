@@ -60,6 +60,8 @@ const wikiBrowserFiles = [
   "../components/wiki-browser/top-bar.tsx"
 ];
 const wikiBrowserSource = wikiBrowserFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
+const localImportDialogSource = readFileSync(new URL("../components/local-import-dialog.tsx", import.meta.url), "utf8");
+const localImportSource = readFileSync(new URL("../lib/local-import.ts", import.meta.url), "utf8");
 const queryPanelSource = readFileSync(new URL("../components/query-panel.tsx", import.meta.url), "utf8");
 const queryContextSource = readFileSync(new URL("../lib/query-context.ts", import.meta.url), "utf8");
 const vfsClientFiles = [
@@ -72,6 +74,7 @@ const vfsClientFiles = [
 const vfsClientSource = vfsClientFiles.map((p) => readFileSync(new URL(p, import.meta.url), "utf8")).join("\n");
 const databasePreviewSource = readFileSync(new URL("../lib/database-preview.ts", import.meta.url), "utf8");
 const wranglerConfigSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+const assetsIgnoreSource = readFileSync(new URL("../public/.assetsignore", import.meta.url), "utf8");
 const globalsCss = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta.url), "utf8");
 
@@ -122,6 +125,20 @@ assert.match(wikiBrowserSource, /deleteNodeAuthenticated/);
 assert.match(wikiBrowserSource, /writeNodeAuthenticated/);
 assert.match(wikiBrowserSource, /mkdirNodeAuthenticated/);
 assert.match(wikiBrowserSource, /moveNodeAuthenticated/);
+assert.match(wikiBrowserSource, /Import files/);
+assert.match(wikiBrowserSource, /Import folder/);
+assert.match(wikiBrowserSource, /accept="\.md,\.pdf,text\/markdown,application\/pdf"/);
+assert.match(wikiBrowserSource, /webkitdirectory/);
+assert.match(wikiBrowserSource, /writeNodesAuthenticated/);
+assert.match(localImportDialogSource, /Local \{mode === "folder" \? "folder" : "files"\} → Wiki/);
+assert.match(localImportDialogSource, /existing file.*will be kept unless replacement is selected/);
+assert.match(localImportDialogSource, /const busy = state\.phase === "writing"/);
+assert.match(localImportSource, /LOCAL_IMPORT_NODE_LIMIT = 100/);
+assert.match(localImportSource, /LOCAL_IMPORT_BYTE_LIMIT = 1_500_000/);
+assert.match(localImportSource, /LOCAL_IMPORT_SOURCE_FILE_BYTE_LIMIT = 20_000_000/);
+assert.match(localImportSource, /status === "conflict" && replacements\.has\(entry\.path\)/);
+assert.match(wikiBrowserSource, /new AbortController\(\)/);
+assert.match(wikiBrowserSource, /localImportAbortController\.current\?\.abort\(\);[\s\S]{0,240}\}, \[canisterId, databaseId\]\);/);
 assert.match(wikiBrowserSource, /nodeContextCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /childNodesCache\.current\.clear\(\)/);
 assert.match(wikiBrowserSource, /expectedEtag: null/);
@@ -162,6 +179,7 @@ assert.match(adminRouteShellSource, /<AdminShell>\{children\}<\/AdminShell>/);
 assert.match(marketplaceLayoutSource, /<AdminRouteShell>/);
 assert.match(marketplaceLayoutSource, /<AdminContent>\{children\}<\/AdminContent>/);
 assert.match(wranglerConfigSource, /"r2_buckets"/);
+assert.match(assetsIgnoreSource, /^\.DS_Store$/m, "static asset uploads must exclude macOS metadata");
 assert.match(wranglerConfigSource, /"binding": "LINK_PREVIEW_IMAGES"/);
 assert.match(wranglerConfigSource, /"bucket_name": "kinic-wiki-link-preview-images"/);
 assert.match(wranglerConfigSource, /"queues"/);
@@ -425,8 +443,8 @@ assert.match(documentPaneSource, /toast\.error\(`\$\{label\} copy failed`\)/);
 assert.doesNotMatch(documentPaneSource, /copyStatus/);
 assert.doesNotMatch(documentPaneSource, /setCopyStatus/);
 assert.doesNotMatch(documentPaneSource, /label="Saved"/);
-assert.match(layoutSource, /import \{ Toaster \} from "sonner"/);
-assert.match(layoutSource, /<Toaster richColors position="bottom-right" \/>/);
+assert.match(layoutSource, /import \{ Toaster \} from "@\/components\/ui\/toast"/);
+assert.match(layoutSource, /<Toaster \/>/);
 assert.match(sourceCapturePanelSource, /toast\.success\(`Queued and accepted \$\{created\.requestPath\}`\)/);
 assert.match(sourceCapturePanelSource, /toast\.error\(`Queued \$\{created\.requestPath\}\. \$\{created\.triggerError\}`\)/);
 assert.match(markdownEditDocumentSource, /toast\.success\("Saved"\)/);

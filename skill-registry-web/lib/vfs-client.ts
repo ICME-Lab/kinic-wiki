@@ -8,7 +8,7 @@ import { isLocalReplicaHost } from "@kinic/vfs-client-core";
 import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
-import { idlFactory } from "@/lib/vfs-idl";
+import { idlFactory } from "@kinic/vfs-candid";
 import type { ChildNode, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
@@ -21,15 +21,21 @@ type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: 
 type RawDatabaseMember = { database_id: string; principal: string; role: Variant; created_at_ms: bigint };
 type RawWriteNodeRequest = { database_id: string; path: string; kind: Variant; content: string; metadata_json: string; expected_etag: [] | [string] };
 type RawWriteNodeResult = { created: boolean; node: RawNodeMutationAck };
+type RawNodeMutationError = {
+  code: Variant;
+  message: string;
+  failed_index: [] | [number];
+  conflict_path: [] | [string];
+};
 
 type VfsActor = {
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
-  mkdir_node: (request: { database_id: string; path: string }) => Promise<{ Ok: MkdirNodeResult } | { Err: string }>;
+  mkdir_node: (request: { database_id: string; path: string }) => Promise<{ Ok: MkdirNodeResult } | { Err: RawNodeMutationError }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   search_nodes: (request: { database_id: string; query_text: string; prefix: [] | [string]; top_k: number; preview_mode: [] | [Variant] }) => Promise<{ Ok: RawSearchHit[] } | { Err: string }>;
-  write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
+  write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: RawNodeMutationError }>;
 };
 
 const DEFAULT_WIKI_IC_HOST = "https://icp0.io";
@@ -113,7 +119,7 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
       metadata_json: request.metadataJson,
       expected_etag: request.expectedEtag ? [request.expectedEtag] : []
     });
-    if ("Err" in result) throwCanisterError(result.Err);
+    if ("Err" in result) throwCanisterError(result.Err.message);
     return { created: result.Ok.created, node: normalizeNodeMutationAck(result.Ok.node) };
   });
 }
@@ -121,7 +127,7 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
 export async function mkdirNodeAuthenticated(canisterId: string, identity: Identity, request: MkdirNodeRequest): Promise<MkdirNodeResult> {
   return callVfs(async () => {
     const result = await (await createAuthenticatedActor(canisterId, identity)).mkdir_node({ database_id: request.databaseId, path: request.path });
-    if ("Err" in result) throwCanisterError(result.Err);
+    if ("Err" in result) throwCanisterError(result.Err.message);
     return result.Ok;
   });
 }

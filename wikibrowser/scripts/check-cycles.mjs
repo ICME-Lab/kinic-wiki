@@ -12,24 +12,28 @@ const vfsClientFiles = [
   "../lib/vfs-client/market.ts"
 ];
 const vfsClient = vfsClientFiles.map((p) => readProjectFile(p)).join("\n");
-const idl = readProjectFile("../lib/vfs-idl.ts");
+const idl = readProjectFile("../../packages/vfs-candid/index.ts");
 
-assert.match(client, /purchaseCyclesWithWallet/);
+assert.match(client, /purchaseCyclesWithFundingSource/);
 assert.match(client, /listDatabasesAuthenticated/);
 assert.match(client, /data-tid="cycles-login-button"/);
 assert.match(client, /Sign in with Internet Identity/);
 assert.match(client, /Purchase cycles with OISY/);
 assert.match(client, /Purchase cycles with Plug/);
+assert.match(client, /Purchase cycles with Internet Identity/);
+assert.match(client, /requiredKinicBalanceE8s/);
 assertNoAppBalanceSurface(client);
 assert.doesNotMatch(client, /paymentSource === "kinic"/);
 
-assert.match(dashboardHome, /Create with wallet/);
-assert.match(dashboardHome, /purchaseCyclesWithWallet/);
+assert.match(dashboardHome, /Create with \$\{fundingProviderLabel/);
+assert.match(dashboardHome, /purchaseCyclesWithFundingSource/);
 assertNoAppBalanceSurface(dashboardHome);
 assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource/);
 
 assert.match(wallet, /export async function purchaseCyclesWithOisy/);
 assert.match(wallet, /export async function purchaseCyclesWithPlug/);
+assert.match(wallet, /export async function purchaseCyclesWithIdentity/);
+assert.match(wallet, /export async function purchaseCyclesWithFundingSource/);
 assert.match(wallet, /approveParams\(canisterId/);
 assert.match(wallet, /runOisyAllowanceCall/);
 assert.match(wallet, /runPlugAllowanceCall/);

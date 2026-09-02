@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { cleanup, render, screen } from "@testing-library/react";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  PublicNodeDocument,
   publicNodeDescription,
   publicNodeHead,
   publicNodeTitle,
@@ -16,6 +21,47 @@ const data: PublicNodePageData = {
   title: "Public note",
   description: "Public description"
 };
+
+const originalScrollTo = window.scrollTo;
+
+beforeAll(() => {
+  window.scrollTo = vi.fn();
+});
+
+afterEach(() => cleanup());
+
+afterAll(() => {
+  window.scrollTo = originalScrollTo;
+});
+
+describe("PublicNodeDocument", () => {
+  it("renders accessible brand, publication, content, and dashboard links", async () => {
+    const rootRoute = createRootRoute({ component: Outlet });
+    const pageRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: "/",
+      component: () => <PublicNodeDocument data={data} />
+    });
+    const router = createRouter({
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+      routeTree: rootRoute.addChildren([pageRoute])
+    });
+
+    render(<RouterProvider router={router} />);
+
+    const homeLink = await screen.findByRole("link", { name: "Kinic Wiki home" });
+    expect(homeLink.getAttribute("href")).toBe("/");
+    expect(homeLink.querySelector('img[src="/kinic-mark.png"]')).not.toBeNull();
+    expect(screen.getByText("Published with Kinic Wiki")).not.toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Public note" })).not.toBeNull();
+
+    const dashboardLinks = screen.getAllByRole("link", { name: "Start using Kinic Wiki" });
+    expect(dashboardLinks).toHaveLength(2);
+    for (const dashboardLink of dashboardLinks) {
+      expect(dashboardLink.getAttribute("href")).toBe("/dashboard");
+    }
+  });
+});
 
 describe("publicNodeHead", () => {
   it.each([

@@ -13,30 +13,36 @@ import {
   generateIiKey,
   IiDelegationError,
   IiRegistrationError,
-  IiSessionEndedError,
   INTERNET_IDENTITY_ORIGIN,
-  mintKinicIdentity,
   redeemRegistration,
   resolveKinicMcpTargetOrigin,
-  restoreIiKey
+  restoreIiKey,
+  restoreKinicIdentity,
+  type KinicDelegationMaterialV1
 } from "./internet-identity.js";
+import { restoreReviewServiceIdentity } from "./review-identity.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,
+  sessionKeyContext,
   type AuthorizationSessionInput,
   type ClientAuthMethod,
-  type McpAuthStateV2,
+  type IdentitySource,
+  type McpAuthStateV5,
   type OAuthClientRecordV2,
   type TokenIssueResult
 } from "./state.js";
 
 const CALLBACK_PATH = "/mcp/connect";
+const II_CONNECT_PATH = "/oauth/connect/internet-identity";
+const REVIEW_CONNECT_PATH = "/oauth/connect/reviewer";
+const REVIEW_DATABASE_ID_PATTERN = /^db_[a-z2-7]{12}$/u;
 const CLIENT_PREFIX = "mcl1.";
 const COOKIE_NAME = "__Host-kinic-mcp-connect";
 const SESSION_CAP_MS = 8 * 60 * 60 * 1000;
 const CONNECT_TTL_MS = 10 * 60 * 1000;
 const CLIENT_SECRET_TTL_SECONDS = 0;
 const MAX_AUTH_BODY_BYTES = 16_384;
-const ALLOWED_SCOPES = new Set(["mcp:read", "offline_access"]);
+const ALLOWED_SCOPES = new Set(["mcp:read", "mcp:write", "offline_access"]);
 
 type OAuthClientRegistrationRequest = {
   redirect_uris?: unknown;
@@ -45,7 +51,7 @@ type OAuthClientRegistrationRequest = {
   client_name?: unknown;
 };
 
-export type McpAccessPolicy = "public" | "private_required" | "private_opt_in";
+export type McpAccessPolicy = "public" | "private_required";
 
 export type AuthenticationMode =
   | McpAccessPolicy
@@ -55,18 +61,23 @@ export type AuthenticationMode =
 
 export function authenticationMode(request: Request, env: RuntimeEnv): AuthenticationMode {
   const policy = env.MCP_ACCESS_POLICY?.trim();
-  if (policy !== "public" && policy !== "private_required" && policy !== "private_opt_in") {
+  if (policy !== "public" && policy !== "private_required") {
     return "misconfigured";
   }
   if (policy === "public") {
     return policy;
   }
   const configuredOrigin = oauthOrigin(env);
+  const reviewFlag = env.MCP_REVIEW_LOGIN_ENABLED?.trim();
+  if (reviewFlag && reviewFlag !== "true" && reviewFlag !== "false") {
+    return "misconfigured";
+  }
   if (
     !configuredOrigin ||
     !env.MCP_AUTH_STATE ||
     !env.MCP_KEY_ENCRYPTION_KEY?.trim() ||
-    !env.MCP_REGISTRATION_RATE_LIMIT
+    !env.MCP_REGISTRATION_RATE_LIMIT ||
+    (reviewLoginEnabled(env) && !reviewLoginConfigured(env))
   ) {
     return "misconfigured";
   }
@@ -93,7 +104,7 @@ export function authenticationBoundaryResponse(mode: AuthenticationMode): Respon
 
 export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promise<Response | null> {
   const mode = authenticationMode(request, env);
-  if (mode !== "private_required" && mode !== "private_opt_in") {
+  if (mode !== "private_required") {
     return null;
   }
   const url = new URL(request.url);
@@ -117,6 +128,12 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
   if (request.method === "GET" && url.pathname === "/oauth/authorize") {
     return authorize(request, env);
   }
+  if (request.method === "POST" && url.pathname === II_CONNECT_PATH) {
+    return startInternetIdentityConnect(request, env);
+  }
+  if (request.method === "POST" && url.pathname === REVIEW_CONNECT_PATH) {
+    return completeReviewConnect(request, env);
+  }
   if (url.pathname === CALLBACK_PATH && request.method === "GET") {
     return connectPage();
   }
@@ -131,8 +148,12 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
 
 export async function authenticateMcpRequest(
   request: Request,
-  env: RuntimeEnv
-): Promise<{ identity: Identity } | { response: Response }> {
+  env: RuntimeEnv,
+  requireDelegation: boolean
+): Promise<
+  | { identity?: Identity; scopes: string[]; actionPermission: "queries" | "all"; identitySource: IdentitySource }
+  | { response: Response }
+> {
   const resource = mcpResource(env);
   const unauthorized = () =>
     json(
@@ -156,39 +177,46 @@ export async function authenticateMcpRequest(
     return { response: unauthorized() };
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
-  const validated = await stub.validateAccessToken(tokenValue, resource, Date.now());
-  if (!validated) {
+  const authenticated = await stub.authenticateAccessToken(tokenValue, resource, Date.now(), requireDelegation);
+  if (authenticated.kind === "invalid") {
     return { response: unauthorized() };
   }
-  let keyJson: JsonnableEd25519KeyIdentity;
-  try {
-    keyJson = await decryptJson<JsonnableEd25519KeyIdentity>(
-      validated.encryptedSessionKey,
-      encryptionKey(env),
-      sessionKeyContext(sessionId)
-    );
-  } catch {
-    await stub.invalidate();
-    return { response: unauthorized() };
-  }
-  try {
-    const targetOrigin = resolveKinicMcpTargetOrigin(
-      env.KINIC_WIKI_MCP_TARGET_ORIGIN,
-      env.KINIC_WIKI_CANISTER_ID
-    );
-    const identity = await mintKinicIdentity(restoreIiKey(keyJson), targetOrigin);
-    return { identity };
-  } catch (error) {
-    if (error instanceof IiSessionEndedError) {
-      await stub.invalidate();
-      return { response: unauthorized() };
-    }
-    logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_unknown");
+  if (authenticated.kind === "temporarily_unavailable") {
+    logMcpAuth(authenticated.stage);
     return { response: json({ error: "temporarily_unavailable" }, 503) };
   }
+  let identity: Identity | undefined;
+  if (authenticated.identitySource === "review_service" && requireDelegation) {
+    try {
+      identity = restoreReviewServiceIdentity(
+        env.MCP_REVIEW_IDENTITY_KEY,
+        env.MCP_REVIEW_IDENTITY_PRINCIPAL
+      );
+    } catch {
+      logMcpAuth("review_identity_restore");
+      return { response: json({ error: "temporarily_unavailable" }, 503) };
+    }
+  } else if (authenticated.delegation) {
+    try {
+      identity = restoreKinicIdentity(
+        authenticated.delegation as KinicDelegationMaterialV1,
+        resolveKinicMcpTargetOrigin(env.KINIC_WIKI_MCP_TARGET_ORIGIN, env.KINIC_WIKI_CANISTER_ID),
+        Date.now()
+      );
+    } catch (error) {
+      logMcpAuth(error instanceof IiDelegationError ? error.stage : "delegation_cache");
+      return { response: json({ error: "temporarily_unavailable" }, 503) };
+    }
+  }
+  return {
+    ...(identity ? { identity } : {}),
+    scopes: authenticated.scope.split(/\s+/u).filter(Boolean),
+    actionPermission: authenticated.actionPermission,
+    identitySource: authenticated.identitySource
+  };
 }
 
-export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
+export function mcpUnauthorizedResponse(env: RuntimeEnv, scope = "mcp:read"): Response {
   return json(
     { error: "unauthorized" },
     401,
@@ -196,7 +224,8 @@ export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
       "www-authenticate": mcpWwwAuthenticateChallenge(
         env,
         "insufficient_scope",
-        "Private connection is required"
+        "Private connection is required",
+        scope
       )
     }
   );
@@ -205,13 +234,15 @@ export function mcpUnauthorizedResponse(env: RuntimeEnv): Response {
 export function mcpWwwAuthenticateChallenge(
   env: RuntimeEnv,
   error: "insufficient_scope" | "invalid_token",
-  errorDescription: string
+  errorDescription: string,
+  scope?: string
 ): string {
   const origin = requiredOauthOrigin(env);
   return [
     `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
     `error="${error}"`,
-    `error_description="${errorDescription}"`
+    `error_description="${errorDescription}"`,
+    ...(scope ? [`scope="${scope}"`] : [])
   ].join(", ");
 }
 
@@ -220,7 +251,7 @@ function protectedResourceMetadata(env: RuntimeEnv) {
   return {
     resource: mcpResource(env),
     authorization_servers: [origin],
-    scopes_supported: ["mcp:read", "offline_access"],
+    scopes_supported: ["mcp:read", "mcp:write", "offline_access"],
     bearer_methods_supported: ["header"]
   };
 }
@@ -236,7 +267,7 @@ function authorizationServerMetadata(env: RuntimeEnv) {
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
-    scopes_supported: ["mcp:read", "offline_access"]
+    scopes_supported: ["mcp:read", "mcp:write", "offline_access"]
   };
 }
 
@@ -324,7 +355,6 @@ async function registerClient(request: Request, env: RuntimeEnv): Promise<Respon
 async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
   const resource = mcpResource(env);
-  const origin = requiredOauthOrigin(env);
   const clientId = url.searchParams.get("client_id");
   const redirectUri = url.searchParams.get("redirect_uri");
   const oauthState = url.searchParams.get("state");
@@ -369,6 +399,7 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
     codeChallenge,
     connectStateHash: await sha256(connectState),
     cookieHash: await sha256(cookieValue),
+    registrationPublicKey: base64UrlEncode(new Uint8Array(registrationKey.getPublicKey().toDer())),
     registrationKey: await encryptJson(registrationKey.toJSON(), key, registrationKeyContext(sessionId)),
     sessionKey: await encryptJson(sessionKey.toJSON(), key, sessionKeyContext(sessionId)),
     createdAt: now,
@@ -379,22 +410,161 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!created) {
     return oauthJsonError("server_error", 500);
   }
-  const iiUrl = new URL("/mcp", INTERNET_IDENTITY_ORIGIN);
-  const fragment = new URLSearchParams({
-    registration_key: base64UrlEncode(new Uint8Array(registrationKey.getPublicKey().toDer())),
-    callback: `${origin}${CALLBACK_PATH}`,
-    state: connectState,
-    ttl: String(SESSION_CAP_MS / 1000)
+  return new Response(authorizationChoicePage(connectState, reviewLoginEnabled(env)), {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "set-cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "referrer-policy": "no-referrer"
+    }
   });
-  iiUrl.hash = fragment.toString();
+}
+
+async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): Promise<Response> {
+  const input = await pendingConnectInput(request, env);
+  if (!input) {
+    return oauthJsonError("invalid_request", 400);
+  }
+  const origin = requiredOauthOrigin(env);
+  const iiUrl = new URL("/mcp", INTERNET_IDENTITY_ORIGIN);
+  iiUrl.hash = new URLSearchParams({
+    registration_key: input.pending.registrationPublicKey,
+    callback: `${origin}${CALLBACK_PATH}`,
+    state: input.connectState,
+    ttl: String(SESSION_CAP_MS / 1000)
+  }).toString();
+  return new Response(null, {
+    status: 302,
+    headers: { location: iiUrl.toString(), "cache-control": "no-store" }
+  });
+}
+
+async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!reviewLoginEnabled(env) || !reviewLoginConfigured(env)) {
+    return oauthJsonError("temporarily_unavailable", 503);
+  }
+  let rateLimitAllowed: boolean;
+  try {
+    const clientAddress = request.headers.get("cf-connecting-ip") ?? "unknown";
+    rateLimitAllowed = (await reviewLoginRateLimiter(env).limit({
+      key: `review-login:${clientAddress}`
+    })).success;
+  } catch {
+    return oauthJsonError("temporarily_unavailable", 503);
+  }
+  if (!rateLimitAllowed) {
+    return json(
+      { error: "temporarily_unavailable" },
+      429,
+      { "cache-control": "no-store", "retry-after": "60" }
+    );
+  }
+
+  const form = await limitedForm(request);
+  const connectState = form?.get("connect_state") ?? null;
+  const username = form?.get("username") ?? null;
+  const password = form?.get("password") ?? null;
+  const cookieValue = readCookie(request.headers.get("cookie"), COOKIE_NAME);
+  if (!connectState || !username || !password || !cookieValue) {
+    return oauthJsonError("invalid_request", 400);
+  }
+  const sessionId = cookieValue.split(".", 1)[0];
+  if (!sessionId || !/^[A-Za-z0-9_-]+$/u.test(sessionId)) {
+    return oauthJsonError("invalid_request", 400);
+  }
+  const stub = authNamespace(env).getByName(sessionName(sessionId));
+  const pending = await stub.inspectPendingConnect(connectState, cookieValue, Date.now());
+  if (!pending || pending.sessionId !== sessionId) {
+    return oauthJsonError("invalid_request", 400);
+  }
+  const [usernameMatches, passwordMatches] = await Promise.all([
+    secretEquals(env.MCP_REVIEW_USERNAME_HASH!.trim(), username),
+    secretEquals(env.MCP_REVIEW_PASSWORD_HASH!.trim(), password)
+  ]);
+  if (!usernameMatches || !passwordMatches) {
+    return new Response(authorizationChoicePage(connectState, true, "Sign-in failed."), {
+      status: 401,
+      headers: authorizationPageHeaders()
+    });
+  }
+  const claimed = await stub.claimConnect(connectState, cookieValue, Date.now());
+  if (!claimed || claimed.sessionId !== sessionId) {
+    return oauthJsonError("invalid_request", 400);
+  }
+  const completed = await stub.completeReviewConnect(
+    env.MCP_REVIEW_ACCESS_VERSION!.trim(),
+    Date.now(),
+    sessionId
+  );
+  if (!completed) {
+    await stub.invalidate();
+    return oauthJsonError("invalid_request", 400);
+  }
+  const redirect = new URL(completed.redirectUri);
+  redirect.searchParams.set("code", completed.code);
+  redirect.searchParams.set("state", completed.oauthState);
   return new Response(null, {
     status: 302,
     headers: {
-      location: iiUrl.toString(),
-      "set-cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+      location: redirect.toString(),
+      "set-cookie": `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
       "cache-control": "no-store"
     }
   });
+}
+
+async function pendingConnectInput(
+  request: Request,
+  env: RuntimeEnv
+): Promise<{
+  connectState: string;
+  pending: { sessionId: string; registrationPublicKey: string };
+} | null> {
+  const form = await limitedForm(request);
+  const connectState = form?.get("connect_state") ?? null;
+  const cookieValue = readCookie(request.headers.get("cookie"), COOKIE_NAME);
+  if (!connectState || !cookieValue) return null;
+  const sessionId = cookieValue.split(".", 1)[0];
+  if (!sessionId || !/^[A-Za-z0-9_-]+$/u.test(sessionId)) return null;
+  const pending = await authNamespace(env)
+    .getByName(sessionName(sessionId))
+    .inspectPendingConnect(connectState, cookieValue, Date.now());
+  return pending?.sessionId === sessionId ? { connectState, pending } : null;
+}
+
+function authorizationChoicePage(connectState: string, reviewEnabled: boolean, error = ""): string {
+  const reviewerForm = reviewEnabled
+    ? `<hr><h2>OpenAI reviewer sign in</h2>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
+<form method="post" action="${REVIEW_CONNECT_PATH}">
+<input type="hidden" name="connect_state" value="${connectState}">
+<label>Username <input name="username" autocomplete="username" required></label><br>
+<label>Password <input type="password" name="password" autocomplete="current-password" required></label><br>
+<button type="submit">Sign in</button></form>`
+    : "";
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Connect Kinic Wiki</title><body><h1>Connect Kinic Wiki</h1>
+<form method="post" action="${II_CONNECT_PATH}"><input type="hidden" name="connect_state" value="${connectState}">
+<button type="submit">Continue with Internet Identity</button></form>${reviewerForm}</body></html>`;
+}
+
+function authorizationPageHeaders(): HeadersInit {
+  return {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "referrer-policy": "no-referrer"
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/gu, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]!);
 }
 
 function connectPage(): Response {
@@ -462,8 +632,8 @@ async function completeConnect(request: Request, env: RuntimeEnv): Promise<Respo
   let sessionKey: ReturnType<typeof restoreIiKey>;
   try {
     const key = encryptionKey(env);
-    if (!pending.registrationKey) {
-      throw new Error("registration key is unavailable");
+    if (!pending.registrationKey || !pending.sessionKey) {
+      throw new Error("Internet Identity connection keys are unavailable");
     }
     registrationKey = restoreIiKey(
       await decryptJson<JsonnableEd25519KeyIdentity>(
@@ -486,7 +656,12 @@ async function completeConnect(request: Request, env: RuntimeEnv): Promise<Respo
     await stub.invalidate();
     return registrationFailureResponse(traceId, error);
   }
-  const completed = await stub.completeConnect(registered.grantExpiresAt, Date.now(), sessionId);
+  const completed = await stub.completeConnect(
+    registered.grantExpiresAt,
+    registered.permissions,
+    Date.now(),
+    sessionId
+  );
   if (!completed) {
     await stub.invalidate();
     return connectFailureResponse(traceId, "authorization_completion", "invalid_connection", 400);
@@ -735,11 +910,56 @@ function mcpResource(env: RuntimeEnv): string {
   return `${requiredOauthOrigin(env)}/mcp`;
 }
 
-function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV2> {
+function authNamespace(env: RuntimeEnv): DurableObjectNamespace<McpAuthStateV5> {
   if (!env.MCP_AUTH_STATE) {
     throw new Error("MCP_AUTH_STATE binding is required");
   }
   return env.MCP_AUTH_STATE;
+}
+
+function reviewLoginEnabled(env: RuntimeEnv): boolean {
+  return env.MCP_REVIEW_LOGIN_ENABLED?.trim() === "true";
+}
+
+function reviewLoginConfigured(env: RuntimeEnv): boolean {
+  const reviewDatabaseId = env.MCP_REVIEW_DATABASE_ID?.trim() ?? "";
+  const reviewWritePrefix = env.MCP_REVIEW_WRITE_PREFIX?.trim() ?? "";
+  return Boolean(
+    env.MCP_REVIEW_LOGIN_RATE_LIMIT &&
+    /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_USERNAME_HASH?.trim() ?? "") &&
+    /^[A-Za-z0-9_-]{43}$/u.test(env.MCP_REVIEW_PASSWORD_HASH?.trim() ?? "") &&
+    env.MCP_REVIEW_IDENTITY_KEY?.trim() &&
+    env.MCP_REVIEW_IDENTITY_PRINCIPAL?.trim() &&
+    /^[A-Za-z0-9._-]{1,64}$/u.test(env.MCP_REVIEW_ACCESS_VERSION?.trim() ?? "") &&
+    REVIEW_DATABASE_ID_PATTERN.test(reviewDatabaseId) &&
+    isCanonicalReviewWritePath(reviewWritePrefix)
+  );
+}
+
+export function isCanonicalReviewWritePath(path: string): boolean {
+  if (!path.startsWith("/") || path === "/" || path.endsWith("/") || path.includes("//")) {
+    return false;
+  }
+  return path
+    .slice(1)
+    .split("/")
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+export function reviewWritePathIsAllowed(path: string, configuredPrefix: string): boolean {
+  const prefix = configuredPrefix.trim();
+  return (
+    isCanonicalReviewWritePath(path) &&
+    isCanonicalReviewWritePath(prefix) &&
+    (path === prefix || path.startsWith(`${prefix}/`))
+  );
+}
+
+function reviewLoginRateLimiter(env: RuntimeEnv): RateLimit {
+  if (!env.MCP_REVIEW_LOGIN_RATE_LIMIT) {
+    throw new Error("MCP_REVIEW_LOGIN_RATE_LIMIT binding is required");
+  }
+  return env.MCP_REVIEW_LOGIN_RATE_LIMIT;
 }
 
 function registrationRateLimiter(env: RuntimeEnv): RateLimit {
@@ -766,10 +986,6 @@ function sessionName(sessionId: string): string {
 
 function registrationKeyContext(sessionId: string): string {
   return `session:${sessionId}:registration-key:v1`;
-}
-
-function sessionKeyContext(sessionId: string): string {
-  return `session:${sessionId}:session-key:v1`;
 }
 
 function parseRoutedToken(token: string, prefix: string): string | null {

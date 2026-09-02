@@ -6,18 +6,21 @@ import SwiftUI
 
 struct BrowseNodeListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var isSearchPresented = false
     @AppStorage("browseNodeSortOrder") private var sortOrder = BrowseNodeSortOrder.name
     @Bindable var model: AppModel
     let folderPath: String
     @Binding var selectedDocumentPath: String?
+    @Binding var isSearchPresented: Bool
+    let openSearchFolder: (String) -> Void
 
     var body: some View {
         List {
             if isSearching {
                 BrowseSearchResultsView(
                     model: model,
-                    selectedDocumentPath: $selectedDocumentPath
+                    folderPath: normalizedFolderPath,
+                    selectedDocumentPath: $selectedDocumentPath,
+                    openFolder: openFolderFromSearch
                 )
             } else if let error = model.browseError {
                 Text(error)
@@ -33,9 +36,24 @@ struct BrowseNodeListView: View {
         }
         .navigationTitle(model.selectedBrowseDatabase?.displayTitle ?? "Notes")
         .searchable(text: $model.searchQuery, isPresented: $isSearchPresented, prompt: "Search nodes")
-        .onSubmit(of: .search, model.startSearch)
+        .searchScopes($model.browseSearchScope) {
+            ForEach(BrowseSearchScope.allCases) { scope in
+                Text(scope.title)
+                    .tag(scope)
+            }
+        }
+        .onSubmit(of: .search) {
+            model.startSearch(in: normalizedFolderPath)
+        }
         .onChange(of: model.searchQuery) { oldQuery, newQuery in
-            model.searchQueryDidChange(from: oldQuery, to: newQuery)
+            model.searchQueryDidChange(
+                from: oldQuery,
+                to: newQuery,
+                folderPath: normalizedFolderPath
+            )
+        }
+        .onChange(of: model.browseSearchScope) {
+            model.browseSearchScopeDidChange(folderPath: normalizedFolderPath)
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -57,6 +75,7 @@ struct BrowseNodeListView: View {
         }
         .task(id: normalizedFolderPath) {
             loadFolder()
+            model.browseFolderDidBecomeActive(normalizedFolderPath)
         }
     }
 
@@ -110,6 +129,9 @@ struct BrowseNodeListView: View {
 
     private func openDocument(_ path: String) {
         selectedDocumentPath = path
-        model.startLoadBrowseDocument(path)
+    }
+
+    private func openFolderFromSearch(_ path: String) {
+        openSearchFolder(path)
     }
 }

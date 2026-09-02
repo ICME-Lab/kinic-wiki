@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/ViewModels/AskAIModel.swift
-// What: Main-actor conversation, retrieval trace, grounding, and history coordinator.
-// Why: Ask AI views stay declarative while stale responses and unsupported answers are suppressed centrally.
+// What: Main-actor DB-scoped conversational routing, retrieval, grounding, and history coordinator.
+// Why: Ask AI views stay declarative while every conversation remains pinned to one database.
 
 import Foundation
 import Observation
@@ -8,7 +8,7 @@ import Observation
 @MainActor
 @Observable
 final class AskAIModel {
-    static let maximumQuestionCharacters = AskAIQueryPlanner.maximumQuestionCharacters
+    static let maximumQuestionCharacters = AskAIRouter.maximumQuestionCharacters
 
     private let knowledgeProvider: AskAIKnowledgeProviding
     private let client: AskAICompleting
@@ -19,6 +19,7 @@ final class AskAIModel {
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private var historyContextID = UUID()
     @ObservationIgnored private var historyOperationID: UUID?
+    @ObservationIgnored private var pendingBrowseDatabaseIntent: PendingBrowseDatabaseIntent?
     private var generationID: UUID?
     private(set) var historyScope: AskAIHistoryScope
     private(set) var hasStoredConversationData = false
@@ -200,8 +201,33 @@ final class AskAIModel {
         errorMessage = nil
         pendingDatabaseId = nil
         pendingDatabaseTitle = nil
+        pendingBrowseDatabaseIntent = nil
         isConfirmingDatabaseChange = false
         isConfirmingHistoryReset = false
+    }
+
+    func deleteStoredHistoryForAccountDeletion(scope: AskAIHistoryScope) async throws {
+        guard scope == historyScope else {
+            try await AskAIConversationStore.live(scope: scope).deleteAllStoredConversationData()
+            return
+        }
+
+        cancelGeneration(persistFailure: false)
+        historyContextID = UUID()
+        historyOperationID = nil
+        loadState = .loading
+        let pendingPersistence = persistenceTask
+        let targetStore = store
+        persistenceTask = nil
+
+        await pendingPersistence?.value
+        try await targetStore.deleteAllStoredConversationData()
+
+        conversations = []
+        currentConversation = nil
+        hasStoredConversationData = false
+        draft = ""
+        errorMessage = nil
     }
 
     func syncSelectedDatabase() {
@@ -210,6 +236,9 @@ final class AskAIModel {
             return
         }
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
+        if pendingBrowseDatabaseIntent?.databaseId == databaseId {
+            return
+        }
         guard currentConversation?.databaseId != databaseId else {
             return
         }
@@ -262,10 +291,13 @@ final class AskAIModel {
     }
 
     func selectConversation(_ conversation: AskAIConversation) {
-        cancelGeneration()
-        knowledgeProvider.selectAskAIDatabase(conversation.databaseId)
-        currentConversation = conversation
-        errorMessage = nil
+        guard requestBrowseDatabaseSelection(
+            databaseId: conversation.databaseId,
+            action: .conversation(conversation)
+        ) else {
+            return
+        }
+        applySelectedConversation(conversation)
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
@@ -293,13 +325,13 @@ final class AskAIModel {
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
 
         let history = AskAIHistoryFormatter.semanticHistory(conversation.messages)
+        let outputLanguage = knowledgeProvider.askAIOutputLanguage
         let userMessage = AskAIMessage(role: .user, text: question)
         let assistantID = UUID()
         let trace = [
             AskAITraceEvent(
-                stage: .searching,
-                title: "Generating search queries",
-                detail: question,
+                stage: .generating,
+                title: "Preparing a response",
                 isActive: true
             )
         ]
@@ -331,7 +363,8 @@ final class AskAIModel {
                 databaseTitle: conversation.databaseTitle,
                 assistantID: assistantID,
                 question: question,
-                history: history
+                history: history,
+                outputLanguage: outputLanguage
             )
         }
         let timeout = generationTimeout
@@ -386,7 +419,8 @@ final class AskAIModel {
         databaseTitle: String,
         assistantID: UUID,
         question: String,
-        history: [AskAIMessage]
+        history: [AskAIMessage],
+        outputLanguage: WikiOutputLanguage
     ) async {
         do {
             guard continueGeneration(
@@ -394,13 +428,14 @@ final class AskAIModel {
                 conversationID: conversationID,
                 databaseID: databaseID
             ) else { return }
-            let queryPrompt = AskAIQueryPlanner.buildPrompt(
+            let routePrompt = AskAIRouter.buildPrompt(
                 databaseTitle: databaseTitle,
                 question: question,
-                history: history
+                history: history,
+                outputLanguage: outputLanguage
             )
-            let queryResponse = try await client.completeContent(
-                message: queryPrompt,
+            let routeResponse = try await client.completeContent(
+                message: routePrompt,
                 timeout: .seconds(30)
             )
             try Task.checkCancellation()
@@ -409,8 +444,77 @@ final class AskAIModel {
                 conversationID: conversationID,
                 databaseID: databaseID
             ) else { return }
-            let queryPlan = try AskAIQueryPlanner.parse(queryResponse)
-            let retrieval = try await knowledgeProvider.retrieveAskAISources(
+            let routeRequiresSearch = AskAIRouter.requiresDatabaseSearch(
+                question: question,
+                history: history
+            )
+            var route: AskAIRoute
+            var needsRepair = false
+            do {
+                route = try AskAIRouter.parse(routeResponse)
+                if case .conversation = route, routeRequiresSearch {
+                    needsRepair = true
+                }
+            } catch is AskAIRouteError {
+                route = .conversation(answer: "")
+                needsRepair = true
+            }
+            if needsRepair {
+                let repairResponse = try await client.completeContent(
+                    message: AskAIRouter.buildRepairPrompt(
+                        databaseTitle: databaseTitle,
+                        question: question,
+                        history: history,
+                        outputLanguage: outputLanguage
+                    ),
+                    timeout: .seconds(30)
+                )
+                try Task.checkCancellation()
+                guard continueGeneration(
+                    requestID: requestID,
+                    conversationID: conversationID,
+                    databaseID: databaseID
+                ) else { return }
+                route = try AskAIRouter.parse(repairResponse)
+                if case .conversation = route, routeRequiresSearch {
+                    throw AskAIRouteError.invalidFormat
+                }
+            }
+            if case let .conversation(answer) = route {
+                completeConversation(messageID: assistantID, answer: answer)
+                persistCurrentConversation()
+                finishGeneration(requestID: requestID)
+                return
+            }
+
+            guard case let .search(parsedQueryPlan) = route else {
+                throw AskAIRouteError.invalidFormat
+            }
+            let queryPlan = AskAIQueryPlanner.enriched(
+                parsedQueryPlan,
+                question: question,
+                history: history
+            )
+            guard knowledgeProvider.canAskAI else {
+                completeConversation(
+                    messageID: assistantID,
+                    answer: "The selected database is unavailable. Choose a readable database to search your notes."
+                )
+                persistCurrentConversation()
+                finishGeneration(requestID: requestID)
+                return
+            }
+            setTrace(
+                messageID: assistantID,
+                events: [
+                    AskAITraceEvent(
+                        stage: .searching,
+                        title: "Searching notes",
+                        isActive: true
+                    )
+                ]
+            )
+            let initialRetrieval = try await knowledgeProvider.retrieveAskAISources(
                 databaseId: databaseID,
                 queryPlan: queryPlan
             )
@@ -420,13 +524,63 @@ final class AskAIModel {
                 conversationID: conversationID,
                 databaseID: databaseID
             ) else { return }
+            var retrieval = initialRetrieval
+            var searchAttemptCount = 1
+            if retrieval.sources.isEmpty {
+                let recoveryResponse = try await client.completeContent(
+                    message: AskAIQueryPlanner.buildRecoveryPrompt(
+                        databaseTitle: databaseTitle,
+                        question: question,
+                        history: history,
+                        previousPlan: queryPlan
+                    ),
+                    timeout: .seconds(30)
+                )
+                try Task.checkCancellation()
+                guard continueGeneration(
+                    requestID: requestID,
+                    conversationID: conversationID,
+                    databaseID: databaseID
+                ) else { return }
+                do {
+                    let parsedRecoveryPlan = try AskAIQueryPlanner.parseRecovery(
+                        recoveryResponse,
+                        excluding: queryPlan
+                    )
+                    let recoveryPlan = AskAIQueryPlanner.enriched(
+                        parsedRecoveryPlan,
+                        question: question,
+                        history: history,
+                        excluding: queryPlan
+                    )
+                    let recoveryRetrieval = try await knowledgeProvider.retrieveAskAISources(
+                        databaseId: databaseID,
+                        queryPlan: recoveryPlan
+                    )
+                    try Task.checkCancellation()
+                    guard continueGeneration(
+                        requestID: requestID,
+                        conversationID: conversationID,
+                        databaseID: databaseID
+                    ) else { return }
+                    retrieval = AskAIRetrievalResult(
+                        searchQueries: initialRetrieval.searchQueries + recoveryRetrieval.searchQueries,
+                        candidateCount: initialRetrieval.candidateCount + recoveryRetrieval.candidateCount,
+                        sources: recoveryRetrieval.sources
+                    )
+                    searchAttemptCount = 2
+                } catch is AskAIQueryPlanError {
+                    // One bounded recovery attempt was consumed; an invalid replacement plan is treated as no match.
+                }
+            }
             let contexts = retrieval.sources
             let searchDetail = retrieval.searchQueries.joined(separator: "\n")
             let builtPrompt = AskAIPromptBuilder.build(
                 databaseTitle: databaseTitle,
                 question: question,
                 history: history,
-                sources: contexts
+                sources: contexts,
+                outputLanguage: outputLanguage
             )
             let includedContexts = builtPrompt.includedContexts
 
@@ -435,17 +589,25 @@ final class AskAIModel {
                 events: [
                     AskAITraceEvent(
                         stage: .searching,
-                        title: "Generated search queries",
+                        title: searchAttemptCount == 1
+                            ? "Searched with \(retrieval.searchQueries.count) \(retrieval.searchQueries.count == 1 ? "query" : "queries")"
+                            : "Retried search with \(retrieval.searchQueries.count) queries",
                         detail: searchDetail
                     ),
                     AskAITraceEvent(
                         stage: .found,
-                        title: "Found \(contexts.count) matching \(contexts.count == 1 ? "note" : "notes")",
+                        title: searchAttemptCount == 1
+                            ? "Found \(retrieval.candidateCount) candidate \(retrieval.candidateCount == 1 ? "note" : "notes")"
+                            : "Found \(retrieval.candidateCount) candidate matches across 2 searches"
+                    ),
+                    AskAITraceEvent(
+                        stage: .verifying,
+                        title: "Verified \(contexts.count) matching \(contexts.count == 1 ? "note" : "notes")",
                         detail: contexts.map(\.source.path).joined(separator: "\n")
                     ),
                     AskAITraceEvent(
                         stage: .reading,
-                        title: "Read \(includedContexts.count) \(includedContexts.count == 1 ? "note" : "notes")",
+                        title: "Used \(includedContexts.count) \(includedContexts.count == 1 ? "note" : "notes") for answer",
                         detail: includedContexts.map(\.source.path).joined(separator: "\n")
                     )
                 ]
@@ -456,12 +618,25 @@ final class AskAIModel {
                 finishGeneration(requestID: requestID)
                 return
             }
+            if AskAIIdentityPolicy.requiresExplicitEvidence(question: question),
+               !AskAIIdentityPolicy.hasDirectEvidence(
+                question: question,
+                sources: includedContexts
+               ) {
+                completeAsInsufficient(
+                    messageID: assistantID,
+                    sources: includedContexts.map(\.source)
+                )
+                persistCurrentConversation()
+                finishGeneration(requestID: requestID)
+                return
+            }
 
             appendTrace(
                 messageID: assistantID,
                 event: AskAITraceEvent(
-                    stage: .verifying,
-                    title: "Preparing an answer from selected notes",
+                    stage: .generating,
+                    title: "Generating an answer from selected notes",
                     isActive: true
                 )
             )
@@ -545,13 +720,15 @@ final class AskAIModel {
                 event.isActive = false
                 return event
             }
-            message.trace.append(
-                AskAITraceEvent(
-                    stage: .generating,
-                    title: "Answered with cited notes",
-                    detail: sources.map { "\($0.id): \($0.path)" }.joined(separator: "\n")
-                )
-            )
+        }
+    }
+
+    private func completeConversation(messageID: UUID, answer: String) {
+        updateMessage(id: messageID) { message in
+            message.text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            message.sources = []
+            message.state = .complete
+            message.trace = []
         }
     }
 
@@ -594,12 +771,67 @@ final class AskAIModel {
     }
 
     private func applyDatabaseChange(databaseId: String, title: String) {
+        guard requestBrowseDatabaseSelection(
+            databaseId: databaseId,
+            action: .newConversation(databaseId: databaseId, title: title)
+        ) else {
+            pendingDatabaseId = nil
+            pendingDatabaseTitle = nil
+            isConfirmingDatabaseChange = false
+            return
+        }
+        applySelectedDatabaseChange(databaseId: databaseId, title: title)
+    }
+
+    func resolveBrowseDatabaseSelection(_ resolution: BrowseDatabaseSelectionResolution) {
+        guard let pendingIntent = pendingBrowseDatabaseIntent,
+              pendingIntent.requestId == resolution.requestId else {
+            return
+        }
+        pendingBrowseDatabaseIntent = nil
+        guard resolution.outcome == .applied,
+              resolution.databaseId == pendingIntent.databaseId,
+              knowledgeProvider.selectedAskAIDatabaseId == pendingIntent.databaseId else {
+            return
+        }
+        switch pendingIntent.action {
+        case .newConversation(let databaseId, let title):
+            applySelectedDatabaseChange(databaseId: databaseId, title: title)
+        case .conversation(let conversation):
+            applySelectedConversation(conversation)
+        }
+    }
+
+    private func requestBrowseDatabaseSelection(
+        databaseId: String,
+        action: PendingBrowseDatabaseAction
+    ) -> Bool {
+        switch knowledgeProvider.selectAskAIDatabase(databaseId) {
+        case .unchanged, .applied:
+            pendingBrowseDatabaseIntent = nil
+            return true
+        case .awaitingDiscard(let request):
+            pendingBrowseDatabaseIntent = PendingBrowseDatabaseIntent(
+                requestId: request.id,
+                databaseId: databaseId,
+                action: action
+            )
+            return false
+        }
+    }
+
+    private func applySelectedDatabaseChange(databaseId: String, title: String) {
         cancelGeneration()
-        knowledgeProvider.selectAskAIDatabase(databaseId)
         currentConversation = makeConversation(databaseId: databaseId, title: title)
         pendingDatabaseId = nil
         pendingDatabaseTitle = nil
         isConfirmingDatabaseChange = false
+        errorMessage = nil
+    }
+
+    private func applySelectedConversation(_ conversation: AskAIConversation) {
+        cancelGeneration()
+        currentConversation = conversation
         errorMessage = nil
     }
 
@@ -611,12 +843,10 @@ final class AskAIModel {
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
         guard !databaseId.isEmpty else {
             currentConversation = nil
+            errorMessage = nil
             return
         }
-        currentConversation = makeConversation(
-            databaseId: databaseId,
-            title: knowledgeProvider.selectedAskAIDatabaseTitle
-        )
+        currentConversation = makeConversation(databaseId: databaseId, title: knowledgeProvider.selectedAskAIDatabaseTitle)
         errorMessage = nil
     }
 
@@ -719,4 +949,15 @@ final class AskAIModel {
         generationTimeoutTask = nil
         isGenerating = false
     }
+}
+
+private enum PendingBrowseDatabaseAction {
+    case newConversation(databaseId: String, title: String)
+    case conversation(AskAIConversation)
+}
+
+private struct PendingBrowseDatabaseIntent {
+    let requestId: UUID
+    let databaseId: String
+    let action: PendingBrowseDatabaseAction
 }

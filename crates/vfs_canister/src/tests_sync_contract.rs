@@ -10,6 +10,7 @@ use vfs_types::{
 
 use super::{
     HttpRequest, ICP_CLI_LOGIN_DISCOVERY_PATH, ICP_CLI_LOGIN_PATH, II_ALTERNATIVE_ORIGINS_PATH,
+    II_APP_LOGO, II_APP_LOGO_PATH, II_APP_METADATA_BODY, II_APP_METADATA_PATH,
     II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY, SERVICE,
     delete_node, export_snapshot, fetch_updates, http_request, mkdir_node, search_node_paths,
     search_nodes, staging_ii_alternative_origins_body, write_node,
@@ -107,6 +108,51 @@ fn production_ii_alternative_origins_do_not_include_localhost() {
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
     assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains(&removed_ios_local_origin()));
+}
+
+#[test]
+fn http_request_serves_certified_ii_app_metadata() {
+    let response = http_request(test_http_get(II_APP_METADATA_PATH));
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(
+        String::from_utf8(response.body).expect("body should be utf8"),
+        II_APP_METADATA_BODY
+    );
+    assert!(II_APP_METADATA_BODY.contains(r#""name":"Kinic Wiki""#));
+    assert!(II_APP_METADATA_BODY.contains(II_APP_LOGO_PATH));
+    assert!(response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Content-Type") && value == "application/json; charset=utf-8"
+    }));
+    assert!(response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Access-Control-Allow-Origin") && value == "*"
+    }));
+    assert!(
+        response
+            .headers
+            .iter()
+            .any(|(name, _)| { name.eq_ignore_ascii_case(CERTIFICATE_EXPRESSION_HEADER_NAME) })
+    );
+}
+
+#[test]
+fn http_request_serves_certified_ii_app_logo() {
+    let response = http_request(test_http_get(II_APP_LOGO_PATH));
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(response.body, II_APP_LOGO);
+    assert!(response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Content-Type") && value == "image/png"
+    }));
+    assert!(response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Access-Control-Allow-Origin") && value == "*"
+    }));
+    assert!(
+        response
+            .headers
+            .iter()
+            .any(|(name, _)| { name.eq_ignore_ascii_case(CERTIFICATE_EXPRESSION_HEADER_NAME) })
+    );
 }
 
 #[test]

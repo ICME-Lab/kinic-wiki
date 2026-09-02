@@ -33,6 +33,8 @@ const ADMIN_NAV_ITEMS: readonly AdminNavItem[] = [
     icon: BookOpen,
     children: [
       { href: "/docs", label: "Overview", icon: FileText },
+      { href: "/docs/ios", label: "iOS App", icon: FileText },
+      { href: "/docs/clipper", label: "Wiki Clipper", icon: FileText },
       { href: "/docs/cli", label: "CLI Guide", icon: FileText },
       { href: "/docs/canister-api", label: "Canister API", icon: FileText },
       { href: "/docs/skills", label: "Skills", icon: FileText }
@@ -155,7 +157,7 @@ function AdminSidebar({ pathname }: { pathname: string }) {
 }
 
 function AdminAccountControls() {
-  const { authLoading, authReady, login, logout, principal } = useAppSession();
+  const { authControlsLocked, authLoading, authReady, login, logout, principal } = useAppSession();
 
   return (
     <section className="grid gap-2 border-t border-line pt-4" aria-label="Account">
@@ -163,7 +165,7 @@ function AdminAccountControls() {
       {!principal ? (
         <button
           className="mx-3 min-h-10 rounded-lg border border-action bg-action px-3 text-sm font-bold text-white hover:border-accent hover:bg-white hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={!authReady}
+          disabled={!authReady || authControlsLocked}
           data-tid="login-button"
           type="button"
           onClick={() => void login()}
@@ -178,7 +180,7 @@ function AdminAccountControls() {
           <button
             aria-label="Log out"
             className="grid size-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-paper hover:text-accentText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={authLoading}
+            disabled={authLoading || authControlsLocked}
             title="Log out"
             type="button"
             onClick={() => void logout()}

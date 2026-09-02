@@ -10,6 +10,7 @@ use crate::fs_helpers::{file_search_title, prefix_filter_sql_for_column};
 
 const SEARCH_CANDIDATE_MULTIPLIER: u32 = 4;
 const FTS_RANK_SCALE: f32 = 10_000.0;
+const FTS_TERM_MAX_CHARS: usize = 64;
 const PATH_EXACT_SCORE: f32 = -600_000_000.0;
 const BASENAME_EXACT_SCORE: f32 = -500_000_000.0;
 const BASENAME_PREFIX_SCORE: f32 = -400_000_000.0;
@@ -25,9 +26,16 @@ pub(crate) struct SearchQueryPlan {
     pub(crate) raw_query: String,
     pub(crate) lowered_query: String,
     pub(crate) path_terms: Vec<String>,
+    // Lowercased whitespace terms below the FTS trigram minimum (fewer than 3
+    // characters). These are excluded from FTS, so recall must AND-check them
+    // against path/title/content explicitly to avoid both false positives
+    // (FTS matches the longer terms alone) and false negatives (an all-short
+    // query otherwise relies on a contiguous substring that never occurs).
+    pub(crate) short_terms: Vec<String>,
     exact_fts: Option<String>,
     recall_fts: Option<String>,
     has_cjk: bool,
+    has_short_term: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -69,26 +77,40 @@ pub(crate) fn build_search_query_plan(query_text: &str) -> Option<SearchQueryPla
         .iter()
         .map(|term| term.to_lowercase())
         .collect::<Vec<_>>();
-    let mut recall_terms = Vec::new();
-    let mut has_cjk = false;
+    let has_cjk = whitespace_terms.iter().any(|term| contains_cjk(term));
+    // The fs_nodes_fts table uses the FTS5 trigram tokenizer, which requires
+    // query tokens of at least 3 characters and matches substrings. Shorter
+    // terms are handled by the path/content-substring fallback stages instead.
+    // Very long single-token terms are truncated so a huge query (or a huge
+    // stored token) cannot blow up the trigram index/query.
+    let has_short_term = whitespace_terms.iter().any(|term| term.chars().count() < 3);
+    let short_terms = whitespace_terms
+        .iter()
+        .filter(|term| term.chars().count() < 3)
+        .map(|term| term.to_lowercase())
+        .collect::<Vec<_>>();
+    let mut fts_terms = Vec::new();
+    let mut seen_fts = std::collections::HashSet::new();
     for term in &whitespace_terms {
-        recall_terms.push(term.clone());
-        if contains_cjk(term) {
-            has_cjk = true;
-            recall_terms.extend(cjk_bigrams(term));
+        if term.chars().count() < 3 {
+            continue;
+        }
+        let trimmed: String = term.chars().take(FTS_TERM_MAX_CHARS).collect();
+        if seen_fts.insert(trimmed.clone()) {
+            fts_terms.push(trimmed);
         }
     }
-    recall_terms.sort();
-    recall_terms.dedup();
-    let exact_fts = join_fts_terms(&whitespace_terms, " ");
-    let recall_fts = join_fts_terms(&recall_terms, " OR ");
+    let exact_fts = (!fts_terms.is_empty()).then(|| join_fts_terms(&fts_terms, " "));
+    let recall_fts = (fts_terms.len() > 1).then(|| join_fts_terms(&fts_terms, " OR "));
     Some(SearchQueryPlan {
         raw_query,
         lowered_query,
         path_terms,
-        exact_fts: Some(exact_fts.clone()),
-        recall_fts: (exact_fts != recall_fts).then_some(recall_fts),
+        short_terms,
+        exact_fts,
+        recall_fts,
         has_cjk,
+        has_short_term,
     })
 }
 
@@ -201,10 +223,27 @@ pub(crate) fn load_content_substring_candidates(
     prefix: Option<&str>,
     top_k: i64,
 ) -> Result<Vec<SearchCandidate>, String> {
-    if !plan.has_cjk {
+    if !plan.has_cjk && !plan.has_short_term {
         return Ok(Vec::new());
     }
-    let mut values = vec![crate::sqlite::types::Value::from(plan.raw_query.clone())];
+    let (mut values, predicates) = if plan.has_cjk {
+        (
+            vec![crate::sqlite::types::Value::from(plan.raw_query.clone())],
+            "instr(content, ?1) > 0".to_string(),
+        )
+    } else {
+        // ASCII-only short-term queries must AND each term individually so an
+        // all-short query (e.g. "AI ML") still matches docs where the terms are
+        // not adjacent (e.g. "AI and ML"), and the longer terms stay required
+        // alongside the short ones.
+        let mut predicates = Vec::new();
+        let mut values = Vec::new();
+        for (index, term) in plan.path_terms.iter().enumerate() {
+            predicates.push(format!("instr(lower(content), ?{}) > 0", index + 1));
+            values.push(crate::sqlite::types::Value::from(term.clone()));
+        }
+        (values, predicates.join(" AND "))
+    };
     let (scope_sql, scope_values) = non_root_prefix(prefix)
         .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
         .unwrap_or_else(|| (String::new(), Vec::new()));
@@ -212,7 +251,7 @@ pub(crate) fn load_content_substring_candidates(
     let sql = format!(
         "SELECT id, path, kind
          FROM fs_nodes
-         WHERE instr(content, ?1) > 0{}
+         WHERE {predicates}{}
          ORDER BY path ASC
          LIMIT {}",
         scope_sql,
@@ -249,6 +288,48 @@ pub(crate) fn load_content_substring_candidates(
 
 fn non_root_prefix(prefix: Option<&str>) -> Option<&str> {
     prefix.filter(|value| *value != "/")
+}
+
+// Retains only content-based candidates that contain every short term (terms
+// below the FTS trigram minimum) in their path, title, or content. FTS matches
+// on the longer terms alone and would otherwise return documents that miss a
+// short query word. Path-only candidates are unaffected: load_path_candidates
+// already AND-checks every term against the path.
+pub(crate) fn filter_candidates_on_short_terms(
+    conn: &Connection,
+    candidates: &mut BTreeMap<i64, SearchCandidate>,
+    plan: &SearchQueryPlan,
+) -> Result<(), String> {
+    if plan.short_terms.is_empty() {
+        return Ok(());
+    }
+    let content_ids = candidates
+        .values()
+        .filter(|candidate| candidate.has_content_match)
+        .map(|candidate| candidate.row_id)
+        .collect::<Vec<_>>();
+    if content_ids.is_empty() {
+        return Ok(());
+    }
+    let contents = load_contents_by_id(conn, &content_ids)?;
+    let taken = std::mem::take(candidates);
+    for (row_id, candidate) in taken {
+        let path_lower = candidate.path.to_lowercase();
+        let title_lower = file_search_title(&candidate.path).to_lowercase();
+        let content_lower = contents.get(&row_id).map(|content| content.to_lowercase());
+        let all_short_terms_present = plan.short_terms.iter().all(|term| {
+            path_lower.contains(term)
+                || title_lower.contains(term)
+                || content_lower
+                    .as_deref()
+                    .map(|content| content.contains(term))
+                    .unwrap_or(false)
+        });
+        if all_short_terms_present {
+            candidates.insert(row_id, candidate);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn rerank_candidates(
@@ -581,14 +662,6 @@ fn join_fts_terms(terms: &[String], separator: &str) -> String {
         .join(separator)
 }
 
-fn cjk_bigrams(term: &str) -> Vec<String> {
-    let chars = term.chars().collect::<Vec<_>>();
-    chars
-        .windows(2)
-        .map(|window| window.iter().collect::<String>())
-        .collect()
-}
-
 fn contains_cjk(value: &str) -> bool {
     value.chars().any(
         |ch| matches!(ch as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff),
@@ -628,13 +701,55 @@ mod tests {
             build_search_query_plan("shared-bench-search").expect("ascii query plan should exist");
         assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_none());
+        assert!(!plan.has_cjk);
+        assert!(!plan.has_short_term);
     }
 
     #[test]
-    fn cjk_query_plan_keeps_recall_fts() {
+    fn cjk_query_plan_deduplicates_single_fts_term() {
         let plan = build_search_query_plan("検索改善").expect("cjk query plan should exist");
         assert!(plan.exact_fts.is_some());
+        assert!(plan.recall_fts.is_none());
+        assert!(plan.has_cjk);
+        assert!(!plan.has_short_term);
+    }
+
+    #[test]
+    fn multi_term_query_plan_keeps_or_recall_fts() {
+        let plan = build_search_query_plan("長期記憶 検索精度")
+            .expect("multi-term query plan should exist");
+        assert!(plan.exact_fts.is_some());
         assert!(plan.recall_fts.is_some());
+        assert!(plan.has_cjk);
+        assert!(!plan.has_short_term);
+    }
+
+    #[test]
+    fn short_term_query_plan_omits_fts_and_keeps_path_terms() {
+        let plan = build_search_query_plan("検 索 改").expect("short-term plan should exist");
+        assert!(plan.exact_fts.is_none());
+        assert!(plan.recall_fts.is_none());
+        assert_eq!(plan.path_terms, vec!["検", "索", "改"]);
+        assert!(plan.has_cjk);
+        assert!(plan.has_short_term);
+    }
+
+    #[test]
+    fn short_ascii_query_plan_omits_fts_and_marks_short_term() {
+        let plan = build_search_query_plan("AI agents").expect("short ascii plan should exist");
+        assert!(plan.exact_fts.is_some());
+        assert!(plan.recall_fts.is_none());
+        assert!(!plan.has_cjk);
+        assert!(plan.has_short_term);
+    }
+
+    #[test]
+    fn short_ascii_query_plan_collects_lowercased_short_terms() {
+        let plan = build_search_query_plan("AI agents").expect("short ascii plan should exist");
+        assert_eq!(plan.short_terms, vec!["ai"]);
+        let all_short = build_search_query_plan("AI ML").expect("all-short plan should exist");
+        assert_eq!(all_short.short_terms, vec!["ai", "ml"]);
+        assert!(all_short.exact_fts.is_none());
     }
 
     #[test]

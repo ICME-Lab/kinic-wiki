@@ -10,6 +10,9 @@ import type { RuntimeEnv } from "./env.js";
 export default {
   async fetch(request, env, _ctx): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      return jsonResponse({ ok: true }, 200);
+    }
     if (request.method === "POST" && url.pathname === "/source-capture") {
       const authError = await workerAuthError(request, env);
       if (authError) return authError;

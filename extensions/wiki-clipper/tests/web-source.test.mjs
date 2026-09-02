@@ -73,6 +73,17 @@ test("webSourcePathForUrl ignores hash fragments", async () => {
   );
 });
 
+test("webSourcePathForUrl distinguishes hash routes", async () => {
+  assert.notEqual(
+    await webSourcePathForUrl("https://example.com/#/page-a", "Example App"),
+    await webSourcePathForUrl("https://example.com/#/page-b", "Example App")
+  );
+  assert.notEqual(
+    await webSourcePathForUrl("https://example.com/#!/page-a", "Example App"),
+    await webSourcePathForUrl("https://example.com/#!/page-b", "Example App")
+  );
+});
+
 test("buildWebEvidenceSource preserves unicode title slugs", async () => {
   const raw = await buildWebEvidenceSource({
     url: "https://example.com/unicode",
@@ -263,6 +274,25 @@ test("collectWebPageSnapshot caps extracted text before normalizing huge pages",
   } finally {
     globalThis.document = previousDocument;
     globalThis.location = previousLocation;
+  }
+});
+
+test("collectWebPageSnapshot is self-contained for executeScript serialization", () => {
+  const source = collectWebPageSnapshot.toString();
+  const referencedHelpers = [
+    "normalizeExtractedLine",
+    "openingFenceForLine",
+    "closingFenceForLine",
+    "markdownFence",
+    "collapseBlankLines",
+    "markdownCodeBlock"
+  ];
+  for (const helper of referencedHelpers) {
+    assert.equal(
+      source.includes(helper),
+      true,
+      `collectWebPageSnapshot must define ${helper} inside its body for chrome.scripting.executeScript serialization`
+    );
   }
 });
 

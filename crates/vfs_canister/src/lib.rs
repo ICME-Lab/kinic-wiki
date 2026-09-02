@@ -51,8 +51,9 @@ use vfs_types::{
     MarketListing, MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage,
     MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability,
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext,
+    NodeContextRequest, NodeEntry, NodeMutationError, NodeMutationResult, NodePublication,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
     OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
     QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceCaptureTriggerSessionCheckRequest,
@@ -72,6 +73,11 @@ const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
 const II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
 const II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi","http://localhost:3000","http://127.0.0.1:3010","http://localhost:3010","http://127.0.0.1:3100"]}"#;
+const II_APP_METADATA_PATH: &str = "/.well-known/ii-app-metadata";
+const II_APP_METADATA_BODY: &str = r#"{"name":"Kinic Wiki","description":"Capture, organize, and search your knowledge with Internet Identity.","logo":"/.well-known/ii-app-logo.png"}"#;
+const II_APP_LOGO_PATH: &str = "/.well-known/ii-app-logo.png";
+const II_APP_LOGO: &[u8] =
+    include_bytes!("../../../extensions/wiki-clipper/assets/kinic-logo-transparent.png");
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
@@ -1165,37 +1171,54 @@ fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
 }
 
 #[update]
-fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
+fn delete_account() -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("delete_account", None, |service, caller, now| {
+        let outcome = service.delete_account(caller, now)?;
+        for db_file_name in outcome.deleted_database_file_names {
+            unmount_database_file(&db_file_name);
+        }
+        Ok(())
+    })
+}
+
+#[update]
+fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.write_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("write_node", Some(database_id), |service, caller, now| {
+        service.write_node(caller, request, now)
+    })
 }
 
 #[update]
 fn write_source_for_generation(
     request: WriteSourceForGenerationRequest,
-) -> Result<WriteSourceForGenerationResult, String> {
+) -> Result<WriteSourceForGenerationResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_node_mutation_metered_update(
         "write_source_for_generation",
         Some(database_id),
-        RequiredRole::Writer,
         |service, caller, now| service.write_source_for_generation(caller, request, now),
     )
 }
 
 #[update]
-fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
+fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "write_nodes",
+    with_node_mutation_metered_update("write_nodes", Some(database_id), |service, caller, now| {
+        service.write_nodes(caller, request, now)
+    })
+}
+
+#[update]
+fn mutate_nodes_batch(
+    request: MutateNodesBatchRequest,
+) -> Result<Vec<NodeMutationResult>, NodeMutationError> {
+    let database_id = request.database_id.clone();
+    with_node_mutation_metered_update(
+        "mutate_nodes_batch",
         Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.write_nodes(caller, request, now),
+        |service, caller, now| service.mutate_nodes_batch(caller, request, now),
     )
 }
 
@@ -1250,58 +1273,43 @@ fn check_source_run_session(request: SourceRunSessionCheckRequest) -> Result<(),
 }
 
 #[update]
-fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
+fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "append_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.append_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("append_node", Some(database_id), |service, caller, now| {
+        service.append_node(caller, request, now)
+    })
 }
 
 #[update]
-fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
+fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "edit_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.edit_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("edit_node", Some(database_id), |service, caller, now| {
+        service.edit_node(caller, request, now)
+    })
 }
 
 #[update]
-fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
+fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "delete_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.delete_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("delete_node", Some(database_id), |service, caller, now| {
+        service.delete_node(caller, request, now)
+    })
 }
 
 #[update]
-fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
+fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "move_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.move_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("move_node", Some(database_id), |service, caller, now| {
+        service.move_node(caller, request, now)
+    })
 }
 
 #[update]
-fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
+fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
-        "mkdir_node",
-        Some(database_id),
-        RequiredRole::Writer,
-        |service, caller, now| service.mkdir_node(caller, request, now),
-    )
+    with_node_mutation_metered_update("mkdir_node", Some(database_id), |service, caller, now| {
+        service.mkdir_node(caller, request, now)
+    })
 }
 
 #[query]
@@ -1345,12 +1353,13 @@ fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, Str
 }
 
 #[update]
-fn multi_edit_node(request: MultiEditNodeRequest) -> Result<MultiEditNodeResult, String> {
+fn multi_edit_node(
+    request: MultiEditNodeRequest,
+) -> Result<MultiEditNodeResult, NodeMutationError> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_node_mutation_metered_update(
         "multi_edit_node",
         Some(database_id),
-        RequiredRole::Writer,
         |service, caller, now| service.multi_edit_node(caller, request, now),
     )
 }
@@ -1467,7 +1476,9 @@ fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result
     }
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
+        service.run_database_migrations(&meta.database_id)?;
     }
+    service.recover_pending_publication_mutations()?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }
@@ -1481,7 +1492,9 @@ fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result
     service.run_index_migrations_for_upgrade(config)?;
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
+        service.run_database_migrations(&meta.database_id)?;
     }
+    service.recover_pending_publication_mutations()?;
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
 }
@@ -2167,6 +2180,51 @@ where
     )
 }
 
+fn with_node_mutation_metered_update<T, F>(
+    method: &str,
+    database_id: Option<String>,
+    f: F,
+) -> Result<T, NodeMutationError>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, NodeMutationError>,
+{
+    let caller = caller_text();
+    let now = now_millis();
+    let before_charge_units = update_charge_units();
+    SERVICE.with(|slot| {
+        let borrowed = slot.borrow();
+        let service = borrowed.as_ref().ok_or_else(|| {
+            NodeMutationError::write_unavailable("wiki service is not initialized")
+        })?;
+        let authorization_database_id = database_id.as_deref().ok_or_else(|| {
+            NodeMutationError::invalid_operation(
+                "database_id is required for node mutation metering",
+            )
+        })?;
+        let cycles_billing_config =
+            service.prepare_node_mutation(authorization_database_id, &caller)?;
+        let result = f(service, &caller, now);
+        let after_charge_units = update_charge_units();
+        if result.is_ok() {
+            let charge_result = update_charge_cycles(before_charge_units, after_charge_units)
+                .and_then(|cycles_delta| {
+                    service.charge_database_update(
+                        &cycles_billing_config,
+                        authorization_database_id,
+                        &caller,
+                        method,
+                        cycles_delta,
+                        now,
+                    )
+                });
+            if let Err(error) = charge_result {
+                ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            }
+        }
+        result
+    })
+}
+
 fn with_role_unmetered_update<T, F>(
     method: &str,
     database_id: Option<String>,
@@ -2383,6 +2441,13 @@ fn certified_static_responses() -> Vec<(
             "application/json; charset=utf-8",
             true,
         ),
+        certified_static_response_entry(
+            II_APP_METADATA_PATH,
+            II_APP_METADATA_BODY.as_bytes().to_vec(),
+            "application/json; charset=utf-8",
+            true,
+        ),
+        certified_static_response_entry(II_APP_LOGO_PATH, II_APP_LOGO.to_vec(), "image/png", true),
         certified_static_response_entry(
             ICP_CLI_LOGIN_DISCOVERY_PATH,
             ICP_CLI_LOGIN_PATH.as_bytes().to_vec(),

@@ -1,15 +1,24 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
+import { DelegationChain } from "@icp-sdk/core/identity";
 import { describe, expect, it } from "vitest";
-import { sha256 } from "../src/auth/crypto.js";
+import { encryptJson, sha256 } from "../src/auth/crypto.js";
+import { generateIiKey, type KinicDelegationMaterialV1 } from "../src/auth/internet-identity.js";
 import {
+  DELEGATION_REFRESH_MARGIN_MS,
   OAUTH_CLIENT_IDLE_TTL_MS,
+  SingleFlight,
+  delegationContext,
+  delegationNeedsRefresh,
+  sessionKeyContext,
   type AuthorizationSessionInput,
-  type McpAuthStateV2,
+  type AuthStateRecordV5,
+  type McpAuthStateV5,
   type OAuthClientRecordV2
 } from "../src/auth/state.js";
 
 const origin = "https://wiki-mcp-staging.kinic.xyz";
 const resource = `${origin}/mcp`;
+const encryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const encryptedValue = {
   version: 1 as const,
   algorithm: "AES-GCM" as const,
@@ -24,7 +33,7 @@ describe("staging OAuth discovery and registration", () => {
     await expect(protectedResource.json()).resolves.toMatchObject({
       resource,
       authorization_servers: [origin],
-      scopes_supported: ["mcp:read", "offline_access"]
+      scopes_supported: ["mcp:read", "mcp:write", "offline_access"]
     });
 
     const server = await fetchWorker(`${origin}/.well-known/oauth-authorization-server`);
@@ -35,63 +44,51 @@ describe("staging OAuth discovery and registration", () => {
     });
   });
 
-  it("returns a tool-level OAuth challenge only when connect_private is called", async () => {
-    const publicResponse = await fetchWorker(`${origin}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "find_databases", arguments: {} }
-      })
-    });
-    expect(publicResponse.status).toBe(200);
-    await expect(publicResponse.json()).resolves.toEqual({ ok: true, mode: "public" });
+  it.each(["initialize", "tools/list", "tools/call"])(
+    "requires OAuth at the staging HTTP boundary for %s",
+    async (method) => {
+      const response = await fetchWorker(`${origin}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params: method === "tools/call" ? { name: "find_databases", arguments: {} } : {}
+        })
+      });
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toContain(
+        "/.well-known/oauth-protected-resource/mcp"
+      );
+      expect(response.headers.get("www-authenticate")).toContain('scope="mcp:read"');
+    }
+  );
 
+  it("ends unsupported stateless SSE requests without leaving a Worker open", async () => {
     const response = await fetchWorker(`${origin}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: { name: "connect_private", arguments: {} }
-      })
+      method: "GET",
+      headers: { accept: "text/event-stream", "mcp-protocol-version": "2025-11-25" }
     });
-    expect(response.status).toBe(200);
-    const payload = await response.json<{
-      result: { isError: boolean; _meta: { "mcp/www_authenticate": string[] } };
-    }>();
-    expect(payload.result.isError).toBe(true);
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      "/.well-known/oauth-protected-resource/mcp"
-    );
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      'error="insufficient_scope"'
-    );
-    expect(payload.result._meta["mcp/www_authenticate"][0]).toContain(
-      'error_description="Private connection is required"'
-    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+    await expect(response.text()).resolves.toBe("");
   });
 
-  it("keeps a connect_private batch behind an HTTP OAuth boundary", async () => {
+  it("keeps every JSON-RPC batch behind the HTTP OAuth boundary", async () => {
     const response = await fetchWorker(`${origin}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify([
         { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} },
-        {
-          jsonrpc: "2.0",
-          id: 4,
-          method: "tools/call",
-          params: { name: "connect_private", arguments: {} }
-        }
+        { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "find_databases", arguments: {} } }
       ])
     });
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
-    expect(response.headers.get("www-authenticate")).toContain("error_description");
+    expect(response.headers.get("www-authenticate")).toContain(
+      "/.well-known/oauth-protected-resource/mcp"
+    );
   });
 
   it("serves safe callback messages without embedding connection data", async () => {
@@ -246,10 +243,23 @@ describe("staging OAuth discovery and registration", () => {
       code_challenge_method: "S256"
     }).toString();
     const started = await fetchWorker(valid.toString(), { redirect: "manual" });
-    expect(started.status).toBe(302);
-    expect(started.headers.get("location")).toMatch(/^https:\/\/id\.ai\/mcp#/u);
+    expect(started.status).toBe(200);
+    const authorizationHtml = await started.text();
+    expect(authorizationHtml).toContain("Continue with Internet Identity");
+    expect(authorizationHtml).toContain("OpenAI reviewer sign in");
     expect(started.headers.get("set-cookie")).toContain("HttpOnly");
     expect(started.headers.get("set-cookie")).toContain("SameSite=Lax");
+    const iiStarted = await fetchWorker(`${origin}/oauth/connect/internet-identity`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: cookieFrom(started)
+      },
+      body: new URLSearchParams({ connect_state: connectStateFrom(authorizationHtml) }).toString()
+    });
+    expect(iiStarted.status).toBe(302);
+    expect(iiStarted.headers.get("location")).toMatch(/^https:\/\/id\.ai\/mcp#/u);
 
     valid.searchParams.set("redirect_uri", "https://chatgpt.com/connector/oauth/callback/");
     expect((await fetchWorker(valid.toString(), { redirect: "manual" })).status).toBe(400);
@@ -274,9 +284,355 @@ describe("staging OAuth discovery and registration", () => {
     });
     await expect(tokenWithWrongResource.json()).resolves.toEqual({ error: "invalid_target" });
   });
+
+  it("authorizes the dedicated reviewer without Internet Identity setup", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const verifier = "r".repeat(43);
+    const started = await fetchWorker(await authorizationUrl(clientId, verifier), { redirect: "manual" });
+    const html = await started.text();
+    const cookie = cookieFrom(started);
+    const connectState = connectStateFrom(html);
+
+    const rejected = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.240",
+        cookie
+      },
+      body: new URLSearchParams({
+        connect_state: connectState,
+        username: "openai-review",
+        password: "wrong"
+      }).toString()
+    });
+    expect(rejected.status).toBe(401);
+    expect(await rejected.text()).toContain("Sign-in failed.");
+
+    const accepted = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.240",
+        cookie
+      },
+      body: new URLSearchParams({
+        connect_state: connectState,
+        username: "openai-review",
+        password: "review-password"
+      }).toString()
+    });
+    expect(accepted.status).toBe(302);
+    const redirect = new URL(accepted.headers.get("location")!);
+    expect(redirect.origin + redirect.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
+    expect(redirect.searchParams.get("state")).toBe("client-state");
+    const code = redirect.searchParams.get("code");
+    expect(code).toMatch(/^mkc1\./u);
+
+    const tokenResponse = await fetchWorker(`${origin}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        code: code!,
+        redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+        code_verifier: verifier,
+        resource
+      }).toString()
+    });
+    expect(tokenResponse.status).toBe(200);
+    await expect(tokenResponse.json()).resolves.toMatchObject({
+      token_type: "Bearer",
+      scope: "mcp:read mcp:write offline_access",
+      resource
+    });
+  });
+
+  it("binds reviewer login to its cookie and rate limits repeated attempts", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const started = await fetchWorker(await authorizationUrl(clientId, "l".repeat(43)));
+    const html = await started.text();
+    const connectState = connectStateFrom(html);
+    const body = new URLSearchParams({
+      connect_state: connectState,
+      username: "openai-review",
+      password: "wrong"
+    }).toString();
+    const missingCookie = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "cf-connecting-ip": "198.51.100.241"
+      },
+      body
+    });
+    expect(missingCookie.status).toBe(400);
+
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      response = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "cf-connecting-ip": "198.51.100.242",
+          cookie: cookieFrom(started)
+        },
+        body
+      });
+    }
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get("retry-after")).toBe("60");
+  });
 });
 
-describe("McpAuthStateV2 single-use records", () => {
+describe("McpAuthStateV5 single-use records", () => {
+  it("refreshes cached delegations at the 30-second margin or on origin change", () => {
+    const now = Date.now();
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + DELEGATION_REFRESH_MARGIN_MS + 1 },
+        targetOrigin,
+        now
+      )
+    ).toBe(false);
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + DELEGATION_REFRESH_MARGIN_MS },
+        targetOrigin,
+        now
+      )
+    ).toBe(true);
+    expect(
+      delegationNeedsRefresh(
+        { cachedDelegationTargetOrigin: targetOrigin, cachedDelegationExpiresAt: now + 5 * 60_000 },
+        "https://6emaw-iyaaa-aaaay-aacka-cai.ic0.app",
+        now
+      )
+    ).toBe(true);
+  });
+
+  it("shares one in-flight delegation mint and starts a new one after completion", async () => {
+    const singleFlight = new SingleFlight<string>();
+    let resolve!: (value: string) => void;
+    let calls = 0;
+    const factory = () => {
+      calls += 1;
+      return new Promise<string>((complete) => {
+        resolve = complete;
+      });
+    };
+
+    const first = singleFlight.run(factory);
+    const second = singleFlight.run(factory);
+    expect(first).toBe(second);
+    expect(calls).toBe(1);
+    resolve("delegation");
+    await expect(Promise.all([first, second])).resolves.toEqual(["delegation", "delegation"]);
+    await Promise.resolve();
+
+    const third = singleFlight.run(async () => {
+      calls += 1;
+      return "renewed";
+    });
+    await expect(third).resolves.toBe("renewed");
+    expect(calls).toBe(2);
+  });
+
+  it("reuses an encrypted delegation across token validation and refresh rotation", async () => {
+    const now = Date.now();
+    const sessionId = "delegation-cache";
+    const verifier = "d".repeat(43);
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${sessionId}`);
+    const input = await session(sessionId, verifier, now, now + 10 * 60_000, now + 60_000);
+    input.sessionKey = await encryptJson(
+      generateIiKey().toJSON(),
+      encryptionKey,
+      sessionKeyContext(sessionId)
+    );
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${sessionId}.cookie`, now);
+    const completed = await stub.completeConnect(now + 10 * 60_000, "all", now, sessionId);
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+
+    const appKey = generateIiKey();
+    const rootKey = generateIiKey();
+    const expiresAt = now + 5 * 60_000;
+    const chain = await DelegationChain.create(rootKey, appKey.getPublicKey(), new Date(expiresAt));
+    const material: KinicDelegationMaterialV1 = {
+      version: 1,
+      targetOrigin,
+      expiresAt,
+      appKey: appKey.toJSON(),
+      delegation: chain.toJSON()
+    };
+    const encryptedDelegation = await encryptJson(
+      material,
+      encryptionKey,
+      delegationContext(sessionId, targetOrigin)
+    );
+    await runInDurableObject(stub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.cachedDelegation = encryptedDelegation;
+      record.cachedDelegationTargetOrigin = targetOrigin;
+      record.cachedDelegationExpiresAt = expiresAt;
+      await state.storage.put("record", record);
+    });
+
+    await expect(stub.authenticateAccessToken(issued!.accessToken, resource, now, false)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: null
+    });
+    await expect(stub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: { targetOrigin, expiresAt }
+    });
+    const rotated = await stub.rotateRefreshToken({
+      refreshToken: issued!.refreshToken!,
+      clientId: "client",
+      resource,
+      now: now + 1
+    });
+    await expect(stub.authenticateAccessToken(rotated!.accessToken, resource, now + 1, true)).resolves.toMatchObject({
+      kind: "valid",
+      delegation: { targetOrigin, expiresAt }
+    });
+  });
+
+  it("clears a corrupt encrypted delegation without invalidating the OAuth session", async () => {
+    const now = Date.now();
+    const sessionId = "corrupt-delegation";
+    const verifier = "c".repeat(43);
+    const targetOrigin = "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app";
+    const stub = env.MCP_AUTH_STATE.getByName(`session:${sessionId}`);
+    const input = await session(sessionId, verifier, now, now + 10 * 60_000, now + 60_000);
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", `${sessionId}.cookie`, now);
+    const completed = await stub.completeConnect(now + 10 * 60_000, "all", now, sessionId);
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+    await runInDurableObject(stub, async (instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      record.cachedDelegation = encryptedValue;
+      record.cachedDelegationTargetOrigin = targetOrigin;
+      record.cachedDelegationExpiresAt = now + 5 * 60_000;
+      await state.storage.put("record", record);
+      await expect(
+        (instance as unknown as { readCachedDelegation(origin: string, now: number): Promise<unknown> })
+          .readCachedDelegation(targetOrigin, now)
+      ).resolves.toBeNull();
+    });
+    await expect(stub.validateAccessToken(issued!.accessToken, resource, now)).resolves.not.toBeNull();
+  });
+
+  it("removes write scope from Questions-only II sessions", async () => {
+    const verifier = "q".repeat(43);
+    const stub = env.MCP_AUTH_STATE.getByName("session:questions-scope");
+    const input = await session("questions-scope", verifier);
+    input.scope = "mcp:read mcp:write offline_access";
+    await stub.createSession(input);
+    await stub.claimConnect("connect-state", "questions-scope.cookie", Date.now());
+
+    const completed = await stub.completeConnect(Date.now() + 60_000, "queries", Date.now(), "questions-scope");
+    const issued = await stub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now: Date.now()
+    });
+
+    await expect(stub.validateAccessToken(issued!.accessToken, resource, Date.now())).resolves.toMatchObject({
+      scope: "mcp:read offline_access",
+      actionPermission: "queries",
+      identitySource: "internet_identity"
+    });
+  });
+
+  it("uses the review service source and rejects stale review access versions", async () => {
+    const now = Date.now();
+    const verifier = "v".repeat(43);
+    const validStub = env.MCP_AUTH_STATE.getByName("session:review-valid");
+    await validStub.createSession(await session("review-valid", verifier, now));
+    await validStub.claimConnect("connect-state", "review-valid.cookie", now);
+    const completed = await validStub.completeReviewConnect("review-v1", now, "review-valid");
+    const issued = await validStub.exchangeCode({
+      code: completed!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: true,
+      now
+    });
+    await expect(validStub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toMatchObject({
+      kind: "valid",
+      identitySource: "review_service",
+      actionPermission: "all",
+      delegation: null
+    });
+    let refreshTokenHashBeforeRotation: string | null = null;
+    await runInDurableObject(validStub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      refreshTokenHashBeforeRotation = record.currentRefreshTokenHash;
+      record.reviewAccessVersion = "review-v0";
+      await state.storage.put("record", record);
+    });
+    await expect(validStub.authenticateAccessToken(issued!.accessToken, resource, now, true)).resolves.toEqual({
+      kind: "invalid"
+    });
+    await expect(
+      validStub.rotateRefreshToken({
+        refreshToken: issued!.refreshToken!,
+        clientId: "client",
+        resource,
+        now: now + 1
+      })
+    ).resolves.toBeNull();
+    await runInDurableObject(validStub, async (_instance, state) => {
+      const record = (await state.storage.get<AuthStateRecordV5>("record"))!;
+      if (record.kind !== "authorization_session") throw new Error("session record missing");
+      expect(record.currentRefreshTokenHash).toBe(refreshTokenHashBeforeRotation);
+      expect(record.spentRefreshTokenHashes).toEqual([]);
+    });
+
+    const staleStub = env.MCP_AUTH_STATE.getByName("session:review-stale");
+    await staleStub.createSession(await session("review-stale", verifier, now));
+    await staleStub.claimConnect("connect-state", "review-stale.cookie", now);
+    const staleCompleted = await staleStub.completeReviewConnect("review-v0", now, "review-stale");
+    const staleIssued = await staleStub.exchangeCode({
+      code: staleCompleted!.code,
+      clientId: "client",
+      redirectUri: "https://chatgpt.com/callback",
+      codeVerifier: verifier,
+      issueRefreshToken: false,
+      now
+    });
+    expect(staleIssued).toBeNull();
+  });
+
   it("atomically consumes state and authorization code", async () => {
     const verifier = "b".repeat(43);
     const stub = env.MCP_AUTH_STATE.getByName("session:single-use");
@@ -287,7 +643,7 @@ describe("McpAuthStateV2 single-use records", () => {
     ]);
     expect(claims.filter(Boolean)).toHaveLength(1);
 
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "single-use");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "single-use");
     expect(completed).not.toBeNull();
     const first = await stub.exchangeCode({
       code: completed!.code,
@@ -383,7 +739,7 @@ describe("McpAuthStateV2 single-use records", () => {
     await expect(stub.claimConnect("wrong", "negative.cookie", Date.now())).resolves.toBeNull();
     await expect(stub.claimConnect("connect-state", "wrong", Date.now())).resolves.toBeNull();
     await stub.claimConnect("connect-state", "negative.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "negative");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "negative");
     await expect(
       stub.exchangeCode({
         code: completed!.code,
@@ -404,7 +760,7 @@ describe("McpAuthStateV2 single-use records", () => {
       await session("code-expiry", verifier, now, now + 8 * 60 * 60 * 1000, now + 10 * 60 * 1000)
     );
     await stub.claimConnect("connect-state", "code-expiry.cookie", now);
-    const completed = await stub.completeConnect(now + 8 * 60 * 60 * 1000, now, "code-expiry");
+    const completed = await stub.completeConnect(now + 8 * 60 * 60 * 1000, "all", now, "code-expiry");
     await expect(
       stub.exchangeCode({
         code: completed!.code,
@@ -426,7 +782,7 @@ describe("McpAuthStateV2 single-use records", () => {
       await session("alarm-transition", verifier, now, sessionExpiresAt, now + 10 * 60 * 1000)
     );
     await stub.claimConnect("connect-state", "alarm-transition.cookie", now);
-    const completed = await stub.completeConnect(sessionExpiresAt, now, "alarm-transition");
+    const completed = await stub.completeConnect(sessionExpiresAt, "all", now, "alarm-transition");
     await expect(alarmTime(stub)).resolves.toBe(now + 10 * 60 * 1000);
     await stub.exchangeCode({
       code: completed!.code,
@@ -445,7 +801,7 @@ describe("McpAuthStateV2 single-use records", () => {
     await stub.claimConnect("connect-state", "invalidated.cookie", Date.now());
     await stub.invalidate();
 
-    await expect(stub.completeConnect(Date.now() + 60_000, Date.now(), "invalidated")).resolves.toBeNull();
+    await expect(stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "invalidated")).resolves.toBeNull();
   });
 
   it("revokes the token family only when a spent refresh token is replayed", async () => {
@@ -453,7 +809,7 @@ describe("McpAuthStateV2 single-use records", () => {
     const stub = env.MCP_AUTH_STATE.getByName("session:refresh");
     await stub.createSession(await session("refresh", verifier));
     await stub.claimConnect("connect-state", "refresh.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "refresh");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "refresh");
     const issued = await stub.exchangeCode({
       code: completed!.code,
       clientId: "client",
@@ -511,7 +867,7 @@ describe("McpAuthStateV2 single-use records", () => {
     const stub = env.MCP_AUTH_STATE.getByName("session:refresh-limit");
     await stub.createSession(await session("refresh-limit", verifier, Date.now(), Date.now() + 60_000));
     await stub.claimConnect("connect-state", "refresh-limit.cookie", Date.now());
-    const completed = await stub.completeConnect(Date.now() + 60_000, Date.now(), "refresh-limit");
+    const completed = await stub.completeConnect(Date.now() + 60_000, "all", Date.now(), "refresh-limit");
     let issued = await stub.exchangeCode({
       code: completed!.code,
       clientId: "client",
@@ -604,6 +960,34 @@ async function register(
   });
 }
 
+async function authorizationUrl(clientId: string, verifier: string): Promise<string> {
+  const url = new URL(`${origin}/oauth/authorize`);
+  url.search = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+    state: "client-state",
+    resource,
+    scope: "mcp:read mcp:write offline_access",
+    code_challenge: "",
+    code_challenge_method: "S256"
+  }).toString();
+  url.searchParams.set("code_challenge", await sha256(verifier));
+  return url.toString();
+}
+
+function cookieFrom(response: Response): string {
+  const header = response.headers.get("set-cookie");
+  if (!header) throw new Error("authorization cookie is missing");
+  return header.split(";", 1)[0];
+}
+
+function connectStateFrom(html: string): string {
+  const match = html.match(/name="connect_state" value="([A-Za-z0-9_-]+)"/u);
+  if (!match) throw new Error("connect state is missing");
+  return match[1];
+}
+
 async function session(
   sessionId: string,
   verifier: string,
@@ -621,6 +1005,7 @@ async function session(
     codeChallenge: await sha256(verifier),
     connectStateHash: await sha256("connect-state"),
     cookieHash: await sha256(`${sessionId}.cookie`),
+    registrationPublicKey: "registration-public-key",
     registrationKey: encryptedValue,
     sessionKey: encryptedValue,
     createdAt: now,
@@ -629,7 +1014,7 @@ async function session(
   };
 }
 
-function alarmTime(stub: DurableObjectStub<McpAuthStateV2>) {
+function alarmTime(stub: DurableObjectStub<McpAuthStateV5>) {
   return runInDurableObject(stub, async (_instance, state) => state.storage.getAlarm());
 }
 

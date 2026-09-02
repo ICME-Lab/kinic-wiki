@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/lib/markdown-renderer";
 import { AppLink as Link } from "@/components/app-link";
 import supportMarkdown from "../../docs/legal/support.md?raw";
 
@@ -44,8 +43,7 @@ export default function SupportPage() {
         </aside>
 
         <article className="markdown-body policy-document min-w-0 max-w-[760px]">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+          <Markdown
             components={{
               h1({ children }) {
                 return (
@@ -85,7 +83,7 @@ export default function SupportPage() {
             }}
           >
             {supportMarkdown}
-          </ReactMarkdown>
+          </Markdown>
         </article>
       </div>
 

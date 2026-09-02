@@ -34,7 +34,7 @@ final class KinicAuthSessionStore: @unchecked Sendable {
             return nil
         }
         do {
-            try ICIdentityBridge.validateSession(session, configuration: configuration)
+            try ICIdentitySession.validateSession(session, configuration: configuration)
             return session
         } catch {
             clear()
@@ -43,7 +43,7 @@ final class KinicAuthSessionStore: @unchecked Sendable {
     }
 
     func save(_ session: ICAuthSession) throws {
-        try ICIdentityBridge.validateSession(session, configuration: configuration)
+        try ICIdentitySession.validateSession(session, configuration: configuration)
         let data = try JSONEncoder().encode(session)
         clear()
         var query = baseQuery()

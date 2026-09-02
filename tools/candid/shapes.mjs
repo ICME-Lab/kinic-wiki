@@ -419,6 +419,25 @@ export const expectedTypes = {
   },
   NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null", Folder: "null" } },
   NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
+  NodeMutationErrorCode: {
+    kind: "variant",
+    cases: {
+      EtagConflict: "null",
+      NotFound: "null",
+      Forbidden: "null",
+      WriteUnavailable: "null",
+      InvalidOperation: "null"
+    }
+  },
+  NodeMutationError: {
+    kind: "record",
+    fields: {
+      code: "NodeMutationErrorCode",
+      message: "text",
+      failed_index: "opt nat32",
+      conflict_path: "opt text"
+    }
+  },
   WriteNodeRequest: {
     kind: "record",
     fields: {
@@ -429,6 +448,20 @@ export const expectedTypes = {
       metadata_json: "text",
       database_id: "text"
     }
+  },
+  WriteNodeItem: {
+    kind: "record",
+    fields: {
+      content: "text",
+      kind: "NodeKind",
+      path: "text",
+      expected_etag: "opt text",
+      metadata_json: "text"
+    }
+  },
+  WriteNodesRequest: {
+    kind: "record",
+    fields: { nodes: "vec WriteNodeItem", database_id: "text" }
   },
   WriteNodeResult: {
     kind: "record",
@@ -470,6 +503,7 @@ export const expectedTypes = {
       from_path: "text",
       to_path: "text",
       expected_etag: "opt text",
+      expected_target_etag: "opt text",
       overwrite: "bool",
       database_id: "text"
     }
@@ -621,10 +655,11 @@ export const expectedTypes = {
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
-  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
-  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
-  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
-  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "text" } },
+  ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "NodeMutationError" } },
+  ResultWriteNodes: { kind: "variant", cases: { Ok: "vec WriteNodeResult", Err: "NodeMutationError" } },
+  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "NodeMutationError" } },
+  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "NodeMutationError" } },
+  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "NodeMutationError" } },
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
@@ -648,7 +683,7 @@ export const expectedTypes = {
   },
   ResultWriteSourceForGeneration: {
     kind: "variant",
-    cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
+    cases: { Ok: "WriteSourceForGenerationResult", Err: "NodeMutationError" }
   },
   SearchNodeHit: {
     kind: "record",
@@ -735,40 +770,41 @@ export const didTypeAliases = {
   ResultCyclesBillingConfig: "Result_9",
   ResultInitialFreeDatabaseGrantStatus: "Result_10",
   ResultOptionalNodePublication: "Result_11",
-  ResultCyclesPurchase: "Result_13",
-  ResultLinks: "Result_14",
-  ResultChildren: "Result_15",
-  ResultCyclesEntries: "Result_16",
-  ResultCyclesPendingPurchases: "Result_17",
-  ResultMembers: "Result_18",
-  ResultDatabases: "Result_19",
-  ResultNat64: "Result_21",
-  ResultMarketListing: "Result_22",
-  ResultMarketListingDetail: "Result_23",
-  ResultMarketEntitlementPage: "Result_24",
-  ResultMarketListings: "Result_25",
-  ResultMarketListingPage: "Result_26",
-  ResultMarketOrderPage: "Result_27",
-  ResultMarketPurchasePreview: "Result_28",
-  ResultMarketOrder: "Result_29",
-  ResultMemoryManifest: "Result_30",
-  ResultMkdirNode: "Result_31",
-  ResultMoveNode: "Result_32",
+  ResultLinks: "Result_13",
+  ResultChildren: "Result_14",
+  ResultCyclesEntries: "Result_15",
+  ResultCyclesPendingPurchases: "Result_16",
+  ResultMembers: "Result_17",
+  ResultDatabases: "Result_18",
+  ResultNat64: "Result_20",
+  ResultMarketListing: "Result_21",
+  ResultMarketListingDetail: "Result_22",
+  ResultMarketEntitlementPage: "Result_23",
+  ResultMarketListings: "Result_24",
+  ResultMarketListingPage: "Result_25",
+  ResultMarketOrderPage: "Result_26",
+  ResultMarketPurchasePreview: "Result_27",
+  ResultMarketOrder: "Result_28",
+  ResultMemoryManifest: "Result_29",
+  ResultMkdirNode: "Result_30",
+  ResultMoveNode: "Result_31",
   ResultNodePublication: "Result_33",
-  ResultQueryContext: "Result_34",
-  ResultIndexSqlJsonQuery: "Result_35",
-  ResultNode: "Result_36",
-  ResultNodeContext: "Result_37",
-  ResultPublicNode: "Result_38",
-  ResultSearch: "Result_39",
-  ResultStorageBillingBatch: "Result_40",
-  ResultSourceEvidence: "Result_41",
+  ResultCyclesPurchase: "Result_34",
+  ResultQueryContext: "Result_35",
+  ResultIndexSqlJsonQuery: "Result_36",
+  ResultNode: "Result_37",
+  ResultNodeContext: "Result_38",
+  ResultPublicNode: "Result_39",
+  ResultSearch: "Result_40",
+  ResultStorageBillingBatch: "Result_41",
+  ResultSourceEvidence: "Result_42",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultDatabaseMetadata: "Result_42",
-  ResultWikiMetrics: "Result_43",
-  ResultWikiMetricsSeries: "Result_44",
-  ResultWriteSourceForGeneration: "Result_46"
+  ResultWriteNodes: "Result_46",
+  ResultDatabaseMetadata: "Result_43",
+  ResultWikiMetrics: "Result_44",
+  ResultWikiMetricsSeries: "Result_45",
+  ResultWriteSourceForGeneration: "Result_47"
 };
 
 export const expectedMethods = {
@@ -836,5 +872,6 @@ export const expectedMethods = {
   update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
+  write_nodes: { input: ["WriteNodesRequest"], output: "ResultWriteNodes", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };

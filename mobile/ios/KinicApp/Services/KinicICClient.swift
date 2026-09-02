@@ -44,6 +44,7 @@ actor KinicICClient {
         try await vfsClient.sourceURLExists(databaseId: databaseId, url: url, session: session)
     }
 
+    @discardableResult
     func writeNode(
         databaseId: String,
         path: String,
@@ -52,7 +53,7 @@ actor KinicICClient {
         metadataJson: String,
         expectedEtag: String?,
         session: ICAuthSession
-    ) async throws {
+    ) async throws -> VFSWriteNodeResult {
         try await vfsClient.writeNode(
             databaseId: databaseId,
             path: path,
@@ -66,6 +67,22 @@ actor KinicICClient {
 
     func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
         try await vfsClient.readBrowseNode(databaseId: databaseId, path: path, session: session)
+    }
+
+    func getNodePublication(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication? {
+        try await vfsClient.getNodePublication(databaseId: databaseId, path: path, session: session)
+    }
+
+    func publishNode(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication {
+        try await vfsClient.publishNode(databaseId: databaseId, path: path, session: session)
+    }
+
+    func unpublishNode(databaseId: String, path: String, session: ICAuthSession) async throws {
+        try await vfsClient.unpublishNode(databaseId: databaseId, path: path, session: session)
+    }
+
+    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: ICAuthSession) async throws {
+        try await vfsClient.deleteNode(databaseId: databaseId, path: path, expectedEtag: expectedEtag, session: session)
     }
 
     func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
@@ -113,6 +130,10 @@ actor KinicICClient {
 
     func deleteDatabase(databaseId: String, session: ICAuthSession) async throws {
         try await vfsClient.deleteDatabase(databaseId: databaseId, session: session)
+    }
+
+    func deleteAccount(session: ICAuthSession) async throws {
+        try await vfsClient.deleteAccount(session: session)
     }
 
     func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {

@@ -5,7 +5,7 @@ import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { FileCode, FileText, Folder, Loader2, Route } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/toast";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";

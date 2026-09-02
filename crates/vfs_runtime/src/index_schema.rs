@@ -5,8 +5,10 @@ use super::*;
 
 const INDEX_SCHEMA_MIGRATION_002: &str =
     include_str!("../migrations/index_db/002_node_publications.sql");
-const INDEX_SCHEMA_MIGRATION_003: &str =
-    include_str!("../migrations/index_db/003_iap_cycle_grants.sql");
+const INDEX_SCHEMA_MIGRATION_CURRENT: &str =
+    include_str!("../migrations/index_db/003_publication_mutation_recovery.sql");
+const INDEX_SCHEMA_MIGRATION_IAP: &str =
+    include_str!("../migrations/index_db/004_iap_cycle_grants.sql");
 
 impl VfsService {
     pub fn run_index_migrations(&self) -> Result<(), String> {
@@ -67,6 +69,7 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     insert_cycles_billing_config(&tx, config)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
@@ -106,6 +109,7 @@ fn run_index_migrations_in_tx(
     insert_cycles_billing_config(conn, config)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     validate_index_schema(conn)?;
     Ok(())
@@ -167,20 +171,43 @@ fn apply_pending_index_migrations(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
 ) -> Result<(), String> {
-    let versions = applied_index_versions(conn)?;
-    let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut versions = applied_index_versions(conn)?;
+    let mut version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
     if version_refs == INDEX_SCHEMA_VERSIONS {
         return Ok(());
     }
     if version_refs == [INDEX_SCHEMA_VERSION_INITIAL] {
         conn.execute_batch(INDEX_SCHEMA_MIGRATION_002)
             .map_err(|error| error.to_string())?;
-        insert_schema_migration(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
-    } else if version_refs
-        != [
+        #[cfg(not(target_arch = "wasm32"))]
+        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+        #[cfg(target_arch = "wasm32")]
+        insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
+        versions.push(INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string());
+        version_refs = versions.iter().map(String::as_str).collect();
+    }
+    if version_refs
+        == [
             INDEX_SCHEMA_VERSION_INITIAL,
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
         ]
+    {
+        conn.execute_batch(INDEX_SCHEMA_MIGRATION_CURRENT)
+            .map_err(|error| error.to_string())?;
+        #[cfg(not(target_arch = "wasm32"))]
+        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+        #[cfg(target_arch = "wasm32")]
+        insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+        versions.push(INDEX_SCHEMA_VERSION_CURRENT.to_string());
+        version_refs = versions.iter().map(String::as_str).collect();
+    }
+    if version_refs
+        != [
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+            INDEX_SCHEMA_VERSION_CURRENT,
+        ]
+        && version_refs != INDEX_SCHEMA_VERSIONS
     {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
@@ -188,16 +215,23 @@ fn apply_pending_index_migrations(
         ));
     }
 
+    if version_refs == INDEX_SCHEMA_VERSIONS {
+        return Ok(());
+    }
+
     let config = config.ok_or_else(|| {
         format!(
             "cycles config required to apply index schema migration {INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS}"
         )
     })?;
-    conn.execute_batch(INDEX_SCHEMA_MIGRATION_003)
+    conn.execute_batch(INDEX_SCHEMA_MIGRATION_IAP)
         .map_err(|error| error.to_string())?;
     validate_principal_text(&config.iap_authority_id)?;
     set_cycles_billing_config_text(conn, "iap_authority_id", &config.iap_authority_id)?;
-    insert_schema_migration(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     Ok(())
 }
 
@@ -278,6 +312,8 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_purchase_pending_operations",
         "market_entitlements",
         "node_publications",
+        "publication_mutation_recovery_batches",
+        "publication_mutation_recovery_items",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -484,6 +520,20 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             "node_publications",
             &["public_id", "database_id", "path", "published_at_ms"][..],
         ),
+        (
+            "publication_mutation_recovery_batches",
+            &["operation_id", "database_id"][..],
+        ),
+        (
+            "publication_mutation_recovery_items",
+            &[
+                "operation_id",
+                "public_id",
+                "database_id",
+                "path",
+                "published_at_ms",
+            ][..],
+        ),
     ] {
         for column in columns {
             if !index_column_exists(conn, table, column)? {
@@ -528,6 +578,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_entitlements_database_buyer_active_idx",
         "market_entitlements_buyer_idx",
         "node_publications_database_idx",
+        "publication_mutation_recovery_database_idx",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));

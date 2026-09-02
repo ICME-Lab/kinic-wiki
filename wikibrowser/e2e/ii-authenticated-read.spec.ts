@@ -1,9 +1,15 @@
 import { expect, testWithII } from "@dfinity/internet-identity-playwright";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { CDPSession, Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   createDatabaseAuthenticated,
+  getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
+  mkdirNodeAuthenticated,
   writeNodeAuthenticated
 } from "../lib/vfs-client";
 
@@ -14,6 +20,8 @@ const E2E_LINKED_PATH = "/Knowledge/e2e-linked.md";
 const E2E_TITLE = "E2E Private Note";
 const E2E_LINKED_TITLE = "E2E Linked Note";
 const E2E_TOKEN = `e2e-private-token-${Date.now()}`;
+const IMPORT_ROOT_NAME = "folder-import-fixture";
+const execFile = promisify(execFileCallback);
 
 testWithII.skip(!CANISTER_ID, "VITE_KINIC_WIKI_CANISTER_ID is required.");
 
@@ -21,7 +29,41 @@ testWithII.beforeEach(async ({ iiPage }) => {
   await iiPage.waitReady({ url: II_PROVIDER_URL, timeout: 60_000 });
 });
 
-testWithII("reads a private database after Internet Identity login", async ({ page, browser }) => {
+testWithII("creates and activates a paid second database from Internet Identity without a wallet", async ({ page }) => {
+  await installVirtualAuthenticator(page);
+  await page.goto("/dashboard");
+  await createLocalIdentity(page);
+  await expect(page.getByRole("heading", { name: "My databases", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem("kinic-wiki.wallet-session"))).toBeNull();
+  const principalLabel = await page.locator('[aria-label^="Principal "]').getAttribute("aria-label");
+  const principal = principalLabel?.slice("Principal ".length) ?? "";
+  expect(principal).not.toEqual("");
+  await seedLocalKinic(principal, 200_000_000n);
+
+  await page.getByRole("button", { name: "Create database", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "Create database" });
+  await expect(dialog.getByText(/^Requires [0-9,]+ cycles\.$/)).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Database name" }).fill(`Free database e2e ${Date.now()}`);
+  await expect(dialog.getByRole("button", { name: "Create", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/db\/db_[a-z0-9]+\/Knowledge$/);
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Create database", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Create database" });
+  await expect(dialog.getByText("Requires 1.000 KINIC.", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Payment source", { exact: true })).toBeVisible();
+  await expect(dialog.locator('input[value="ii"]')).toBeChecked();
+  await expect(dialog.getByText("Required balance", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Refresh balance", exact: true }).click();
+  await expect(dialog.getByText("2.000 KINIC", { exact: true })).toBeVisible();
+  await dialog.getByRole("textbox", { name: "Database name" }).fill(`Paid database e2e ${Date.now()}`);
+  await expect(dialog.getByRole("button", { name: "Create with Internet Identity", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Create with Internet Identity", exact: true }).click();
+  await expect(page).toHaveURL(/\/db\/db_[a-z0-9]+\/Knowledge$/);
+});
+
+testWithII("reads a private database after Internet Identity login", async ({ page, browser }, testInfo) => {
   await installVirtualAuthenticator(page);
   await page.goto("/dashboard");
   await createLocalIdentity(page);
@@ -31,7 +73,9 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   const principal = principalLabel?.slice("Principal ".length) ?? "";
   expect(principal).not.toEqual("");
   const databaseId = await seedPrivateDatabase(principal);
+  const secondDatabaseId = await seedPrivateDatabase(principal);
   const privateHref = `/db/${encodeURIComponent(databaseId)}${E2E_PATH}`;
+  const secondPrivateHref = `/db/${encodeURIComponent(secondDatabaseId)}${E2E_PATH}`;
 
   const anonymousContext = await browser.newContext();
   const anonymousPage = await anonymousContext.newPage();
@@ -43,6 +87,87 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await page.goto(privateHref);
   await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
+
+  const markdownImportPath = testInfo.outputPath("selected-local.md");
+  const pdfImportPath = testInfo.outputPath("selected-manual.pdf");
+  await writeFile(markdownImportPath, "# Selected Markdown\n\nImported as an individual file.\n");
+  await writeFile(pdfImportPath, textPdf("Selected PDF text"));
+
+  const explorerPanel = page.locator('[data-tid="wiki-explorer-panel"]');
+  await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Import files" }).click();
+  await page.locator('input[type="file"]:not([webkitdirectory])').setInputFiles([markdownImportPath, pdfImportPath]);
+  const fileImportDialog = page.getByRole("dialog", { name: "Import files" });
+  await expect(fileImportDialog.getByText("2 selected files")).toBeVisible();
+  await fileImportDialog.getByRole("button", { name: "Import 2" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/Knowledge(?:\\?tab=explorer)?$`));
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/selected-local.md`);
+  await expect(page.getByRole("heading", { name: "Selected Markdown" })).toBeVisible();
+  await expect(page.getByText("Imported as an individual file.")).toBeVisible();
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/selected-manual.md`);
+  await expect(page.getByText("Selected PDF text")).toBeVisible();
+  await page.goto(privateHref);
+
+  const importDirectory = testInfo.outputPath(IMPORT_ROOT_NAME);
+  await mkdir(join(importDirectory, "nested"), { recursive: true });
+  await writeFile(join(importDirectory, "nested", "local.md"), "# Local Markdown\n\nImported from a local folder.\n");
+  await writeFile(join(importDirectory, "manual.pdf"), textPdf("Imported PDF text"));
+  await writeFile(join(importDirectory, "existing.md"), "# Replaced content\n");
+  await writeFile(join(importDirectory, "image.png"), "not-an-image");
+
+  await explorerPanel.getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Import folder" }).click();
+  await page.locator('input[type="file"][webkitdirectory]').setInputFiles(importDirectory);
+  const importDialog = page.getByRole("dialog", { name: "Import folder" });
+  await expect(importDialog.getByText("PDF converted")).toBeVisible();
+  await expect(importDialog.getByText("1 existing file will be kept unless replacement is selected.")).toBeVisible();
+  await expect(importDialog.getByText("Excluded (1)")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(importDialog.getByRole("button", { name: "Import 3" })).toBeVisible();
+  await importDialog.getByRole("button", { name: "Import 3" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/Knowledge/${IMPORT_ROOT_NAME}(?:\\?tab=explorer)?$`));
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/${IMPORT_ROOT_NAME}/nested/local.md`);
+  await expect(page.getByRole("heading", { name: "Local Markdown" })).toBeVisible();
+  await expect(page.getByText("Imported from a local folder.")).toBeVisible();
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/${IMPORT_ROOT_NAME}/manual.md`);
+  await expect(page.getByRole("heading", { name: "manual" })).toBeVisible();
+  await expect(page.getByText("Imported PDF text")).toBeVisible();
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/Knowledge/${IMPORT_ROOT_NAME}/existing.md`);
+  await expect(page.getByRole("heading", { name: "Existing content" })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(privateHref);
+
+  const explorer = page.locator('[data-tid="wiki-explorer-panel"]');
+  const explorerNoteNames = () => explorer
+    .locator('a[href$="/Knowledge/e2e.md"], a[href$="/Knowledge/e2e-linked.md"]')
+    .allTextContents();
+  await explorer.getByRole("combobox", { name: "Sort Explorer" }).click();
+  await page.getByRole("option", { name: "Name (Z–A)" }).click();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+  expect(await page.evaluate(() => window.localStorage.getItem("kinicWikiExplorerSortOrder"))).toBe("name-desc");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+
+  await page.goto(secondPrivateHref);
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+  await expect.poll(explorerNoteNames).toEqual(["e2e.md", "e2e-linked.md"]);
+  await page.goto(privateHref);
+  await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
+
+  await explorer.getByRole("button", { name: "More Explorer actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Move" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  await explorer.getByRole("button", { name: "More Explorer actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  await expect(explorer.getByRole("textbox", { name: "Rename selected node" })).toHaveValue("e2e.md");
+  await explorer.getByRole("button", { name: "Cancel Explorer action" }).click();
 
   const rscRequests: string[] = [];
   page.on("request", (request) => {
@@ -218,6 +343,23 @@ testWithII("publishes one node without exposing the private database", async ({ 
   await anonymousContext.close();
 });
 
+async function seedLocalKinic(recipientPrincipal: string, amountE8s: bigint): Promise<void> {
+  const config = await getCyclesBillingConfig(CANISTER_ID);
+  const argument = `(record {
+    to = record { owner = principal "${recipientPrincipal}"; subaccount = null };
+    fee = null;
+    memo = null;
+    from_subaccount = null;
+    created_at_time = null;
+    amount = ${amountE8s} : nat
+  })`;
+  await execFile(
+    "icp",
+    ["canister", "call", config.kinicLedgerCanisterId, "icrc1_transfer", argument, "-e", process.env.ICP_ENVIRONMENT ?? "local-wiki", "-o", "candid"],
+    { maxBuffer: 1024 * 1024 }
+  );
+}
+
 async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
   const seedIdentity = Ed25519KeyIdentity.generate();
   const { database_id: databaseId } = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, `II e2e ${Date.now()}`);
@@ -234,6 +376,18 @@ async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
     path: E2E_LINKED_PATH,
     kind: "file",
     content: `# ${E2E_LINKED_TITLE}\n`,
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  await mkdirNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: `/Knowledge/${IMPORT_ROOT_NAME}`
+  });
+  await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
+    databaseId,
+    path: `/Knowledge/${IMPORT_ROOT_NAME}/existing.md`,
+    kind: "file",
+    content: "# Existing content\n",
     metadataJson: "{}",
     expectedEtag: null
   });
@@ -286,4 +440,26 @@ async function installVirtualAuthenticator(page: Page): Promise<CDPSession> {
     }
   });
   return client;
+}
+
+function textPdf(text: string): Buffer {
+  const stream = `BT\n/F1 16 Tf\n72 720 Td\n(${text.replace(/[()\\]/g, "\\$&")}) Tj\nET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(pdf);
 }

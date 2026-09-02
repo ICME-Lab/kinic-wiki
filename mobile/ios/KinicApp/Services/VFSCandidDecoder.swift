@@ -29,15 +29,27 @@ enum VFSCandidDecoder {
         }
     }
 
-    static func decodeWriteNodeResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
-        guard case .record = ok else {
+    static func decodeWriteNodeResult(_ data: Data) throws -> VFSWriteNodeResult {
+        let ok = try decodeMutationResult(data)
+        guard case .record(let fields) = ok else {
             throw VFSCandidError.invalidPayload("expected write_node result")
         }
+        guard case .record(let nodeFields) = try record(fields, "node") else {
+            throw VFSCandidError.invalidPayload("write_node node is not a record")
+        }
+        return VFSWriteNodeResult(
+            created: try bool(fields, "created"),
+            node: VFSNodeMutationAck(
+                path: try text(nodeFields, "path"),
+                kind: try nodeKind(from: variant(nodeFields, "kind")),
+                updatedAt: try int64(nodeFields, "updated_at"),
+                etag: try text(nodeFields, "etag")
+            )
+        )
     }
 
     static func decodeWriteNodesResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .vector(let values) = ok else {
             throw VFSCandidError.invalidPayload("expected write_nodes result")
         }
@@ -49,7 +61,7 @@ enum VFSCandidDecoder {
     }
 
     static func decodeMkdirNodeResult(_ data: Data) throws {
-        let ok = try decodeResult(data)
+        let ok = try decodeMutationResult(data)
         guard case .record = ok else {
             throw VFSCandidError.invalidPayload("expected mkdir_node result")
         }
@@ -75,6 +87,29 @@ enum VFSCandidDecoder {
             createdAt: try int64(fields, "created_at"),
             updatedAt: try int64(fields, "updated_at")
         )
+    }
+
+    static func decodeNodePublicationResult(_ data: Data) throws -> NodePublication {
+        try nodePublication(from: decodeResult(data))
+    }
+
+    static func decodeOptionalNodePublicationResult(_ data: Data) throws -> NodePublication? {
+        let ok = try decodeResult(data)
+        guard case .opt(let value) = ok else {
+            throw VFSCandidError.invalidPayload("expected optional node publication")
+        }
+        guard let value else {
+            return nil
+        }
+        return try nodePublication(from: value)
+    }
+
+    static func decodeDeleteNodeResult(_ data: Data) throws -> String {
+        let ok = try decodeMutationResult(data)
+        guard case .record(let fields) = ok else {
+            throw VFSCandidError.invalidPayload("expected delete_node result")
+        }
+        return try text(fields, "path")
     }
 
     static func decodeChildNodesResult(_ data: Data) throws -> [ChildNode] {
@@ -244,6 +279,51 @@ enum VFSCandidDecoder {
         return value
     }
 
+    private static func decodeMutationResult(_ data: Data) throws -> Value {
+        var parser = Parser(data: data)
+        let values = try parser.parse()
+        guard values.count == 1,
+              case .variant(let variantLabel, let value) = values[0] else {
+            throw VFSCandidError.invalidPayload("expected mutation result variant")
+        }
+        if variantLabel == label("Err") {
+            guard case .record(let fields) = value else {
+                throw VFSCandidError.invalidPayload("expected mutation Err record")
+            }
+            guard let codeValue = fields[label("code")],
+                  case .variant(let codeLabel, _) = codeValue else {
+                throw VFSCandidError.invalidPayload("missing mutation error code")
+            }
+            throw VFSCandidError.nodeMutationRejected(VFSNodeMutationFailure(
+                code: try nodeMutationErrorCode(from: codeLabel),
+                message: try text(fields, "message"),
+                failedIndex: try optionalNat32(fields, "failed_index"),
+                conflictPath: try optionalText(fields, "conflict_path")
+            ))
+        }
+        guard variantLabel == label("Ok") else {
+            throw VFSCandidError.invalidPayload("unknown mutation result variant")
+        }
+        return value
+    }
+
+    private static func nodeMutationErrorCode(from value: UInt32) throws -> VFSNodeMutationErrorCode {
+        switch value {
+        case label("EtagConflict"):
+            .etagConflict
+        case label("NotFound"):
+            .notFound
+        case label("Forbidden"):
+            .forbidden
+        case label("WriteUnavailable"):
+            .writeUnavailable
+        case label("InvalidOperation"):
+            .invalidOperation
+        default:
+            throw VFSCandidError.invalidPayload("unknown mutation error code")
+        }
+    }
+
     private static func databaseSummary(from value: Value) throws -> DatabaseSummary {
         guard case .record(let fields) = value else {
             throw VFSCandidError.invalidPayload("database summary is not a record")
@@ -306,6 +386,18 @@ enum VFSCandidDecoder {
             sizeBytes: try optionalNat64(fields, "size_bytes"),
             hasChildren: try bool(fields, "has_children"),
             isVirtual: try bool(fields, "is_virtual")
+        )
+    }
+
+    private static func nodePublication(from value: Value) throws -> NodePublication {
+        guard case .record(let fields) = value else {
+            throw VFSCandidError.invalidPayload("node publication is not a record")
+        }
+        return NodePublication(
+            publicId: try text(fields, "public_id"),
+            databaseId: try text(fields, "database_id"),
+            path: try text(fields, "path"),
+            publishedAtMs: try int64(fields, "published_at_ms")
         )
     }
 
@@ -498,6 +590,20 @@ enum VFSCandidDecoder {
             throw VFSCandidError.invalidPayload("optional field \(name) is not nat64")
         }
         return nat64
+    }
+
+    private static func optionalNat32(_ fields: [UInt32: Value], _ name: String) throws -> UInt32? {
+        guard let value = fields[label(name)],
+              case .opt(let child) = value else {
+            throw VFSCandidError.invalidPayload("missing optional nat32 field \(name)")
+        }
+        guard let child else {
+            return nil
+        }
+        guard case .nat32(let nat32) = child else {
+            throw VFSCandidError.invalidPayload("optional field \(name) is not nat32")
+        }
+        return nat32
     }
 
     private static func textVector(_ fields: [UInt32: Value], _ name: String) throws -> [String] {
@@ -800,4 +906,16 @@ struct VFSNode: Identifiable, Equatable, Sendable {
     var id: String {
         path
     }
+}
+
+struct VFSNodeMutationAck: Equatable, Sendable {
+    let path: String
+    let kind: VFSNodeKind
+    let updatedAt: Int64
+    let etag: String
+}
+
+struct VFSWriteNodeResult: Equatable, Sendable {
+    let created: Bool
+    let node: VFSNodeMutationAck
 }

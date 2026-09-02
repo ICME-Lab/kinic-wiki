@@ -136,6 +136,7 @@ struct VFSClient: @unchecked Sendable {
         """
     }
 
+    @discardableResult
     func writeNode(
         databaseId: String,
         path: String,
@@ -144,7 +145,7 @@ struct VFSClient: @unchecked Sendable {
         metadataJson: String,
         expectedEtag: String?,
         session: ICAuthSession
-    ) async throws {
+    ) async throws -> VFSWriteNodeResult {
         try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
         let data = try await client.callRaw(
             method: "write_node",
@@ -158,7 +159,7 @@ struct VFSClient: @unchecked Sendable {
             ),
             identity: session
         )
-        try VFSCandidDecoder.decodeWriteNodeResult(data)
+        return try VFSCandidDecoder.decodeWriteNodeResult(data)
     }
 
     func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
@@ -171,6 +172,49 @@ struct VFSClient: @unchecked Sendable {
             identity: session
         )
         return try VFSCandidDecoder.decodeReadNodeResult(data)
+    }
+
+    func getNodePublication(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication? {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.queryRaw(
+            method: "get_node_publication",
+            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeOptionalNodePublicationResult(data)
+    }
+
+    func publishNode(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "publish_node",
+            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
+            identity: session
+        )
+        return try VFSCandidDecoder.decodeNodePublicationResult(data)
+    }
+
+    func unpublishNode(databaseId: String, path: String, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "unpublish_node",
+            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(data)
+    }
+
+    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "delete_node",
+            arg: VFSCandidEncoder.deleteNode(databaseId: databaseId, path: path, expectedEtag: expectedEtag),
+            identity: session
+        )
+        let deletedPath = try VFSCandidDecoder.decodeDeleteNodeResult(data)
+        guard deletedPath == path else {
+            throw VFSClientError.unexpectedDeletedPath(expected: path, actual: deletedPath)
+        }
     }
 
     func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
@@ -285,6 +329,16 @@ struct VFSClient: @unchecked Sendable {
         let data = try await client.callRaw(
             method: "delete_database",
             arg: VFSCandidEncoder.deleteDatabase(databaseId: databaseId),
+            identity: session
+        )
+        try VFSCandidDecoder.decodeUnitResult(data)
+    }
+
+    func deleteAccount(session: ICAuthSession) async throws {
+        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+        let data = try await client.callRaw(
+            method: "delete_account",
+            arg: VFSCandidEncoder.empty(),
             identity: session
         )
         try VFSCandidDecoder.decodeUnitResult(data)
@@ -418,6 +472,7 @@ private extension VFSClient {
 private enum VFSClientError: Error, LocalizedError, Equatable {
     case conflictingSourceCaptureRequest(String)
     case workerTriggerFailed(String)
+    case unexpectedDeletedPath(expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
@@ -425,6 +480,8 @@ private enum VFSClientError: Error, LocalizedError, Equatable {
             "Source capture request already exists with different content: \(path)"
         case .workerTriggerFailed(let message):
             message
+        case let .unexpectedDeletedPath(expected, actual):
+            "Deleted path mismatch: expected \(expected), received \(actual)"
         }
     }
 }

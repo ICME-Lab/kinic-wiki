@@ -52,7 +52,7 @@ export async function generateDraft(
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
   deepSeekApiKey: string,
-  outputLanguage: OutputLanguage = "en"
+  outputLanguage?: OutputLanguage
 ): Promise<WikiDraft> {
   return parseAndValidateDraftResponse(await requestDeepSeekDraft(draftMessages(source, contextHits, config, outputLanguage), config, deepSeekApiKey), source.path);
 }
@@ -62,6 +62,13 @@ export async function requestDeepSeekDraft(
   config: WorkerConfig,
   deepSeekApiKey: string
 ): Promise<unknown> {
+  const requestPayload = JSON.stringify({
+    model: config.model,
+    max_tokens: config.maxOutputTokens,
+    thinking: { type: "disabled" },
+    response_format: { type: "json_object" },
+    messages
+  });
   let response: Response;
   try {
     response = await fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
@@ -70,12 +77,7 @@ export async function requestDeepSeekDraft(
         Authorization: `Bearer ${deepSeekApiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: config.maxOutputTokens,
-        response_format: { type: "json_object" },
-        messages
-      }),
+      body: requestPayload,
       redirect: "manual",
       signal: AbortSignal.timeout(DEEPSEEK_TIMEOUT_MS)
     });
@@ -86,6 +88,16 @@ export async function requestDeepSeekDraft(
   const text = await readBoundedResponseText(response);
   if (!response.ok) {
     const retryable = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500;
+    console.warn(
+      JSON.stringify({
+        event: "deepseek_request_failed",
+        status: response.status,
+        model: config.model,
+        inputCharacters: messages.reduce((total, message) => total + message.content.length, 0),
+        requestBytes: new TextEncoder().encode(requestPayload).byteLength,
+        retryable
+      })
+    );
     throw new DeepSeekRequestError(
       `deepseek_http_${response.status}`,
       deepSeekRequestFailureMessage(text, response),
@@ -104,7 +116,7 @@ function draftMessages(
   source: WikiNode,
   contextHits: SearchNodeHit[],
   config: WorkerConfig,
-  outputLanguage: OutputLanguage
+  outputLanguage?: OutputLanguage
 ): { role: "system" | "user"; content: string }[] {
   return [
     {
@@ -223,7 +235,7 @@ export function deepSeekErrorMessage(body: unknown): string {
   return "DeepSeek request failed";
 }
 
-function extractDeepSeekResponseText(body: unknown): string {
+export function extractDeepSeekResponseText(body: unknown): string {
   if (!isDeepSeekChatCompletion(body)) {
     throw new DeepSeekResponseError("DeepSeek response shape is invalid");
   }

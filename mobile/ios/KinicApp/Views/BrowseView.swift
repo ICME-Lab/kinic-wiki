@@ -11,13 +11,15 @@ struct BrowseView: View {
     @State private var selectedDatabaseId: String?
     @State private var selectedDocumentPath: String?
     @State private var folderPath: [BrowseFolderRoute] = []
+    @State private var isBrowseSearchPresented = false
+    @State private var navigationGate = BrowseNavigationGate()
 
     var body: some View {
         NavigationSplitView {
             BrowseDatabaseListView(
                 model: model,
-                selectedDatabaseId: $selectedDatabaseId,
-                selectedDocumentPath: $selectedDocumentPath,
+                selectedDatabaseId: selectedDatabaseBinding,
+                selectedDocumentPath: selectedDocumentPathBinding,
                 folderPath: $folderPath
             )
         } content: {
@@ -25,8 +27,10 @@ struct BrowseView: View {
                 BrowseNodeNavigationView(
                     model: model,
                     databaseId: selectedDatabaseId,
-                    selectedDocumentPath: $selectedDocumentPath,
-                    folderPath: $folderPath
+                    selectedDocumentPath: selectedDocumentPathBinding,
+                    folderPath: $folderPath,
+                    isSearchPresented: $isBrowseSearchPresented,
+                    requestSearchFolder: requestSearchFolder
                 )
             } else {
                 ContentUnavailableView("Select a database", systemImage: "externaldrive")
@@ -39,6 +43,16 @@ struct BrowseView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .confirmationDialog(
+            "Discard unsaved changes?",
+            isPresented: pendingNavigationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes", role: .destructive, action: applyPendingNavigation)
+            Button("Continue Editing", role: .cancel, action: cancelPendingNavigation)
+        } message: {
+            Text("Your Markdown changes have not been saved.")
+        }
         .task {
             model.startRefreshDatabases()
             syncSelectionFromModel()
@@ -72,9 +86,131 @@ struct BrowseView: View {
         selectedDatabaseId = databaseId
     }
 
+    private var selectedDatabaseBinding: Binding<String?> {
+        Binding(
+            get: { selectedDatabaseId },
+            set: { databaseId in requestDatabaseSelection(databaseId) }
+        )
+    }
+
+    private var selectedDocumentPathBinding: Binding<String?> {
+        Binding(
+            get: { selectedDocumentPath },
+            set: { path in requestDocumentSelection(path) }
+        )
+    }
+
+    private var pendingNavigationPresented: Binding<Bool> {
+        Binding(
+            get: { navigationGate.pendingRequest != nil },
+            set: { presented in
+                if !presented {
+                    cancelPendingNavigation()
+                }
+            }
+        )
+    }
+
+    private func requestDatabaseSelection(_ databaseId: String?) {
+        guard databaseId != selectedDatabaseId else { return }
+        guard let databaseId else {
+            requestNavigation(.database(nil))
+            return
+        }
+        _ = model.requestBrowseDatabaseSelection(databaseId)
+    }
+
+    private func requestDocumentSelection(_ path: String?) {
+        guard path != selectedDocumentPath else { return }
+        requestNavigation(.document(path))
+    }
+
+    private func requestSearchFolder(_ path: String) {
+        requestNavigation(.searchFolder(AppModel.normalizedBrowsePath(path)))
+    }
+
+    private func requestNavigation(_ request: BrowseNavigationGate.Request) {
+        let previousPendingRequest = navigationGate.pendingRequest
+        let requestToApply = navigationGate.request(
+            request,
+            hasUnsavedChanges: model.documentEditSession?.hasChanges == true
+        )
+        if previousPendingRequest != navigationGate.pendingRequest {
+            cancelExternalRequestIfNeeded(previousPendingRequest)
+        }
+        if let requestToApply {
+            apply(requestToApply)
+        }
+    }
+
+    private func applyPendingNavigation() {
+        guard let pendingRequest = navigationGate.confirm() else { return }
+        model.discardBrowseDocumentEdits()
+        apply(pendingRequest)
+    }
+
+    private func cancelPendingNavigation() {
+        cancelExternalRequestIfNeeded(navigationGate.cancel())
+    }
+
+    private func cancelExternalRequestIfNeeded(_ request: BrowseNavigationGate.Request?) {
+        switch request {
+        case .databaseSelection(let selectionRequest):
+            model.cancelBrowseDatabaseSelection(selectionRequest)
+        case .deepLink(let deepLinkRequest):
+            model.cancelBrowseDeepLink(deepLinkRequest)
+        default:
+            return
+        }
+    }
+
+    private func apply(_ navigation: BrowseNavigationGate.Request) {
+        if model.documentEditSession != nil {
+            model.discardBrowseDocumentEdits()
+        }
+        switch navigation {
+        case .database(let databaseId):
+            selectedDatabaseId = databaseId
+            selectedDocumentPath = nil
+            folderPath = []
+            if let databaseId, databaseId != model.selectedBrowseDatabaseId {
+                model.selectBrowseDatabase(databaseId)
+            }
+        case .databaseSelection(let request):
+            model.applyBrowseDatabaseSelection(request)
+        case .document(let path):
+            selectedDocumentPath = path
+            if let path {
+                model.startLoadBrowseDocument(path)
+            }
+        case .target(let target):
+            apply(target)
+        case .searchFolder(let path):
+            isBrowseSearchPresented = false
+            model.clearBrowseSearch()
+            selectedDocumentPath = nil
+            folderPath = AppModel.browseNavigationRoutes(
+                for: .folder(path),
+                includeDocument: false
+            )
+        case .deepLink(let request):
+            model.applyBrowseDeepLink(request)
+        }
+    }
+
     private func applyBrowseNavigationRequest() {
         syncSelectionFromModel()
-        switch model.requestedBrowseTarget {
+        if let request = model.requestedBrowseDeepLink {
+            requestNavigation(.deepLink(request))
+        } else if let request = model.requestedBrowseDatabaseSelection {
+            requestNavigation(.databaseSelection(request))
+        } else {
+            requestNavigation(.target(model.requestedBrowseTarget))
+        }
+    }
+
+    private func apply(_ target: BrowseNavigationTarget) {
+        switch target {
         case let .folder(path):
             selectedDocumentPath = nil
             folderPath = AppModel.browseNavigationRoutes(

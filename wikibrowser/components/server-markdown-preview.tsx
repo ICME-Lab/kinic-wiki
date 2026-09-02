@@ -2,8 +2,7 @@
 // What: Render public Markdown into static HTML with safe links and images.
 // Why: Search crawlers need useful node content before the client browser fetches VFS data.
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Markdown } from "@/lib/markdown-renderer";
 import { safeMarkdownImageSrc } from "@/lib/markdown-images";
 import { renderWikilinksAsMarkdown } from "@/lib/markdown-wikilinks";
 import { hrefForMarkdownLink } from "@/lib/paths";
@@ -21,8 +20,7 @@ export function ServerMarkdownPreview({
 }) {
   const markdown = renderWikilinksAsMarkdown(content);
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+    <Markdown
       components={{
         a({ href, children, ...props }) {
           const wikiHref = hrefForMarkdownLink(canisterId, databaseId, nodePath, href);
@@ -48,6 +46,6 @@ export function ServerMarkdownPreview({
       }}
     >
       {markdown}
-    </ReactMarkdown>
+    </Markdown>
   );
 }

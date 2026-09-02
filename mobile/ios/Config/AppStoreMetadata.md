@@ -28,7 +28,7 @@ With KinicWiki, you can:
 - Search across your wiki
 - Ask questions using evidence from one selected database
 - See which documents were searched and used for an answer
-- Read Markdown documents
+- Read Markdown documents, and edit existing notes outside Sources when you are an Owner or Writer
 - Choose and manage multiple databases
 - Control who can read or write each database
 
@@ -83,3 +83,5 @@ On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Conti
 Public databases are shown by default. Open Browse and select the pre-populated public database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain" and submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
 
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
+
+To test account deletion, sign in, open Settings, and choose "Delete Account" under Account Deletion. The confirmation explains that sole-owned databases are permanently deleted, shared databases remain while the current user's access is removed, purchased access is revoked, and local account history is erased. Internet Identity itself and transaction records required for settlement and duplicate-grant prevention are not deleted. After successful deletion, the app signs out automatically.

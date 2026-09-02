@@ -1,5 +1,5 @@
 // Where: mobile/ios/KinicApp/Models/AskAIMessage.swift
-// What: A persisted user question or grounded assistant response.
+// What: A persisted user question or conversational or grounded assistant response.
 // Why: Ask AI conversations need durable, testable state independent of SwiftUI views.
 
 import Foundation

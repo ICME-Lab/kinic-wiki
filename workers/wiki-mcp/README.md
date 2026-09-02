@@ -1,26 +1,30 @@
 # Kinic Wiki MCP
 
-Remote MCP Workers for Kinic Wiki recall: anonymous production and private opt-in staging. Staging exposes the same eight read tools publicly plus `connect_private`; after OAuth it runs the eight data tools only with the delegated Internet Identity.
+Remote MCP Workers for Kinic Wiki recall. The public production Worker remains anonymous and read-only with eight tools. The Private production and staging Workers require OAuth at MCP connection and expose those eight reads plus two atomic batch mutation tools. Normal users authorize an Internet Identity delegation; the dedicated OpenAI reviewer login uses a restricted service identity against the same canister tools.
 
 Canonical documentation: `../../docs/mcp.md`.
 
 ## Endpoints
 
-- Production: `https://wiki-mcp.kinic.xyz/mcp`
-- Staging: `https://wiki-mcp-staging.kinic.xyz/mcp`
+- Public search: `https://wiki-mcp.kinic.xyz/mcp`
+- Private production: `https://wiki-private-mcp.kinic.xyz/mcp`
+- Private staging: `https://wiki-mcp-staging.kinic.xyz/mcp`
 - Local: `http://127.0.0.1:8787/mcp`
 
 ## Tools
 
-- `find_databases`: discover databases visible to the request principal (public databases in production).
-- `search`: search one database visible to the request principal with canister FTS and selectable preview mode.
-- `fetch_many`: read 1 to 10 search result nodes by exact opaque ids or public URLs returned by `search`.
-- `read_path`: read one known VFS path without a search result id.
-- `read_paths`: read up to 10 known VFS paths with one restricted SQL query.
-- `list`: list node inventory under a prefix without content.
-- `memory_manifest`: discover Store API roots, capabilities, and limits.
-- `context`: read task-scoped context through `query_context`.
-- `connect_private`: start OAuth/II connection when unauthenticated, or return only `{ connected: true, mode: "private" }` after authentication.
+The eight read tools are `find_databases`, `search`, `fetch_many`, `read_path`, `read_paths`, `list`, `memory_manifest`, and `context`.
+
+Private production and staging additionally expose:
+
+- `write_nodes`: atomically create or fully replace 1–100 nodes in one database; use it even for a single create or replacement.
+- `mutate_nodes_batch`: atomically apply 1–100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations; use it for the whole change set whenever any non-write operation is present, even for one operation.
+
+Private connection requires only OAuth `mcp:read`. Both mutation tools require OAuth `mcp:read mcp:write` and full action permission, with step-up authorization when a read-only token attempts a mutation. II Questions-only sessions can read but cannot mutate; the dedicated reviewer login has full action permission but remains bounded by its requested OAuth scopes and fixture-only service principal. There is no connection tool or single-mutation MCP tool.
+
+OAuth is validated for every Private MCP POST. II sessions mint a per-app delegation only for `tools/call`; reviewer sessions restore the configured request-scoped service identity instead. An II app key and delegation chain are reused until 30 seconds before the five-minute cap, and concurrent cache misses share one mint.
+
+Every `write_nodes` item and batch `write` operation is a full replacement and must explicitly provide `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` may be omitted. A batch `move` with `overwrite: true` must include `expected_target_etag` when its destination exists and omit it when the destination is absent; the field is invalid with `overwrite: false`. Conflict errors distinguish the input `path` from the actual `conflict_path`, and inline `current_content` is capped at 40,000 characters with truncation and original-size fields.
 
 ## Local
 
@@ -32,9 +36,6 @@ pnpm dev
 pnpm smoke:staging -- --open
 ```
 
-The staging smoke command first scans all nine tools and calls `find_databases` anonymously, then calls `connect_private` and starts OAuth from the returned MCP `_meta["mcp/www_authenticate"]` challenge. Pass `--database-id <id>` and `--path <known-path>` to verify private database visibility plus `context` and `read_path` after connection. The command reports only success flags and response sizes, not tokens, principals, or private node text.
+The staging smoke command authenticates at connection, checks the exact 10-tool contract, and runs private reads. It securely caches OAuth credentials under the user state directory and reuses or refreshes them, so browser consent is normally needed only on the first run. A first write-enabled run needs one additional consent for write scope; `--reset-auth` forces a fresh login, and `MCP_STAGING_AUTH_CACHE` overrides the cache path. Do not run concurrent smoke processes against one cache because refresh tokens rotate. With `--database-id <id> --path <known-path>` it verifies a known private path. Adding `--write-smoke-path <new-temporary-path>` verifies single and multiple `write_nodes`, etag conflict rereads, atomic rollback, `mutate_nodes_batch`, and batch cleanup; select `Actions & questions` in II. It reports only success flags and response sizes, never tokens, principals, or private node text.
 
-Staging requires `KINIC_WIKI_MCP_TARGET_ORIGIN` to be the bare
-`https://<KINIC_WIKI_CANISTER_ID>.ic0.app` origin. This is distinct from the
-`https://icp0.io` IC API gateway and is passed unchanged to the Internet
-Identity MCP backend calls.
+Staging uses canister `3ryrw-kyaaa-aaaaf-qgxpq-cai` and requires `KINIC_WIKI_MCP_TARGET_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.ic0.app`. This derivation origin is distinct from the `https://icp0.io` API gateway. Browser URLs use `https://kinic-wiki-browser-staging.hude.workers.dev`.
