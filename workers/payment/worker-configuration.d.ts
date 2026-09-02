@@ -10,7 +10,7 @@ interface __BaseEnv_PaymentBindings {
 	APP_STORE_ENVIRONMENT: "Sandbox";
 	APP_STORE_BUNDLE_ID: "xyz.kinic.ios.KinicWiki";
 	APP_STORE_NOTIFICATION_ROOT_SHA256: "local-notification-root-sha256";
-	IAP_PRODUCT_CATALOG_JSON: "{\"xyz.kinic.dbcredits.small\":\"400000000000\",\"xyz.kinic.dbcredits.medium\":\"1200000000000\",\"xyz.kinic.dbcredits.large\":\"4000000000000\"}";
+	IAP_PRODUCT_CATALOG_JSON: "{\"xyz.kinic.dbcredits.small\":\"1825000000000\",\"xyz.kinic.dbcredits.medium\":\"1200000000000\",\"xyz.kinic.dbcredits.large\":\"4000000000000\"}";
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

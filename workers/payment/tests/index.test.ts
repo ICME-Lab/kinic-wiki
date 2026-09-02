@@ -46,6 +46,39 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
 });
 
+test("activation uses the purchase intent cycles snapshot after catalog changes", async () => {
+  const env = await testEnv();
+  const appAccountToken = await purchaseIntent(env);
+  env.IAP_PRODUCT_CATALOG_JSON = JSON.stringify({ [PRODUCT_ID]: "99999" });
+  const transactionJWS = jws({ transactionId: "tx-snapshot", appAccountToken });
+  await activateDatabase(
+    env,
+    { transactionJWS },
+    async (_env, request) => {
+      assert.equal(request.amountCycles, 12345n);
+    },
+    fakeAppStoreFetch(jws(serverPayload("tx-snapshot", { appAccountToken })))
+  );
+});
+
+test("activation rejects legacy intents without a cycles snapshot", async () => {
+  const env = await testEnv();
+  const appAccountToken = await purchaseIntent(env);
+  env.DB.intents.get(appAccountToken)!.amount_cycles = null;
+  const transactionJWS = jws({ transactionId: "tx-legacy", appAccountToken });
+  await assert.rejects(
+    () => activateDatabase(
+      env,
+      { transactionJWS },
+      async () => {
+        throw new Error("grant must not be called");
+      },
+      fakeAppStoreFetch(jws(serverPayload("tx-legacy", { appAccountToken })))
+    ),
+    /missing a valid cycles snapshot/
+  );
+});
+
 test("purchase intent endpoint creates UUID token for known product", async () => {
   const env = await testEnv();
   const response = await worker.fetch(
@@ -62,6 +95,7 @@ test("purchase intent endpoint creates UUID token for known product", async () =
   assert.deepEqual(Object.keys(body), ["appAccountToken"]);
   assert.match(String(body.appAccountToken), /^[0-9a-f-]{36}$/u);
   assert.equal(env.DB.intents.get(String(body.appAccountToken))?.database_id, DATABASE_ID);
+  assert.equal(env.DB.intents.get(String(body.appAccountToken))?.amount_cycles, "12345");
 });
 
 test("purchase intent endpoint rejects unknown product", async () => {
@@ -901,6 +935,7 @@ type PurchaseIntentRow = {
   database_id: string;
   purchaser_principal: string;
   product_id: string;
+  amount_cycles: string | null;
   status: string;
   transaction_id: string | null;
 };
@@ -1000,6 +1035,7 @@ class MemoryStatement {
         database_id: String(this.values[1]),
         purchaser_principal: String(this.values[2]),
         product_id: String(this.values[3]),
+        amount_cycles: String(this.values[4]),
         status: "created",
         transaction_id: null
       });

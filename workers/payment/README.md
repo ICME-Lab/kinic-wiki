@@ -33,6 +33,13 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
 
 `IAP_PRODUCT_CATALOG_JSON` is authoritative. iOS never sends an amount.
 
+The current `xyz.kinic.dbcredits.small` template grant is `1,825,000,000,000` cycles.
+This is the 1B-cycle-floor of `($4.99 / 2) / 1.366430 XDR per USD`, using the published
+reference rate only for the pre-approval calculation. Recompute and record the
+XDR/USD rate when the App Store price is approved, then update the catalog before
+selling. Keep the product's cycles value immutable after an intent is created; each
+intent stores its own amount snapshot.
+
 ## Deployment
 
 `wrangler.jsonc` is a local/dev config and intentionally does not bind `payment.kinic.xyz`.

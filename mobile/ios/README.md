@@ -65,7 +65,7 @@ iOS local tunnel execution is not supported. Real-device and TestFlight checks u
 The app reads Payment Worker and StoreKit settings from the same xcconfig:
 
 - `KINIC_PAYMENT_BASE_URL`: Payment Worker origin, default `https://payment.kinic.xyz`
-- `KINIC_IAP_PRODUCT_IDS`: comma-separated consumable credit pack product IDs
+- `KINIC_IAP_PRODUCT_IDS`: comma-separated consumable credit pack product IDs (the initial release enables `xyz.kinic.dbcredits.small` only)
 
 Purchase flow: create DB first, keep it `pending` when no free grant applies, create a Payment Worker purchase intent, pass its `appAccountToken` to StoreKit 2, post `{ transactionJWS }` to `/iap/activate-database`, and let the worker resolve the destination from the purchase intent. Finish the StoreKit transaction only after successful activation. Recovery replays StoreKit unfinished transactions and does not keep a second local pending-purchase record.
 

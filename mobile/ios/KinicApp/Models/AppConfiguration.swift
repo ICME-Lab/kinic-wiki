@@ -66,7 +66,7 @@ struct AppConfiguration: Equatable, Sendable {
         callbackDomain: "wiki.kinic.xyz",
         appGroupId: nil,
         keychainAccessGroup: nil,
-        iapProductIds: ["xyz.kinic.dbcredits.small", "xyz.kinic.dbcredits.medium", "xyz.kinic.dbcredits.large"],
+        iapProductIds: ["xyz.kinic.dbcredits.small"],
         askAIURL: URL(string: "https://api.kinic.io/chat")!
     )
 

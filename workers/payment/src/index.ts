@@ -39,6 +39,7 @@ type PurchaseIntentRow = {
   database_id: string;
   purchaser_principal: string;
   product_id: string;
+  amount_cycles: string | null;
   status: string;
   transaction_id: string | null;
 };
@@ -129,15 +130,16 @@ export default createPaymentWorker();
 
 export async function createPurchaseIntent(env: RuntimeEnv, input: PurchaseIntentInput): Promise<{ appAccountToken: string }> {
   const catalog = parseProductCatalog(env.IAP_PRODUCT_CATALOG_JSON);
-  if (!catalog.has(input.productId)) {
+  const amountCycles = catalog.get(input.productId);
+  if (amountCycles === undefined) {
     throw new Error(`unknown IAP product: ${input.productId}`);
   }
   const now = Date.now();
   const appAccountToken = crypto.randomUUID().toLowerCase();
   await env.DB.prepare(
-    "INSERT INTO iap_purchase_intents (app_account_token, database_id, purchaser_principal, product_id, status, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?4, 'created', ?5, ?5)"
+    "INSERT INTO iap_purchase_intents (app_account_token, database_id, purchaser_principal, product_id, amount_cycles, status, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, ?4, ?5, 'created', ?6, ?6)"
   )
-    .bind(appAccountToken, input.databaseId, input.purchaserPrincipal, input.productId, now)
+    .bind(appAccountToken, input.databaseId, input.purchaserPrincipal, input.productId, amountCycles.toString(), now)
     .run();
   return { appAccountToken };
 }
@@ -170,6 +172,7 @@ export async function activateDatabase(
   if (fulfillment.status === "fulfilled") {
     return fulfilledActivationResponse(fulfillment, verified.appAccountToken);
   }
+  const amountCycles = parseAmountCyclesSnapshot(intent.amount_cycles);
   const claim = await markFulfillmentGranting(env, {
     transactionId,
     databaseId: intent.database_id,
@@ -178,7 +181,7 @@ export async function activateDatabase(
     productId: verified.productId,
     environment: verified.environment,
     bundleId: verified.bundleId,
-    cycles: verified.cycles.toString(),
+    cycles: amountCycles.toString(),
   });
   if (claim.fulfillment) {
     return fulfilledActivationResponse(claim.fulfillment, verified.appAccountToken);
@@ -186,7 +189,7 @@ export async function activateDatabase(
   try {
     await grant(env, {
       databaseId: intent.database_id,
-      amountCycles: verified.cycles,
+      amountCycles,
       externalPaymentId: transactionId,
       provider: "apple_iap",
       productId: verified.productId,
@@ -223,7 +226,7 @@ export async function activateDatabase(
     databaseId: intent.database_id,
     purchaserPrincipal: intent.purchaser_principal,
     productId: verified.productId,
-    cycles: verified.cycles.toString()
+    cycles: amountCycles.toString()
   };
 }
 
@@ -276,7 +279,7 @@ async function fulfillmentByTransaction(env: RuntimeEnv, transactionId: string):
 
 async function purchaseIntentByToken(env: RuntimeEnv, appAccountToken: string): Promise<PurchaseIntentRow | null> {
   return env.DB.prepare(
-    "SELECT app_account_token, database_id, purchaser_principal, product_id, status, transaction_id FROM iap_purchase_intents WHERE app_account_token = ?1"
+    "SELECT app_account_token, database_id, purchaser_principal, product_id, amount_cycles, status, transaction_id FROM iap_purchase_intents WHERE app_account_token = ?1"
   )
     .bind(appAccountToken)
     .first<PurchaseIntentRow>();
@@ -299,7 +302,19 @@ async function validatePurchaseIntent(
   if (intent.status !== "created") {
     throw new Error("purchase intent is not active");
   }
+  parseAmountCyclesSnapshot(intent.amount_cycles);
   return intent;
+}
+
+function parseAmountCyclesSnapshot(value: string | null): bigint {
+  if (!value || !/^[1-9][0-9]*$/u.test(value)) {
+    throw new Error("purchase intent is missing a valid cycles snapshot");
+  }
+  const cycles = BigInt(value);
+  if (cycles > 9_223_372_036_854_775_807n) {
+    throw new Error("purchase intent cycles snapshot exceeds canister limit");
+  }
+  return cycles;
 }
 
 async function ensureFulfillmentReceived(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string }): Promise<FulfillmentRow> {
