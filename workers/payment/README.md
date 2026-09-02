@@ -33,16 +33,31 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
 
 `IAP_PRODUCT_CATALOG_JSON` is authoritative. iOS never sends an amount.
 
-The current `xyz.kinic.dbcredits.small` template grant is `1,825,000,000,000` cycles.
-This is the 1B-cycle-floor of `($4.99 / 2) / 1.366430 XDR per USD`, using the published
-reference rate only for the pre-approval calculation. Recompute and record the
-XDR/USD rate when the App Store price is approved, then update the catalog before
-selling. Keep the product's cycles value immutable after an intent is created; each
-intent stores its own amount snapshot.
+The Sandbox grant for `xyz.kinic.dbcredits.small` is `1,823,000,000,000` cycles.
+This is the 1B-cycle-floor of `($4.99 / 2) / 1.368360 XDR per USD`, using the IMF
+rate published for 2026-09-01 and the App Store price read back on 2026-09-02.
+The production record remains unapproved until the production price is approved
+and read back. Keep the product's cycles value immutable after an intent is created;
+each intent stores its own amount snapshot.
 
 ## Deployment
 
 `wrangler.jsonc` is a local/dev config and intentionally does not bind `payment.kinic.xyz`.
+
+The committed `wrangler.sandbox.jsonc` is isolated to `kinic-payment-sandbox`, the staging
+VFS canister, a dedicated D1 database name, and dedicated Rate Limiting namespaces. Before
+the first deployment, create the D1 database with Wrangler's `--update-config` and apply both
+migrations remotely. Store the IAP identity PEM, notification root fingerprint, and Apple
+credentials only with `wrangler secret put`; never write them to a file in this repository.
+
+```bash
+pnpm --filter kinic-payment-worker check:sandbox
+pnpm --filter kinic-payment-worker deploy:sandbox:dry-run
+pnpm --filter kinic-payment-worker deploy:sandbox
+```
+
+The deployment command also requires a clean branch containing `origin/main`. The sandbox
+catalog intentionally exposes only `xyz.kinic.dbcredits.small`.
 
 Production deploy requires an explicit config:
 
@@ -59,6 +74,9 @@ Then deploy with:
 ```bash
 pnpm --filter kinic-payment-worker deploy
 ```
+
+Production deployment is blocked until the non-secret price record in `operations/` is
+marked approved with the App Store CLI readback timestamp and the approval-time IMF rate.
 
 ## Verification
 

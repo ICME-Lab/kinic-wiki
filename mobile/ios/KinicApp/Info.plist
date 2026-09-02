@@ -24,6 +24,8 @@
 	<string>$(KINIC_PAYMENT_BASE_URL)</string>
 	<key>KINIC_IAP_PRODUCT_IDS</key>
 	<string>$(KINIC_IAP_PRODUCT_IDS)</string>
+	<key>KINIC_DEPLOYMENT_ENVIRONMENT</key>
+	<string>$(KINIC_DEPLOYMENT_ENVIRONMENT)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

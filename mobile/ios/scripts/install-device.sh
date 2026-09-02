@@ -11,11 +11,52 @@ scheme="${KINIC_IOS_SCHEME:-Kinic}"
 derived_data="${KINIC_IOS_DERIVED_DATA:-/tmp/kinic-ios-device-build}"
 device_id="${KINIC_IOS_DEVICE_ID:-}"
 install_timeout="${KINIC_IOS_INSTALL_TIMEOUT:-180}"
+sandbox_mode=0
+print_config=0
+build_args=()
 
 fail() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sandbox)
+      sandbox_mode=1
+      shift
+      ;;
+    --print-runtime-config)
+      print_config=1
+      shift
+      ;;
+    *)
+      build_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+sandbox_build_settings=()
+if [[ "$sandbox_mode" == "1" ]]; then
+  sandbox_build_settings=(
+    KINIC_DEPLOYMENT_ENVIRONMENT=sandbox
+    KINIC_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai
+    KINIC_API_BASE_URL=https://icp0.io
+    KINIC_IDENTITY_PROVIDER=https://id.ai/authorize
+    KINIC_DERIVATION_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io
+    KINIC_AUTH_ORIGIN=https://kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_CALLBACK_DOMAIN=kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_ASSOCIATED_DOMAIN=kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_PAYMENT_BASE_URL=https://kinic-payment-sandbox.hude.workers.dev
+    KINIC_IAP_PRODUCT_IDS=xyz.kinic.dbcredits.small
+  )
+fi
+
+if [[ "$print_config" == "1" ]]; then
+  printf '%s\n' "${sandbox_build_settings[@]}"
+  exit 0
+fi
 
 "$repo_root/mobile/ios/scripts/ensure-xcodegen-project.sh"
 
@@ -52,13 +93,14 @@ fi
 
 app_path="$derived_data/Build/Products/Debug-iphoneos/KinicWiki.app"
 
-printf 'Building %s for device %s...\n' "$scheme" "$device_id"
+printf 'Building %s for device %s (%s)...\n' "$scheme" "$device_id" "$([[ "$sandbox_mode" == "1" ]] && printf sandbox || printf production)"
 xcodebuild build \
   -project "$project" \
   -scheme "$scheme" \
   -destination "platform=iOS,id=$device_id" \
   -derivedDataPath "$derived_data" \
-  "$@"
+  "${sandbox_build_settings[@]}" \
+  "${build_args[@]}"
 
 [[ -d "$app_path" ]] || fail "Built app not found: $app_path"
 

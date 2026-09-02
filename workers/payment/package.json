@@ -6,9 +6,17 @@
   "scripts": {
     "cf-typegen": "wrangler types --env-interface PaymentBindings worker-configuration.d.ts",
     "cf-typecheck": "wrangler types --env-interface PaymentBindings worker-configuration.d.ts --check",
-    "deploy": "wrangler deploy --config wrangler.production.jsonc",
+    "check:catalog": "node scripts/validate-iap-catalog.mjs",
+    "check:catalog:production": "node scripts/validate-iap-catalog.mjs --production",
+    "check:sandbox": "node scripts/check-sandbox-deploy.mjs --config-only && node scripts/validate-iap-catalog.mjs",
+    "deploy": "node scripts/validate-iap-catalog.mjs --production && wrangler deploy --config wrangler.production.jsonc",
+    "deploy:sandbox": "node scripts/check-sandbox-deploy.mjs && node scripts/validate-iap-catalog.mjs && wrangler deploy --config wrangler.sandbox.jsonc",
+    "deploy:sandbox:dry-run": "node scripts/check-sandbox-deploy.mjs --config-only && node scripts/validate-iap-catalog.mjs && wrangler deploy --dry-run --config wrangler.sandbox.jsonc",
+    "d1:create:sandbox": "wrangler d1 create kinic-payment-sandbox --binding DB --update-config --use-remote --config wrangler.sandbox.jsonc",
+    "d1:migrate:sandbox": "wrangler d1 migrations apply DB --remote --config wrangler.sandbox.jsonc",
+    "d1:migrations:list:sandbox": "wrangler d1 migrations list DB --remote --config wrangler.sandbox.jsonc",
     "dev": "wrangler dev --config wrangler.jsonc",
-    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js && node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

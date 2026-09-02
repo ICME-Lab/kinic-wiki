@@ -1,0 +1,49 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "kinic-payment-sandbox",
+	"account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-07-09",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		"KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+		"KINIC_WIKI_IC_HOST": "https://icp0.io",
+		"KINIC_IAP_AUTHORITY_ID": "jao7b-vs75q-xlvit-szusc-eiiv3-sel57-6iyuu-6fzkh-lqui4-mbqcf-aae",
+		"APP_STORE_ENVIRONMENT": "Sandbox",
+		"APP_STORE_BUNDLE_ID": "xyz.kinic.ios.KinicWiki",
+		"IAP_PRODUCT_CATALOG_JSON": "{\"xyz.kinic.dbcredits.small\":\"1823000000000\"}"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "kinic-payment-sandbox",
+			"migrations_dir": "migrations",
+			"database_id": "d93a00ac-27be-485e-8c4b-1065c1f29bd2",
+			"remote": true
+		}
+	],
+	"ratelimits": [
+		{
+			"name": "IAP_GLOBAL_RATE_LIMITER",
+			"namespace_id": "21001",
+			"simple": {
+				"limit": 300,
+				"period": 60
+			}
+		},
+		{
+			"name": "IAP_PRINCIPAL_RATE_LIMITER",
+			"namespace_id": "21002",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		}
+	]
+}

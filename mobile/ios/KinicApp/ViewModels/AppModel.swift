@@ -335,7 +335,6 @@ final class AppModel {
     var browseSearchScope: BrowseSearchScope
     var browseSearchPhase: BrowseSearchPhase
     var browseSearchLimit: UInt32
-    var pendingDatabaseActivation: PendingDatabaseActivation?
     var statusMessage: String?
     var browseError: String?
     var documentError: String?
@@ -552,7 +551,6 @@ final class AppModel {
         browseSearchScope = .database
         browseSearchPhase = .idle
         browseSearchLimit = 20
-        pendingDatabaseActivation = nil
         session = initialSession ?? authService.restore()
         browsePathLoadRequestID = 0
         documentLoadRequestID = 0

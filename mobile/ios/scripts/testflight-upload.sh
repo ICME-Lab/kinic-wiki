@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Where: mobile/ios/scripts/testflight-upload.sh
-# What: Archive KinicWiki and upload it to TestFlight from CLI.
-# Why: TestFlight submissions need a repeatable production build path without editing Xcode project files.
+# What: Archive, export, and upload KinicWiki to TestFlight from CLI.
+# Why: Signing and API upload must remain separate and must not require exporting Keychain API keys.
 
 set -euo pipefail
 
@@ -24,15 +24,17 @@ scheme="${KINIC_IOS_SCHEME:-Kinic}"
 configuration="${KINIC_IOS_CONFIGURATION:-Release}"
 team_id="AKN976G7AK"
 bundle_id="xyz.kinic.ios.KinicWiki"
+asc_app_id="${ASC_APP_ID:-6785718977}"
 build_number="${KINIC_IOS_BUILD_NUMBER:-}"
 marketing_version="${KINIC_IOS_MARKETING_VERSION:-0.1.0}"
-archive_path="${KINIC_IOS_ARCHIVE_PATH:-$repo_root/mobile/ios/build/TestFlight/KinicWiki-$marketing_version-$build_number.xcarchive}"
-export_path="${KINIC_IOS_EXPORT_PATH:-$repo_root/mobile/ios/build/TestFlight/export-$marketing_version-$build_number}"
-asc_key_path="${ASC_KEY_PATH:-}"
-asc_key_id="${ASC_KEY_ID:-}"
-asc_issuer_id="${ASC_ISSUER_ID:-}"
+archive_path_override="${KINIC_IOS_ARCHIVE_PATH:-}"
+export_path_override="${KINIC_IOS_EXPORT_PATH:-}"
+asc_profile="${ASC_PROFILE:-}"
 mode="upload"
 distribution="external"
+sandbox_mode=0
+external_requested=0
+print_runtime_config=0
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -42,19 +44,18 @@ fail() {
 usage() {
   cat <<'EOF'
 Usage:
-  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh
-  KINIC_IOS_BUILD_NUMBER=<number> ASC_KEY_PATH=<AuthKey_XXX.p8> ASC_KEY_ID=<key-id> ASC_ISSUER_ID=<issuer-id> mobile/ios/scripts/testflight-upload.sh --internal-only
-  mobile/ios/scripts/testflight-upload.sh --internal-only
-  mobile/ios/scripts/testflight-upload.sh --validate-only
+  ASC_PROFILE=<profile> mobile/ios/scripts/testflight-upload.sh
+  ASC_PROFILE=<profile> mobile/ios/scripts/testflight-upload.sh --internal-only
+  ASC_PROFILE=<profile> mobile/ios/scripts/testflight-upload.sh --sandbox
+  ASC_PROFILE=<profile> mobile/ios/scripts/testflight-upload.sh --validate-only
 
 Environment:
   Required:
-    KINIC_IOS_BUILD_NUMBER      App Store Connect build number. Must be numeric and greater than 1.
-    ASC_KEY_PATH                App Store Connect API private key path.
-    ASC_KEY_ID                  App Store Connect API key id.
-    ASC_ISSUER_ID               App Store Connect issuer id.
+    ASC_PROFILE                 Named asc API-key profile stored in macOS Keychain.
 
   Optional:
+    ASC_APP_ID                  App Store Connect app ID. Defaults to Kinic 6785718977.
+    KINIC_IOS_BUILD_NUMBER      Explicit build number. Otherwise ASC latest + 1 is used.
     KINIC_IOS_MARKETING_VERSION Defaults to 0.1.0.
     KINIC_IOS_ARCHIVE_PATH      Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_EXPORT_PATH       Defaults under mobile/ios/build/TestFlight.
@@ -65,6 +66,8 @@ Environment:
 Options:
     --external                  Upload a build that can be assigned to external TestFlight groups. This is the default.
     --internal-only             Upload an internal-only TestFlight build.
+    --sandbox                   Use staging services and force an internal-only build.
+    --print-runtime-config      Print the selected runtime settings without building.
 EOF
 }
 
@@ -76,10 +79,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --external)
       distribution="external"
+      external_requested=1
       shift
       ;;
     --internal-only)
       distribution="internal-only"
+      shift
+      ;;
+    --sandbox)
+      sandbox_mode=1
+      distribution="internal-only"
+      shift
+      ;;
+    --print-runtime-config)
+      print_runtime_config=1
       shift
       ;;
     -h|--help)
@@ -92,17 +105,84 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$build_number" ]] || fail "KINIC_IOS_BUILD_NUMBER is required"
+if [[ "$sandbox_mode" == "1" && "$external_requested" == "1" ]]; then
+  fail "Sandbox builds cannot be uploaded for external TestFlight distribution"
+fi
+
+runtime_build_settings=(
+  KINIC_DEPLOYMENT_ENVIRONMENT=production
+  KINIC_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai
+  KINIC_API_BASE_URL=https://icp0.io
+  KINIC_IDENTITY_PROVIDER=https://id.ai/authorize
+  KINIC_DERIVATION_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io
+  KINIC_AUTH_ORIGIN=https://wiki.kinic.xyz
+  KINIC_CALLBACK_DOMAIN=wiki.kinic.xyz
+  KINIC_ASSOCIATED_DOMAIN=wiki.kinic.xyz
+  KINIC_PAYMENT_BASE_URL=https://payment.kinic.xyz
+  KINIC_IAP_PRODUCT_IDS=xyz.kinic.dbcredits.small
+)
+if [[ "$sandbox_mode" == "1" ]]; then
+  runtime_build_settings=(
+    KINIC_DEPLOYMENT_ENVIRONMENT=sandbox
+    KINIC_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai
+    KINIC_API_BASE_URL=https://icp0.io
+    KINIC_IDENTITY_PROVIDER=https://id.ai/authorize
+    KINIC_DERIVATION_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io
+    KINIC_AUTH_ORIGIN=https://kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_CALLBACK_DOMAIN=kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_ASSOCIATED_DOMAIN=kinic-wiki-browser-staging.hude.workers.dev
+    KINIC_PAYMENT_BASE_URL=https://kinic-payment-sandbox.hude.workers.dev
+    KINIC_IAP_PRODUCT_IDS=xyz.kinic.dbcredits.small
+  )
+fi
+
+if [[ "$print_runtime_config" == "1" ]]; then
+  printf 'distribution=%s\n' "$distribution"
+  printf '%s\n' "${runtime_build_settings[@]}"
+  exit 0
+fi
+
+[[ -n "$asc_profile" ]] || fail "ASC_PROFILE is required"
+
+resolve_next_build_number() {
+  local build_json latest
+  if ! build_json="$(asc --profile "$asc_profile" builds info \
+      --app "$asc_app_id" --latest --platform IOS --output json)"; then
+    fail "Could not read the latest App Store Connect build with profile $asc_profile"
+  fi
+  latest="$(printf '%s' "$build_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => {
+      const value = JSON.parse(input);
+      const candidate = value?.data?.attributes?.version
+        ?? value?.data?.attributes?.buildNumber
+        ?? value?.attributes?.version
+        ?? value?.version
+        ?? value?.buildNumber;
+      if (!/^\d+$/.test(String(candidate ?? ""))) process.exit(2);
+      process.stdout.write(String(candidate));
+    });
+  ')" || fail "Could not parse the latest App Store Connect build number"
+  printf '%s\n' "$((latest + 1))"
+}
+
+if [[ "$sandbox_mode" == "1" || -z "$build_number" ]]; then
+  build_number="$(resolve_next_build_number)"
+fi
+
+archive_path="${archive_path_override:-$repo_root/mobile/ios/build/TestFlight/KinicWiki-$marketing_version-$build_number.xcarchive}"
+export_path="${export_path_override:-$repo_root/mobile/ios/build/TestFlight/export-$marketing_version-$build_number}"
+
 [[ "$build_number" =~ ^[0-9]+$ ]] || fail "KINIC_IOS_BUILD_NUMBER must be numeric"
 (( build_number > 1 )) || fail "KINIC_IOS_BUILD_NUMBER must be greater than 1 for TestFlight"
 [[ -n "$marketing_version" ]] || fail "KINIC_IOS_MARKETING_VERSION must not be empty"
-[[ -n "$asc_key_path" ]] || fail "ASC_KEY_PATH is required"
-[[ -f "$asc_key_path" ]] || fail "ASC_KEY_PATH does not exist: $asc_key_path"
-[[ -n "$asc_key_id" ]] || fail "ASC_KEY_ID is required"
-[[ -n "$asc_issuer_id" ]] || fail "ASC_ISSUER_ID is required"
+[[ "$asc_app_id" =~ ^[0-9]+$ ]] || fail "ASC_APP_ID must be numeric"
 
 if [[ "$mode" == "validate-only" ]]; then
-  printf 'TestFlight upload inputs validated for %s build %s.\n' "$marketing_version" "$build_number"
+  printf 'TestFlight upload inputs validated for %s build %s (%s, %s).\n' \
+    "$marketing_version" "$build_number" \
+    "$([[ "$sandbox_mode" == "1" ]] && printf sandbox || printf production)" "$distribution"
   exit 0
 fi
 
@@ -119,7 +199,7 @@ cat >"$export_options" <<EOF
 <plist version="1.0">
 <dict>
   <key>destination</key>
-  <string>upload</string>
+  <string>export</string>
   <key>manageAppVersionAndBuildNumber</key>
   <false/>
   <key>method</key>
@@ -153,33 +233,39 @@ xcodebuild archive \
   -destination "generic/platform=iOS" \
   -archivePath "$archive_path" \
   -allowProvisioningUpdates \
-  -authenticationKeyPath "$asc_key_path" \
-  -authenticationKeyID "$asc_key_id" \
-  -authenticationKeyIssuerID "$asc_issuer_id" \
   CURRENT_PROJECT_VERSION="$build_number" \
   MARKETING_VERSION="$marketing_version" \
-  KINIC_CANISTER_ID="6emaw-iyaaa-aaaay-aacka-cai" \
-  KINIC_API_BASE_URL="https://icp0.io" \
-  KINIC_IDENTITY_PROVIDER="https://id.ai/authorize" \
-  KINIC_DERIVATION_ORIGIN="https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io" \
-  KINIC_AUTH_ORIGIN="https://wiki.kinic.xyz" \
-  KINIC_CALLBACK_DOMAIN="wiki.kinic.xyz" \
-  KINIC_ASSOCIATED_DOMAIN="wiki.kinic.xyz"
+  "${runtime_build_settings[@]}"
+
+archive_bundle_id="$(plutil -extract ApplicationProperties.CFBundleIdentifier raw -o - "$archive_path/Info.plist")"
+archive_version="$(plutil -extract ApplicationProperties.CFBundleShortVersionString raw -o - "$archive_path/Info.plist")"
+archive_build="$(plutil -extract ApplicationProperties.CFBundleVersion raw -o - "$archive_path/Info.plist")"
+[[ "$archive_bundle_id" == "$bundle_id" ]] || fail "Archive Bundle ID mismatch: $archive_bundle_id"
+[[ "$archive_version" == "$marketing_version" ]] || fail "Archive version mismatch: $archive_version"
+[[ "$archive_build" == "$build_number" ]] || fail "Archive build mismatch: $archive_build"
 
 app_privacy="$archive_path/Products/Applications/KinicWiki.app/PrivacyInfo.xcprivacy"
 extension_privacy="$archive_path/Products/Applications/KinicWiki.app/PlugIns/KinicShareExtension.appex/PrivacyInfo.xcprivacy"
 [[ -f "$app_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from app archive"
 [[ -f "$extension_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from Share Extension archive"
 
-printf 'Uploading archive to TestFlight...\n'
+printf 'Exporting signed IPA...\n'
 xcodebuild -exportArchive \
   -quiet \
   -archivePath "$archive_path" \
   -exportPath "$export_path" \
   -exportOptionsPlist "$export_options" \
-  -allowProvisioningUpdates \
-  -authenticationKeyPath "$asc_key_path" \
-  -authenticationKeyID "$asc_key_id" \
-  -authenticationKeyIssuerID "$asc_issuer_id"
+  -allowProvisioningUpdates
+
+ipa_path="$export_path/KinicWiki.ipa"
+[[ -f "$ipa_path" ]] || fail "Exported IPA not found: $ipa_path"
+
+printf 'Uploading verified IPA with asc profile %s...\n' "$asc_profile"
+asc --profile "$asc_profile" builds upload \
+  --app "$asc_app_id" \
+  --ipa "$ipa_path" \
+  --version "$marketing_version" \
+  --build-number "$build_number" \
+  --wait
 
 printf 'Uploaded KinicWiki %s (%s) to TestFlight (%s).\n' "$marketing_version" "$build_number" "$distribution"

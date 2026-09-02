@@ -5,6 +5,11 @@
 import Foundation
 import ICNativeClient
 
+enum AppDeploymentEnvironment: String, Equatable, Sendable {
+    case production
+    case sandbox
+}
+
 struct AppConfiguration: Equatable, Sendable {
     static let privacyPolicyURL = URL(string: "https://wiki.kinic.xyz/privacy-policy")!
 
@@ -19,6 +24,7 @@ struct AppConfiguration: Equatable, Sendable {
     let keychainAccessGroup: String?
     let iapProductIds: [String]
     let askAIURL: URL
+    let deploymentEnvironment: AppDeploymentEnvironment
 
     var icClientConfiguration: ICClientConfiguration {
         ICClientConfiguration(
@@ -67,7 +73,8 @@ struct AppConfiguration: Equatable, Sendable {
         appGroupId: nil,
         keychainAccessGroup: nil,
         iapProductIds: ["xyz.kinic.dbcredits.small"],
-        askAIURL: URL(string: "https://api.kinic.io/chat")!
+        askAIURL: URL(string: "https://api.kinic.io/chat")!,
+        deploymentEnvironment: .production
     )
 
     static func liveFromBundle(_ bundle: Bundle = .main) -> AppConfiguration {
@@ -83,7 +90,10 @@ struct AppConfiguration: Equatable, Sendable {
             appGroupId: bundle.optionalString("APP_GROUP_ID"),
             keychainAccessGroup: bundle.optionalString("KINIC_KEYCHAIN_ACCESS_GROUP"),
             iapProductIds: Self.iapProductIds(from: bundle.optionalString("KINIC_IAP_PRODUCT_IDS")),
-            askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL")
+            askAIURL: bundle.requiredURL("KINIC_ASK_AI_URL"),
+            deploymentEnvironment: Self.deploymentEnvironment(
+                from: bundle.requiredString("KINIC_DEPLOYMENT_ENVIRONMENT")
+            )
         )
     }
 
@@ -95,5 +105,12 @@ struct AppConfiguration: Equatable, Sendable {
             .split(separator: ",")
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    static func deploymentEnvironment(from value: String) -> AppDeploymentEnvironment {
+        guard let environment = AppDeploymentEnvironment(rawValue: value) else {
+            preconditionFailure("Invalid KINIC_DEPLOYMENT_ENVIRONMENT: \(value)")
+        }
+        return environment
     }
 }

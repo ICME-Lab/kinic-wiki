@@ -232,6 +232,15 @@ private struct DatabaseCreditSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if model.configuration.deploymentEnvironment == .sandbox {
+                    Section {
+                        Label(
+                            "Sandbox — no real charge; staging credits only",
+                            systemImage: "testtube.2"
+                        )
+                        .foregroundStyle(.secondary)
+                    }
+                }
                 Section("Credit destination") {
                     Text(target.title)
                     Text(target.id)

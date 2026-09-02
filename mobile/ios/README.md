@@ -62,6 +62,11 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 
 iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
 
+Use `mobile/ios/scripts/install-device.sh --sandbox` for Apple Sandbox testing. This
+selects staging canister `3ryrw-kyaaa-aaaaf-qgxpq-cai`, the staging auth domain,
+`kinic-payment-sandbox.hude.workers.dev`, and only `xyz.kinic.dbcredits.small` as one
+coherent runtime. The database credits sheet shows a Sandbox warning in this mode.
+
 The app reads Payment Worker and StoreKit settings from the same xcconfig:
 
 - `KINIC_PAYMENT_BASE_URL`: Payment Worker origin, default `https://payment.kinic.xyz`
@@ -77,6 +82,7 @@ Purchase flow: create DB first, keep it `pending` when no free grant applies, cr
 - `xcodebuild build-for-testing -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO`
 - `xcodebuild build -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS' -allowProvisioningUpdates`
 - `mobile/ios/scripts/install-device.sh`
+- `mobile/ios/scripts/install-device.sh --sandbox`
 - `mobile/ios/scripts/testflight-upload.sh --validate-only`
 - `pnpm --dir wikibrowser test`
 - `pnpm --dir wikibrowser typecheck`
@@ -102,9 +108,10 @@ For a clean browser-session authentication check in a Debug build, launch the ap
 ## TestFlight
 
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, and callback domain `wiki.kinic.xyz`.
-The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
-The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
+The upload script uses `KINIC_IOS_BUILD_NUMBER` when supplied for a production runtime. Otherwise it reads the latest iOS build with the explicitly selected `ASC_PROFILE` and uses the next number. Sandbox mode always resolves latest + 1 so a stale local override cannot be uploaded. It does not edit the Xcode project.
+The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Set `ASC_PROFILE` to an authorized `asc` API-key profile stored in macOS Keychain. The script archives and exports locally, verifies Bundle ID/version/build metadata, then uploads the IPA with that profile; it does not require exporting the API private key.
 The default upload mode is external-TestFlight-capable. Use `--internal-only` only when the build must not be assigned to external tester groups.
+`--sandbox` selects the isolated staging runtime and always sets TestFlight's internal-only flag. Combining it with `--external` is rejected before archive or upload.
 
 Validate inputs without archiving:
 
@@ -122,6 +129,12 @@ Upload an internal-only TestFlight build:
 
 ```bash
 mobile/ios/scripts/testflight-upload.sh --internal-only
+```
+
+Upload the Sandbox runtime for internal testing only:
+
+```bash
+mobile/ios/scripts/testflight-upload.sh --sandbox
 ```
 
 External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
