@@ -1270,6 +1270,7 @@ struct ShareInboxTests {
     func formatsDatabaseManagementValues() {
         #expect(DatabaseManagementFormat.cycles(nil) == "Unknown")
         #expect(DatabaseManagementFormat.cycles(2_000_000_000_000) == "2T cycles")
+        #expect(DatabaseManagementFormat.cycles(1_823_000_000_000) == "1.823T cycles")
         #expect(DatabaseManagementFormat.cycles(3_000_000_000) == "3B cycles")
         #expect(DatabaseManagementFormat.cycles(4_000_000) == "4M cycles")
         #expect(DatabaseManagementFormat.cycles(500) == "500 cycles")

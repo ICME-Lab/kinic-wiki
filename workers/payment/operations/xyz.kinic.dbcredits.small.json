@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "sandbox-approved",
   "appStoreIapId": "6807698664",
   "productId": "xyz.kinic.dbcredits.small",
@@ -7,15 +7,10 @@
   "referenceName": "Kinic Database Credit Pack - Small",
   "baseTerritory": "USA",
   "customerPriceUsd": "4.99",
+  "grantPolicy": "fixed",
   "locale": "en-US",
   "displayName": "Database Credit Pack",
   "description": "Adds database credits to one Kinic Wiki database.",
-  "xdrUsdRate": "1.368360",
-  "rateObservedAt": "2026-09-01",
-  "rateSource": "https://www.imf.org/external/np/fin/data/rms_sdrv.aspx",
-  "cyclePricingSource": "https://docs.internetcomputer.org/references/cycle-costs/",
-  "formula": "floor((priceUsd / 2 / xdrUsdRate) * 1e12 / 1e9) * 1e9",
-  "roundingCycles": "1000000000",
-  "amountCycles": "1823000000000",
+  "amountCycles": "2000000000000",
   "appStorePriceReadbackAt": "2026-09-02T07:17:04Z"
 }

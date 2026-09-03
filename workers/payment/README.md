@@ -33,12 +33,11 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
 
 `IAP_PRODUCT_CATALOG_JSON` is authoritative. iOS never sends an amount.
 
-The Sandbox grant for `xyz.kinic.dbcredits.small` is `1,823,000,000,000` cycles.
-This is the 1B-cycle-floor of `($4.99 / 2) / 1.368360 XDR per USD`, using the IMF
-rate published for 2026-09-01 and the App Store price read back on 2026-09-02.
-The production record remains unapproved until the production price is approved
-and read back. Keep the product's cycles value immutable after an intent is created;
-each intent stores its own amount snapshot.
+The grant for `xyz.kinic.dbcredits.small` is fixed at `2,000,000,000,000` cycles
+for each `$4.99` purchase. It does not vary with the XDR/USD exchange rate. The
+production record remains unapproved until the production price is approved and
+read back. Existing purchase intents keep their stored amount snapshot when the
+catalog changes; only newly created intents receive the current fixed amount.
 
 ## Deployment
 

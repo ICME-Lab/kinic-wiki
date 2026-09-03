@@ -17,7 +17,7 @@
 		"KINIC_IAP_AUTHORITY_ID": "jao7b-vs75q-xlvit-szusc-eiiv3-sel57-6iyuu-6fzkh-lqui4-mbqcf-aae",
 		"APP_STORE_ENVIRONMENT": "Sandbox",
 		"APP_STORE_BUNDLE_ID": "xyz.kinic.ios.KinicWiki",
-		"IAP_PRODUCT_CATALOG_JSON": "{\"xyz.kinic.dbcredits.small\":\"1823000000000\"}"
+		"IAP_PRODUCT_CATALOG_JSON": "{\"xyz.kinic.dbcredits.small\":\"2000000000000\"}"
 	},
 	"d1_databases": [
 		{

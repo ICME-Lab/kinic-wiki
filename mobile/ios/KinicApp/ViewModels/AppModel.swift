@@ -320,6 +320,8 @@ final class AppModel {
     var cyclesBillingConfig: CyclesBillingConfig?
     var databaseCreditProducts: [DatabaseCreditProduct]
     var pendingCreatedDatabase: CreatedDatabase?
+    var databaseCreditActivationRevision: UInt64
+    var lastDatabaseCreditActivationDatabaseId: String?
     var databaseMembers: [DatabaseMember]
     var databaseMembersDatabaseId: String?
     var databaseCycleEntries: [DatabaseCycleEntry]
@@ -536,6 +538,8 @@ final class AppModel {
         cyclesBillingConfig = nil
         databaseCreditProducts = []
         pendingCreatedDatabase = nil
+        databaseCreditActivationRevision = 0
+        lastDatabaseCreditActivationDatabaseId = nil
         databaseMembers = []
         databaseMembersDatabaseId = nil
         databaseCycleEntries = []
@@ -2114,7 +2118,13 @@ final class AppModel {
         await refreshDatabases(selectFirstIfNeeded: false)
         setSelectedDatabase(activation.databaseId)
         setSelectedBrowseDatabase(activation.databaseId)
-        statusMessage = "Database credits added."
+        if let balance = databases.first(where: { $0.databaseId == activation.databaseId })?.cyclesBalance {
+            statusMessage = "Database credits added. Balance: \(DatabaseManagementFormat.cycles(balance))."
+        } else {
+            statusMessage = "Database credits added."
+        }
+        lastDatabaseCreditActivationDatabaseId = activation.databaseId
+        databaseCreditActivationRevision &+= 1
         await loadBrowsePath("/")
         if !pendingURLs.isEmpty {
             await submitNextPendingURL()

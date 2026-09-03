@@ -148,7 +148,8 @@ struct DatabasePanel: View {
                     database: database,
                     isSelected: isSelected,
                     isPublicReadable: model.isPublicBrowseDatabase(database.databaseId),
-                    isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
+                    isPurchased: model.isPurchasedBrowseDatabase(database.databaseId),
+                    showsCyclesBalance: true
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -192,7 +193,8 @@ struct DatabasePanel: View {
             isPurchased ? "Purchased" : nil
         ].compactMap { $0 }
         let badgeText = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
-        return "\(database.displayTitle), \(database.role.displayName)\(badgeText)"
+        let balanceText = database.cyclesBalance.map { ", balance \(DatabaseManagementFormat.cycles($0))" } ?? ""
+        return "\(database.displayTitle), \(database.role.displayName)\(badgeText)\(balanceText)"
     }
 
     nonisolated static func databaseAccessibilityValue(_ database: DatabaseSummary, isSelected: Bool) -> String {
@@ -226,6 +228,7 @@ private struct PendingDatabaseCreditPrompt: View {
 }
 
 private struct DatabaseCreditSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @Bindable var model: AppModel
     let target: DatabaseCreditTarget
 
@@ -285,12 +288,24 @@ private struct DatabaseCreditSheet: View {
             .navigationTitle("Database credits")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .disabled(model.isPurchasingDatabaseCredits)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     if model.isPurchasingDatabaseCredits {
                         ProgressView()
                             .tint(KinicDesign.hotPink)
                     }
                 }
+            }
+        }
+        .interactiveDismissDisabled(model.isPurchasingDatabaseCredits)
+        .onChange(of: model.databaseCreditActivationRevision) {
+            if model.lastDatabaseCreditActivationDatabaseId == target.id {
+                dismiss()
             }
         }
     }

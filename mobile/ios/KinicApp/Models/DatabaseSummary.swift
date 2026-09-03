@@ -41,6 +41,13 @@ struct DatabaseSummary: Codable, Identifiable, Equatable, Sendable {
         return trimmedTitle.isEmpty ? "Untitled database" : trimmedTitle
     }
 
+    var roleAndCyclesBalanceText: String {
+        guard let cyclesBalance else {
+            return role.displayName
+        }
+        return "\(role.displayName) · \(DatabaseManagementFormat.cycles(cyclesBalance))"
+    }
+
     private var shareSelectionDatabaseIdText: String {
         guard databaseId.count > 18 else {
             return databaseId
@@ -271,7 +278,7 @@ enum DatabaseManagementFormat {
 
     private static func formatted(_ value: Double) -> String {
         let formatter = NumberFormatter()
-        formatter.maximumFractionDigits = value >= 10 ? 0 : 1
+        formatter.maximumFractionDigits = value >= 10 ? 0 : 3
         formatter.minimumFractionDigits = 0
         return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.1f", value)
     }

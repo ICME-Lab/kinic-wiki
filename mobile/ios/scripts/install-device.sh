@@ -94,13 +94,16 @@ fi
 app_path="$derived_data/Build/Products/Debug-iphoneos/KinicWiki.app"
 
 printf 'Building %s for device %s (%s)...\n' "$scheme" "$device_id" "$([[ "$sandbox_mode" == "1" ]] && printf sandbox || printf production)"
-xcodebuild build \
+build_command=(xcodebuild build \
   -project "$project" \
   -scheme "$scheme" \
   -destination "platform=iOS,id=$device_id" \
   -derivedDataPath "$derived_data" \
-  "${sandbox_build_settings[@]}" \
-  "${build_args[@]}"
+  "${sandbox_build_settings[@]}")
+if [[ "${#build_args[@]}" -gt 0 ]]; then
+  build_command+=("${build_args[@]}")
+fi
+"${build_command[@]}"
 
 [[ -d "$app_path" ]] || fail "Built app not found: $app_path"
 
