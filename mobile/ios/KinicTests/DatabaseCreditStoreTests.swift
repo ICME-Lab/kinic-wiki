@@ -8,6 +8,21 @@ import Testing
 
 struct DatabaseCreditStoreTests {
     @Test
+    func smallProductPresentationMakesPurchaseActionExplicit() {
+        let product = DatabaseCreditProduct(
+            id: DatabaseCreditProduct.smallProductId,
+            displayName: "Database Credit Pack",
+            displayPrice: "$4.99",
+            displayAmountCycles: DatabaseCreditProduct.smallDisplayAmountCycles
+        )
+
+        #expect(DatabaseCreditProduct.configuredDisplayAmountCycles(for: product.id) == 2_000_000_000_000)
+        #expect(DatabaseCreditProduct.configuredDisplayAmountCycles(for: "unknown") == nil)
+        #expect(product.displayAmountText == "2T cycles")
+        #expect(product.purchaseButtonTitle == "Buy 2T cycles for $4.99")
+    }
+
+    @Test
     func recoveryContinuesAfterActivationFailure() async throws {
         let finishRecorder = DatabaseCreditFinishRecorder()
         let source = FakeDatabaseCreditTransactionSource(events: [

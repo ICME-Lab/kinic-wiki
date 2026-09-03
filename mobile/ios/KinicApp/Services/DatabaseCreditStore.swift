@@ -37,15 +37,19 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
             return []
         }
         let products = try await Product.products(for: ids)
-        return products
+        return try products
             .sorted { left, right in
                 left.displayName.localizedStandardCompare(right.displayName) == .orderedAscending
             }
             .map { product in
-                DatabaseCreditProduct(
+                guard let displayAmountCycles = DatabaseCreditProduct.configuredDisplayAmountCycles(for: product.id) else {
+                    throw DatabaseCreditStoreError.unsupportedProductConfiguration(product.id)
+                }
+                return DatabaseCreditProduct(
                     id: product.id,
                     displayName: product.displayName,
-                    displayPrice: product.displayPrice
+                    displayPrice: product.displayPrice,
+                    displayAmountCycles: displayAmountCycles
                 )
             }
     }
@@ -179,6 +183,7 @@ actor DatabaseCreditStore: DatabaseCreditStoreProtocol {
 
 enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
     case productUnavailable
+    case unsupportedProductConfiguration(String)
     case userCancelled
     case pending
     case unverifiedTransaction
@@ -192,6 +197,8 @@ enum DatabaseCreditStoreError: Error, LocalizedError, Equatable {
         switch self {
         case .productUnavailable:
             "Database credit product is unavailable."
+        case let .unsupportedProductConfiguration(productId):
+            "Database credit product is not configured: \(productId)"
         case .userCancelled:
             "Purchase cancelled."
         case .pending:

@@ -258,26 +258,46 @@ private struct DatabaseCreditSheet: View {
                     ContentUnavailableView("No credit packs", systemImage: "creditcard")
                 } else {
                     ForEach(model.databaseCreditProducts) { product in
-                        Button {
-                            model.startPurchaseDatabaseCredits(
-                                productId: product.id,
-                                databaseId: target.id
-                            )
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(product.displayName)
-                                        .font(.headline)
-                                    Text(product.id)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                        Section {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text(product.displayName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+
+                                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                    Text(product.displayAmountText)
+                                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                                        .foregroundStyle(KinicDesign.hotPink)
+                                        .minimumScaleFactor(0.8)
+
+                                    Spacer(minLength: 8)
+
+                                    Text(product.displayPrice)
+                                        .font(.title3.weight(.semibold))
+                                        .foregroundStyle(.primary)
                                 }
-                                Spacer()
-                                Text(product.displayPrice)
-                                    .font(.body)
+
+                                Text("Adds credits to \(target.title).")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+
+                                Button {
+                                    model.startPurchaseDatabaseCredits(
+                                        productId: product.id,
+                                        databaseId: target.id
+                                    )
+                                } label: {
+                                    Text(model.isPurchasingDatabaseCredits ? "Purchasing…" : product.purchaseButtonTitle)
+                                }
+                                .buttonStyle(KinicPrimaryButtonStyle())
+                                .disabled(model.isPurchasingDatabaseCredits)
+
+                                Text("Apple purchase confirmation opens next.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
+                            .padding(.vertical, 4)
                         }
-                        .disabled(model.isPurchasingDatabaseCredits)
                     }
                 }
                 if let error = model.databaseCreditError {
