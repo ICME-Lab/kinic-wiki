@@ -26,12 +26,21 @@ struct AppConfiguration: Equatable, Sendable {
     let askAIURL: URL
     let deploymentEnvironment: AppDeploymentEnvironment
 
-    var icClientConfiguration: ICClientConfiguration {
-        ICClientConfiguration(
+    func makeICClientConfiguration() throws -> ICClientConfiguration {
+        try ICClientConfiguration(
             canisterId: canisterId,
             apiBaseURL: apiBaseURL,
-            identityProvider: identityProvider,
-            derivationOrigin: derivationOrigin
+            internetIdentityURL: identityProvider,
+            derivationOrigin: derivationOrigin,
+            trustRoot: .mainnet,
+            network: .default
+        )
+    }
+
+    func makeAuthenticationCallbackURL() throws -> URL {
+        try ICInternetIdentityAuthenticator.callbackURL(
+            callbackDomain: callbackDomain,
+            callbackPath: "/ios-auth-callback"
         )
     }
 

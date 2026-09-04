@@ -245,15 +245,15 @@ final class AppModel {
     private let settingsStore: SharedDefaultsStore
     private let logger: Logger
     private var databaseCreditTransactionUpdatesTask: Task<Void, Never>?
-    private let deleteAccountRemotely: @Sendable (ICAuthSession) async throws -> Void
+    private let deleteAccountRemotely: @Sendable (KinicIdentitySession) async throws -> Void
     private let deleteAskAIHistory: @Sendable (AskAIHistoryScope) async throws -> Void
     private let removeAllSharedURLs: () throws -> Void
     private let removeAllCaptureHistory: () throws -> Void
-    private let writeBrowseDocumentRemotely: @Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult
-    private let searchBrowseNodesRemotely: @Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit]
-    private let readBrowseNodeRemotely: @Sendable (String, String, ICAuthSession?) async throws -> VFSNode?
-    private let listBrowseChildrenRemotely: @Sendable (String, String, ICAuthSession?) async throws -> [ChildNode]
-    private var session: ICAuthSession?
+    private let writeBrowseDocumentRemotely: @Sendable (BrowseDocumentWriteRequest, KinicIdentitySession) async throws -> VFSWriteNodeResult
+    private let searchBrowseNodesRemotely: @Sendable (BrowseSearchRequest, KinicIdentitySession?) async throws -> [SearchNodeHit]
+    private let readBrowseNodeRemotely: @Sendable (String, String, KinicIdentitySession?) async throws -> VFSNode?
+    private let listBrowseChildrenRemotely: @Sendable (String, String, KinicIdentitySession?) async throws -> [ChildNode]
+    private var session: KinicIdentitySession?
     private var browsePathLoadRequestID: Int
     private var documentLoadRequestID: Int
     private var searchRequestID: Int
@@ -446,15 +446,15 @@ final class AppModel {
         shareInbox: ShareInbox,
         settingsStore: SharedDefaultsStore,
         sourceCaptureHistoryStore: SourceCaptureHistoryStore? = nil,
-        deleteAccountRemotely: (@Sendable (ICAuthSession) async throws -> Void)? = nil,
+        deleteAccountRemotely: (@Sendable (KinicIdentitySession) async throws -> Void)? = nil,
         deleteAskAIHistory: (@Sendable (AskAIHistoryScope) async throws -> Void)? = nil,
         removeAllSharedURLs: (() throws -> Void)? = nil,
         removeAllCaptureHistory: (() throws -> Void)? = nil,
-        writeBrowseDocumentRemotely: (@Sendable (BrowseDocumentWriteRequest, ICAuthSession) async throws -> VFSWriteNodeResult)? = nil,
-        searchBrowseNodesRemotely: (@Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit])? = nil,
-        readBrowseNodeRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> VFSNode?)? = nil,
-        listBrowseChildrenRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> [ChildNode])? = nil,
-        initialSession: ICAuthSession? = nil
+        writeBrowseDocumentRemotely: (@Sendable (BrowseDocumentWriteRequest, KinicIdentitySession) async throws -> VFSWriteNodeResult)? = nil,
+        searchBrowseNodesRemotely: (@Sendable (BrowseSearchRequest, KinicIdentitySession?) async throws -> [SearchNodeHit])? = nil,
+        readBrowseNodeRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> VFSNode?)? = nil,
+        listBrowseChildrenRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> [ChildNode])? = nil,
+        initialSession: KinicIdentitySession? = nil
     ) {
         self.configuration = configuration
         self.authService = authService
@@ -555,7 +555,18 @@ final class AppModel {
         browseSearchScope = .database
         browseSearchPhase = .idle
         browseSearchLimit = 20
-        session = initialSession ?? authService.restore()
+        if let initialSession {
+            session = initialSession
+            statusMessage = nil
+        } else {
+            do {
+                session = try authService.restore()
+                statusMessage = nil
+            } catch {
+                session = nil
+                statusMessage = error.localizedDescription
+            }
+        }
         browsePathLoadRequestID = 0
         documentLoadRequestID = 0
         searchRequestID = 0
@@ -603,8 +614,8 @@ final class AppModel {
             let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: strictAppGroup)
             return AppModel(
                 configuration: configuration,
-                authService: KinicAuthService(configuration: configuration),
-                client: KinicICClient(configuration: configuration),
+                authService: try KinicAuthService(configuration: configuration),
+                client: try KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: configuration.appGroupId, strict: strictAppGroup),
                 settingsStore: settingsStore,
                 sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: configuration.appGroupId, strict: strictAppGroup)
@@ -625,8 +636,8 @@ final class AppModel {
             let settingsStore = try SharedDefaultsStore(appGroupId: nil)
             return AppModel(
                 configuration: configuration,
-                authService: KinicAuthService(configuration: configuration),
-                client: KinicICClient(configuration: configuration),
+                authService: try KinicAuthService(configuration: configuration),
+                client: try KinicICClient(configuration: configuration),
                 shareInbox: try ShareInbox(appGroupId: nil),
                 settingsStore: settingsStore,
                 sourceCaptureHistoryStore: try SourceCaptureHistoryStore(appGroupId: nil)
@@ -1278,7 +1289,12 @@ final class AppModel {
     }
 
     func signOut() {
-        authService.signOut()
+        do {
+            try authService.signOut()
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
         documentEditSession = nil
         cancelRequestedBrowseDatabaseSelection()
         cancelRequestedBrowseDeepLink()
@@ -1818,7 +1834,7 @@ final class AppModel {
         await loadCyclesBillingConfig(force: true)
     }
 
-    private func loadPurchasedDatabaseIds(session: ICAuthSession) async throws -> Set<String> {
+    private func loadPurchasedDatabaseIds(session: KinicIdentitySession) async throws -> Set<String> {
         var cursor: String?
         var ids = Set<String>()
         repeat {
@@ -1835,7 +1851,7 @@ final class AppModel {
         resetBrowseStateForRoot()
     }
 
-    private func browseSession(for databaseId: String) -> ICAuthSession? {
+    private func browseSession(for databaseId: String) -> KinicIdentitySession? {
         if let session, memberBrowseDatabaseIds.contains(databaseId) || !publicBrowseDatabaseIds.contains(databaseId) {
             return session
         }
@@ -2269,7 +2285,7 @@ final class AppModel {
         node: VFSNode,
         databaseId: String,
         requestID: Int,
-        session: ICAuthSession?
+        session: KinicIdentitySession?
     ) async {
         guard node.kind == .file,
               node.path.hasSuffix(".md"),

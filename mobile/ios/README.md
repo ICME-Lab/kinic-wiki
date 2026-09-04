@@ -54,7 +54,7 @@ Enable these capabilities:
 
 Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/ii-auth-callbacks`, `https://wiki.kinic.xyz/.well-known/apple-app-site-association`, and the terminating `/ios-auth-callback` route.
 
-During the ICRC-167 rollout, the web deployment keeps `/native-auth` for already released app versions. Remove that bridge only after the direct-transport iOS release has reached users.
+Authentication uses direct ICRC-167 callbacks at `/ios-auth-callback`; the legacy `/native-auth` bridge is not supported.
 
 The Share Extension intentionally supports URL shares only. WebPage shares are not enabled until JavaScript preprocessing and property-list URL extraction are implemented.
 

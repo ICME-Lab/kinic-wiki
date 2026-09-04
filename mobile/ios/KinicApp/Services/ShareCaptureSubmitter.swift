@@ -8,24 +8,24 @@ import ICNativeClient
 struct ShareCaptureSubmitter: Sendable {
     private let configuration: AppConfiguration
     private let timeoutNanoseconds: UInt64?
-    private let restoreSession: @Sendable () -> ICAuthSession?
+    private let restoreSession: @Sendable () throws -> KinicIdentitySession?
     private let selectedDatabaseId: @Sendable () -> String
     private let enqueueURL: @Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void
-    private let saveRequest: @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission
+    private let saveRequest: @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission
     private let saveHistory: @Sendable (SourceCaptureRequest, Date) throws -> Void
-    private let triggerSourceCapture: @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void
+    private let triggerSourceCapture: @Sendable (CaptureSubmission, KinicIdentitySession) async throws -> Void
     private let selectedOutputLanguage: @Sendable () -> WikiOutputLanguage
 
     static func makeLive(configuration: AppConfiguration, timeoutNanoseconds: UInt64? = 12_000_000_000) throws -> ShareCaptureSubmitter {
-        let sessionStore = KinicAuthSessionStore(configuration: configuration)
+        let sessionStore = try KinicAuthSessionStore(configuration: configuration)
         let settingsStore = try SharedDefaultsStore(appGroupId: configuration.appGroupId, strict: true)
         let historyStore = try SourceCaptureHistoryStore(appGroupId: configuration.appGroupId, strict: true)
-        let client = KinicICClient(configuration: configuration)
+        let client = try KinicICClient(configuration: configuration)
         return ShareCaptureSubmitter(
             configuration: configuration,
             timeoutNanoseconds: timeoutNanoseconds,
             restoreSession: {
-                sessionStore.restore()
+                try sessionStore.restore()
             },
             selectedDatabaseId: {
                 settingsStore.databaseId
@@ -62,12 +62,12 @@ struct ShareCaptureSubmitter: Sendable {
     init(
         configuration: AppConfiguration,
         timeoutNanoseconds: UInt64?,
-        restoreSession: @escaping @Sendable () -> ICAuthSession?,
+        restoreSession: @escaping @Sendable () throws -> KinicIdentitySession?,
         selectedDatabaseId: @escaping @Sendable () -> String,
         enqueueURL: @escaping @Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void,
-        saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission,
+        saveRequest: @escaping @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission,
         saveHistory: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void = { _, _ in },
-        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void,
+        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, KinicIdentitySession) async throws -> Void,
         selectedOutputLanguage: @escaping @Sendable () -> WikiOutputLanguage = { .english }
     ) {
         self.configuration = configuration
@@ -93,7 +93,18 @@ struct ShareCaptureSubmitter: Sendable {
         } catch {
             return .failed(message: error.localizedDescription)
         }
-        guard let session = restoreSession() else {
+        let restoredSession: KinicIdentitySession?
+        do {
+            restoredSession = try restoreSession()
+        } catch {
+            return queue(
+                normalizedURL,
+                outputLanguage: outputLanguage,
+                captureMetadata: captureMetadata,
+                reason: "Saved for later because the shared sign-in could not be read."
+            )
+        }
+        guard let session = restoredSession else {
             return queue(
                 normalizedURL,
                 outputLanguage: outputLanguage,

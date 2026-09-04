@@ -24,7 +24,7 @@ settings:
 packages:
   ICNativeClient:
     url: https://github.com/humandebri/ICNativeClient
-    exactVersion: 0.2.1
+    exactVersion: 0.6.0
   Textual:
     url: https://github.com/gonzalezreal/textual
     exactVersion: 0.5.0
@@ -69,6 +69,7 @@ targets:
     sources:
       - KinicShareExtension
       - KinicApp/Models/AppConfiguration.swift
+      - KinicApp/Models/KinicIdentitySession.swift
       - KinicApp/Models/CaptureSubmission.swift
       - KinicApp/Models/ChildNode.swift
       - KinicApp/Models/CreatedDatabase.swift
@@ -93,11 +94,8 @@ targets:
       - KinicApp/Services/SourceCaptureRequestBuilder.swift
       - KinicApp/Services/SourceCaptureRequestError.swift
       - KinicApp/Services/XPostMetadataFetcher.swift
-      - KinicApp/Services/VFSCandidDecoder.swift
-      - KinicApp/Services/VFSCandidEncoder.swift
       - KinicApp/Services/VFSCandidError.swift
-      - KinicApp/Services/VFSCandidLabels.swift
-      - KinicApp/Services/VFSCandidLEB.swift
+      - KinicApp/Services/VFSCandidTypes.swift
       - KinicApp/Services/VFSClient.swift
       - KinicApp/Utilities/Bundle+Configuration.swift
       - KinicApp/Utilities/SourceCaptureContract.swift
