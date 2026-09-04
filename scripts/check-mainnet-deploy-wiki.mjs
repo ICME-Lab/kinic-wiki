@@ -10,22 +10,27 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const validBillingAuthorityId = "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae";
+const validIapAuthorityId = "r7inp-6aaaa-aaaaa-aaabq-cai";
 
 assertDryRun(
   tempBinDir(),
   {
     KINIC_LEDGER_CANISTER_ID: "ryjl3-tyaaa-aaaaa-aaaba-cai",
-    BILLING_AUTHORITY_ID: "aaaaa-aa"
+    BILLING_AUTHORITY_ID: "aaaaa-aa",
+    IAP_AUTHORITY_ID: validIapAuthorityId
   },
   /ICP_ENVIRONMENT=mainnet-sev/,
   /KINIC_LEDGER_CANISTER_ID=ryjl3-tyaaa-aaaaa-aaaba-cai/,
-  /BILLING_AUTHORITY_ID=aaaaa-aa/
+  /BILLING_AUTHORITY_ID=aaaaa-aa/,
+  /IAP_AUTHORITY_ID=r7inp-6aaaa-aaaaa-aaabq-cai/
 );
 
 const oldMainnet = runDryRun(tempBinDir(), {
   ICP_ENVIRONMENT: "old-mainnet",
   KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-  BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+  BILLING_AUTHORITY_ID: validBillingAuthorityId,
+  IAP_AUTHORITY_ID: validIapAuthorityId
 });
 assert.notEqual(oldMainnet.status, 0);
 assert.match(oldMainnet.stderr, /fresh mainnet-sev only/);
@@ -34,7 +39,8 @@ const oldMainnetArg = runDryRun(
   tempBinDir(),
   {
     KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+    BILLING_AUTHORITY_ID: validBillingAuthorityId,
+    IAP_AUTHORITY_ID: validIapAuthorityId
   },
   root,
   ["--environment", "old-mainnet"]
@@ -45,7 +51,8 @@ assert.match(oldMainnetArg.stderr, /fresh mainnet-sev only/);
 const ambiguousIc = runDryRun(tempBinDir(), {
   ICP_ENVIRONMENT: "ic",
   KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-  BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+  BILLING_AUTHORITY_ID: validBillingAuthorityId,
+  IAP_AUTHORITY_ID: validIapAuthorityId
 });
 assert.notEqual(ambiguousIc.status, 0);
 assert.match(ambiguousIc.stderr, /fresh mainnet-sev only/);
@@ -53,6 +60,13 @@ assert.match(ambiguousIc.stderr, /fresh mainnet-sev only/);
 const sevMissingEnv = runDryRun(tempBinDir(), {});
 assert.notEqual(sevMissingEnv.status, 0);
 assert.match(sevMissingEnv.stderr, /KINIC_LEDGER_CANISTER_ID is required/);
+
+const sevMissingIapAuthority = runDryRun(tempBinDir(), {
+  KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
+  BILLING_AUTHORITY_ID: validBillingAuthorityId
+});
+assert.notEqual(sevMissingIapAuthority.status, 0);
+assert.match(sevMissingIapAuthority.stderr, /IAP_AUTHORITY_ID is required/);
 
 for (const invalidPrincipal of [
   '73mez-iiaaa-aaaaq-aaasq-cai"',
@@ -62,7 +76,8 @@ for (const invalidPrincipal of [
 ]) {
   const invalidLedgerPrincipal = runDryRun(tempBinDir(), {
     KINIC_LEDGER_CANISTER_ID: invalidPrincipal,
-    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+    BILLING_AUTHORITY_ID: validBillingAuthorityId,
+    IAP_AUTHORITY_ID: validIapAuthorityId
   });
   assert.notEqual(invalidLedgerPrincipal.status, 0);
   assert.match(
@@ -73,7 +88,8 @@ for (const invalidPrincipal of [
 
 const whitespacePrincipal = runDryRun(tempBinDir(), {
   KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai bad",
-  BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+  BILLING_AUTHORITY_ID: validBillingAuthorityId,
+  IAP_AUTHORITY_ID: validIapAuthorityId
 });
 assert.notEqual(whitespacePrincipal.status, 0);
 assert.match(whitespacePrincipal.stderr, /KINIC_LEDGER_CANISTER_ID must not contain whitespace/);
@@ -83,30 +99,35 @@ assertDryRun(
   {
     ICP_ENVIRONMENT: "mainnet-sev",
     KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+    BILLING_AUTHORITY_ID: validBillingAuthorityId,
+    IAP_AUTHORITY_ID: validIapAuthorityId
   },
   /ICP_ENVIRONMENT=mainnet-sev/,
   /KINIC_LEDGER_CANISTER_ID=73mez-iiaaa-aaaaq-aaasq-cai/,
-  /BILLING_AUTHORITY_ID=r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae/
+  /BILLING_AUTHORITY_ID=r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae/,
+  /IAP_AUTHORITY_ID=r7inp-6aaaa-aaaaa-aaabq-cai/
 );
 
 assertDryRun(
   tempBinDir(),
   {
     KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+    BILLING_AUTHORITY_ID: validBillingAuthorityId,
+    IAP_AUTHORITY_ID: validIapAuthorityId
   },
   ["--environment", "mainnet-sev"],
   /ICP_ENVIRONMENT=mainnet-sev/,
   /KINIC_LEDGER_CANISTER_ID=73mez-iiaaa-aaaaq-aaasq-cai/,
-  /BILLING_AUTHORITY_ID=r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae/
+  /BILLING_AUTHORITY_ID=r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae/,
+  /IAP_AUTHORITY_ID=r7inp-6aaaa-aaaaa-aaabq-cai/
 );
 
 assertDeploy(
   fakeDeployIcp(),
   {
     KINIC_LEDGER_CANISTER_ID: "73mez-iiaaa-aaaaq-aaasq-cai",
-    BILLING_AUTHORITY_ID: "r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
+    BILLING_AUTHORITY_ID: validBillingAuthorityId,
+    IAP_AUTHORITY_ID: validIapAuthorityId
   }
 );
 
@@ -146,6 +167,7 @@ function testEnv(binDir, env) {
   const cleanEnv = { ...process.env, ...env, PATH: `${binDir}:${process.env.PATH}` };
   if (!("KINIC_LEDGER_CANISTER_ID" in env)) delete cleanEnv.KINIC_LEDGER_CANISTER_ID;
   if (!("BILLING_AUTHORITY_ID" in env)) delete cleanEnv.BILLING_AUTHORITY_ID;
+  if (!("IAP_AUTHORITY_ID" in env)) delete cleanEnv.IAP_AUTHORITY_ID;
   return cleanEnv;
 }
 

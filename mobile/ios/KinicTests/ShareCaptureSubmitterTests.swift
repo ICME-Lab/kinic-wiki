@@ -352,24 +352,27 @@ private struct ShareCaptureHarness {
             identityProvider: URL(string: "https://id.ai/authorize")!,
             derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
+            paymentBaseURL: URL(string: "https://payment.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
             keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-            askAIURL: URL(string: "https://api.kinic.io/chat")!
+            iapProductIds: [],
+            askAIURL: URL(string: "https://api.kinic.io/chat")!,
+            deploymentEnvironment: .production
         )
         try FileManager.default.createDirectory(at: queueDirectory, withIntermediateDirectories: true)
     }
 
     func submitter(
-        session: ICAuthSession?,
+        session: KinicIdentitySession?,
         databaseId: String,
         outputLanguage: WikiOutputLanguage = .english,
         timeoutNanoseconds: UInt64? = nil,
-        saveRequest: @escaping @Sendable (SourceCaptureRequest, ICAuthSession) async throws -> CaptureSubmission = { request, _ in
+        saveRequest: @escaping @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission = { request, _ in
             CaptureSubmission(databaseId: request.databaseId, requestPath: request.requestPath, requestId: request.requestId, url: request.normalizedURL, sessionNonce: "session-default")
         },
         saveHistory: (@Sendable (SourceCaptureRequest, Date) throws -> Void)? = nil,
-        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, ICAuthSession) async throws -> Void = { _, _ in },
+        triggerSourceCapture: @escaping @Sendable (CaptureSubmission, KinicIdentitySession) async throws -> Void = { _, _ in },
         enqueueURL: (@Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void)? = nil
     ) -> ShareCaptureSubmitter {
         let queueDirectory = queueDirectory
@@ -425,17 +428,8 @@ private struct ShareCaptureHarness {
     }
 }
 
-private func makeSession() -> ICAuthSession {
-    ICAuthSession(
-        principal: "aaaaa-aa",
-        canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
-        identityProvider: "https://id.ai/authorize",
-        derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
-        sessionPublicKey: Data(),
-        sessionPrivateKey: Data(),
-        delegation: ICDelegationChain(publicKey: Data(), delegations: []),
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
-    )
+private func makeSession() -> KinicIdentitySession {
+    .testing(principal: "aaaaa-aa")
 }
 
 private actor TriggerProbe {

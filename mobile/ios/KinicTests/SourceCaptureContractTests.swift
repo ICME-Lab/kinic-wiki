@@ -5,12 +5,10 @@ import Testing
 struct SourceCaptureContractTests {
     @Test
     func sharedBoundaryFixture() throws {
-        let fixtureURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appending(path: "contracts/source-capture-contract.json")
+        let fixtureURL = try #require(
+            Bundle(for: SourceCaptureContractTestsBundleToken.self)
+                .url(forResource: "source-capture-contract", withExtension: "json")
+        )
         let data = try Data(contentsOf: fixtureURL)
         let fixture = try JSONDecoder().decode(Fixture.self, from: data)
 
@@ -22,6 +20,8 @@ struct SourceCaptureContractTests {
         }
     }
 }
+
+private final class SourceCaptureContractTestsBundleToken {}
 
 private struct Fixture: Decodable {
     let requestIds: [Entry]

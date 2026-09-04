@@ -69,7 +69,7 @@ const groups = {
     ["skill-registry-web/lib/vfs-client.ts", "RawNodeMutationError"],
     ["workers/wiki-generator/src/vfs.ts", "RawNodeMutationError"],
     ["extensions/wiki-clipper/src/vfs-actor.js", "NodeMutationError"],
-    ["mobile/ios/KinicApp/Services/VFSCandidDecoder.swift", "nodeMutationError"],
+    ["mobile/ios/KinicApp/Services/VFSCandidTypes.swift", "VFSNodeMutationFailure"],
     ["docs/STAGING.md", "staging Wiki Browser and staging MCP Worker"],
     ["docs/RELEASE.md", "Wiki Clipper Chrome extension"],
     ["docs/RELEASE.md", "known externally maintained Candid clients"]

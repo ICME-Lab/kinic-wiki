@@ -13,10 +13,10 @@ use vfs_runtime::{
     fail_next_discard_database_reservation_for_test, generated_database_id_for_test,
 };
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
-    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseCyclesIapGrantRequest,
+    DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
+    KINIC_LEDGER_FEE_E8S, MarketCreateListingRequest, MarketListing, MarketListingStatus,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
     SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
@@ -26,6 +26,8 @@ use vfs_types::{
 mod node_publications;
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
 const MARKET_SECOND_BUYER_PRINCIPAL: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
+const IAP_AUTHORITY_PRINCIPAL: &str = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+
 fn service() -> VfsService {
     service_with_root().0
 }
@@ -118,6 +120,21 @@ fn test_cycles_top_up_config() -> CyclesTopUpConfig {
 fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     DeleteDatabaseRequest {
         database_id: database_id.to_string(),
+    }
+}
+
+fn iap_grant_request(
+    database_id: &str,
+    external_payment_id: &str,
+    amount_cycles: u64,
+) -> DatabaseCyclesIapGrantRequest {
+    DatabaseCyclesIapGrantRequest {
+        database_id: database_id.to_string(),
+        amount_cycles,
+        external_payment_id: external_payment_id.to_string(),
+        provider: "apple_iap".to_string(),
+        product_id: "xyz.kinic.dbcredits.small".to_string(),
+        purchaser_principal: "r7inp-6aaaa-aaaaa-aaabq-cai".to_string(),
     }
 }
 
@@ -434,6 +451,15 @@ fn database_cycles_balance(root: &std::path::Path, database_id: &str) -> i64 {
     .expect("database cycles balance should load")
 }
 
+fn set_database_cycles_balance(root: &std::path::Path, database_id: &str, balance_cycles: i64) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE database_cycle_accounts SET balance_cycles = ?1 WHERE database_id = ?2",
+        params![balance_cycles, database_id],
+    )
+    .expect("database cycles balance should update");
+}
+
 fn database_cycles_suspended_at(root: &std::path::Path, database_id: &str) -> Option<i64> {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -575,10 +601,18 @@ fn column_exists(root: &std::path::Path, table_name: &str, column_name: &str) ->
 }
 
 #[test]
-fn fresh_index_schema_records_single_current_marker_without_legacy_tables() {
+fn fresh_index_schema_records_current_migration_chain_without_legacy_tables() {
     let (_service, root) = service_with_root();
     assert_eq!(
         schema_migration_count(&root, "database_index:001_initial"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
     assert!(table_exists(&root, "market_listings"));
@@ -798,12 +832,28 @@ fn index_migrations_create_current_schema_once() {
         schema_migration_count(&root, "database_index:001_initial"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
+        1
+    );
 
     service
         .run_index_migrations()
         .expect("index migrations should be idempotent");
     assert_eq!(
         schema_migration_count(&root, "database_index:001_initial"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:002_node_publications"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
         1
     );
 }
@@ -1454,6 +1504,10 @@ fn database_create_returns_generated_id_and_name() {
         schema_migration_count(&root, "database_index:001_initial"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:004_iap_cycle_grants"),
+        1
+    );
 
     let result = service
         .create_generated_database(" Team skills ", "owner", 1)
@@ -1527,6 +1581,220 @@ fn initial_free_database_grant_creates_active_database_once_per_principal() {
         free_cycle_grant_database_id(&root, "owner").as_deref(),
         Some(first.meta.database_id.as_str())
     );
+}
+
+#[test]
+fn iap_grant_activates_pending_database_and_records_ledger() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("iOS DB", "owner", 1)
+        .expect("pending database should reserve");
+
+    let result = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&pending.database_id, "apple-tx-1", 5_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            2,
+        )
+        .expect("IAP grant should activate database");
+
+    assert_eq!(result.block_index, 0);
+    assert_eq!(result.amount_cycles, 5_000);
+    assert_eq!(database_index_row(&root, &pending.database_id).0, "active");
+    assert_eq!(database_cycles_balance(&root, &pending.database_id), 5_000);
+    assert_eq!(
+        database_ledger_kinds(&root, &pending.database_id),
+        vec!["apple_iap"]
+    );
+}
+
+#[test]
+fn iap_grant_tops_up_active_database_and_is_idempotent() {
+    let (service, root) = service_with_root();
+    let database = service
+        .create_generated_database("active", "owner", 1)
+        .expect("database should create");
+
+    let first = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-2", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            2,
+        )
+        .expect("first IAP grant should apply");
+    let duplicate = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-2", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            3,
+        )
+        .expect("duplicate IAP grant should be idempotent");
+
+    assert_eq!(first.balance_cycles, 7_000);
+    assert_eq!(duplicate.balance_cycles, 7_000);
+    assert_eq!(database_cycles_balance(&root, &database.database_id), 7_000);
+    assert_eq!(
+        database_ledger_kinds(&root, &database.database_id),
+        vec!["apple_iap"]
+    );
+}
+
+#[test]
+fn iap_grant_rejects_non_iap_authority() {
+    let service = service();
+    let database = service
+        .create_generated_database("active", "owner", 1)
+        .expect("database should create");
+
+    let error = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-3", 7_000),
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            2,
+        )
+        .expect_err("non-IAP authority should reject");
+
+    assert!(error.contains("caller is not IAP authority"));
+}
+
+#[test]
+fn iap_grant_rejects_deleted_and_missing_database() {
+    let service = service();
+    let database = service
+        .create_generated_database("deleted", "owner", 1)
+        .expect("database should create");
+    service
+        .delete_database(delete_request(&database.database_id), "owner", 2)
+        .expect("database should delete");
+
+    let deleted = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-deleted", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            3,
+        )
+        .expect_err("deleted database should reject");
+    let missing = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request("missing", "apple-tx-missing", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            4,
+        )
+        .expect_err("missing database should reject");
+
+    assert!(
+        deleted.contains("database is deleted") || deleted.contains("database not found"),
+        "deleted database should be rejected: {deleted}"
+    );
+    assert!(missing.contains("database not found"));
+}
+
+#[test]
+fn iap_grant_rejects_invalid_amount_and_overflow() {
+    let (service, root) = service_with_root();
+    let database = service
+        .create_generated_database("active", "owner", 1)
+        .expect("database should create");
+
+    let zero = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-zero", 0),
+            IAP_AUTHORITY_PRINCIPAL,
+            2,
+        )
+        .expect_err("zero cycles should reject");
+    let too_large = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-too-large", u64::MAX),
+            IAP_AUTHORITY_PRINCIPAL,
+            3,
+        )
+        .expect_err("u64 cycles above i64 should reject");
+    set_database_cycles_balance(&root, &database.database_id, i64::MAX - 1);
+    let overflow = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-overflow", 2),
+            IAP_AUTHORITY_PRINCIPAL,
+            4,
+        )
+        .expect_err("balance overflow should reject");
+
+    assert!(zero.contains("must be positive"));
+    assert!(too_large.contains("exceeds i64"));
+    assert!(overflow.contains("balance overflow"));
+}
+
+#[test]
+fn iap_grant_rejects_duplicate_mismatch_without_second_credit() {
+    let (service, root) = service_with_root();
+    let first = service
+        .create_generated_database("first", "owner", 1)
+        .expect("first database should create");
+    let second = service
+        .create_generated_database("second", "owner", 2)
+        .expect("second database should create");
+    service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&first.database_id, "apple-tx-duplicate-mismatch", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            3,
+        )
+        .expect("first grant should apply");
+
+    let wrong_database = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&second.database_id, "apple-tx-duplicate-mismatch", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            4,
+        )
+        .expect_err("duplicate for another database should reject");
+    let wrong_amount = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&first.database_id, "apple-tx-duplicate-mismatch", 8_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            5,
+        )
+        .expect_err("duplicate with another amount should reject");
+
+    assert!(wrong_database.contains("different database"));
+    assert!(wrong_amount.contains("amount mismatch"));
+    assert_eq!(database_cycles_balance(&root, &first.database_id), 7_000);
+    assert_eq!(database_cycles_balance(&root, &second.database_id), 0);
+}
+
+#[test]
+fn iap_grant_rejects_duplicate_for_pending_database_without_activation_side_effects() {
+    let (service, root) = service_with_root();
+    let active = service
+        .create_generated_database("active", "owner", 1)
+        .expect("active database should create");
+    let pending = service
+        .reserve_pending_generated_database("pending", "owner", 2)
+        .expect("pending database should reserve");
+    service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&active.database_id, "apple-tx-pending-duplicate", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            3,
+        )
+        .expect("first grant should apply");
+    let mount_count_before = mount_history_count(&root);
+
+    let error = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&pending.database_id, "apple-tx-pending-duplicate", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            4,
+        )
+        .expect_err("duplicate for pending database should reject");
+
+    assert!(error.contains("different database"));
+    assert_eq!(
+        database_index_row(&root, &pending.database_id),
+        ("pending".to_string(), None, 0)
+    );
+    assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
+    assert_eq!(mount_history_count(&root), mount_count_before);
 }
 
 #[test]
@@ -2098,6 +2366,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
+                iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 cycles_per_kinic: 234_500_000_000,
                 min_update_cycles: 1_000_000,
                 top_up: test_cycles_top_up_config(),
@@ -2110,6 +2379,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
+                iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 cycles_per_kinic: 469_000_000_000,
                 min_update_cycles: 1_000_000,
                 top_up: test_cycles_top_up_config(),

@@ -7,29 +7,30 @@ import ICNativeClient
 
 @MainActor
 final class KinicAuthService {
-    private let authenticateSession: (Bool) async throws -> ICAuthSession
-    private let restoreSession: () -> ICAuthSession?
-    private let saveSession: (ICAuthSession) throws -> Void
-    private let clearSession: () -> Void
+    private let authenticateSession: (Bool) async throws -> KinicIdentitySession
+    private let restoreSession: () throws -> KinicIdentitySession?
+    private let saveSession: (KinicIdentitySession) throws -> Void
+    private let clearSession: () throws -> Void
     private let prefersEphemeralWebBrowserSession: Bool
 
     init(
         configuration: AppConfiguration,
         prefersEphemeralWebBrowserSession: Bool? = nil
-    ) {
-        let authenticator = ICInternetIdentityAuthenticator(
-            configuration: configuration.icClientConfiguration,
-            callbackDomain: configuration.callbackDomain
+    ) throws {
+        let authenticator = try ICInternetIdentityAuthenticator(
+            configuration: configuration.makeICClientConfiguration(),
+            callbackURL: configuration.makeAuthenticationCallbackURL()
         )
-        let store = KinicAuthSessionStore(configuration: configuration)
+        let store = try KinicAuthSessionStore(configuration: configuration)
         authenticateSession = { prefersEphemeralWebBrowserSession in
-            try await authenticator.authenticate(
+            let session = try await authenticator.authenticate(
                 prefersEphemeralWebBrowserSession: prefersEphemeralWebBrowserSession
             )
+            return KinicIdentitySession(nativeSession: session)
         }
-        restoreSession = { store.restore() }
+        restoreSession = { try store.restore() }
         saveSession = { try store.save($0) }
-        clearSession = { store.clear() }
+        clearSession = { try store.clear() }
         self.prefersEphemeralWebBrowserSession =
             prefersEphemeralWebBrowserSession
             ?? Self.debugPrefersEphemeralWebBrowserSession(environment: ProcessInfo.processInfo.environment)
@@ -37,10 +38,10 @@ final class KinicAuthService {
 
     init(
         prefersEphemeralWebBrowserSession: Bool = false,
-        authenticateSession: @escaping (Bool) async throws -> ICAuthSession,
-        restoreSession: @escaping () -> ICAuthSession? = { nil },
-        saveSession: @escaping (ICAuthSession) throws -> Void,
-        clearSession: @escaping () -> Void = {}
+        authenticateSession: @escaping (Bool) async throws -> KinicIdentitySession,
+        restoreSession: @escaping () throws -> KinicIdentitySession? = { nil },
+        saveSession: @escaping (KinicIdentitySession) throws -> Void,
+        clearSession: @escaping () throws -> Void = {}
     ) {
         self.authenticateSession = authenticateSession
         self.restoreSession = restoreSession
@@ -49,21 +50,21 @@ final class KinicAuthService {
         self.prefersEphemeralWebBrowserSession = prefersEphemeralWebBrowserSession
     }
 
-    func restore() -> ICAuthSession? {
-        restoreSession()
+    func restore() throws -> KinicIdentitySession? {
+        try restoreSession()
     }
 
     func signIn(
-        verify: (ICAuthSession) async throws -> Void
-    ) async throws -> ICAuthSession {
+        verify: (KinicIdentitySession) async throws -> Void
+    ) async throws -> KinicIdentitySession {
         let session = try await authenticateSession(prefersEphemeralWebBrowserSession)
         try await verify(session)
         try saveSession(session)
         return session
     }
 
-    func signOut() {
-        clearSession()
+    func signOut() throws {
+        try clearSession()
     }
 
     nonisolated static func debugPrefersEphemeralWebBrowserSession(

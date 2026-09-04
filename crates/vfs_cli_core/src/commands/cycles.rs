@@ -151,6 +151,7 @@ pub(crate) async fn run_cycles_command(client: &impl VfsApi, command: CyclesComm
 pub(crate) struct CyclesBillingConfigOutput {
     kinic_ledger_canister_id: String,
     billing_authority_id: String,
+    iap_authority_id: String,
     cycles_per_kinic: u64,
     min_update_cycles: u64,
     top_up: CyclesTopUpConfig,
@@ -162,6 +163,7 @@ impl CyclesBillingConfigOutput {
         Self {
             kinic_ledger_canister_id: config.kinic_ledger_canister_id,
             billing_authority_id: config.billing_authority_id,
+            iap_authority_id: config.iap_authority_id,
             cycles_per_kinic: config.cycles_per_kinic,
             min_update_cycles: config.min_update_cycles,
             top_up: config.top_up,
@@ -180,6 +182,7 @@ pub(crate) fn cycles_config_lines(
             config.kinic_ledger_canister_id
         ),
         format!("billing_authority_id\t{}", config.billing_authority_id),
+        format!("iap_authority_id\t{}", config.iap_authority_id),
         format!("cycles_per_kinic\t{}", config.cycles_per_kinic),
         format!("min_update_cycles\t{}", config.min_update_cycles),
         format!("top_up_enabled\t{}", config.top_up.enabled),

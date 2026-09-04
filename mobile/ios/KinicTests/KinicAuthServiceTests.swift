@@ -92,15 +92,7 @@ struct KinicAuthServiceTests {
         }
     }
 
-    private func authSession() -> ICAuthSession {
-        ICAuthSession(
-            principal: "2vxsx-fae",
-            canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
-            identityProvider: "https://id.ai/authorize",
-            derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
-            sessionPublicKey: Data([1]),
-            sessionPrivateKey: Data([2]),
-            delegation: ICDelegationChain(publicKey: Data([3]), delegations: [])
-        )
+    private func authSession() -> KinicIdentitySession {
+        .testing(principal: "2vxsx-fae")
     }
 }

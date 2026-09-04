@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the current schema. Fresh index DBs are created directly at the current schema, and already-current DBs are validated only. The current schema marker is `database_index:001_initial` and includes `database_free_cycle_grants`. Older index schemas, partial billing schemas, and index DBs without `schema_migrations` are rejected instead of repaired.
+The index DB startup path ensures the current schema. Fresh index DBs are created directly at the current schema, and already-current DBs are validated only. The current schema marker is `database_index:004_iap_cycle_grants` and includes `database_free_cycle_grants` and `database_iap_cycle_grants`. The supported 001/002/003/004 migration chain is applied transactionally. Partial or unknown schemas and index DBs without `schema_migrations` are rejected instead of repaired.
 
 Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active DBs consume one active user DB slot. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
@@ -65,6 +65,18 @@ External ledger calls are used for DB cycles purchase and App KINIC balance move
 - `kinic_deposit_balance(KinicDepositRequest)` credits App KINIC only after the canister pulls KINIC through ICRC-2 `approve` + `icrc2_transfer_from`.
 - `kinic_withdraw_balance(KinicWithdrawRequest)` sends KINIC from the canister to the requested ledger account with ICRC-1 `icrc1_transfer`. App balance is debited by `amount_e8s + expected_fee_e8s`. Direct ledger transfers to a principal are not credited to App KINIC balance.
 
+iOS App Store IAP uses a separate Payment Worker path and never calls the KINIC ledger:
+
+- iOS creates the DB first. If the free grant is unavailable, the DB remains `pending`.
+- StoreKit returns a signed transaction JWS to iOS after purchase.
+- The Payment Worker verifies the App Store transaction, resolves `product_id -> amount_cycles` from `IAP_PRODUCT_CATALOG_JSON`, then calls `grant_database_cycles_from_iap(DatabaseCyclesIapGrantRequest)`.
+- `grant_database_cycles_from_iap` is accepted only from `iap_authority_id`. `billing_authority_id` cannot call it.
+- `provider` is `apple_iap`. `external_payment_id` is the Apple `transactionId`.
+- Pending DBs are activated through the same mount and migration path as ledger-backed cycle purchase. Active DBs receive a balance top-up. Deleted or missing DBs reject.
+- `database_iap_cycle_grants` enforces one grant per `(provider, external_payment_id)`. A duplicate for the same DB and amount is idempotent; a duplicate for a different DB or amount rejects.
+
+IAP credit is service credit denominated in the existing DB cycles unit. It is not an on-chain cycles purchase. The operator remains responsible for topping up the canister's real IC cycles.
+
 Any authenticated caller can cycle purchase an existing DB that still has an owner, including callers with no DB role. The payer is recorded in the DB ledger entry. Reader and writer cycles history redacts payer/caller principals, while DB owner and billing authority can read full payer/caller details. Once the ledger call starts, normal completion or explicit ledger-error cancellation resolves the started operation even if membership changes during the await. Ambiguous ledger results keep the pending operation as `ambiguous` for billing-authority review. If ledger transfer succeeds but local activation or cycles apply fails, the completed pending operation remains for billing-authority review. Owner, billing authority, and payer can inspect pending purchase status through `list_database_cycles_pending_purchases(database_id)` or CLI `database cycles-pending <database-id>`.
 
 Successful DB update calls are charged after execution. The charge is raw cycle usage:
@@ -83,28 +95,29 @@ storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
 
 Storage charges use the latest `logical_size_bytes` stored in the index DB and write `kind = "storage_charge"` ledger entries for actually collected cycles. Settlement does not open every DB to remeasure size; write/update paths keep `logical_size_bytes` current enough for billing. Insufficient-balance unpaid cycles are not carried forward or tracked as debt in v1. The residual cost above the remaining balance is forgiven as subsidy/suspension policy, the remaining balance is consumed, and the DB is suspended. Timer settlement persists `cursor_mount_id` and a fixed `billing_now_ms` in the index DB, processes up to six 1000-DB batches per message, and schedules a short continuation timer while `next_cursor_mount_id` remains. The same `billing_now_ms` is reused until the run finishes, so DBs in one run do not receive different elapsed times. Settlement execution overhead allocation and index DB byte billing are outside this flow.
 
-`database_cycle_ledger` is the cycles source of truth. Successful charged update calls are recorded there directly. Ledger-backed cycle purchase entries store ledger block indexes in `ledger_block_index`.
+`database_cycle_ledger` is the cycles source of truth. Successful charged update calls are recorded there directly. Ledger-backed cycle purchase entries store ledger block indexes in `ledger_block_index`. IAP grants write `kind = "apple_iap"`, `method = "grant_database_cycles_from_iap"`, and no KINIC payment amount or ledger block index.
 
 Cycles history redacts payer/caller principals for reader and writer callers. DB owner and billing authority can read full cycles history. Pending cycle purchase status is visible only to owner, billing authority, and the payer of that operation. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record.
+`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate, minimum-balance, top-up, and IAP authority fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record. Keep `iap_authority_id` as a dedicated Payment Worker identity, separate from `billing_authority_id`.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
+`scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` or `IAP_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet deploys must use `scripts/mainnet/deploy_wiki.sh`. The wrapper supports only `mainnet-sev`, so fresh installs must set `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` explicitly. The wrapper rejects `old-mainnet`, ambiguous `ic` environment usage, and any other environment. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet deploys must use `scripts/mainnet/deploy_wiki.sh`. The wrapper supports only `mainnet-sev`, so fresh installs must set `KINIC_LEDGER_CANISTER_ID`, `BILLING_AUTHORITY_ID`, and `IAP_AUTHORITY_ID` explicitly. The wrapper rejects `old-mainnet`, ambiguous `ic` environment usage, and any other environment. The script rejects empty or anonymous values before install.
 
 Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles.
 
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
-- Existing canisters must already have the current index schema marker `database_index:001_initial`.
-- Older schemas are unsupported after the reset. Recreate or reinstall instead of auto-converting them.
+- An already-current schema accepts a no-argument upgrade.
+- Applying `database_index:004_iap_cycle_grants` requires an explicit `CyclesBillingConfig`, so the IAP authority cannot be inferred from a default.
+- Unknown or partial schemas remain unsupported. Recreate or reinstall instead of auto-converting them.
 
 Normal operator flow:
 
 1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.
-2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.
+2. If the response has `status = Pending`, the DB needs its first cycle purchase or verified IAP credit grant before reads and writes.
 3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. The browser can sign this directly with the logged-in Internet Identity delegation identity or with a connected OISY/Plug wallet. These are separate default ledger accounts: the user selects one payment source and balances are never combined, split, or used as an automatic fallback. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the selected ledger account.
 4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 5. Successful DB updates consume DB cycles balance.

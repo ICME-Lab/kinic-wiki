@@ -147,7 +147,7 @@ struct BrowseDocumentEditingTests {
                 ))),
                 .writeUnavailable
             ),
-            (.failure(.invalidPayload("offline")), nil)
+            (.failure(.canisterRejected("offline")), nil)
         ]
 
         for (result, expectedRestriction) in failures {
@@ -536,8 +536,8 @@ private final class BrowseEditingFixture {
 
     init(
         probe: BrowseDocumentWriteProbe? = nil,
-        readBrowseNodeRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> VFSNode?)? = nil,
-        listBrowseChildrenRemotely: (@Sendable (String, String, ICAuthSession?) async throws -> [ChildNode])? = nil
+        readBrowseNodeRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> VFSNode?)? = nil,
+        listBrowseChildrenRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> [ChildNode])? = nil
     ) throws {
         suiteName = "kinic.browse-editing-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -547,8 +547,8 @@ private final class BrowseEditingFixture {
             .appending(path: UUID().uuidString)
         model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: queueDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults),
             writeBrowseDocumentRemotely: { request, _ in
@@ -745,15 +745,6 @@ private func waitForBlockedSharedParent(_ reader: ControlledSameDatabaseDeepLink
     Issue.record("Timed out waiting for the shared parent read")
 }
 
-private func browseEditingSession() -> ICAuthSession {
-    ICAuthSession(
-        principal: "aaaaa-aa",
-        canisterId: AppConfiguration.preview.canisterId,
-        identityProvider: AppConfiguration.preview.identityProvider.absoluteString,
-        derivationOrigin: AppConfiguration.preview.derivationOrigin,
-        sessionPublicKey: Data(),
-        sessionPrivateKey: Data(),
-        delegation: ICDelegationChain(publicKey: Data(), delegations: []),
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
-    )
+private func browseEditingSession() -> KinicIdentitySession {
+    .testing(principal: "aaaaa-aa")
 }

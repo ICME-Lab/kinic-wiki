@@ -545,8 +545,8 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
         )
@@ -573,8 +573,8 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
         )
@@ -602,8 +602,8 @@ struct ShareInboxTests {
         defaults.set("db_first", forKey: "kinic.browse-database-id.v1")
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
         )
@@ -625,8 +625,8 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
         )
@@ -853,8 +853,8 @@ struct ShareInboxTests {
         let probe = AccountDeletionProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
             sourceCaptureHistoryStore: historyStore,
@@ -900,8 +900,8 @@ struct ShareInboxTests {
         let cleanupProbe = AccountLocalCleanupProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
             deleteAccountRemotely: { _ in
@@ -955,8 +955,8 @@ struct ShareInboxTests {
         let cleanupProbe = AccountLocalCleanupProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
             sourceCaptureHistoryStore: historyStore,
@@ -1013,8 +1013,8 @@ struct ShareInboxTests {
         let probe = AccountDeletionProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults),
             deleteAccountRemotely: { session in
@@ -1131,8 +1131,8 @@ struct ShareInboxTests {
         }
         let model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults)
         )
@@ -1270,6 +1270,7 @@ struct ShareInboxTests {
     func formatsDatabaseManagementValues() {
         #expect(DatabaseManagementFormat.cycles(nil) == "Unknown")
         #expect(DatabaseManagementFormat.cycles(2_000_000_000_000) == "2T cycles")
+        #expect(DatabaseManagementFormat.cycles(1_823_000_000_000) == "1.823T cycles")
         #expect(DatabaseManagementFormat.cycles(3_000_000_000) == "3B cycles")
         #expect(DatabaseManagementFormat.cycles(4_000_000) == "4M cycles")
         #expect(DatabaseManagementFormat.cycles(500) == "500 cycles")
@@ -1283,6 +1284,7 @@ struct ShareInboxTests {
         let config = CyclesBillingConfig(
             kinicLedgerCanisterId: "ledger",
             billingAuthorityId: "authority",
+            iapAuthorityId: "iap",
             cyclesPerKinic: 1,
             minUpdateCycles: 100,
             topUp: CyclesTopUpConfig(enabled: true, launcherPrincipal: "launcher", thresholdCycles: 1_000)
@@ -1362,17 +1364,8 @@ private func writeJSON<T: Encodable>(_ value: T, to fileURL: URL) throws {
     try data.write(to: fileURL)
 }
 
-private func accountDeletionSession() -> ICAuthSession {
-    ICAuthSession(
-        principal: "aaaaa-aa",
-        canisterId: AppConfiguration.preview.canisterId,
-        identityProvider: AppConfiguration.preview.identityProvider.absoluteString,
-        derivationOrigin: AppConfiguration.preview.derivationOrigin,
-        sessionPublicKey: Data(),
-        sessionPrivateKey: Data(),
-        delegation: ICDelegationChain(publicKey: Data(), delegations: []),
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
-    )
+private func accountDeletionSession() -> KinicIdentitySession {
+    .testing(principal: "aaaaa-aa")
 }
 
 private actor AccountDeletionProbe {

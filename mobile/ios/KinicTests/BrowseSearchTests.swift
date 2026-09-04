@@ -341,7 +341,7 @@ private final class BrowseSearchFixture {
     }
 
     init(
-        search: @escaping @Sendable (BrowseSearchRequest, ICAuthSession?) async throws -> [SearchNodeHit]
+        search: @escaping @Sendable (BrowseSearchRequest, KinicIdentitySession?) async throws -> [SearchNodeHit]
     ) throws {
         suiteName = "kinic.browse-search-tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -351,8 +351,8 @@ private final class BrowseSearchFixture {
             .appending(path: UUID().uuidString)
         model = AppModel(
             configuration: .preview,
-            authService: KinicAuthService(configuration: .preview),
-            client: KinicICClient(configuration: .preview),
+            authService: try! KinicAuthService(configuration: .preview),
+            client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: queueDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults),
             searchBrowseNodesRemotely: search,
@@ -459,15 +459,6 @@ private func searchDatabaseSummary() -> DatabaseSummary {
     )
 }
 
-private func browseSearchSession() -> ICAuthSession {
-    ICAuthSession(
-        principal: "aaaaa-aa",
-        canisterId: AppConfiguration.preview.canisterId,
-        identityProvider: AppConfiguration.preview.identityProvider.absoluteString,
-        derivationOrigin: AppConfiguration.preview.derivationOrigin,
-        sessionPublicKey: Data(),
-        sessionPrivateKey: Data(),
-        delegation: ICDelegationChain(publicKey: Data(), delegations: []),
-        createdAt: Date(timeIntervalSince1970: 1_700_000_000)
-    )
+private func browseSearchSession() -> KinicIdentitySession {
+    .testing(principal: "aaaaa-aa")
 }

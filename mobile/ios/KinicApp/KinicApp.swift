@@ -8,6 +8,7 @@ import SwiftUI
 @main
 struct KinicApp: App {
     @State private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
 #if DEBUG
@@ -46,8 +47,17 @@ struct KinicApp: App {
         HomeView(model: model)
             .tint(KinicDesign.hotPink)
             .preferredColorScheme(model.isDarkAppearanceEnabled ? .dark : .light)
+            .task {
+                model.startDatabaseCreditTransactionObserver()
+                model.startRecoverPendingDatabaseCreditPurchases()
+            }
             .onOpenURL { url in
                 model.handleOpenURL(url)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    model.appDidBecomeActive()
+                }
             }
     }
 }

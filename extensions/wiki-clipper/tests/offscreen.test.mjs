@@ -539,6 +539,7 @@ test("listWritableDatabases reloads auth client once before listing databases", 
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai",
             cycles_per_kinic: 1n,
             min_update_cycles: 10_000n
           }
@@ -746,6 +747,7 @@ test("listWritableDatabases returns active writable database summaries", async (
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai",
             cycles_per_kinic: 1n,
             min_update_cycles: 10_000n
           }
@@ -788,6 +790,7 @@ test("listWritableDatabases uses summary name when metadata is missing", async (
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai",
             cycles_per_kinic: 1n,
             min_update_cycles: 10_000n
           }
@@ -829,6 +832,7 @@ test("listWritableDatabases preserves database metadata when present", async () 
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai",
             cycles_per_kinic: 1n,
             min_update_cycles: 10_000n
           }
@@ -895,6 +899,7 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
         Ok: {
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
           billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+          iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai",
           cycles_per_kinic: 1n,
           min_update_cycles: 10_000n
         }
