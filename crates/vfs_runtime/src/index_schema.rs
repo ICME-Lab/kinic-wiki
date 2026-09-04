@@ -275,17 +275,6 @@ fn insert_schema_migration_zero(conn: &Transaction<'_>, version: &str) -> Result
     Ok(())
 }
 
-fn insert_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        insert_schema_migration_now(conn, version)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        insert_schema_migration_zero(conn, version)
-    }
-}
-
 fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(FRESH_INDEX_SCHEMA_SQL)
         .map_err(|error| error.to_string())

@@ -149,7 +149,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run lint
@@ -187,7 +187,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run typecheck
@@ -223,7 +223,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run typecheck
         run: pnpm typecheck
       - name: Run tests
@@ -251,7 +251,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run lint
