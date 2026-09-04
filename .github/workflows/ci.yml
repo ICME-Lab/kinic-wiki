@@ -123,12 +123,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dummy_key="$RUNNER_TEMP/kinic-ci-dummy-asc-key.p8"
-          printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'dummy' '-----END PRIVATE KEY-----' > "$dummy_key"
           KINIC_IOS_BUILD_NUMBER=2 \
-            ASC_KEY_PATH="$dummy_key" \
-            ASC_KEY_ID=DUMMYKEY01 \
-            ASC_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
+            ASC_PROFILE=ci-dummy \
             mobile/ios/scripts/testflight-upload.sh --validate-only
 
   wikibrowser-check:
@@ -153,7 +149,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run lint
@@ -191,7 +187,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run typecheck
@@ -227,7 +223,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run typecheck
         run: pnpm typecheck
       - name: Run tests
@@ -255,7 +251,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run audit
-        run: pnpm audit --audit-level moderate
+        run: pnpm audit --audit-level moderate --ignore-registry-errors
       - name: Run tests
         run: pnpm test
       - name: Run lint

@@ -1270,6 +1270,7 @@ struct ShareInboxTests {
     func formatsDatabaseManagementValues() {
         #expect(DatabaseManagementFormat.cycles(nil) == "Unknown")
         #expect(DatabaseManagementFormat.cycles(2_000_000_000_000) == "2T cycles")
+        #expect(DatabaseManagementFormat.cycles(1_823_000_000_000) == "1.823T cycles")
         #expect(DatabaseManagementFormat.cycles(3_000_000_000) == "3B cycles")
         #expect(DatabaseManagementFormat.cycles(4_000_000) == "4M cycles")
         #expect(DatabaseManagementFormat.cycles(500) == "500 cycles")
@@ -1283,6 +1284,7 @@ struct ShareInboxTests {
         let config = CyclesBillingConfig(
             kinicLedgerCanisterId: "ledger",
             billingAuthorityId: "authority",
+            iapAuthorityId: "iap",
             cyclesPerKinic: 1,
             minUpdateCycles: 100,
             topUp: CyclesTopUpConfig(enabled: true, launcherPrincipal: "launcher", thresholdCycles: 1_000)

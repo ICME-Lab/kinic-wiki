@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ANONYMOUS_PRINCIPAL="2vxsx-fae"
 KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
+IAP_AUTHORITY_ID="${IAP_AUTHORITY_ID:-}"
 DEPLOY_ENVIRONMENT="${ICP_ENVIRONMENT:-mainnet-sev}"
 DRY_RUN=0
 DEPLOY_ARGS=()
@@ -70,6 +71,7 @@ require_principal_env() {
 require_mainnet_sev_environment
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env BILLING_AUTHORITY_ID
+require_principal_env IAP_AUTHORITY_ID
 
 ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
@@ -78,6 +80,7 @@ cat >"${ARGS_FILE}" <<EOF
 (record {
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   billing_authority_id = "${BILLING_AUTHORITY_ID}";
+  iap_authority_id = "${IAP_AUTHORITY_ID}";
   top_up = record {
     enabled = true;
     launcher_principal = "xfug4-5qaaa-aaaak-afowa-cai";
@@ -93,6 +96,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "ICP_ENVIRONMENT=${DEPLOY_ENVIRONMENT}" >&2
   echo "KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID}" >&2
   echo "BILLING_AUTHORITY_ID=${BILLING_AUTHORITY_ID}" >&2
+  echo "IAP_AUTHORITY_ID=${IAP_AUTHORITY_ID}" >&2
   exit 0
 fi
 

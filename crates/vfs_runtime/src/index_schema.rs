@@ -5,8 +5,10 @@ use super::*;
 
 const INDEX_SCHEMA_MIGRATION_002: &str =
     include_str!("../migrations/index_db/002_node_publications.sql");
-const INDEX_SCHEMA_MIGRATION_003: &str =
+const INDEX_SCHEMA_MIGRATION_CURRENT: &str =
     include_str!("../migrations/index_db/003_publication_mutation_recovery.sql");
+const INDEX_SCHEMA_MIGRATION_IAP: &str =
+    include_str!("../migrations/index_db/004_iap_cycle_grants.sql");
 
 impl VfsService {
     pub fn run_index_migrations(&self) -> Result<(), String> {
@@ -17,7 +19,7 @@ impl VfsService {
         &self,
         config: CyclesBillingConfig,
     ) -> Result<(), String> {
-        let action = {
+        {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let mut conn = self.open_index()?;
@@ -27,15 +29,14 @@ impl VfsService {
             {
                 self.write_index(|conn| run_index_migrations_in_tx(conn, &config))
             }
-        }?;
-        self.apply_index_post_migration_action(action)
+        }
     }
 
     pub fn run_index_migrations_for_upgrade(
         &self,
         config: Option<CyclesBillingConfig>,
     ) -> Result<(), String> {
-        let action = {
+        {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let mut conn = self.open_index()?;
@@ -47,31 +48,18 @@ impl VfsService {
                     run_index_migrations_in_tx_for_upgrade(conn, config.as_ref())
                 })
             }
-        }?;
-        self.apply_index_post_migration_action(action)
-    }
-
-    fn apply_index_post_migration_action(
-        &self,
-        action: IndexPostMigrationAction,
-    ) -> Result<(), String> {
-        match action {
-            IndexPostMigrationAction::None => Ok(()),
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_index_migrations(
-    conn: &mut Connection,
-    config: &CyclesBillingConfig,
-) -> Result<IndexPostMigrationAction, String> {
+fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> Result<(), String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        apply_pending_index_migrations(&tx)?;
+        apply_pending_index_migrations(&tx, Some(config))?;
         validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(IndexPostMigrationAction::None);
+        return Ok(());
     }
     reject_existing_index_tables_without_migrations(conn)?;
     validate_cycles_billing_config(config)?;
@@ -82,21 +70,22 @@ fn run_index_migrations(
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     tx.commit().map_err(|error| error.to_string())?;
-    Ok(IndexPostMigrationAction::None)
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_index_migrations_for_upgrade(
     conn: &mut Connection,
     config: Option<&CyclesBillingConfig>,
-) -> Result<IndexPostMigrationAction, String> {
+) -> Result<(), String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        apply_pending_index_migrations(&tx)?;
+        apply_pending_index_migrations(&tx, config)?;
         validate_current_index_schema(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(IndexPostMigrationAction::None);
+        return Ok(());
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
@@ -107,11 +96,11 @@ fn run_index_migrations_for_upgrade(
 fn run_index_migrations_in_tx(
     conn: &Transaction<'_>,
     config: &CyclesBillingConfig,
-) -> Result<IndexPostMigrationAction, String> {
+) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        apply_pending_index_migrations(conn)?;
+        apply_pending_index_migrations(conn, Some(config))?;
         validate_current_index_schema(conn)?;
-        return Ok(IndexPostMigrationAction::None);
+        return Ok(());
     }
     reject_existing_index_tables_without_migrations_tx(conn)?;
     validate_cycles_billing_config(config)?;
@@ -121,19 +110,20 @@ fn run_index_migrations_in_tx(
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_INITIAL)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     validate_index_schema(conn)?;
-    Ok(IndexPostMigrationAction::None)
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
 fn run_index_migrations_in_tx_for_upgrade(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
-) -> Result<IndexPostMigrationAction, String> {
+) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        apply_pending_index_migrations(conn)?;
+        apply_pending_index_migrations(conn, config)?;
         validate_current_index_schema(conn)?;
-        return Ok(IndexPostMigrationAction::None);
+        return Ok(());
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
@@ -177,7 +167,10 @@ fn validate_current_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     validate_index_schema(conn)
 }
 
-fn apply_pending_index_migrations(conn: &Transaction<'_>) -> Result<(), String> {
+fn apply_pending_index_migrations(
+    conn: &Transaction<'_>,
+    config: Option<&CyclesBillingConfig>,
+) -> Result<(), String> {
     let mut versions = applied_index_versions(conn)?;
     let mut version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
     if version_refs == INDEX_SCHEMA_VERSIONS {
@@ -194,22 +187,51 @@ fn apply_pending_index_migrations(conn: &Transaction<'_>) -> Result<(), String> 
         version_refs = versions.iter().map(String::as_str).collect();
     }
     if version_refs
-        != [
+        == [
             INDEX_SCHEMA_VERSION_INITIAL,
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
         ]
+    {
+        conn.execute_batch(INDEX_SCHEMA_MIGRATION_CURRENT)
+            .map_err(|error| error.to_string())?;
+        #[cfg(not(target_arch = "wasm32"))]
+        insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+        #[cfg(target_arch = "wasm32")]
+        insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+        versions.push(INDEX_SCHEMA_VERSION_CURRENT.to_string());
+        version_refs = versions.iter().map(String::as_str).collect();
+    }
+    if version_refs
+        != [
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+            INDEX_SCHEMA_VERSION_CURRENT,
+        ]
+        && version_refs != INDEX_SCHEMA_VERSIONS
     {
         return Err(format!(
             "unsupported index schema version; recreate the index database: {}",
             versions.join(", ")
         ));
     }
-    conn.execute_batch(INDEX_SCHEMA_MIGRATION_003)
+
+    if version_refs == INDEX_SCHEMA_VERSIONS {
+        return Ok(());
+    }
+
+    let config = config.ok_or_else(|| {
+        format!(
+            "cycles config required to apply index schema migration {INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS}"
+        )
+    })?;
+    conn.execute_batch(INDEX_SCHEMA_MIGRATION_IAP)
         .map_err(|error| error.to_string())?;
+    validate_principal_text(&config.iap_authority_id)?;
+    set_cycles_billing_config_text(conn, "iap_authority_id", &config.iap_authority_id)?;
     #[cfg(not(target_arch = "wasm32"))]
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     #[cfg(target_arch = "wasm32")]
-    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     Ok(())
 }
 
@@ -235,7 +257,8 @@ fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn insert_schema_migration_now(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        "INSERT INTO schema_migrations (version, applied_at)
+         VALUES (?1, CAST(strftime('%s', 'now') AS INTEGER) * 1000)",
         params![version],
     )
     .map_err(|error| error.to_string())?;
@@ -269,6 +292,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_cycle_accounts",
         "database_cycle_ledger",
         "database_free_cycle_grants",
+        "database_iap_cycle_grants",
         "database_cycle_pending_operations",
         "cycles_billing_config",
         "storage_billing_state",
@@ -379,6 +403,21 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         (
             "database_free_cycle_grants",
             &["principal", "database_id", "grant_cycles", "created_at_ms"][..],
+        ),
+        (
+            "database_iap_cycle_grants",
+            &[
+                "grant_id",
+                "provider",
+                "external_payment_id",
+                "database_id",
+                "product_id",
+                "purchaser_principal",
+                "amount_cycles",
+                "balance_after_cycles",
+                "caller",
+                "created_at_ms",
+            ][..],
         ),
         (
             "database_cycle_pending_operations",
@@ -519,6 +558,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "ops_answer_sessions_expiry_idx",
         "source_run_sessions_expiry_idx",
         "database_cycle_ledger_database_idx",
+        "database_iap_cycle_grants_database_idx",
         "database_cycle_pending_operations_database_idx",
         "market_listings_status_idx",
         "market_listings_database_idx",

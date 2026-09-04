@@ -91,6 +91,7 @@ pub struct DatabaseSummary {
 pub struct CyclesBillingConfig {
     pub kinic_ledger_canister_id: String,
     pub billing_authority_id: String,
+    pub iap_authority_id: String,
     pub cycles_per_kinic: u64,
     pub min_update_cycles: u64,
     pub top_up: CyclesTopUpConfig,
@@ -98,6 +99,7 @@ pub struct CyclesBillingConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CyclesBillingConfigUpdate {
+    pub iap_authority_id: String,
     pub cycles_per_kinic: u64,
     pub min_update_cycles: u64,
     pub top_up: CyclesTopUpConfig,
@@ -115,6 +117,16 @@ pub struct DatabaseCyclesPurchaseRequest {
     pub database_id: String,
     pub payment_amount_e8s: u64,
     pub min_expected_cycles: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCyclesIapGrantRequest {
+    pub database_id: String,
+    pub amount_cycles: u64,
+    pub external_payment_id: String,
+    pub provider: String,
+    pub product_id: String,
+    pub purchaser_principal: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

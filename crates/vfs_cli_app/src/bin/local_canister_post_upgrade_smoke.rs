@@ -158,6 +158,7 @@ fn expected_cycles_config() -> Result<CyclesBillingConfig> {
     Ok(CyclesBillingConfig {
         kinic_ledger_canister_id: required_env("KINIC_LEDGER_CANISTER_ID")?,
         billing_authority_id: required_env("BILLING_AUTHORITY_ID")?,
+        iap_authority_id: required_env("IAP_AUTHORITY_ID")?,
         cycles_per_kinic: env_u64("CYCLES_PER_KINIC", 234_500_000_000)?,
         min_update_cycles: env_u64("MIN_UPDATE_CYCLES", 1_000_000)?,
         top_up: CyclesTopUpConfig {

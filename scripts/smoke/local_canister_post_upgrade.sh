@@ -98,10 +98,16 @@ if [[ -z "${BILLING_AUTHORITY_ID:-}" ]]; then
   export BILLING_AUTHORITY_ID
 fi
 
+if [[ -z "${IAP_AUTHORITY_ID:-}" ]]; then
+  IAP_AUTHORITY_ID="$(icp identity principal)"
+  export IAP_AUTHORITY_ID
+fi
+
 LEDGER_SETUP_OUTPUT="$(ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" bash scripts/local/setup_kinic_ledger.sh)"
 KINIC_LEDGER_CANISTER_ID="${LEDGER_SETUP_OUTPUT#KINIC_LEDGER_CANISTER_ID=}"
 export ICP_ENVIRONMENT
 export KINIC_LEDGER_CANISTER_ID
+export IAP_AUTHORITY_ID
 export SMOKE_CYCLE_PURCHASE_E8S
 
 scripts/local/deploy_wiki.sh "$@"

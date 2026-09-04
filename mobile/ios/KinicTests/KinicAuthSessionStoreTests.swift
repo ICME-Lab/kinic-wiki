@@ -16,10 +16,13 @@ struct KinicAuthSessionStoreTests {
             identityProvider: URL(string: "https://id.ai/authorize")!,
             derivationOrigin: "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
             authOrigin: URL(string: "https://wiki.kinic.xyz")!,
+            paymentBaseURL: URL(string: "https://payment.kinic.xyz")!,
             callbackDomain: "wiki.kinic.xyz",
             appGroupId: "group.xyz.kinic.ios.KinicWiki",
             keychainAccessGroup: "AKN976G7AK.xyz.kinic.ios.KinicWiki",
-            askAIURL: URL(string: "https://api.kinic.io/chat")!
+            iapProductIds: [],
+            askAIURL: URL(string: "https://api.kinic.io/chat")!,
+            deploymentEnvironment: .production
         )
 
         let store = KinicAuthSessionStore(configuration: configuration, service: "test.service")

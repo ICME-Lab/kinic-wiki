@@ -13,12 +13,12 @@ const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8");
 
 const didTypeAliases = {
   ...sharedAliases,
-  ResultNodes: "Result_19",
+  ResultNodes: "Result_20",
   ResultWriteNodes: "Result_46",
   ResultEditNode: "Result_6",
-  ResultMutationBatch: "Result_32",
-  ResultNodePublication: "Result_33",
-  ResultCyclesPurchase: "Result_34",
+  ResultMutationBatch: "Result_33",
+  ResultNodePublication: "Result_34",
+  ResultCyclesPurchase: "Result_13",
   ResultQueryContext: "Result_35",
   ResultIndexSqlJsonQuery: "Result_36",
   ResultNode: "Result_37",

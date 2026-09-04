@@ -9,6 +9,7 @@ struct BrowseDatabaseRow: View {
     let isSelected: Bool
     var isPublicReadable = false
     var isPurchased = false
+    var showsCyclesBalance = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -42,7 +43,7 @@ struct BrowseDatabaseRow: View {
                     }
                 }
 
-                Text(database.role.displayName)
+                Text(showsCyclesBalance ? database.roleAndCyclesBalanceText : database.role.displayName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -77,6 +77,7 @@ fn test_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
         cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
         min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
         top_up: default_cycles_top_up_config(),
@@ -112,7 +113,8 @@ fn index_migrations_create_current_schema_once() {
         vec![
             INDEX_SCHEMA_VERSION_INITIAL.to_string(),
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
-            INDEX_SCHEMA_VERSION_CURRENT.to_string()
+            INDEX_SCHEMA_VERSION_CURRENT.to_string(),
+            INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
         ]
     );
     assert_eq!(
@@ -130,23 +132,16 @@ fn index_migrations_apply_node_publications_once() {
         .run_index_migrations()
         .expect("fresh index schema should create");
     let conn = Connection::open(&index_path).expect("index DB should reopen");
-    conn.execute("DROP TABLE publication_mutation_recovery_items", params![])
-        .expect("recovery items table should drop");
-    conn.execute(
-        "DROP TABLE publication_mutation_recovery_batches",
-        params![],
+    conn.execute_batch(
+        "DROP TABLE node_publications;
+         DROP TABLE publication_mutation_recovery_items;
+         DROP TABLE publication_mutation_recovery_batches;
+         DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations
+         WHERE version != 'database_index:001_initial';",
     )
-    .expect("recovery batches table should drop");
-    conn.execute("DROP TABLE node_publications", params![])
-        .expect("new table should drop");
-    conn.execute(
-        "DELETE FROM schema_migrations WHERE version IN (?1, ?2)",
-        params![
-            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
-            INDEX_SCHEMA_VERSION_CURRENT
-        ],
-    )
-    .expect("new migration marker should delete");
+    .expect("schema should downgrade to 001 shape");
     drop(conn);
 
     service
@@ -161,7 +156,8 @@ fn index_migrations_apply_node_publications_once() {
         vec![
             INDEX_SCHEMA_VERSION_INITIAL.to_string(),
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
-            INDEX_SCHEMA_VERSION_CURRENT.to_string()
+            INDEX_SCHEMA_VERSION_CURRENT.to_string(),
+            INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
         ]
     );
 }
@@ -182,28 +178,74 @@ fn index_migrations_apply_publication_recovery_from_002_once() {
         params![],
     )
     .expect("recovery batches table should drop");
-    conn.execute(
-        "DELETE FROM schema_migrations WHERE version = ?1",
-        params![INDEX_SCHEMA_VERSION_CURRENT],
+    conn.execute_batch(
+        "DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations
+         WHERE version IN ('database_index:003_publication_mutation_recovery',
+                           'database_index:004_iap_cycle_grants')",
     )
     .expect("recovery migration marker should delete");
     drop(conn);
 
     service
         .run_index_migrations()
-        .expect("002 to 003 migration should apply");
+        .expect("003 to 004 migration should apply");
     service
         .run_index_migrations()
-        .expect("003 migration should apply only once");
+        .expect("004 migration should apply only once");
 
     assert_eq!(
         index_versions(&index_path),
         vec![
             INDEX_SCHEMA_VERSION_INITIAL.to_string(),
             INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS.to_string(),
-            INDEX_SCHEMA_VERSION_CURRENT.to_string()
+            INDEX_SCHEMA_VERSION_CURRENT.to_string(),
+            INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS.to_string(),
         ]
     );
+}
+
+#[test]
+fn index_migrations_roll_back_all_pending_steps_when_004_fails() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service
+        .run_index_migrations()
+        .expect("fresh index schema should create");
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute_batch(
+        "DROP TABLE node_publications;
+         DROP TABLE publication_mutation_recovery_items;
+         DROP TABLE publication_mutation_recovery_batches;
+         DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations
+         WHERE version != 'database_index:001_initial';
+         CREATE TABLE database_iap_cycle_grants (forced_failure INTEGER NOT NULL);",
+    )
+    .expect("schema should downgrade with a forced 004 collision");
+    drop(conn);
+
+    service
+        .run_index_migrations()
+        .expect_err("004 failure should roll back the full migration transaction");
+
+    assert_eq!(
+        index_versions(&index_path),
+        vec![INDEX_SCHEMA_VERSION_INITIAL.to_string()]
+    );
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    let node_publications_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'node_publications'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("node publications existence should load");
+    assert_eq!(node_publications_count, 0);
 }
 
 #[test]
@@ -226,6 +268,117 @@ fn current_upgrade_migrations_accept_no_config() {
         service.cycles_billing_config().expect("config should load"),
         config
     );
+}
+
+#[test]
+fn index_migration_004_adds_iap_authority_from_upgrade_config() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service
+        .run_index_migrations_with_config(test_cycles_billing_config())
+        .expect("fresh current schema should create");
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute_batch(
+        "DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
+    )
+    .expect("schema should downgrade to 002 shape");
+    drop(conn);
+
+    let migration_config = CyclesBillingConfig {
+        iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai".to_string(),
+        ..test_cycles_billing_config()
+    };
+    service
+        .run_index_migrations_for_upgrade(Some(migration_config.clone()))
+        .expect("004 migration should apply");
+
+    assert_eq!(
+        index_versions(&index_path),
+        vec![
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+            INDEX_SCHEMA_VERSION_CURRENT,
+            INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS
+        ]
+    );
+    assert_eq!(
+        service
+            .cycles_billing_config()
+            .expect("config should load")
+            .iap_authority_id,
+        migration_config.iap_authority_id
+    );
+}
+
+#[test]
+fn index_migration_004_requires_upgrade_config() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service
+        .run_index_migrations_with_config(test_cycles_billing_config())
+        .expect("fresh current schema should create");
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute_batch(
+        "DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
+    )
+    .expect("schema should downgrade to 002 shape");
+    drop(conn);
+
+    let error = service
+        .run_index_migrations_for_upgrade(None)
+        .expect_err("004 migration should require explicit config");
+
+    assert!(error.contains(INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS));
+    assert_eq!(
+        index_versions(&index_path),
+        vec![
+            INDEX_SCHEMA_VERSION_INITIAL,
+            INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
+            INDEX_SCHEMA_VERSION_CURRENT
+        ]
+    );
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    let authority_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM cycles_billing_config WHERE key = 'iap_authority_id'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("authority count should load");
+    assert_eq!(authority_count, 0);
+}
+
+#[test]
+fn feature_branch_iap_002_marker_is_rejected() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let conn = Connection::open(&index_path).expect("index DB should open");
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations (
+           version TEXT PRIMARY KEY,
+           applied_at INTEGER NOT NULL
+         );
+         INSERT INTO schema_migrations (version, applied_at)
+         VALUES
+           ('database_index:001_initial', 0),
+           ('database_index:002_iap_cycle_grants', 0);",
+    )
+    .expect("feature branch markers should insert");
+    drop(conn);
+    let service = VfsService::new(index_path, dir.path().join("databases"));
+
+    let error = service
+        .run_index_migrations_for_upgrade(Some(test_cycles_billing_config()))
+        .expect_err("feature branch migration history should reject");
+
+    assert!(error.contains("unsupported index schema version"));
+    assert!(error.contains("database_index:002_iap_cycle_grants"));
 }
 
 #[test]

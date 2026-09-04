@@ -70,6 +70,7 @@ impl VfsApi for MockClient {
         Ok(CyclesBillingConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             billing_authority_id: "aaaaa-aa".to_string(),
+            iap_authority_id: "aaaaa-aa".to_string(),
             cycles_per_kinic: 1_000,
             min_update_cycles: 1,
             top_up: test_cycles_top_up_config(),

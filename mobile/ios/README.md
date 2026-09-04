@@ -16,11 +16,12 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
+- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. iOS App Store IAP can activate a pending DB or top up an owner-managed active DB. KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Lets signed-in `Owner` and `Writer` members explicitly edit and save existing Markdown documents outside `/Sources`; drafts remain in memory only and optimistic saves preserve the original `etag`.
 - Adds a database-scoped Ask AI tab that retrieves relevant wiki documents, shows its search and evidence-checking activity, and refuses to answer when no supporting document is available.
 - Stores Ask AI conversation history on the device in separate namespaces for each authenticated principal, with a separate device-local guest namespace. Database searches use `https://api.kinic.io/chat` once to route the request and generate up to three diversified queries (literal, paraphrased, and anchor-only), then once more when verified notes are found to generate a fully validated answer with cited database sources. Query-generation failures do not fall back to local question tokenization.
 - Lets signed-in users delete their Kinic account data from Settings. Sole-owned databases are deleted; shared-database membership, purchased access, and account-scoped local history are removed; Internet Identity and retained transaction records remain.
-- Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. Top-up, purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
+- KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
 
@@ -61,6 +62,18 @@ The Share Extension intentionally supports URL shares only. WebPage shares are n
 
 iOS local tunnel execution is not supported. Real-device and TestFlight checks use the mainnet configuration in `mobile/ios/Config/Kinic.xcconfig`: canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, callback domain `wiki.kinic.xyz`, and Ask AI endpoint `https://api.kinic.io/chat`.
 
+Use `mobile/ios/scripts/install-device.sh --sandbox` for Apple Sandbox testing. This
+selects staging canister `3ryrw-kyaaa-aaaaf-qgxpq-cai`, the staging auth domain,
+`kinic-payment-sandbox.hude.workers.dev`, and only `xyz.kinic.dbcredits.small` as one
+coherent runtime. The database credits sheet shows a Sandbox warning in this mode.
+
+The app reads Payment Worker and StoreKit settings from the same xcconfig:
+
+- `KINIC_PAYMENT_BASE_URL`: Payment Worker origin, default `https://payment.kinic.xyz`
+- `KINIC_IAP_PRODUCT_IDS`: comma-separated consumable credit pack product IDs (the initial release enables `xyz.kinic.dbcredits.small` only)
+
+Purchase flow: create DB first, keep it `pending` when no free grant applies, create a Payment Worker purchase intent, pass its `appAccountToken` to StoreKit 2, post `{ transactionJWS }` to `/iap/activate-database`, and let the worker resolve the destination from the purchase intent. Finish the StoreKit transaction only after successful activation. Recovery replays StoreKit unfinished transactions and does not keep a second local pending-purchase record.
+
 ## Verification
 
 - Install XcodeGen if needed: `brew install xcodegen`
@@ -69,6 +82,7 @@ iOS local tunnel execution is not supported. Real-device and TestFlight checks u
 - `xcodebuild build-for-testing -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO`
 - `xcodebuild build -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'generic/platform=iOS' -allowProvisioningUpdates`
 - `mobile/ios/scripts/install-device.sh`
+- `mobile/ios/scripts/install-device.sh --sandbox`
 - `mobile/ios/scripts/testflight-upload.sh --validate-only`
 - `pnpm --dir wikibrowser test`
 - `pnpm --dir wikibrowser typecheck`
@@ -94,9 +108,10 @@ For a clean browser-session authentication check in a Debug build, launch the ap
 ## TestFlight
 
 TestFlight uploads use production defaults from `mobile/ios/Config/Kinic.xcconfig`: mainnet canister `6emaw-iyaaa-aaaay-aacka-cai`, IC gateway `https://icp0.io`, Internet Identity `https://id.ai/authorize`, and callback domain `wiki.kinic.xyz`.
-The upload script overrides `CURRENT_PROJECT_VERSION` from `KINIC_IOS_BUILD_NUMBER` and does not edit the Xcode project.
-The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Copy `mobile/ios/.env.testflight.example` and fill the App Store Connect API key values there.
+The upload script uses `KINIC_IOS_BUILD_NUMBER` when supplied for a production runtime. Otherwise it reads the latest iOS build with the explicitly selected `ASC_PROFILE` and uses the next number. Sandbox mode always resolves latest + 1 so a stale local override cannot be uploaded. It does not edit the Xcode project.
+The upload script automatically loads `mobile/ios/.env.local` and `mobile/ios/.env.testflight.local` when present. Set `ASC_PROFILE` to an authorized `asc` API-key profile stored in macOS Keychain. The script archives and exports locally, verifies Bundle ID/version/build metadata, then uploads the IPA with that profile; it does not require exporting the API private key.
 The default upload mode is external-TestFlight-capable. Use `--internal-only` only when the build must not be assigned to external tester groups.
+`--sandbox` selects the isolated staging runtime and always sets TestFlight's internal-only flag. Combining it with `--external` is rejected before archive or upload.
 
 Validate inputs without archiving:
 
@@ -114,6 +129,12 @@ Upload an internal-only TestFlight build:
 
 ```bash
 mobile/ios/scripts/testflight-upload.sh --internal-only
+```
+
+Upload the Sandbox runtime for internal testing only:
+
+```bash
+mobile/ios/scripts/testflight-upload.sh --sandbox
 ```
 
 External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
