@@ -66,6 +66,19 @@ the canister ledger and Apple transactions remain consistent.
 
 ## 3. Deploy the Payment Worker closed
 
+Switch to the normal iOS and Payment Worker worktree before continuing. The
+backport worktree has no Payment Worker and contains the older iOS upload script.
+Run all remaining steps from the normal worktree:
+
+```bash
+cd /Users/0xhude/Desktop/work/llm-wiki
+git branch --show-current
+git status --short
+```
+
+Confirm the branch is `fix/icnativeclient-0-6-review-findings`, the reviewed
+iOS and Payment Worker changes are committed, and the worktree is clean.
+
 Keep `APP_STORE_SANDBOX_FULFILLMENT_ENABLED=false` and
 `APP_STORE_SANDBOX_GRANT_LIMIT=10`. From a clean committed branch run:
 
