@@ -18,9 +18,8 @@ export function validateCatalog({ record, sandboxConfig, productionConfig, produ
   assert.equal(sandboxCatalog[record.productId], record.amountCycles);
 
   const productionCatalog = JSON.parse(productionConfig.vars.IAP_PRODUCT_CATALOG_JSON);
+  assert.deepEqual(Object.keys(productionCatalog), [record.productId]);
   assert.equal(productionCatalog[record.productId], record.amountCycles);
-  assert.ok("xyz.kinic.dbcredits.medium" in productionCatalog);
-  assert.ok("xyz.kinic.dbcredits.large" in productionCatalog);
 
   if (production) {
     assert.equal(record.status, "approved", "production IAP pricing record is not approved");

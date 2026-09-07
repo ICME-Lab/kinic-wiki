@@ -127,6 +127,110 @@ struct BrowseDocumentEditingTests {
 
     @MainActor
     @Test
+    func automaticCreditRecoveryPreservesCurrentDatabaseDocumentAndDraft() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        model.selectedDatabaseId = "db_edit"
+        #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
+        model.updateBrowseDocumentDraft("my unsaved draft")
+
+        let disposition = model.applyDatabaseCreditNavigation(
+            DatabaseCreditActivation(
+                databaseId: "db_recovered",
+                purchaserPrincipal: "r7inp-6aaaa-aaaaa-aaabq-cai",
+                productId: DatabaseCreditProduct.smallProductId
+            ),
+            origin: .automaticRecovery
+        )
+
+        #expect(disposition == .unchanged)
+        #expect(model.selectedDatabaseId == "db_edit")
+        #expect(model.selectedBrowseDatabaseId == "db_edit")
+        #expect(model.selectedBrowseNodePath == "/Knowledge/Page.md")
+        #expect(model.documentNode?.content == "old")
+        #expect(model.documentEditSession?.draftContent == "my unsaved draft")
+        #expect(model.requestedBrowseDatabaseSelection == nil)
+    }
+
+    @MainActor
+    @Test
+    func explicitCreditPurchaseWaitsForDiscardBeforeSwitchingDatabases() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        model.selectedDatabaseId = "db_edit"
+        #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
+        model.updateBrowseDocumentDraft("my unsaved draft")
+        let activation = DatabaseCreditActivation(
+            databaseId: "db_purchased",
+            purchaserPrincipal: "r7inp-6aaaa-aaaaa-aaabq-cai",
+            productId: DatabaseCreditProduct.smallProductId
+        )
+
+        guard case .awaitingDiscard(let request) = model.applyDatabaseCreditNavigation(
+            activation,
+            origin: .explicitPurchase
+        ) else {
+            Issue.record("Expected database credit navigation to await discard")
+            return
+        }
+        #expect(request.purpose == .databaseCreditActivation)
+        #expect(model.selectedDatabaseId == "db_edit")
+        #expect(model.selectedBrowseDatabaseId == "db_edit")
+        #expect(model.documentEditSession?.draftContent == "my unsaved draft")
+
+        model.cancelBrowseDatabaseSelection(request)
+        #expect(model.selectedDatabaseId == "db_edit")
+        #expect(model.selectedBrowseDatabaseId == "db_edit")
+        #expect(model.documentEditSession?.draftContent == "my unsaved draft")
+
+        guard case .awaitingDiscard(let confirmedRequest) = model.applyDatabaseCreditNavigation(
+            activation,
+            origin: .explicitPurchase
+        ) else {
+            Issue.record("Expected a second database credit navigation request")
+            return
+        }
+        model.discardBrowseDocumentEdits()
+        model.applyBrowseDatabaseSelection(confirmedRequest)
+
+        #expect(model.selectedDatabaseId == "db_purchased")
+        #expect(model.selectedBrowseDatabaseId == "db_purchased")
+        #expect(model.selectedBrowseNodePath == nil)
+        #expect(model.documentNode == nil)
+        #expect(model.documentEditSession == nil)
+    }
+
+    @MainActor
+    @Test
+    func explicitCreditPurchaseSwitchesImmediatelyWithoutUnsavedChanges() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        model.selectedDatabaseId = "db_edit"
+
+        let disposition = model.applyDatabaseCreditNavigation(
+            DatabaseCreditActivation(
+                databaseId: "db_purchased",
+                purchaserPrincipal: "r7inp-6aaaa-aaaaa-aaabq-cai",
+                productId: DatabaseCreditProduct.smallProductId
+            ),
+            origin: .explicitPurchase
+        )
+
+        #expect(disposition == .applied)
+        #expect(model.selectedDatabaseId == "db_purchased")
+        #expect(model.selectedBrowseDatabaseId == "db_purchased")
+        #expect(model.selectedBrowseNodePath == nil)
+        #expect(model.documentNode == nil)
+    }
+
+    @MainActor
+    @Test
     func saveRejectionsLockWritingWhileTransportErrorsRemainRetryable() async throws {
         let failures: [(BrowseDocumentWriteProbe.Result, BrowseDocumentWriteRestriction?)] = [
             (

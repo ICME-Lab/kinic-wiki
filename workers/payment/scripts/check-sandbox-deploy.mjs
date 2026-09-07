@@ -12,8 +12,15 @@ export function validateSandboxConfig(config, { requireProvisioned = false } = {
   assert.equal(config.workers_dev, true);
   assert.ok(!config.routes?.length, "sandbox config must not define routes");
   assert.equal(config.vars.KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
-  assert.equal(config.vars.APP_STORE_ENVIRONMENT, "Sandbox");
+  assert.equal(config.vars.APP_STORE_ALLOWED_ENVIRONMENTS, "Sandbox");
+  assert.equal(config.vars.APP_STORE_SANDBOX_FULFILLMENT_ENABLED, "true");
+  assert.equal(config.vars.APP_STORE_SANDBOX_GRANT_LIMIT, "1000");
   assert.equal(config.vars.APP_STORE_BUNDLE_ID, "xyz.kinic.ios.KinicWiki");
+  const appleRootFingerprints = String(config.vars.APP_STORE_NOTIFICATION_ROOT_SHA256S ?? "").split(",");
+  assert.equal(appleRootFingerprints.length, 3);
+  for (const fingerprint of appleRootFingerprints) {
+    assert.match(fingerprint, /^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$/u);
+  }
 
   const catalog = JSON.parse(config.vars.IAP_PRODUCT_CATALOG_JSON);
   assert.deepEqual(Object.keys(catalog), ["xyz.kinic.dbcredits.small"]);
@@ -52,8 +59,7 @@ function assertSandboxSecrets() {
     "KINIC_IAP_AUTHORITY_IDENTITY_PEM",
     "APP_STORE_ISSUER_ID",
     "APP_STORE_KEY_ID",
-    "APP_STORE_PRIVATE_KEY_PEM",
-    "APP_STORE_NOTIFICATION_ROOT_SHA256"
+    "APP_STORE_PRIVATE_KEY_PEM"
   ]) {
     assert.ok(names.has(required), `missing sandbox Worker secret: ${required}`);
   }

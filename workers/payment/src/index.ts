@@ -2,7 +2,7 @@
 // What: HTTP API for App Store IAP database credit fulfillment.
 // Why: iOS purchases need server verification before the VFS canister grants credits.
 
-import type { RuntimeEnv } from "./env.js";
+import { sandboxFulfillmentPolicy, type AppStoreEnvironment, type RuntimeEnv } from "./env.js";
 import { verifyStoreKitTransaction, transactionPayload } from "./app-store.js";
 import { verifyAppStoreNotification } from "./app-store-notification.js";
 import { parseProductCatalog } from "./product-catalog.js";
@@ -150,7 +150,6 @@ export async function activateDatabase(
   grant: typeof grantDatabaseCyclesFromIap = grantDatabaseCyclesFromIap,
   fetcher: typeof fetch = fetch
 ): Promise<Record<string, string | boolean>> {
-  const catalog = parseProductCatalog(env.IAP_PRODUCT_CATALOG_JSON);
   const devicePayload = transactionPayload(input.transactionJWS);
   const transactionId = requiredText(devicePayload.transactionId, "transactionId");
   const deviceAppAccountToken = optionalUuidText(devicePayload.appAccountToken, "appAccountToken");
@@ -158,7 +157,11 @@ export async function activateDatabase(
   if (existingFulfillment?.status === "fulfilled") {
     return fulfilledActivationResponse(existingFulfillment, deviceAppAccountToken);
   }
-  const verified = await verifyStoreKitTransaction(env, input.transactionJWS, catalog, fetcher);
+  const verified = await verifyStoreKitTransaction(env, input.transactionJWS, fetcher);
+  const sandboxPolicy = sandboxFulfillmentPolicy(env);
+  if (verified.environment === "Sandbox" && !sandboxPolicy.enabled) {
+    throw new ActivationError("Sandbox fulfillment is disabled", 403, false);
+  }
   const intent = await validatePurchaseIntent(env, {
     appAccountToken: verified.appAccountToken,
     productId: verified.productId,
@@ -167,7 +170,9 @@ export async function activateDatabase(
   const fulfillment = await ensureFulfillmentReceived(env, {
     transactionId,
     databaseId: intent.database_id,
-    purchaserPrincipal: intent.purchaser_principal
+    purchaserPrincipal: intent.purchaser_principal,
+    environment: verified.environment,
+    sandboxGrantLimit: sandboxPolicy.grantLimit
   });
   if (fulfillment.status === "fulfilled") {
     return fulfilledActivationResponse(fulfillment, verified.appAccountToken);
@@ -317,15 +322,18 @@ function parseAmountCyclesSnapshot(value: string | null): bigint {
   return cycles;
 }
 
-async function ensureFulfillmentReceived(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string }): Promise<FulfillmentRow> {
+async function ensureFulfillmentReceived(env: RuntimeEnv, input: { transactionId: string; databaseId: string; purchaserPrincipal: string; environment: AppStoreEnvironment; sandboxGrantLimit: number }): Promise<FulfillmentRow> {
   const now = Date.now();
   await env.DB.prepare(
-    "INSERT INTO iap_fulfillments (transaction_id, database_id, purchaser_principal, app_account_token, product_id, environment, bundle_id, cycles, status, error_message, created_at_ms, updated_at_ms) VALUES (?1, ?2, ?3, NULL, 'unknown', ?4, ?5, '0', 'received', NULL, ?6, ?6) ON CONFLICT(transaction_id) DO NOTHING"
+    "INSERT INTO iap_fulfillments (transaction_id, database_id, purchaser_principal, app_account_token, product_id, environment, bundle_id, cycles, status, error_message, created_at_ms, updated_at_ms) SELECT ?1, ?2, ?3, NULL, 'unknown', ?4, ?5, '0', 'received', NULL, ?6, ?6 WHERE ?4 <> 'Sandbox' OR (SELECT COUNT(*) FROM iap_fulfillments WHERE environment = 'Sandbox') < ?7 ON CONFLICT(transaction_id) DO NOTHING"
   )
-    .bind(input.transactionId, input.databaseId, input.purchaserPrincipal, env.APP_STORE_ENVIRONMENT, env.APP_STORE_BUNDLE_ID, now)
+    .bind(input.transactionId, input.databaseId, input.purchaserPrincipal, input.environment, env.APP_STORE_BUNDLE_ID, now, input.sandboxGrantLimit)
     .run();
   const fulfillment = await fulfillmentByTransaction(env, input.transactionId);
   if (!fulfillment) {
+    if (input.environment === "Sandbox") {
+      throw new ActivationError("Sandbox fulfillment grant limit reached", 403, false);
+    }
     throw new Error("fulfillment row was not created");
   }
   assertFulfillmentOwner(fulfillment, input.databaseId, input.purchaserPrincipal, "received");

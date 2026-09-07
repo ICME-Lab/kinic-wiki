@@ -19,8 +19,7 @@ const sandboxConfig = {
 };
 const productionConfig = {
   vars: {
-    IAP_PRODUCT_CATALOG_JSON:
-      '{"xyz.kinic.dbcredits.small":"2000000000000","xyz.kinic.dbcredits.medium":"1","xyz.kinic.dbcredits.large":"1"}'
+    IAP_PRODUCT_CATALOG_JSON: '{"xyz.kinic.dbcredits.small":"2000000000000"}'
   }
 };
 

@@ -772,11 +772,19 @@ final class AppModel {
     }
 
     @discardableResult
-    func requestBrowseDatabaseSelection(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
+    func requestBrowseDatabaseSelection(
+        _ databaseId: String,
+        purpose: BrowseDatabaseSelectionPurpose = .browse
+    ) -> BrowseDatabaseSelectionDisposition {
         let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !databaseId.isEmpty,
-              databaseId != selectedBrowseDatabaseId else {
+        guard !databaseId.isEmpty else {
             return .unchanged
+        }
+        if databaseId == selectedBrowseDatabaseId {
+            let changesCaptureDatabase = purpose == .databaseCreditActivation
+                && selectedDatabaseId != databaseId
+            applyBrowseDatabaseSelectionPurpose(purpose, databaseId: databaseId)
+            return changesCaptureDatabase ? .applied : .unchanged
         }
 
         cancelRequestedBrowseDeepLink()
@@ -784,10 +792,15 @@ final class AppModel {
         guard documentEditSession?.hasChanges == true else {
             documentEditSession = nil
             applySelectedBrowseDatabase(databaseId)
+            applyBrowseDatabaseSelectionPurpose(purpose, databaseId: databaseId)
             return .applied
         }
 
-        let request = BrowseDatabaseSelectionRequest(id: UUID(), databaseId: databaseId)
+        let request = BrowseDatabaseSelectionRequest(
+            id: UUID(),
+            databaseId: databaseId,
+            purpose: purpose
+        )
         requestedBrowseDatabaseSelection = request
         requestTab(.browse)
         browseNavigationRequestID += 1
@@ -799,6 +812,7 @@ final class AppModel {
         requestedBrowseDatabaseSelection = nil
         documentEditSession = nil
         applySelectedBrowseDatabase(request.databaseId)
+        applyBrowseDatabaseSelectionPurpose(request.purpose, databaseId: request.databaseId)
         browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
             requestId: request.id,
             databaseId: request.databaseId,
@@ -1262,6 +1276,15 @@ final class AppModel {
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID += 1
         startLoadBrowsePath(currentPath)
+    }
+
+    private func applyBrowseDatabaseSelectionPurpose(
+        _ purpose: BrowseDatabaseSelectionPurpose,
+        databaseId: String
+    ) {
+        guard purpose == .databaseCreditActivation else { return }
+        setSelectedDatabase(databaseId)
+        autoSubmitPendingURL()
     }
 
     private func cancelRequestedBrowseDeepLink() {
@@ -2084,7 +2107,7 @@ final class AppModel {
                 databaseId: databaseId,
                 purchaserPrincipal: session.principal
             )
-            await applyDatabaseCreditActivation(activation)
+            await applyDatabaseCreditActivation(activation, origin: .explicitPurchase)
         } catch {
             databaseCreditError = error.localizedDescription
         }
@@ -2103,7 +2126,7 @@ final class AppModel {
             result.activations,
             for: session?.principal
         ) {
-            await applyDatabaseCreditActivation(activation)
+            await applyDatabaseCreditActivation(activation, origin: .automaticRecovery)
         }
         databaseCreditError = Self.databaseCreditRecoveryError(result.failures)
     }
@@ -2129,11 +2152,15 @@ final class AppModel {
         return "\(first.message) (\(remaining) more transaction\(remaining == 1 ? "" : "s") failed.)"
     }
 
-    private func applyDatabaseCreditActivation(_ activation: DatabaseCreditActivation) async {
-        pendingCreatedDatabase = nil
+    private func applyDatabaseCreditActivation(
+        _ activation: DatabaseCreditActivation,
+        origin: DatabaseCreditActivationOrigin
+    ) async {
+        if pendingCreatedDatabase?.databaseId == activation.databaseId {
+            pendingCreatedDatabase = nil
+        }
         await refreshDatabases(selectFirstIfNeeded: false)
-        setSelectedDatabase(activation.databaseId)
-        setSelectedBrowseDatabase(activation.databaseId)
+        guard origin == .explicitPurchase else { return }
         if let balance = databases.first(where: { $0.databaseId == activation.databaseId })?.cyclesBalance {
             statusMessage = "Database credits added. Balance: \(DatabaseManagementFormat.cycles(balance))."
         } else {
@@ -2141,10 +2168,19 @@ final class AppModel {
         }
         lastDatabaseCreditActivationDatabaseId = activation.databaseId
         databaseCreditActivationRevision &+= 1
-        await loadBrowsePath("/")
-        if !pendingURLs.isEmpty {
-            await submitNextPendingURL()
-        }
+        _ = applyDatabaseCreditNavigation(activation, origin: origin)
+    }
+
+    @discardableResult
+    func applyDatabaseCreditNavigation(
+        _ activation: DatabaseCreditActivation,
+        origin: DatabaseCreditActivationOrigin
+    ) -> BrowseDatabaseSelectionDisposition {
+        guard origin == .explicitPurchase else { return .unchanged }
+        return requestBrowseDatabaseSelection(
+            activation.databaseId,
+            purpose: .databaseCreditActivation
+        )
     }
 
     private func loadBrowsePath(_ path: String) async {

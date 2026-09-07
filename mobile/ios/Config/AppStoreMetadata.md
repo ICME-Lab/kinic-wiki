@@ -40,12 +40,11 @@ Create your first database at no cost. An initial usage grant is included so you
 
 wiki, knowledge, capture, links, notes, Internet Computer
 
-## What's New in 1.0.2
+## What's New in 1.0.4
 
-- Ask questions using evidence from one selected database.
-- Review the notes searched and cited for each supported answer.
-- Improved response completion handling for Kinic AI.
-- Added clearer privacy information for transient Ask AI processing and on-device history.
+- Purchase database credits securely through the App Store.
+- Improved Internet Identity sign-in and saved-session reliability.
+- Improved database browsing and capture reliability.
 
 ## Screenshot Story
 

@@ -36,3 +36,8 @@ struct DatabaseCreditActivation: Equatable, Sendable {
     let purchaserPrincipal: String
     let productId: String
 }
+
+enum DatabaseCreditActivationOrigin: Equatable, Sendable {
+    case explicitPurchase
+    case automaticRecovery
+}

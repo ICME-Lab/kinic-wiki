@@ -39,6 +39,9 @@ export async function grantDatabaseCyclesFromIap(env: RuntimeEnv, request: IapGr
     import("@icp-sdk/core/principal"),
     identityFromPem(env.KINIC_IAP_AUTHORITY_IDENTITY_PEM)
   ]);
+  if (identity.getPrincipal().toText() !== env.KINIC_IAP_AUTHORITY_ID) {
+    throw new Error("IAP authority identity does not match KINIC_IAP_AUTHORITY_ID");
+  }
   const idlFactory: Parameters<typeof Actor.createActor>[0] = ({ IDL: idl }) => {
     const DatabaseCyclesIapGrantRequest = idl.Record({
       database_id: idl.Text,

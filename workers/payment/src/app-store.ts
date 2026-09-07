@@ -2,9 +2,8 @@
 // What: App Store Server API transaction verification.
 // Why: StoreKit JWS from the device is not trusted until Apple confirms it.
 
-import type { AppStoreEnvironment, RuntimeEnv } from "./env.js";
+import { allowedAppStoreEnvironments, type AppStoreEnvironment, type RuntimeEnv } from "./env.js";
 import { base64Url, base64UrlJson, decodeJwsPayload } from "./jws.js";
-import type { ProductCatalog } from "./product-catalog.js";
 
 export type VerifiedTransaction = {
   transactionId: string;
@@ -12,7 +11,6 @@ export type VerifiedTransaction = {
   bundleId: string;
   environment: AppStoreEnvironment;
   appAccountToken: string;
-  cycles: bigint;
 };
 
 type TransactionPayload = {
@@ -31,13 +29,17 @@ type AppStoreTransactionResponse = {
 export async function verifyStoreKitTransaction(
   env: RuntimeEnv,
   transactionJWS: string,
-  catalog: ProductCatalog,
   fetcher: typeof fetch = fetch
 ): Promise<VerifiedTransaction> {
   const devicePayload = transactionPayload(transactionJWS);
   const transactionId = requireText(devicePayload.transactionId, "transactionId");
+  const deviceEnvironment = requireEnvironment(devicePayload.environment);
+  const allowedEnvironments = allowedAppStoreEnvironments(env);
+  if (!allowedEnvironments.has(deviceEnvironment)) {
+    throw new Error("App Store environment is not allowed");
+  }
   const serverJwt = await appStoreServerJwt(env);
-  const response = await fetcher(`${appStoreBaseUrl(env.APP_STORE_ENVIRONMENT)}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`, {
+  const response = await fetcher(`${appStoreBaseUrl(deviceEnvironment)}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`, {
     headers: { authorization: `Bearer ${serverJwt}` }
   });
   if (!response.ok) {
@@ -59,23 +61,18 @@ export async function verifyStoreKitTransaction(
   if (bundleId !== env.APP_STORE_BUNDLE_ID) {
     throw new Error("App Store bundle id mismatch");
   }
-  if (environment !== env.APP_STORE_ENVIRONMENT) {
+  if (environment !== deviceEnvironment || !allowedEnvironments.has(environment)) {
     throw new Error("App Store environment mismatch");
   }
   if (payload.revocationDate !== undefined && payload.revocationDate !== null) {
     throw new Error("App Store transaction was revoked");
-  }
-  const cycles = catalog.get(productId);
-  if (!cycles) {
-    throw new Error(`unknown IAP product: ${productId}`);
   }
   return {
     transactionId,
     productId,
     bundleId,
     environment,
-    appAccountToken,
-    cycles
+    appAccountToken
   };
 }
 
@@ -110,7 +107,7 @@ async function appStoreServerJwt(env: RuntimeEnv): Promise<string> {
 }
 
 function appStoreBaseUrl(environment: AppStoreEnvironment): string {
-  return environment === "Production" ? "https://api.storekit.itunes.apple.com" : "https://api.storekit-sandbox.itunes.apple.com";
+  return environment === "Production" ? "https://api.storekit.apple.com" : "https://api.storekit-sandbox.apple.com";
 }
 
 function requireEnvironment(value: unknown): AppStoreEnvironment {

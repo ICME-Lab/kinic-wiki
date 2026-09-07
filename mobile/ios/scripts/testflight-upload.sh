@@ -6,6 +6,25 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+
+# Shell values are explicit invocation inputs and take precedence over local defaults.
+caller_asc_app_id_set="${ASC_APP_ID+x}"
+caller_asc_app_id="${ASC_APP_ID-}"
+caller_asc_profile_set="${ASC_PROFILE+x}"
+caller_asc_profile="${ASC_PROFILE-}"
+caller_build_number_set="${KINIC_IOS_BUILD_NUMBER+x}"
+caller_build_number="${KINIC_IOS_BUILD_NUMBER-}"
+caller_marketing_version_set="${KINIC_IOS_MARKETING_VERSION+x}"
+caller_marketing_version="${KINIC_IOS_MARKETING_VERSION-}"
+caller_archive_path_set="${KINIC_IOS_ARCHIVE_PATH+x}"
+caller_archive_path="${KINIC_IOS_ARCHIVE_PATH-}"
+caller_export_path_set="${KINIC_IOS_EXPORT_PATH+x}"
+caller_export_path="${KINIC_IOS_EXPORT_PATH-}"
+caller_scheme_set="${KINIC_IOS_SCHEME+x}"
+caller_scheme="${KINIC_IOS_SCHEME-}"
+caller_configuration_set="${KINIC_IOS_CONFIGURATION+x}"
+caller_configuration="${KINIC_IOS_CONFIGURATION-}"
+
 env_files=("$repo_root/mobile/ios/.env.local" "$repo_root/mobile/ios/.env.testflight.local")
 if [[ -n "${KINIC_IOS_ENV_FILE:-}" ]]; then
   env_files=("$KINIC_IOS_ENV_FILE")
@@ -19,14 +38,24 @@ for env_file in "${env_files[@]}"; do
   fi
 done
 
+[[ -z "$caller_asc_app_id_set" ]] || ASC_APP_ID="$caller_asc_app_id"
+[[ -z "$caller_asc_profile_set" ]] || ASC_PROFILE="$caller_asc_profile"
+[[ -z "$caller_build_number_set" ]] || KINIC_IOS_BUILD_NUMBER="$caller_build_number"
+[[ -z "$caller_marketing_version_set" ]] || KINIC_IOS_MARKETING_VERSION="$caller_marketing_version"
+[[ -z "$caller_archive_path_set" ]] || KINIC_IOS_ARCHIVE_PATH="$caller_archive_path"
+[[ -z "$caller_export_path_set" ]] || KINIC_IOS_EXPORT_PATH="$caller_export_path"
+[[ -z "$caller_scheme_set" ]] || KINIC_IOS_SCHEME="$caller_scheme"
+[[ -z "$caller_configuration_set" ]] || KINIC_IOS_CONFIGURATION="$caller_configuration"
+
 project="$repo_root/mobile/ios/Kinic.xcodeproj"
+project_spec="$repo_root/mobile/ios/project.yml"
 scheme="${KINIC_IOS_SCHEME:-Kinic}"
 configuration="${KINIC_IOS_CONFIGURATION:-Release}"
 team_id="AKN976G7AK"
 bundle_id="xyz.kinic.ios.KinicWiki"
 asc_app_id="${ASC_APP_ID:-6785718977}"
 build_number="${KINIC_IOS_BUILD_NUMBER:-}"
-marketing_version="${KINIC_IOS_MARKETING_VERSION:-0.1.0}"
+marketing_version="${KINIC_IOS_MARKETING_VERSION:-}"
 archive_path_override="${KINIC_IOS_ARCHIVE_PATH:-}"
 export_path_override="${KINIC_IOS_EXPORT_PATH:-}"
 asc_profile="${ASC_PROFILE:-}"
@@ -40,6 +69,15 @@ fail() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
+
+project_marketing_version="$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' "$project_spec")"
+[[ -n "$project_marketing_version" && "$project_marketing_version" != *$'\n'* ]] \
+  || fail "Could not resolve one MARKETING_VERSION from $project_spec"
+if [[ -z "$marketing_version" ]]; then
+  marketing_version="$project_marketing_version"
+elif [[ -z "$caller_marketing_version_set" && "$marketing_version" != "$project_marketing_version" ]]; then
+  fail "KINIC_IOS_MARKETING_VERSION from an env file ($marketing_version) does not match project.yml ($project_marketing_version); update the env file or pass an explicit shell override"
+fi
 
 usage() {
   cat <<'EOF'
@@ -56,7 +94,7 @@ Environment:
   Optional:
     ASC_APP_ID                  App Store Connect app ID. Defaults to Kinic 6785718977.
     KINIC_IOS_BUILD_NUMBER      Explicit build number. Otherwise ASC latest + 1 is used.
-    KINIC_IOS_MARKETING_VERSION Defaults to 0.1.0.
+    KINIC_IOS_MARKETING_VERSION Defaults to MARKETING_VERSION in project.yml. Shell values override env files.
     KINIC_IOS_ARCHIVE_PATH      Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_EXPORT_PATH       Defaults under mobile/ios/build/TestFlight.
     KINIC_IOS_SCHEME            Defaults to Kinic.
@@ -138,6 +176,8 @@ fi
 
 if [[ "$print_runtime_config" == "1" ]]; then
   printf 'distribution=%s\n' "$distribution"
+  printf 'marketing_version=%s\n' "$marketing_version"
+  printf 'build_number=%s\n' "${build_number:-auto}"
   printf '%s\n' "${runtime_build_settings[@]}"
   exit 0
 fi

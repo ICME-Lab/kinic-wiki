@@ -46,6 +46,123 @@ test("valid transaction grants catalog cycles and marks fulfillment", async () =
   assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
 });
 
+test("production deployment accepts a TestFlight sandbox transaction and uses the sandbox API", async () => {
+  const env = await testEnv();
+  env.APP_STORE_ALLOWED_ENVIRONMENTS = "Sandbox,Production";
+  const appAccountToken = await purchaseIntent(env);
+  let requestedUrl = "";
+  await activateDatabase(
+    env,
+    { transactionJWS: jws({ transactionId: "tx-testflight", appAccountToken }) },
+    async () => {},
+    async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        signedTransactionInfo: jws(serverPayload("tx-testflight", { appAccountToken }))
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  );
+
+  assert.match(requestedUrl, /^https:\/\/api\.storekit-sandbox\.apple\.com\//u);
+  assert.equal(env.DB.rows.get("tx-testflight")?.environment, "Sandbox");
+});
+
+test("production deployment rejects Sandbox fulfillment while its review window is disabled", async () => {
+  const env = await testEnv();
+  env.APP_STORE_ALLOWED_ENVIRONMENTS = "Sandbox,Production";
+  env.APP_STORE_SANDBOX_FULFILLMENT_ENABLED = "false";
+  const appAccountToken = await purchaseIntent(env);
+  let granted = false;
+
+  await assert.rejects(
+    () => activateDatabase(
+      env,
+      { transactionJWS: jws({ transactionId: "tx-sandbox-disabled", appAccountToken }) },
+      async () => {
+        granted = true;
+      },
+      fakeAppStoreFetch(jws(serverPayload("tx-sandbox-disabled", { appAccountToken })))
+    ),
+    /Sandbox fulfillment is disabled/
+  );
+
+  assert.equal(granted, false);
+  assert.equal(env.DB.rows.has("tx-sandbox-disabled"), false);
+});
+
+test("production deployment caps Sandbox fulfillment reservations", async () => {
+  const env = await testEnv();
+  env.APP_STORE_ALLOWED_ENVIRONMENTS = "Sandbox,Production";
+  env.APP_STORE_SANDBOX_GRANT_LIMIT = "1";
+  const firstToken = await purchaseIntent(env);
+  const secondToken = await purchaseIntent(env);
+  let grantCount = 0;
+
+  await activateDatabase(
+    env,
+    { transactionJWS: jws({ transactionId: "tx-sandbox-first", appAccountToken: firstToken }) },
+    async () => {
+      grantCount += 1;
+    },
+    fakeAppStoreFetch(jws(serverPayload("tx-sandbox-first", { appAccountToken: firstToken })))
+  );
+  await assert.rejects(
+    () => activateDatabase(
+      env,
+      { transactionJWS: jws({ transactionId: "tx-sandbox-over-limit", appAccountToken: secondToken }) },
+      async () => {
+        grantCount += 1;
+      },
+      fakeAppStoreFetch(jws(serverPayload("tx-sandbox-over-limit", { appAccountToken: secondToken })))
+    ),
+    /Sandbox fulfillment grant limit reached/
+  );
+
+  assert.equal(grantCount, 1);
+  assert.equal(env.DB.rows.has("tx-sandbox-over-limit"), false);
+});
+
+test("production transaction uses the production API when allowed", async () => {
+  const env = await testEnv();
+  env.APP_STORE_ALLOWED_ENVIRONMENTS = "Sandbox,Production";
+  const appAccountToken = await purchaseIntent(env);
+  let requestedUrl = "";
+  await activateDatabase(
+    env,
+    { transactionJWS: jws({ transactionId: "tx-production", appAccountToken, environment: "Production" }) },
+    async () => {},
+    async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        signedTransactionInfo: jws(serverPayload("tx-production", { appAccountToken, environment: "Production" }))
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  );
+
+  assert.match(requestedUrl, /^https:\/\/api\.storekit\.apple\.com\//u);
+  assert.equal(env.DB.rows.get("tx-production")?.environment, "Production");
+});
+
+test("transaction rejects a device environment outside the deployment allowlist", async () => {
+  const env = await testEnv();
+  const appAccountToken = await purchaseIntent(env);
+  let fetched = false;
+
+  await assert.rejects(
+    () => activateDatabase(
+      env,
+      { transactionJWS: jws({ transactionId: "tx-disallowed", appAccountToken, environment: "Production" }) },
+      async () => {},
+      async () => {
+        fetched = true;
+        return new Response();
+      }
+    ),
+    /environment is not allowed/
+  );
+  assert.equal(fetched, false);
+});
+
 test("activation uses the purchase intent cycles snapshot after catalog changes", async () => {
   const env = await testEnv();
   const appAccountToken = await purchaseIntent(env);
@@ -59,6 +176,26 @@ test("activation uses the purchase intent cycles snapshot after catalog changes"
     },
     fakeAppStoreFetch(jws(serverPayload("tx-snapshot", { appAccountToken })))
   );
+});
+
+test("activation fulfills a saved purchase intent after its product leaves the catalog", async () => {
+  const env = await testEnv();
+  const appAccountToken = await purchaseIntent(env);
+  env.IAP_PRODUCT_CATALOG_JSON = JSON.stringify({ "xyz.kinic.dbcredits.replacement": "99999" });
+  const transactionJWS = jws({ transactionId: "tx-retired-product", appAccountToken });
+
+  await activateDatabase(
+    env,
+    { transactionJWS },
+    async (_env, request) => {
+      assert.equal(request.amountCycles, 12345n);
+      assert.equal(request.productId, PRODUCT_ID);
+    },
+    fakeAppStoreFetch(jws(serverPayload("tx-retired-product", { appAccountToken })))
+  );
+
+  assert.equal(env.DB.rows.get("tx-retired-product")?.status, "fulfilled");
+  assert.equal(env.DB.intents.get(appAccountToken)?.status, "fulfilled");
 });
 
 test("activation rejects legacy intents without a cycles snapshot", async () => {
@@ -411,7 +548,7 @@ test("duplicate transaction for another database does not overwrite fulfillment 
   assert.equal(env.DB.rows.get("tx-conflict")?.database_id, "db_other");
 });
 
-test("unknown product rejects before grant", async () => {
+test("transaction product mismatch rejects before grant", async () => {
   const env = await testEnv();
   const appAccountToken = await purchaseIntent(env);
   await assert.rejects(
@@ -425,7 +562,7 @@ test("unknown product rejects before grant", async () => {
       },
       fakeAppStoreFetch(jws(serverPayload("tx-3", { productId: "unknown.product", appAccountToken })))
     ),
-    /unknown IAP product/
+    /purchase intent product mismatch/
   );
 });
 
@@ -744,7 +881,7 @@ test("App Store notification stores verified refund or revoke payload", async ()
       signedTransactionInfo
     }
   });
-  env.APP_STORE_NOTIFICATION_ROOT_SHA256 = fixture.rootFingerprint;
+  env.APP_STORE_NOTIFICATION_ROOT_SHA256S = fixture.rootFingerprint;
 
   const response = await worker.fetch(
     new Request("https://payment.test/iap/app-store-notifications", {
@@ -772,7 +909,7 @@ test("App Store notification rejects outer bundle or environment mismatch", asyn
       signedTransactionInfo
     }
   });
-  env.APP_STORE_NOTIFICATION_ROOT_SHA256 = fixture.rootFingerprint;
+  env.APP_STORE_NOTIFICATION_ROOT_SHA256S = fixture.rootFingerprint;
 
   const response = await worker.fetch(
     new Request("https://payment.test/iap/app-store-notifications", {
@@ -789,6 +926,7 @@ test("App Store notification rejects outer bundle or environment mismatch", asyn
 
 test("App Store notification rejects nested transaction bundle or environment mismatch", async () => {
   const env = await testEnv();
+  env.APP_STORE_ALLOWED_ENVIRONMENTS = "Sandbox,Production";
   const fixture = signedNotificationFixture();
   const signedTransactionInfo = signFixtureJws(
     fixture,
@@ -803,7 +941,7 @@ test("App Store notification rejects nested transaction bundle or environment mi
       signedTransactionInfo
     }
   });
-  env.APP_STORE_NOTIFICATION_ROOT_SHA256 = fixture.rootFingerprint;
+  env.APP_STORE_NOTIFICATION_ROOT_SHA256S = fixture.rootFingerprint;
 
   const response = await worker.fetch(
     new Request("https://payment.test/iap/app-store-notifications", {
@@ -818,6 +956,48 @@ test("App Store notification rejects nested transaction bundle or environment mi
   assert.equal(env.DB.notifications.size, 0);
 });
 
+test("App Store notification rejects certificates without required Apple purposes", async (context) => {
+  const cases: Array<[string, SignedNotificationFixture, boolean]> = [
+    ["leaf purpose missing", signedNotificationFixture({ leafPurpose: false }), false],
+    ["intermediate purpose missing", signedNotificationFixture({ intermediatePurpose: false }), false],
+    ["intermediate is not a CA", signedNotificationFixture({ intermediateCA: false }), false],
+    ["trusted root does not match", signedNotificationFixture(), true]
+  ];
+
+  for (const [name, fixture, wrongRoot] of cases) {
+    await context.test(name, async () => {
+      const env = await testEnv();
+      const notificationUUID = `notification-${name.replaceAll(" ", "-")}`;
+      const signedTransactionInfo = signFixtureJws(
+        fixture,
+        serverPayload(`tx-${notificationUUID}`, { appAccountToken: crypto.randomUUID() })
+      );
+      const signedPayload = signFixtureJws(fixture, {
+        notificationUUID,
+        notificationType: "REFUND",
+        data: {
+          bundleId: "xyz.kinic.ios.KinicWiki",
+          environment: "Sandbox",
+          signedTransactionInfo
+        }
+      });
+      env.APP_STORE_NOTIFICATION_ROOT_SHA256S = wrongRoot ? "0".repeat(64) : fixture.rootFingerprint;
+
+      const response = await worker.fetch(
+        new Request("https://payment.test/iap/app-store-notifications", {
+          method: "POST",
+          body: JSON.stringify({ signedPayload }),
+          headers: { "content-type": "application/json" }
+        }),
+        env
+      );
+
+      assert.equal(response.status, 400);
+      assert.equal(env.DB.notifications.size, 0);
+    });
+  }
+});
+
 async function testEnv(): Promise<TestRuntimeEnv> {
   return {
     DB: new MemoryD1(),
@@ -825,12 +1005,16 @@ async function testEnv(): Promise<TestRuntimeEnv> {
     IAP_PRINCIPAL_RATE_LIMITER: new TestRateLimit(),
     KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
+    KINIC_IAP_AUTHORITY_ID: "jao7b-vs75q-xlvit-szusc-eiiv3-sel57-6iyuu-6fzkh-lqui4-mbqcf-aae",
     KINIC_IAP_AUTHORITY_IDENTITY_PEM: "unused",
-    APP_STORE_ENVIRONMENT: "Sandbox",
+    APP_STORE_ALLOWED_ENVIRONMENTS: "Sandbox",
+    APP_STORE_SANDBOX_FULFILLMENT_ENABLED: "true",
+    APP_STORE_SANDBOX_GRANT_LIMIT: "1000",
     APP_STORE_BUNDLE_ID: "xyz.kinic.ios.KinicWiki",
     APP_STORE_ISSUER_ID: "issuer",
     APP_STORE_KEY_ID: "key",
     APP_STORE_PRIVATE_KEY_PEM: await p256PrivateKeyPem(),
+    APP_STORE_NOTIFICATION_ROOT_SHA256S: "0".repeat(64),
     IAP_PRODUCT_CATALOG_JSON: JSON.stringify({ "xyz.kinic.dbcredits.small": "12345" })
   };
 }
@@ -854,7 +1038,11 @@ function serverPayload(transactionId: string, overrides: Record<string, string> 
 }
 
 function jws(payload: unknown): string {
-  return `${base64UrlJson({ alg: "ES256" })}.${base64UrlJson(payload)}.signature`;
+  const body = payload && typeof payload === "object" && !Array.isArray(payload)
+    && "transactionId" in payload && !("environment" in payload)
+    ? { ...payload, environment: "Sandbox" }
+    : payload;
+  return `${base64UrlJson({ alg: "ES256" })}.${base64UrlJson(body)}.signature`;
 }
 
 async function purchaseIntent(env: TestRuntimeEnv, overrides: Partial<{ databaseId: string; purchaserPrincipal: string; productId: string }> = {}): Promise<string> {
@@ -868,24 +1056,44 @@ async function purchaseIntent(env: TestRuntimeEnv, overrides: Partial<{ database
 
 type SignedNotificationFixture = {
   leafDerBase64: string;
+  intermediateDerBase64: string;
   rootDerBase64: string;
   rootFingerprint: string;
   leafPrivateKeyPem: string;
 };
 
-function signedNotificationFixture(): SignedNotificationFixture {
+function signedNotificationFixture(options: Partial<{
+  leafPurpose: boolean;
+  intermediatePurpose: boolean;
+  intermediateCA: boolean;
+}> = {}): SignedNotificationFixture {
+  const leafPurpose = options.leafPurpose ?? true;
+  const intermediatePurpose = options.intermediatePurpose ?? true;
+  const intermediateCA = options.intermediateCA ?? true;
   const directory = mkdtempSync(join(tmpdir(), "kinic-payment-notification-"));
   openssl(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "root.key"], directory);
-  openssl(["req", "-x509", "-new", "-key", "root.key", "-sha256", "-days", "1", "-subj", "/CN=Kinic Test Root", "-out", "root.crt"], directory);
+  openssl(["req", "-x509", "-new", "-key", "root.key", "-sha256", "-days", "1", "-subj", "/CN=Kinic Test Root", "-addext", "basicConstraints=critical,CA:TRUE", "-out", "root.crt"], directory);
+  openssl(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "intermediate.key"], directory);
+  const intermediateRequest = ["req", "-new", "-key", "intermediate.key", "-subj", "/CN=Kinic Test Intermediate", "-addext", `basicConstraints=critical,CA:${intermediateCA ? "TRUE" : "FALSE"}`];
+  if (intermediatePurpose) intermediateRequest.push("-addext", "1.2.840.113635.100.6.2.1=ASN1:NULL");
+  intermediateRequest.push("-out", "intermediate.csr");
+  openssl(intermediateRequest, directory);
+  openssl(["x509", "-req", "-in", "intermediate.csr", "-CA", "root.crt", "-CAkey", "root.key", "-CAcreateserial", "-out", "intermediate.crt", "-days", "1", "-sha256", "-copy_extensions", "copy"], directory);
   openssl(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "leaf.key"], directory);
-  openssl(["req", "-new", "-key", "leaf.key", "-subj", "/CN=Kinic Test Leaf", "-out", "leaf.csr"], directory);
-  openssl(["x509", "-req", "-in", "leaf.csr", "-CA", "root.crt", "-CAkey", "root.key", "-CAcreateserial", "-out", "leaf.crt", "-days", "1", "-sha256"], directory);
+  const leafRequest = ["req", "-new", "-key", "leaf.key", "-subj", "/CN=Kinic Test Leaf", "-addext", "basicConstraints=critical,CA:FALSE"];
+  if (leafPurpose) leafRequest.push("-addext", "1.2.840.113635.100.6.11.1=ASN1:NULL");
+  leafRequest.push("-out", "leaf.csr");
+  openssl(leafRequest, directory);
+  openssl(["x509", "-req", "-in", "leaf.csr", "-CA", "intermediate.crt", "-CAkey", "intermediate.key", "-CAcreateserial", "-out", "leaf.crt", "-days", "1", "-sha256", "-copy_extensions", "copy"], directory);
   openssl(["x509", "-in", "root.crt", "-outform", "DER", "-out", "root.der"], directory);
+  openssl(["x509", "-in", "intermediate.crt", "-outform", "DER", "-out", "intermediate.der"], directory);
   openssl(["x509", "-in", "leaf.crt", "-outform", "DER", "-out", "leaf.der"], directory);
   const rootDer = readFileSync(join(directory, "root.der"));
+  const intermediateDer = readFileSync(join(directory, "intermediate.der"));
   const leafDer = readFileSync(join(directory, "leaf.der"));
   return {
     leafDerBase64: leafDer.toString("base64"),
+    intermediateDerBase64: intermediateDer.toString("base64"),
     rootDerBase64: rootDer.toString("base64"),
     rootFingerprint: new X509Certificate(rootDer).fingerprint256.replaceAll(":", "").toLowerCase(),
     leafPrivateKeyPem: readFileSync(join(directory, "leaf.key"), "utf8")
@@ -893,7 +1101,10 @@ function signedNotificationFixture(): SignedNotificationFixture {
 }
 
 function signFixtureJws(fixture: SignedNotificationFixture, payload: unknown): string {
-  const header = base64UrlJson({ alg: "ES256", x5c: [fixture.leafDerBase64, fixture.rootDerBase64] });
+  const header = base64UrlJson({
+    alg: "ES256",
+    x5c: [fixture.leafDerBase64, fixture.intermediateDerBase64, fixture.rootDerBase64]
+  });
   const encodedPayload = base64UrlJson(payload);
   const signingInput = `${header}.${encodedPayload}`;
   const signature = sign("sha256", Buffer.from(signingInput), {
@@ -1013,13 +1224,19 @@ class MemoryStatement {
       if (this.db.rows.has(String(this.values[0]))) {
         return { success: true, meta: { changes: 0 } };
       }
+      const environment = String(this.values[3]);
+      const sandboxGrantLimit = Number(this.values[6]);
+      const sandboxReservations = [...this.db.rows.values()].filter((row) => row.environment === "Sandbox").length;
+      if (environment === "Sandbox" && sandboxReservations >= sandboxGrantLimit) {
+        return { success: true, meta: { changes: 0 } };
+      }
       this.db.rows.set(String(this.values[0]), {
         transaction_id: String(this.values[0]),
         database_id: String(this.values[1]),
         purchaser_principal: String(this.values[2]),
         app_account_token: null,
         product_id: "unknown",
-        environment: String(this.values[3]),
+        environment,
         bundle_id: String(this.values[4]),
         cycles: "0",
         status: "received",
