@@ -70,6 +70,14 @@ struct AppSettingsView: View {
                     }
             }
 
+            Section("On-device Data") {
+                NavigationLink {
+                    VoiceDraftsView(model: model)
+                } label: {
+                    Label("On-device Voice Drafts", systemImage: "waveform")
+                }
+            }
+
             Section("Privacy") {
                 Link("Privacy Policy", destination: AppConfiguration.privacyPolicyURL)
             }

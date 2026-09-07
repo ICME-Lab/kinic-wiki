@@ -6,6 +6,7 @@
 - Subtitle: Save and browse your AI memory
 - Bundle ID: xyz.kinic.ios.KinicWiki
 - Share Extension Bundle ID: xyz.kinic.ios.KinicWiki.ShareExtension
+- Voice Widget Bundle ID: xyz.kinic.ios.KinicWiki.VoiceWidget
 - Team ID: AKN976G7AK
 - App Group: group.xyz.kinic.ios.KinicWiki
 - Primary category: Productivity
@@ -24,6 +25,7 @@ Save web pages from Safari, organize knowledge into clear folders, and search ev
 With KinicWiki, you can:
 
 - Capture links from the iOS share sheet
+- Start an on-device voice note from a Home Screen or Lock Screen widget, Siri, or Shortcuts
 - Browse Knowledge, Memory, Sessions, Skills, and Sources
 - Search across your wiki
 - Ask questions using evidence from one selected database
@@ -60,6 +62,8 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Uses Internet Identity for sign-in.
 - Stores pending shared URLs and selected database ID in the app group container.
 - Stores Ask AI conversation history on the device.
+- Stores unfinished voice-note transcripts as device-local drafts, separated by signed-in principal or guest scope and excluded from backup.
+- Performs voice-note transcription on device. Dictation audio is neither retained nor uploaded; only Markdown approved by the user is written to Kinic.
 - Sends Ask AI questions, the selected database name, up to six recent conversation messages, and relevant document excerpts to Kinic's AI service to generate answers.
 - Discards Ask AI request bodies after processing and does not retain them in logs, caches, databases, analytics, or training datasets.
 - Does not send Ask AI data to a third-party AI provider.
@@ -75,6 +79,7 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Purpose: App Functionality.
 - Tracking: No.
 - Ask AI request data is transient and is not retained after real-time processing.
+- Microphone and Speech Recognition access are used only after the user starts voice capture. Recognition is on device and has no network fallback.
 
 ## Review Notes
 
@@ -83,5 +88,7 @@ On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Conti
 Public databases are shown by default. Open Browse and select the pre-populated public database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain" and submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
 
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
+
+To test voice notes, add the Kinic Voice Note widget or run the "Start Voice Note" shortcut. The action opens KinicWiki in the foreground. Grant Microphone and Speech Recognition access, speak, stop, review the title and transcript, select a writable database, and save. The app requires on-device recognition and does not retain dictation audio. Unsent transcripts remain under Settings > On-device voice drafts until the user retries or deletes them.
 
 To test account deletion, sign in, open Settings, and choose "Delete Account" under Account Deletion. The confirmation explains that sole-owned databases are permanently deleted, shared databases remain while the current user's access is removed, purchased access is revoked, and local account history is erased. Internet Identity itself and transaction records required for settlement and duplicate-grant prevention are not deleted. After successful deletion, the app signs out automatically.

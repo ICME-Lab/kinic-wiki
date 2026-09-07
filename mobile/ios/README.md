@@ -10,6 +10,8 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Uses `humandebri/ICNativeClient` through Swift Package Manager.
 - Includes AppIcon assets generated from the existing Kinic mark.
 - Includes `PrivacyInfo.xcprivacy` for app group `UserDefaults` usage.
+- Adds Home Screen and Lock Screen voice-note widgets plus a matching App Shortcut. They open the app's foreground capture screen; widgets never record audio themselves.
+- Transcribes voice notes on device in the configured wiki output language. Dictation audio is not written to disk or sent to Kinic; only the reviewed Markdown transcript is saved.
 - Opens Internet Identity directly through the ICRC-167 URL transport.
 - Receives Safari/browser Share Sheet URLs through `KinicShareExtension`.
 - Submits shared URLs directly from `KinicShareExtension` when a shared Keychain session and selected database are available.
@@ -36,6 +38,7 @@ The Bundle IDs are fixed to the App Store records:
 
 - `KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki`
 - `KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension`
+- `KINIC_WIDGET_BUNDLE_ID = xyz.kinic.ios.KinicWiki.VoiceWidget`
 
 The production AASA document is served by `wikibrowser/app/.well-known/apple-app-site-association/route.ts`.
 It uses the fixed App ID `AKN976G7AK.xyz.kinic.ios.KinicWiki` and must return `content-type: application/json`.
@@ -50,6 +53,8 @@ Enable these capabilities:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
   - Debug device builds also include `?mode=developer` variants so iOS can refresh the AASA from the origin while Apple CDN caches are stale.
+
+The app requests Microphone and Speech Recognition access only when voice capture starts. On-device recognition is mandatory; unsupported device/language combinations stop before recording and never fall back to network recognition.
 
 Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/ii-auth-callbacks`, `https://wiki.kinic.xyz/.well-known/apple-app-site-association`, and the terminating `/ios-auth-callback` route.
 
@@ -117,6 +122,8 @@ mobile/ios/scripts/testflight-upload.sh --internal-only
 ```
 
 External TestFlight distribution still needs App Store Connect configuration after upload: add the processed build to an external tester group, enter What to Test, submit Beta App Review, then invite testers or create a public link.
+
+Suggested What to Test: add each Kinic Voice Note widget family, start a voice note from the widget and the Start Voice Note shortcut, approve Microphone and Speech Recognition access, confirm partial text appears, and save the reviewed Markdown. Also verify denied permissions, an unsupported on-device language, offline draft retention, retry, and draft deletion in Settings. Dictation audio must never be retained or uploaded.
 
 Before upload, confirm `https://wiki.kinic.xyz/.well-known/apple-app-site-association` is 200, returns `content-type: application/json`, includes `AKN976G7AK.xyz.kinic.ios.KinicWiki`, and excludes `/cycles` before the `/*` catch-all so funding remains on the web. The app target must keep `applinks:wiki.kinic.xyz` and `webcredentials:wiki.kinic.xyz` through `KINIC_CALLBACK_DOMAIN`.
 The script fails before upload if either the app archive or Share Extension archive lacks `PrivacyInfo.xcprivacy`.

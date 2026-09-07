@@ -49,6 +49,10 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>KinicWiki connects to a local development canister on this network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>KinicWiki uses the microphone only while you create a voice note or voice memo.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>KinicWiki transcribes voice notes on this device so you can review and save them as Markdown.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

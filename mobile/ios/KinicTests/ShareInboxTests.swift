@@ -488,6 +488,18 @@ struct ShareInboxTests {
             callbackDomain: "wiki.kinic.xyz"
         ) == .authCallback)
         #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/ios-voice-capture?mode=dictation")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .voiceCapture(.dictation))
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/ios-voice-capture?mode=unknown")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .home("Choose a supported voice capture mode."))
+        #expect(AppModel.openURLDestination(
+            for: URL(string: "https://wiki.kinic.xyz/ios-voice-capture?mode=voice_memo")!,
+            callbackDomain: "wiki.kinic.xyz"
+        ) == .home("Choose a supported voice capture mode."))
+        #expect(AppModel.openURLDestination(
             for: URL(string: "https://wiki.kinic.xyz/db/db_1")!,
             callbackDomain: "wiki.kinic.xyz"
         ) == .browse(databaseId: "db_1", nodePath: "/Knowledge"))
