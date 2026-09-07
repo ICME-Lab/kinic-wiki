@@ -545,7 +545,7 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
@@ -573,7 +573,7 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
@@ -602,7 +602,7 @@ struct ShareInboxTests {
         defaults.set("db_first", forKey: "kinic.browse-database-id.v1")
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
@@ -625,7 +625,7 @@ struct ShareInboxTests {
         let store = SharedDefaultsStore(defaults: defaults)
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: store
@@ -794,8 +794,22 @@ struct ShareInboxTests {
 
     @MainActor
     @Test
-    func signOutClearsLoadedBrowsePath() {
-        let model = AppModel.preview()
+    func signOutClearsLoadedBrowsePath() throws {
+        let suiteName = "kinic.sign-out-browse-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        let inboxDirectory = makeQueueDirectory()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            removeQueueDirectory(inboxDirectory)
+        }
+        let model = AppModel(
+            configuration: .preview,
+            authService: makeTestAuthService(),
+            client: try KinicICClient(configuration: .preview),
+            shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
+            settingsStore: SharedDefaultsStore(defaults: defaults)
+        )
         model.selectedBrowseDatabaseId = "db_preview"
         model.currentNode = VFSNode(
             path: "/Knowledge",
@@ -853,7 +867,7 @@ struct ShareInboxTests {
         let probe = AccountDeletionProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
@@ -900,7 +914,7 @@ struct ShareInboxTests {
         let cleanupProbe = AccountLocalCleanupProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
@@ -955,7 +969,7 @@ struct ShareInboxTests {
         let cleanupProbe = AccountLocalCleanupProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: inbox,
             settingsStore: settings,
@@ -1013,7 +1027,7 @@ struct ShareInboxTests {
         let probe = AccountDeletionProbe()
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults),
@@ -1131,7 +1145,7 @@ struct ShareInboxTests {
         }
         let model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: inboxDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults)

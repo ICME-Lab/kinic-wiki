@@ -351,7 +351,7 @@ private final class BrowseSearchFixture {
             .appending(path: UUID().uuidString)
         model = AppModel(
             configuration: .preview,
-            authService: try! KinicAuthService(configuration: .preview),
+            authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: queueDirectory),
             settingsStore: SharedDefaultsStore(defaults: defaults),
