@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/humandebri/ICNativeClient",
       "state" : {
-        "revision" : "bf6b747681181788eaddc7bdae1d0c4a1274aeef",
-        "version" : "0.6.0"
+        "revision" : "dc517cfa9c1af38c33497878c599a955b34973f4",
+        "version" : "0.7.5"
       }
     },
     {
