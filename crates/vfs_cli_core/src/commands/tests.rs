@@ -194,7 +194,7 @@ impl VfsApi for MockClient {
         Ok(CyclesBillingConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-            iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            iap_authority_id: Some("ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()),
             cycles_per_kinic: 1_000,
             min_update_cycles: 1,
             top_up: test_cycles_top_up_config(),
@@ -1306,7 +1306,7 @@ fn cycles_config_text_includes_billing_authority_principal() {
         &CyclesBillingConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-            iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            iap_authority_id: Some("ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()),
             cycles_per_kinic: 1_000,
             min_update_cycles: 1,
             top_up: test_cycles_top_up_config(),

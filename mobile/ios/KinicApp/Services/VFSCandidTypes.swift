@@ -204,7 +204,7 @@ extension CyclesTopUpConfig: CandidConvertible {
 }
 
 extension CyclesBillingConfig: CandidConvertible {
-    static let candidType: CandidType = .record(fields([("billing_authority_id", .text), ("iap_authority_id", .text), ("kinic_ledger_canister_id", .text), ("top_up", CyclesTopUpConfig.candidType), ("cycles_per_kinic", .nat64), ("min_update_cycles", .nat64)]))
+    static let candidType: CandidType = .record(fields([("billing_authority_id", .text), ("iap_authority_id", Optional<String>.candidType), ("kinic_ledger_canister_id", .text), ("top_up", CyclesTopUpConfig.candidType), ("cycles_per_kinic", .nat64), ("min_update_cycles", .nat64)]))
     init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); billingAuthorityId = try r.required("billing_authority_id"); iapAuthorityId = try r.required("iap_authority_id"); kinicLedgerCanisterId = try r.required("kinic_ledger_canister_id"); topUp = try r.required("top_up"); cyclesPerKinic = try r.required("cycles_per_kinic"); minUpdateCycles = try r.required("min_update_cycles") }
     var candidValue: CandidValue { recordValue(Self.candidType, [("billing_authority_id", billingAuthorityId.candidValue), ("iap_authority_id", iapAuthorityId.candidValue), ("kinic_ledger_canister_id", kinicLedgerCanisterId.candidValue), ("top_up", topUp.candidValue), ("cycles_per_kinic", cyclesPerKinic.candidValue), ("min_update_cycles", minUpdateCycles.candidValue)]) }
 }

@@ -169,7 +169,7 @@ impl VfsService {
         validate_principal_text(&request.purchaser_principal)?;
         let amount_cycles = cycles_to_i64(request.amount_cycles)?;
         let config = self.cycles_billing_config()?;
-        if caller != config.iap_authority_id {
+        if config.iap_authority_id.as_deref() != Some(caller) {
             return Err("caller is not IAP authority".to_string());
         }
         if let Some(existing) = self.read_index(|conn| {

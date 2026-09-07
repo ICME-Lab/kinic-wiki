@@ -13,12 +13,13 @@ use vfs_runtime::{
     fail_next_discard_database_reservation_for_test, generated_database_id_for_test,
 };
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseCyclesIapGrantRequest,
-    DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
-    KINIC_LEDGER_FEE_E8S, MarketCreateListingRequest, MarketListing, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
+    AppendNodeRequest, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesTopUpConfig,
+    DatabaseCyclesIapGrantRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
+    DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S, MarketCreateListingRequest,
+    MarketListing, MarketListingStatus, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MkdirNodeRequest, MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest,
     SourceRunSessionCheckRequest, UpdateDatabaseMetadataRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
@@ -37,7 +38,14 @@ fn service_with_root() -> (VfsService, PathBuf) {
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
     service
-        .run_index_migrations()
+        .run_index_migrations_with_config(CyclesBillingConfig {
+            kinic_ledger_canister_id: "aaaaa-aa".to_string(),
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+            iap_authority_id: Some(IAP_AUTHORITY_PRINCIPAL.to_string()),
+            cycles_per_kinic: 234_500_000_000,
+            min_update_cycles: 1_000_000,
+            top_up: test_cycles_top_up_config(),
+        })
         .expect("index migrations should run");
     (service, root)
 }
@@ -1658,6 +1666,29 @@ fn iap_grant_rejects_non_iap_authority() {
 }
 
 #[test]
+fn iap_grant_fails_closed_when_authority_is_not_configured() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run without an IAP authority");
+    let database = service
+        .create_generated_database("active", "owner", 1)
+        .expect("database should create");
+
+    let error = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-unconfigured", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            2,
+        )
+        .expect_err("unconfigured IAP authority should reject");
+
+    assert!(error.contains("caller is not IAP authority"));
+}
+
+#[test]
 fn iap_grant_rejects_deleted_and_missing_database() {
     let service = service();
     let database = service
@@ -1795,6 +1826,36 @@ fn iap_grant_rejects_duplicate_for_pending_database_without_activation_side_effe
     );
     assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
     assert_eq!(mount_history_count(&root), mount_count_before);
+}
+
+#[test]
+fn iap_grant_rolls_back_balance_and_ledger_when_audit_insert_fails() {
+    let (service, root) = service_with_root();
+    let database = service
+        .create_generated_database("active", "owner", 1)
+        .expect("database should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index DB should open");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_iap_audit_insert
+         BEFORE INSERT ON database_iap_cycle_grants
+         BEGIN
+           SELECT RAISE(ABORT, 'forced IAP audit failure');
+         END;",
+    )
+    .expect("failure trigger should install");
+    drop(conn);
+
+    let error = service
+        .grant_database_cycles_from_iap(
+            iap_grant_request(&database.database_id, "apple-tx-rollback", 7_000),
+            IAP_AUTHORITY_PRINCIPAL,
+            2,
+        )
+        .expect_err("audit failure should reject the grant");
+
+    assert!(error.contains("forced IAP audit failure"));
+    assert_eq!(database_cycles_balance(&root, &database.database_id), 0);
+    assert!(database_ledger_kinds(&root, &database.database_id).is_empty());
 }
 
 #[test]
@@ -2366,7 +2427,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
-                iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                iap_authority_id: Some("ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()),
                 cycles_per_kinic: 234_500_000_000,
                 min_update_cycles: 1_000_000,
                 top_up: test_cycles_top_up_config(),
@@ -2379,7 +2440,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
-                iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                iap_authority_id: Some("ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()),
                 cycles_per_kinic: 469_000_000_000,
                 min_update_cycles: 1_000_000,
                 top_up: test_cycles_top_up_config(),
@@ -2395,6 +2456,28 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
         469_000_000_000
     );
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
+}
+
+#[test]
+fn cycles_billing_config_update_omission_preserves_iap_authority() {
+    let service = service();
+
+    let updated = service
+        .update_cycles_billing_config(
+            CyclesBillingConfigUpdate {
+                iap_authority_id: None,
+                cycles_per_kinic: 469_000_000_000,
+                min_update_cycles: 1_000_000,
+                top_up: test_cycles_top_up_config(),
+            },
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        )
+        .expect("legacy update shape should preserve IAP authority");
+
+    assert_eq!(
+        updated.iap_authority_id.as_deref(),
+        Some(IAP_AUTHORITY_PRINCIPAL)
+    );
 }
 
 #[test]

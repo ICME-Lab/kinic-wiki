@@ -33,7 +33,7 @@ export const expectedTypes = {
       top_up: "CyclesTopUpConfig",
       kinic_ledger_canister_id: "text",
       billing_authority_id: "text",
-      iap_authority_id: "text"
+      iap_authority_id: "opt text"
     }
   },
   CyclesBillingConfigUpdate: {
@@ -42,7 +42,7 @@ export const expectedTypes = {
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
       top_up: "CyclesTopUpConfig",
-      iap_authority_id: "text"
+      iap_authority_id: "opt text"
     }
   },
   CyclesTopUpConfig: {

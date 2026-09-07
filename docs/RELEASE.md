@@ -29,6 +29,12 @@ For the Wiki Clipper, increment the extension version, run its release checks, a
 
 Prepare and validate every artifact before changing the production canister. During the promotion window, stop mutation smoke traffic, upgrade the canister, deploy the production Wiki Browser and MCP Workers, promote the remaining pinned consumers and CLI/iOS/extension artifacts, then run Candid drift and mutation smoke checks before resuming normal writes. Do not intentionally leave an old decoder pointed at the upgraded canister.
 
+The IAP mainnet backport is an additive exception to that coordinated rollout. Mainnet already
+serves the structured node-mutation contract, while the backport only adds optional
+`iap_authority_id` fields, `DatabaseCyclesIapGrantRequest`, and
+`grant_database_cycles_from_iap`. Validate it against `contracts/mainnet-vfs-83bbb0b6.did` with
+`scripts/check-mainnet-candid-compat.mjs`; existing consumers do not need a simultaneous release.
+
 This release also adds native publication recovery state. The index database migrates exactly `001→002→003` (or `002→003`), and each filesystem database migrates exactly `001→002`. The canister upgrade applies versioned migrations once; it does not infer or absorb unknown schemas and does not use `IF NOT EXISTS` as migration state. After a native node mutation commits, publication-finalization failures remain in the durable journal and do not turn the mutation response into an ambiguous failure; the next publication operation or restart reconciles them. The canister instead traps on the same finalization failure so the IC message rolls back atomically. Keep the pre-upgrade backup until publication reads and mutations pass after restart.
 
 The isolated staging rollout is narrower because the Skill Registry, Wiki Generator, iOS app, and Wiki Clipper are pinned to the production canister. Follow [`STAGING.md`](STAGING.md) and use a CLI binary built from the same branch for staging smoke tests.

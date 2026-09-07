@@ -35,7 +35,7 @@ export type RawCanisterHealth = {
 export type RawCyclesBillingConfig = {
   kinic_ledger_canister_id: string;
   billing_authority_id: string;
-  iap_authority_id: string;
+  iap_authority_id: [] | [string];
   cycles_per_kinic: bigint;
   min_update_cycles: bigint;
   top_up: {

@@ -33,13 +33,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     top_up: CyclesTopUpConfig,
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text,
-    iap_authority_id: idl.Text
+    iap_authority_id: idl.Opt(idl.Text)
   });
   const CyclesBillingConfigUpdate = idl.Record({
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig,
-    iap_authority_id: idl.Text
+    iap_authority_id: idl.Opt(idl.Text)
   });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,

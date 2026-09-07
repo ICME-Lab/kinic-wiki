@@ -77,7 +77,7 @@ fn test_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-        iap_authority_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+        iap_authority_id: Some("ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()),
         cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
         min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
         top_up: default_cycles_top_up_config(),
@@ -288,7 +288,7 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
     drop(conn);
 
     let migration_config = CyclesBillingConfig {
-        iap_authority_id: "r7inp-6aaaa-aaaaa-aaabq-cai".to_string(),
+        iap_authority_id: Some("r7inp-6aaaa-aaaaa-aaabq-cai".to_string()),
         ..test_cycles_billing_config()
     };
     service
@@ -310,6 +310,44 @@ fn index_migration_004_adds_iap_authority_from_upgrade_config() {
             .expect("config should load")
             .iap_authority_id,
         migration_config.iap_authority_id
+    );
+}
+
+#[test]
+fn index_migration_004_allows_unconfigured_iap_authority() {
+    let dir = tempdir().expect("tempdir should create");
+    let index_path = dir.path().join("index.sqlite3");
+    let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+    service
+        .run_index_migrations_with_config(test_cycles_billing_config())
+        .expect("fresh current schema should create");
+    let conn = Connection::open(&index_path).expect("index DB should reopen");
+    conn.execute_batch(
+        "DROP TABLE database_iap_cycle_grants;
+         DELETE FROM cycles_billing_config WHERE key = 'iap_authority_id';
+         DELETE FROM schema_migrations WHERE version = 'database_index:004_iap_cycle_grants';",
+    )
+    .expect("schema should downgrade to 003 shape");
+    drop(conn);
+
+    let migration_config = CyclesBillingConfig {
+        iap_authority_id: None,
+        ..test_cycles_billing_config()
+    };
+    service
+        .run_index_migrations_for_upgrade(Some(migration_config))
+        .expect("004 migration should support an unconfigured IAP authority");
+
+    assert_eq!(
+        service
+            .cycles_billing_config()
+            .expect("config should load")
+            .iap_authority_id,
+        None
+    );
+    assert_eq!(
+        index_versions(&index_path).last().map(String::as_str),
+        Some(INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)
     );
 }
 

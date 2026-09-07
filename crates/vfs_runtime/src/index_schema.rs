@@ -226,8 +226,10 @@ fn apply_pending_index_migrations(
     })?;
     conn.execute_batch(INDEX_SCHEMA_MIGRATION_IAP)
         .map_err(|error| error.to_string())?;
-    validate_principal_text(&config.iap_authority_id)?;
-    set_cycles_billing_config_text(conn, "iap_authority_id", &config.iap_authority_id)?;
+    if let Some(iap_authority_id) = &config.iap_authority_id {
+        validate_principal_text(iap_authority_id)?;
+        set_cycles_billing_config_text(conn, "iap_authority_id", iap_authority_id)?;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     #[cfg(target_arch = "wasm32")]

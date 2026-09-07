@@ -78,7 +78,7 @@ struct DatabaseMetadata: Codable, Equatable, Sendable {
 struct CyclesBillingConfig: Equatable, Sendable {
     let kinicLedgerCanisterId: String
     let billingAuthorityId: String
-    let iapAuthorityId: String
+    let iapAuthorityId: String?
     let cyclesPerKinic: UInt64
     let minUpdateCycles: UInt64
     let topUp: CyclesTopUpConfig

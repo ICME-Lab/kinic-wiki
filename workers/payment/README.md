@@ -38,8 +38,8 @@ The iOS endpoints are public and protected by Cloudflare Rate Limiting bindings.
 
 The grant for `xyz.kinic.dbcredits.small` is fixed at `2,000,000,000,000` cycles
 for each `$4.99` purchase. It does not vary with the XDR/USD exchange rate. The
-production record remains unapproved until the production price is approved and
-read back. Existing purchase intents keep their stored amount snapshot when the
+production record is approved from the App Store Connect `$4.99` readback.
+Existing purchase intents keep their stored amount snapshot when the
 catalog changes; only newly created intents receive the current fixed amount.
 
 ## Deployment
@@ -100,7 +100,9 @@ marked approved with the App Store CLI readback timestamp.
    migrations remotely.
 3. Store all four production secrets listed above. Keep the IAP authority identity separate
    from the billing authority.
-4. Upgrade the mainnet wiki canister with that IAP authority and verify that
+4. From the clean `feat/iap-mainnet-backport` worktree, run
+   `scripts/mainnet/deploy_wiki.sh` for a read-only preflight. After reviewing its build,
+   set the exact confirmation value printed by the script and rerun with `--execute`. Verify that
    `get_cycles_billing_config` returns it before exposing the Worker.
 5. Run the production deploy guard, deploy the Worker, and smoke-test both purchase-intent and
    activation error paths before enabling purchases in the app.

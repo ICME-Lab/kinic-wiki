@@ -99,11 +99,11 @@ Storage charges use the latest `logical_size_bytes` stored in the index DB and w
 
 Cycles history redacts payer/caller principals for reader and writer callers. DB owner and billing authority can read full cycles history. Pending cycle purchase status is visible only to owner, billing authority, and the payer of that operation. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate, minimum-balance, top-up, and IAP authority fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record. Keep `iap_authority_id` as a dedicated Payment Worker identity, separate from `billing_authority_id`.
+`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate, minimum-balance, top-up, and IAP authority fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record. `iap_authority_id` is `opt text`: an omitted value preserves the stored authority, while an unconfigured authority makes every IAP grant fail closed. Keep a configured authority as a dedicated Payment Worker identity, separate from `billing_authority_id`.
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` or `IAP_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet deploys must use `scripts/mainnet/deploy_wiki.sh`. The wrapper supports only `mainnet-sev`, so fresh installs must set `KINIC_LEDGER_CANISTER_ID`, `BILLING_AUTHORITY_ID`, and `IAP_AUTHORITY_ID` explicitly. The wrapper rejects `old-mainnet`, ambiguous `ic` environment usage, and any other environment. The script rejects empty or anonymous values before install.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet IAP upgrades must use `scripts/mainnet/deploy_wiki.sh` from a clean `feat/iap-mainnet-backport` worktree. With no arguments the wrapper performs live-state checks, Candid compatibility validation, and a local Wasm build only. `--execute` creates and records a canister snapshot, then invokes `icp deploy` with explicit `--mode upgrade`; reinstall and caller-selected modes are rejected.
 
 Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles.
 
@@ -111,7 +111,7 @@ Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
 - An already-current schema accepts a no-argument upgrade.
-- Applying `database_index:004_iap_cycle_grants` requires an explicit `CyclesBillingConfig`, so the IAP authority cannot be inferred from a default.
+- Applying `database_index:004_iap_cycle_grants` requires an explicit `CyclesBillingConfig`. Its optional IAP authority may be unset, but the migration never infers one from a default.
 - Unknown or partial schemas remain unsupported. Recreate or reinstall instead of auto-converting them.
 
 Normal operator flow:

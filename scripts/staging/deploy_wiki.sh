@@ -51,7 +51,7 @@ cat >"${ARGS_FILE}" <<EOF
 (record {
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   billing_authority_id = "${BILLING_AUTHORITY_ID}";
-  iap_authority_id = "${IAP_AUTHORITY_ID}";
+  iap_authority_id = opt "${IAP_AUTHORITY_ID}";
   top_up = record {
     enabled = false;
     launcher_principal = "xfug4-5qaaa-aaaak-afowa-cai";
