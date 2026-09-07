@@ -24,6 +24,7 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 type FundingProvider = "oisy" | "plug" | "ii";
 
 const CREATE_DATABASE_REQUIRED_KINIC = "1";
+const CREATE_DATABASE_REQUIRED_KINIC_LABEL = `${CREATE_DATABASE_REQUIRED_KINIC} KINIC`;
 
 export function DashboardHomeClient() {
   const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
@@ -359,6 +360,7 @@ export function DashboardHomeClient() {
               }}
               onSelect={fundingChoice.select}
               requiredBalanceE8s={requiredFundingBalanceE8s}
+              requiredBalanceLabel={CREATE_DATABASE_REQUIRED_KINIC_LABEL}
               selected={fundingChoice.selected}
               selectionDisabled={creating}
               walletAccount={{
@@ -376,7 +378,7 @@ export function DashboardHomeClient() {
             />
           }
           open={createDialogOpen}
-          requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : formatTokenAmountFromE8s(requiredFundingBalanceE8s)}
+          requiredBalanceLabel={freeGrantAvailable ? formatFreeGrantCycles(freeGrantStatus?.grantCycles ?? "0") : CREATE_DATABASE_REQUIRED_KINIC_LABEL}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
