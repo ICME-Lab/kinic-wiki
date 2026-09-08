@@ -22,6 +22,12 @@
     "KINIC_WIKI_WORKER_SOURCE_PREFIX": "/Sources",
     "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/"
   },
+  "services": [
+    {
+      "binding": "NNS_PROPOSAL_REVIEW_SERVICE",
+      "service": "kinic-nns-proposal-review"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

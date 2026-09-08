@@ -18,6 +18,9 @@ import { markSourceCaptureRequestCompleted, markSourceCaptureRequestFailed, trig
 import { createAnonymousVfsClient, createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { LinkPreviewQueueMessage, ManualRunInput, OutputLanguage, PublicDatabaseSummary, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
+import type { QueueDisposition, QueueExecution } from "./queue-types.js";
+
+export type { QueueDisposition, QueueExecution } from "./queue-types.js";
 
 export type ManualRunContext = {
   vfs: VfsClient;
@@ -26,17 +29,6 @@ export type ManualRunContext = {
 export type QueueMessageEnvelope =
   | { kind: "valid"; message: QueueMessage }
   | { kind: "invalid"; reason: string };
-
-export type QueueDisposition =
-  | { kind: "ack" }
-  | { kind: "retry"; delaySeconds: number; code: string; message: string }
-  | { kind: "reschedule"; delaySeconds: number; code: string; message: string }
-  | { kind: "dead_letter"; code: string; message: string };
-
-export type QueueExecution = {
-  leaseOwner: string;
-  attempts: number;
-};
 
 type QueueProcessContext = {
   config?: WorkerConfig;

@@ -43,6 +43,7 @@ export function testEnv(queue: TestQueue<QueueMessage>, db: D1Database = new Tes
     WIKI_GENERATION_QUEUE: queue,
     WIKI_GENERATION_DLQ: new TestQueue<WikiGenerationFailureMessage>(),
     LINK_PREVIEW_IMAGES: new TestR2Bucket(),
+    NNS_PROPOSAL_REVIEW_SERVICE: new TestFetcher(),
     KINIC_WIKI_CANISTER_ID: "6emaw-iyaaa-aaaay-aacka-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
     KINIC_WIKI_WORKER_MODEL: "deepseek-v4-flash",
@@ -53,6 +54,27 @@ export function testEnv(queue: TestQueue<QueueMessage>, db: D1Database = new Tes
     KINIC_WIKI_WORKER_TOKEN: "worker-token",
     KINIC_WIKI_WORKER_IDENTITY_PEM: "identity-pem"
   };
+}
+
+export class TestFetcher implements Fetcher {
+  readonly requests: Request[] = [];
+  fail = false;
+
+  constructor(
+    private readonly handler: (request: Request) => Response | Promise<Response> = (request) =>
+      Response.json(
+        new URL(request.url).pathname === "/status"
+          ? { enabled: false }
+          : { enabled: false, initialized: false, discovered: 0, enqueued: 0, resetFailed: 0 }
+      )
+  ) {}
+
+  async fetch(input: Request | string | URL, init?: RequestInit): Promise<Response> {
+    if (this.fail) throw new Error("NNS review service unavailable");
+    const request = new Request(input, init);
+    this.requests.push(request);
+    return this.handler(request);
+  }
 }
 
 export async function withFetchedPage(run: () => Promise<void>, html = "<html><head><title>Fetched Title</title></head><body>Hello source</body></html>"): Promise<void> {

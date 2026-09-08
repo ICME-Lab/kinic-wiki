@@ -15,6 +15,10 @@ interface Queue<T = unknown> {
   send(message: T, options?: { delaySeconds?: number }): Promise<void>;
 }
 
+interface Fetcher {
+  fetch(input: Request | string | URL, init?: RequestInit): Promise<Response>;
+}
+
 type R2PutValue = ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob;
 
 type R2PutOptions = {
@@ -48,7 +52,14 @@ interface ExecutionContext {
 type ExportedHandler<EnvType = Env, QueueBody = unknown> = {
   fetch?(request: Request, env: EnvType, ctx: ExecutionContext): Response | Promise<Response>;
   queue?(batch: MessageBatch<QueueBody>, env: EnvType, ctx: ExecutionContext): void | Promise<void>;
+  scheduled?(controller: ScheduledController, env: EnvType, ctx: ExecutionContext): void | Promise<void>;
 };
+
+interface ScheduledController {
+  readonly scheduledTime: number;
+  readonly cron: string;
+  noRetry(): void;
+}
 
 declare module "crypto" {
   namespace webcrypto {
