@@ -54,8 +54,8 @@ const groups = {
   ],
   canister_cycles_billing: [
     ["scripts/smoke/local_canister_post_upgrade.sh", "scripts/local/deploy_wiki.sh --mode upgrade"],
-    ["scripts/check-mainnet-deploy-wiki.mjs", "fresh mainnet-sev only"],
-    ["scripts/check-mainnet-deploy-wiki.mjs", "KINIC_LEDGER_CANISTER_ID is required"],
+    ["scripts/check-mainnet-deploy-wiki.mjs", "mainnet IAP upgrade preflight: PASS"],
+    ["scripts/check-mainnet-deploy-wiki.mjs", "snapshot_id=test-snapshot"],
     ["docs/DB_LIFECYCLE.md", "billing-authority review"],
     ["docs/DB_LIFECYCLE.md", "repair browser UI, purchase retry API, and ambiguous purchase repair/cancel API are not implemented"],
     ["docs/DB_LIFECYCLE.md", "If ledger transfer succeeds but local DB activation or cycle application fails"],

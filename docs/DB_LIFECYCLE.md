@@ -87,24 +87,25 @@ Storage charges use the latest `logical_size_bytes` stored in the index DB and w
 
 Cycles history redacts payer/caller principals for reader and writer callers. DB owner and billing authority can read full cycles history. Pending cycle purchase status is visible only to owner, billing authority, and the payer of that operation. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record.
+`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update rate, minimum-balance, top-up, and IAP authority fields by calling `update_cycles_billing_config` with a `CyclesBillingConfigUpdate` record. `iap_authority_id` is `opt text`: an omitted value preserves the stored authority, while an unconfigured authority makes every IAP grant fail closed. Keep a configured authority as a dedicated Payment Worker identity, separate from `billing_authority_id`.
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Use `scripts/local/setup_kinic_ledger.sh` for a project-local ICRC ledger.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet deploys must use `scripts/mainnet/deploy_wiki.sh`. The wrapper supports only `mainnet-sev`, so fresh installs must set `KINIC_LEDGER_CANISTER_ID` and `BILLING_AUTHORITY_ID` explicitly. The wrapper rejects `old-mainnet`, ambiguous `ic` environment usage, and any other environment. The script rejects empty or anonymous values before install. These principal values cannot be changed after init.
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Mainnet IAP upgrades must use `scripts/mainnet/deploy_wiki.sh` from a clean `feat/iap-mainnet-backport` worktree. With no arguments the wrapper performs live-state checks, Candid compatibility validation, and a local Wasm build only. `--execute` creates and records a canister snapshot, then invokes `icp deploy` with explicit `--mode upgrade`; reinstall and caller-selected modes are rejected.
 
 Mainnet SEV is reserved as a detached canister before install. The SEV canister is `6emaw-iyaaa-aaaay-aacka-cai` on subnet `re2t4-faa75-v3vhk-kdmdr-uyrkl-aik2l-ixd6u-p3fyr-zlfkc-6c5af-zae`, created by identity `llm-wiki-mainnet` with `2t` cycles.
 
 Upgrade compatibility:
 
 - `post_upgrade` accepts no arg, a bare `CyclesBillingConfig`, or `opt CyclesBillingConfig`.
-- Existing canisters must already have the current index schema marker `database_index:001_initial`.
-- Older schemas are unsupported after the reset. Recreate or reinstall instead of auto-converting them.
+- The supported index path is `001→002→003→004`; migration 004 adds the IAP grant audit table exactly once.
+- Applying `database_index:004_iap_cycle_grants` requires an explicit `CyclesBillingConfig`. Its optional IAP authority may be unset, but the migration never infers one from a default.
+- Unknown or partial schemas are rejected instead of being automatically absorbed.
 
 Normal operator flow:
 
 1. Owner creates a DB with `create_database(CreateDatabaseRequest { name })`. If `initial_free_grant_applied = true` or `status = Active`, the DB is active with `10_000_000_000` cycles.
-2. If the response has `status = Pending`, the DB needs its first cycle purchase before reads and writes.
+2. If the response has `status = Pending`, the DB needs its first cycle purchase or verified IAP credit grant before reads and writes.
 3. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. The browser can sign this directly with the logged-in Internet Identity delegation identity or with a connected OISY/Plug wallet. These are separate default ledger accounts: the user selects one payment source and balances are never combined, split, or used as an automatic fallback. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the selected ledger account.
 4. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 5. Successful DB updates consume DB cycles balance.

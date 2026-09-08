@@ -39,22 +39,22 @@ use sha2::{Digest, Sha256};
 use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    CyclesTopUpConfig, DatabaseCycleEntry, DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase,
-    DatabaseInfo, DatabaseMember, DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
-    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
-    MarketListingStatus, MarketListingView, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    MutateNodesBatchRequest, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    NodeMutation, NodeMutationError, NodeMutationResult, NodePublication,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    CyclesPurchaseResult, CyclesTopUpConfig, DatabaseCycleEntry, DatabaseCycleEntryPage,
+    DatabaseCyclesIapGrantRequest, DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember,
+    DatabaseMetadata, DatabaseRole, DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketListingStatus, MarketListingView,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, MutateNodesBatchRequest, Node, NodeContext,
+    NodeContextRequest, NodeEntry, NodeKind, NodeMutation, NodeMutationError, NodeMutationResult,
+    NodePublication, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, PublicNode, PublishNodeRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SourceCaptureTriggerSessionCheckRequest, SourceCaptureTriggerSessionRequest, SourceEvidence,
     SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
     StorageBillingBatchResult, UpdateDatabaseMetadataRequest, WikiMetrics, WikiMetricsPoint,
@@ -65,10 +65,12 @@ use vfs_types::{
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:001_initial";
 const INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS: &str = "database_index:002_node_publications";
 const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutation_recovery";
+const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycle_grants";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
     INDEX_SCHEMA_VERSION_CURRENT,
+    INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -322,12 +324,16 @@ impl VfsService {
         let next = CyclesBillingConfig {
             kinic_ledger_canister_id: current.kinic_ledger_canister_id,
             billing_authority_id: current.billing_authority_id,
+            iap_authority_id: update.iap_authority_id.or(current.iap_authority_id),
             cycles_per_kinic: update.cycles_per_kinic,
             min_update_cycles: update.min_update_cycles,
             top_up: update.top_up,
         };
         validate_cycles_billing_config(&next)?;
         self.write_index(|tx| {
+            if let Some(iap_authority_id) = &next.iap_authority_id {
+                set_cycles_billing_config_text(tx, "iap_authority_id", iap_authority_id)?;
+            }
             set_cycles_billing_config_value(tx, "cycles_per_kinic", next.cycles_per_kinic)?;
             set_cycles_billing_config_value(tx, "min_update_cycles", next.min_update_cycles)?;
             set_cycles_top_up_config(tx, &next.top_up)?;
@@ -1096,6 +1102,7 @@ fn default_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        iap_authority_id: None,
         cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
         min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
         top_up: default_cycles_top_up_config(),
@@ -1105,6 +1112,9 @@ fn default_cycles_billing_config() -> CyclesBillingConfig {
 fn validate_cycles_billing_config(config: &CyclesBillingConfig) -> Result<(), String> {
     validate_principal_text(&config.kinic_ledger_canister_id)?;
     validate_principal_text(&config.billing_authority_id)?;
+    if let Some(iap_authority_id) = &config.iap_authority_id {
+        validate_principal_text(iap_authority_id)?;
+    }
     validate_cycles_top_up_config(&config.top_up)?;
     if config.cycles_per_kinic == 0 {
         return Err("cycles_per_kinic must be positive".to_string());
@@ -1156,6 +1166,13 @@ fn insert_cycles_billing_config(
         params!["billing_authority_id", config.billing_authority_id],
     )
     .map_err(|error| error.to_string())?;
+    if let Some(iap_authority_id) = &config.iap_authority_id {
+        conn.execute(
+            "INSERT INTO cycles_billing_config (key, value) VALUES (?1, ?2)",
+            params!["iap_authority_id", iap_authority_id.as_str()],
+        )
+        .map_err(|error| error.to_string())?;
+    }
     set_cycles_billing_config_value(conn, "cycles_per_kinic", config.cycles_per_kinic)?;
     set_cycles_billing_config_value(conn, "min_update_cycles", config.min_update_cycles)?;
     set_cycles_top_up_config(conn, &config.top_up)?;
@@ -1225,6 +1242,7 @@ const INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_ledger",
     "database_free_cycle_grants",
     "database_cycle_pending_operations",
+    "database_iap_cycle_grants",
     "cycles_billing_config",
     "storage_billing_state",
     "market_listings",
@@ -1243,6 +1261,7 @@ fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, 
             "kinic_ledger_canister_id",
         )?,
         billing_authority_id: load_cycles_billing_config_text(conn, "billing_authority_id")?,
+        iap_authority_id: load_cycles_billing_config_optional_text(conn, "iap_authority_id")?,
         cycles_per_kinic: load_cycles_billing_config_u64(conn, "cycles_per_kinic")?,
         min_update_cycles: load_cycles_billing_config_u64(conn, "min_update_cycles")?,
         top_up: CyclesTopUpConfig {
@@ -1259,6 +1278,19 @@ fn load_cycles_billing_config_text(conn: &Connection, key: &str) -> Result<Strin
         params![key],
         |row| crate::sqlite::row_get(row, 0),
     )
+    .map_err(|error| error.to_string())
+}
+
+fn load_cycles_billing_config_optional_text(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT value FROM cycles_billing_config WHERE key = ?1",
+        params![key],
+        |row| crate::sqlite::row_get(row, 0),
+    )
+    .optional()
     .map_err(|error| error.to_string())
 }
 
