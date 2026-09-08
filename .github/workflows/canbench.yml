@@ -28,6 +28,8 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Install WASI sysroot
         run: sudo apt-get update && sudo apt-get install -y wasi-libc
+      - name: Test benchmark setup
+        run: cargo test -p vfs-canister --locked --features canbench-rs benches::scale::tests
       - name: Install wasm tooling
         run: cargo install wasi2ic ic-wasm --locked
       - name: Provision fixed canbench toolchain

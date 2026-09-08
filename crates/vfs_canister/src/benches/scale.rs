@@ -24,6 +24,7 @@ use crate::{
 };
 
 const BENCH_DATABASE_ID: &str = "canbench";
+const BENCH_PAYMENT_E8S: u64 = 100_000_000;
 const TREE_DEPTH: usize = 4;
 const CONTENT_SIZE: usize = 256;
 const SEARCH_TOP_K: u32 = 20;
@@ -55,7 +56,7 @@ fn ensure_bench_service() {
     if !initialized {
         initialize_service_with_config(None).expect("bench service should initialize");
     }
-    with_service(|service| {
+    let created = with_service(|service| {
         let exists = service
             .list_databases()?
             .iter()
@@ -64,9 +65,18 @@ fn ensure_bench_service() {
             let caller = caller_text();
             service.create_database(BENCH_DATABASE_ID, &caller, now_millis())?;
         }
-        Ok(())
+        Ok(!exists)
     })
     .expect("bench database should exist");
+    if created {
+        // Seed a paid balance outside measurement; database creation does not grant cycles.
+        fund_bench_database(
+            BENCH_DATABASE_ID,
+            &caller_text(),
+            now_millis(),
+            BENCH_PAYMENT_E8S,
+        );
+    }
 }
 
 fn bench_prefix(case: BenchCase) -> String {
@@ -274,13 +284,13 @@ fn delete_existing_storage_billing_bench_databases(caller: &str) {
     .expect("bench storage billing databases should reset");
 }
 
-fn fund_database_for_storage_billing(database_id: &str, caller: &str, now: i64) {
+fn fund_bench_database(database_id: &str, caller: &str, now: i64, payment_amount_e8s: u64) {
     with_service(|service| {
         let start = service.begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id,
                 caller,
-                payment_amount_e8s: STORAGE_BILLING_PAYMENT_E8S,
+                payment_amount_e8s,
                 min_expected_cycles: 0,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: caller,
@@ -342,10 +352,11 @@ fn seed_storage_billing_databases(case: BenchCase) {
             Ok(())
         })
         .expect("bench storage billing database should seed");
-        fund_database_for_storage_billing(
+        fund_bench_database(
             &database_id,
             &caller,
             30_000 + i64::try_from(index).unwrap_or(i64::MAX),
+            STORAGE_BILLING_PAYMENT_E8S,
         );
     }
 }
@@ -528,6 +539,26 @@ mod tests {
         storage_billing_database_id,
     };
     use vfs_types::{ExportSnapshotResponse, Node, NodeKind};
+
+    #[test]
+    fn bench_database_has_write_cycles_without_an_initial_free_grant() {
+        let dir = tempfile::tempdir().expect("temporary directory should create");
+        let service = vfs_runtime::VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("migrations should run");
+        crate::SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+
+        super::ensure_bench_service();
+        crate::with_service(|service| {
+            service.require_database_write_cycles_available(super::BENCH_DATABASE_ID)
+        })
+        .expect("bench updates must not depend on an implicit free grant");
+        crate::SERVICE.with(|slot| *slot.borrow_mut() = None);
+    }
 
     #[test]
     fn parent_folder_paths_returns_ordered_ancestors_without_leaf() {
