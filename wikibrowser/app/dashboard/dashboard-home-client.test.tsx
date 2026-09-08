@@ -77,7 +77,7 @@ vi.mock("@/app/create-database-dialog", () => ({
     onSubmit: () => void;
   }) => open ? (
     <dialog aria-label="Create database" open>
-      <p>{fundingRequired ? `Requires ${requiredBalanceLabel}.` : `Includes an initial free grant of ${requiredBalanceLabel}. No KINIC payment is required.`}</p>
+      {!fundingRequired ? <p>Includes an initial free grant of {requiredBalanceLabel}. No KINIC payment is required.</p> : null}
       {fundingRequired ? fundingSourceContent : null}
       <input aria-label="Database name" value={databaseName} onChange={(event) => onChange(event.target.value)} />
       <button disabled={createDisabled} type="button" onClick={onSubmit}>{createLabel}</button>
@@ -190,7 +190,7 @@ describe("DashboardHomeClient database creation", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Database name" }), { target: { value: "Paid database" } });
 
     expect(screen.getAllByText("Not connected").length).toBeGreaterThan(0);
-    expect(screen.getByText("1.000 KINIC")).toBeTruthy();
+    expect(screen.getByText("1 KINIC")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Refresh balance" }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: "Create with Internet Identity" }) as HTMLButtonElement).disabled).toBe(true);
     expect(mocks.createDatabaseAuthenticated).not.toHaveBeenCalled();
@@ -203,9 +203,9 @@ describe("DashboardHomeClient database creation", () => {
     render(<DashboardHomeClient />);
 
     fireEvent.click(await enabledButton("Create database"));
-    expect(screen.getByText("Requires 1.000 KINIC.")).toBeTruthy();
+    expect(screen.queryByText(/Requires/)).toBeNull();
     expect(screen.getByText("0.999 KINIC")).toBeTruthy();
-    expect(screen.getByText("This account needs at least 1.000 KINIC.")).toBeTruthy();
+    expect(screen.getByText("This account needs at least 1 KINIC.")).toBeTruthy();
     fireEvent.change(screen.getByRole("textbox", { name: "Database name" }), { target: { value: "Paid database" } });
 
     expect((screen.getByRole("button", { name: "Create with Plug" }) as HTMLButtonElement).disabled).toBe(true);
@@ -219,7 +219,8 @@ describe("DashboardHomeClient database creation", () => {
     render(<DashboardHomeClient />);
 
     fireEvent.click(await enabledButton("Create database"));
-    expect(screen.getAllByText("1.000 KINIC")).toHaveLength(2);
+    expect(screen.getByText("1 KINIC")).toBeTruthy();
+    expect(screen.getByText("1.000 KINIC")).toBeTruthy();
     const refreshButton = screen.getByRole("button", { name: "Refresh balance" }) as HTMLButtonElement;
     expect(refreshButton.disabled).toBe(false);
     fireEvent.click(refreshButton);
@@ -236,7 +237,7 @@ describe("DashboardHomeClient database creation", () => {
 
     fireEvent.click(await enabledButton("Create database"));
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
-    expect(screen.queryByText("This account needs at least 1.000 KINIC.")).toBeNull();
+    expect(screen.queryByText("This account needs at least 1 KINIC.")).toBeNull();
   });
 
   it("disables balance refresh while the balance is loading", async () => {
@@ -247,7 +248,7 @@ describe("DashboardHomeClient database creation", () => {
 
     fireEvent.click(await enabledButton("Create database"));
     expect(screen.getByText("Loading...")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Refreshing..." }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Refresh balance" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows a blocking free-grant error and retries the query", async () => {

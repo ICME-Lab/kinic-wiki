@@ -36,10 +36,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     iap_authority_id: idl.Opt(idl.Text)
   });
   const CyclesBillingConfigUpdate = idl.Record({
+    iap_authority_id: idl.Opt(idl.Text),
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
-    top_up: CyclesTopUpConfig,
-    iap_authority_id: idl.Opt(idl.Text)
+    top_up: CyclesTopUpConfig
   });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,

@@ -51,7 +51,7 @@ testWithII("creates and activates a paid second database from Internet Identity 
   await page.goto("/dashboard");
   await page.getByRole("button", { name: "Create database", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "Create database" });
-  await expect(dialog.getByText("Requires 1.000 KINIC.", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Requires", { exact: true })).toHaveCount(0);
   await expect(dialog.getByText("Payment source", { exact: true })).toBeVisible();
   await expect(dialog.locator('input[value="ii"]')).toBeChecked();
   await expect(dialog.getByText("Required balance", { exact: true })).toBeVisible();

@@ -39,10 +39,10 @@ export const expectedTypes = {
   CyclesBillingConfigUpdate: {
     kind: "record",
     fields: {
+      iap_authority_id: "opt text",
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
-      top_up: "CyclesTopUpConfig",
-      iap_authority_id: "opt text"
+      top_up: "CyclesTopUpConfig"
     }
   },
   CyclesTopUpConfig: {

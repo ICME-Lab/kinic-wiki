@@ -105,6 +105,8 @@ jobs:
         run: npm --prefix packages/vfs-candid test
       - name: Check regression groups
         run: node scripts/check-regression-groups.mjs
+      - name: Test isolated mainnet deploy wrapper
+        run: node scripts/check-mainnet-deploy-wiki.mjs
       - name: Check docs links
         run: node scripts/check-docs-links.mjs
 

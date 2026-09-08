@@ -54,11 +54,11 @@ export function CreateDatabaseDialog({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              {fundingRequired
-                ? `Requires ${requiredBalanceLabel}.`
-                : `Includes an initial free grant of ${requiredBalanceLabel}. No KINIC payment is required.`}
-            </p>
+            {!fundingRequired ? (
+              <p className="mt-2 text-sm leading-6 text-muted">
+                Includes an initial free grant of {requiredBalanceLabel}. No KINIC payment is required.
+              </p>
+            ) : null}
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
             <X aria-hidden size={16} />
