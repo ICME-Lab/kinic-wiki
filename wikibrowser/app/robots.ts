@@ -9,7 +9,7 @@ export default function robots() {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/api/", "/dashboard/", "/profile/", "/cycles/", "/metrics/"]
+      disallow: ["/_next/image", "/api/", "/dashboard/", "/profile/", "/cycles/", "/metrics/"]
     },
     sitemap: new URL("/sitemap.xml", SITE_ORIGIN).toString()
   };

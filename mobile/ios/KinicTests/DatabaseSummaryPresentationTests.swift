@@ -63,4 +63,22 @@ struct DatabaseSummaryPresentationTests {
 
         #expect(database.shareSelectionDetailText == "Reader · db_short")
     }
+
+    @Test
+    func roleAndCyclesBalanceTextShowsDatabaseSpecificBalance() {
+        let database = DatabaseSummary(
+            databaseId: "db_credits",
+            title: "Credits",
+            description: "",
+            metadata: nil,
+            role: .owner,
+            status: .active,
+            logicalSizeBytes: 0,
+            cyclesBalance: 1_823_000_000_000,
+            cyclesSuspendedAtMs: nil,
+            deletedAtMs: nil
+        )
+
+        #expect(database.roleAndCyclesBalanceText == "Owner · 1.823T cycles")
+    }
 }

@@ -10,17 +10,17 @@ actor KinicICClient {
     private let configuration: AppConfiguration
     private let vfsClient: VFSClient
 
-    init(configuration: AppConfiguration) {
+    init(configuration: AppConfiguration) throws {
         self.configuration = configuration
-        client = ICClient(configuration: configuration.icClientConfiguration)
+        client = ICClient(configuration: try configuration.makeICClientConfiguration())
         vfsClient = VFSClient(client: client, configuration: configuration)
     }
 
-    func listWritableDatabases(session: ICAuthSession) async throws -> [DatabaseSummary] {
+    func listWritableDatabases(session: KinicIdentitySession) async throws -> [DatabaseSummary] {
         try await vfsClient.listWritableDatabases(session: session)
     }
 
-    func listReadableDatabases(session: ICAuthSession) async throws -> [DatabaseSummary] {
+    func listReadableDatabases(session: KinicIdentitySession) async throws -> [DatabaseSummary] {
         try await vfsClient.listReadableDatabases(session: session)
     }
 
@@ -28,19 +28,19 @@ actor KinicICClient {
         try await vfsClient.listPublicDatabases()
     }
 
-    func marketListEntitlements(session: ICAuthSession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
+    func marketListEntitlements(session: KinicIdentitySession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
         try await vfsClient.marketListEntitlements(session: session, cursor: cursor, limit: limit)
     }
 
-    func getCyclesBillingConfig(session: ICAuthSession) async throws -> CyclesBillingConfig {
+    func getCyclesBillingConfig(session: KinicIdentitySession) async throws -> CyclesBillingConfig {
         try await vfsClient.getCyclesBillingConfig(session: session)
     }
 
-    func readNode(databaseId: String, path: String, session: ICAuthSession) async throws -> VFSNode? {
+    func readNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> VFSNode? {
         try await vfsClient.readNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func sourceURLExists(databaseId: String, url: URL, session: ICAuthSession) async throws -> Bool {
+    func sourceURLExists(databaseId: String, url: URL, session: KinicIdentitySession) async throws -> Bool {
         try await vfsClient.sourceURLExists(databaseId: databaseId, url: url, session: session)
     }
 
@@ -52,7 +52,7 @@ actor KinicICClient {
         content: String,
         metadataJson: String,
         expectedEtag: String?,
-        session: ICAuthSession
+        session: KinicIdentitySession
     ) async throws -> VFSWriteNodeResult {
         try await vfsClient.writeNode(
             databaseId: databaseId,
@@ -65,39 +65,39 @@ actor KinicICClient {
         )
     }
 
-    func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
+    func readBrowseNode(databaseId: String, path: String, session: KinicIdentitySession?) async throws -> VFSNode? {
         try await vfsClient.readBrowseNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func getNodePublication(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication? {
+    func getNodePublication(databaseId: String, path: String, session: KinicIdentitySession) async throws -> NodePublication? {
         try await vfsClient.getNodePublication(databaseId: databaseId, path: path, session: session)
     }
 
-    func publishNode(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication {
+    func publishNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> NodePublication {
         try await vfsClient.publishNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func unpublishNode(databaseId: String, path: String, session: ICAuthSession) async throws {
+    func unpublishNode(databaseId: String, path: String, session: KinicIdentitySession) async throws {
         try await vfsClient.unpublishNode(databaseId: databaseId, path: path, session: session)
     }
 
-    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: ICAuthSession) async throws {
+    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: KinicIdentitySession) async throws {
         try await vfsClient.deleteNode(databaseId: databaseId, path: path, expectedEtag: expectedEtag, session: session)
     }
 
-    func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
+    func listBrowseChildren(databaseId: String, path: String, session: KinicIdentitySession?) async throws -> [ChildNode] {
         try await vfsClient.listBrowseChildren(databaseId: databaseId, path: path, session: session)
     }
 
-    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession?) async throws -> [SearchNodeHit] {
+    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: KinicIdentitySession?) async throws -> [SearchNodeHit] {
         try await vfsClient.searchBrowseNodes(databaseId: databaseId, query: query, prefix: prefix, limit: limit, session: session)
     }
 
-    func createDatabase(name: String, session: ICAuthSession) async throws -> CreatedDatabase {
+    func createDatabase(name: String, session: KinicIdentitySession) async throws -> CreatedDatabase {
         try await vfsClient.createDatabase(name: name, session: session)
     }
 
-    func updateDatabaseMetadata(databaseId: String, name: String, description: String, llmSummary: String?, tagsJson: String, session: ICAuthSession) async throws -> DatabaseMetadata {
+    func updateDatabaseMetadata(databaseId: String, name: String, description: String, llmSummary: String?, tagsJson: String, session: KinicIdentitySession) async throws -> DatabaseMetadata {
         try await vfsClient.updateDatabaseMetadata(
             databaseId: databaseId,
             name: name,
@@ -108,39 +108,39 @@ actor KinicICClient {
         )
     }
 
-    func listDatabaseMembers(databaseId: String, session: ICAuthSession) async throws -> [DatabaseMember] {
+    func listDatabaseMembers(databaseId: String, session: KinicIdentitySession) async throws -> [DatabaseMember] {
         try await vfsClient.listDatabaseMembers(databaseId: databaseId, session: session)
     }
 
-    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: ICAuthSession) async throws {
+    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: KinicIdentitySession) async throws {
         try await vfsClient.grantDatabaseAccess(databaseId: databaseId, principal: principal, role: role, session: session)
     }
 
-    func revokeDatabaseAccess(databaseId: String, principal: String, session: ICAuthSession) async throws {
+    func revokeDatabaseAccess(databaseId: String, principal: String, session: KinicIdentitySession) async throws {
         try await vfsClient.revokeDatabaseAccess(databaseId: databaseId, principal: principal, session: session)
     }
 
-    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: ICAuthSession) async throws -> DatabaseCycleEntryPage {
+    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: KinicIdentitySession) async throws -> DatabaseCycleEntryPage {
         try await vfsClient.listDatabaseCycleEntries(databaseId: databaseId, cursor: cursor, limit: limit, session: session)
     }
 
-    func listDatabaseCyclesPendingPurchases(databaseId: String, session: ICAuthSession) async throws -> [DatabaseCyclesPendingPurchase] {
+    func listDatabaseCyclesPendingPurchases(databaseId: String, session: KinicIdentitySession) async throws -> [DatabaseCyclesPendingPurchase] {
         try await vfsClient.listDatabaseCyclesPendingPurchases(databaseId: databaseId, session: session)
     }
 
-    func deleteDatabase(databaseId: String, session: ICAuthSession) async throws {
+    func deleteDatabase(databaseId: String, session: KinicIdentitySession) async throws {
         try await vfsClient.deleteDatabase(databaseId: databaseId, session: session)
     }
 
-    func deleteAccount(session: ICAuthSession) async throws {
+    func deleteAccount(session: KinicIdentitySession) async throws {
         try await vfsClient.deleteAccount(session: session)
     }
 
-    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
+    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: KinicIdentitySession) async throws -> CaptureSubmission {
         try await vfsClient.saveSourceCaptureRequest(request, session: session)
     }
 
-    func triggerSourceCapture(databaseId: String, requestPath: String, sessionNonce: String, session: ICAuthSession) async throws {
+    func triggerSourceCapture(databaseId: String, requestPath: String, sessionNonce: String, session: KinicIdentitySession) async throws {
         try await vfsClient.triggerSourceCapture(databaseId: databaseId, requestPath: requestPath, sessionNonce: sessionNonce, session: session)
     }
 }

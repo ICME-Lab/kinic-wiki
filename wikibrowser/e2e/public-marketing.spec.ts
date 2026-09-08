@@ -39,10 +39,21 @@ test("renders the home calls to action and follows internal routes", async ({ pa
   await followInternalLink(page, primaryNavigation.getByRole("link", { name: "Open Dashboard" }), "/dashboard", /\/dashboard$/);
 });
 
-test("redirects the native authentication hash route", async ({ page }) => {
-  await page.goto("/#/native-auth?session=test-session&callback=kinicwiki%3A%2F%2Fauth");
+test("serves only the direct native authentication endpoints", async ({ request }) => {
+  const legacyBridge = await request.get("/native-auth", { maxRedirects: 0 });
+  expect(legacyBridge.status()).toBe(404);
+  expect(legacyBridge.headers().location).toBeUndefined();
 
-  await expect(page).toHaveURL(/\/native-auth\?session=test-session&callback=kinicwiki%3A%2F%2Fauth$/);
+  for (const [path, contentType] of [
+    ["/.well-known/ii-auth-callbacks", /^application\/json(?:;|$)/],
+    ["/.well-known/apple-app-site-association", /^application\/json(?:;|$)/],
+    ["/ios-auth-callback", /^text\/html(?:;|$)/]
+  ] as const) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(200);
+    expect(response.headers().location, path).toBeUndefined();
+    expect(response.headers()["content-type"], path).toMatch(contentType);
+  }
 });
 
 test("renders the iOS overview and guide contracts", async ({ page }) => {

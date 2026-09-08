@@ -104,6 +104,17 @@ export const expectedTypes = {
       min_expected_cycles: "nat64"
     }
   },
+  DatabaseCyclesIapGrantRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      amount_cycles: "nat64",
+      external_payment_id: "text",
+      provider: "text",
+      product_id: "text",
+      purchaser_principal: "text"
+    }
+  },
   MarketCreateListingRequest: {
     kind: "record",
     fields: {
@@ -813,6 +824,7 @@ export const expectedMethods = {
   get_initial_free_database_grant_status: { input: [], output: "ResultInitialFreeDatabaseGrantStatus", mode: "query" },
   get_node_publication: { input: ["PublishNodeRequest"], output: "ResultOptionalNodePublication", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
+  grant_database_cycles_from_iap: { input: ["DatabaseCyclesIapGrantRequest"], output: "ResultCyclesPurchase", mode: "update" },
   update_database_metadata: { input: ["UpdateDatabaseMetadataRequest"], output: "ResultDatabaseMetadata", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },

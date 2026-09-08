@@ -1,0 +1,48 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-payment",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "payment.kinic.xyz",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_IC_HOST": "https://icp0.io",
+    "KINIC_IAP_AUTHORITY_ID": "hcums-tc6dw-saet6-tkznz-mkldy-lwq47-2pehv-uoq3u-6a22c-mqfsh-5qe",
+    "APP_STORE_ALLOWED_ENVIRONMENTS": "Sandbox,Production",
+    "APP_STORE_SANDBOX_FULFILLMENT_ENABLED": "false",
+    "APP_STORE_SANDBOX_GRANT_LIMIT": "10",
+    "APP_STORE_BUNDLE_ID": "xyz.kinic.ios.KinicWiki",
+    "APP_STORE_NOTIFICATION_ROOT_SHA256S": "B0:B1:73:0E:CB:C7:FF:45:05:14:2C:49:F1:29:5E:6E:DA:6B:CA:ED:7E:2C:68:C5:BE:91:B5:A1:10:01:F0:24,C2:B9:B0:42:DD:57:83:0E:7D:11:7D:AC:55:AC:8A:E1:94:07:D3:8E:41:D8:8F:32:15:BC:3A:89:04:44:A0:50,63:34:3A:BF:B8:9A:6A:03:EB:B5:7E:9B:3F:5F:A7:BE:7C:4F:5C:75:6F:30:17:B3:A8:C4:88:C3:65:3E:91:79",
+    "IAP_PRODUCT_CATALOG_JSON": "{\"xyz.kinic.dbcredits.small\":\"2000000000000\"}"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kinic-payment",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "IAP_GLOBAL_RATE_LIMITER",
+      "namespace_id": "REPLACE_WITH_IAP_GLOBAL_RATE_LIMIT_NAMESPACE_ID",
+      "simple": { "limit": 300, "period": 60 }
+    },
+    {
+      "name": "IAP_PRINCIPAL_RATE_LIMITER",
+      "namespace_id": "REPLACE_WITH_IAP_PRINCIPAL_RATE_LIMIT_NAMESPACE_ID",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ]
+}

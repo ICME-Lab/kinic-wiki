@@ -16,18 +16,15 @@ struct VFSClient: @unchecked Sendable {
         self.urlSession = urlSession
     }
 
-    func listWritableDatabases(session: ICAuthSession) async throws -> [DatabaseSummary] {
+    func listWritableDatabases(session: KinicIdentitySession) async throws -> [DatabaseSummary] {
         try await listReadableDatabases(session: session).filter(\.canWrite)
     }
 
-    func listReadableDatabases(session: ICAuthSession) async throws -> [DatabaseSummary] {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
-            method: "list_databases",
-            arg: VFSCandidEncoder.empty(),
-            identity: session
+    func listReadableDatabases(session: KinicIdentitySession) async throws -> [DatabaseSummary] {
+        let result: VFSCandidResult<[DatabaseSummary], String> = try await client.query(
+            method: "list_databases", identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeDatabaseSummaries(data)
+        return try result.textValue()
             .filter(\.canRead)
             .sorted { left, right in
                 left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
@@ -35,61 +32,45 @@ struct VFSClient: @unchecked Sendable {
     }
 
     func listPublicDatabases() async throws -> [DatabaseSummary] {
-        let data = try await client.queryRaw(
-            method: "list_databases",
-            arg: VFSCandidEncoder.empty(),
-            identity: nil
-        )
-        return try VFSCandidDecoder.decodeDatabaseSummaries(data)
+        let result: VFSCandidResult<[DatabaseSummary], String> = try await client.query(method: "list_databases")
+        return try result.textValue()
             .filter(\.canRead)
             .sorted { left, right in
                 left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
             }
     }
 
-    func marketListEntitlements(session: ICAuthSession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
+    func marketListEntitlements(session: KinicIdentitySession, cursor: String?, limit: UInt32) async throws -> MarketEntitlementPage {
+        let result: VFSCandidResult<MarketEntitlementPage, String> = try await client.query(
             method: "market_list_entitlements",
-            arg: VFSCandidEncoder.marketListEntitlements(cursor: cursor, limit: limit),
-            identity: session
+            arguments: try arguments(cursor, limit),
+            identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeMarketEntitlementPageResult(data)
+        return try result.textValue()
     }
 
-    func getCyclesBillingConfig(session: ICAuthSession) async throws -> CyclesBillingConfig {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
-            method: "get_cycles_billing_config",
-            arg: VFSCandidEncoder.empty(),
-            identity: session
-        )
-        return try VFSCandidDecoder.decodeCyclesBillingConfigResult(data)
+    func getCyclesBillingConfig(session: KinicIdentitySession) async throws -> CyclesBillingConfig {
+        let result: VFSCandidResult<CyclesBillingConfig, String> = try await client.query(method: "get_cycles_billing_config", identity: try nativeIdentity(session))
+        return try result.textValue()
     }
 
-    func readNode(databaseId: String, path: String, session: ICAuthSession) async throws -> VFSNode? {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
+    func readNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> VFSNode? {
+        let result: VFSCandidResult<VFSNode?, String> = try await client.query(
             method: "read_node",
-            arg: VFSCandidEncoder.readNode(databaseId: databaseId, path: path),
-            identity: session
+            arguments: try arguments(databaseId, path),
+            identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeReadNodeResult(data)
+        return try result.textValue()
     }
 
-    func sourceURLExists(databaseId: String, url: URL, session: ICAuthSession) async throws -> Bool {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+    func sourceURLExists(databaseId: String, url: URL, session: KinicIdentitySession) async throws -> Bool {
         let lookupURLs = try Self.sourceLookupURLs(for: url)
-        let data = try await client.queryRaw(
+        let result: VFSCandidResult<VFSSQLJSONResult, String> = try await client.query(
             method: "query_database_sql_json",
-            arg: VFSCandidEncoder.queryDatabaseSQLJSON(
-                databaseId: databaseId,
-                sql: Self.sourceURLExistsSQL(normalizedURLs: lookupURLs),
-                limit: 1
-            ),
-            identity: session
+            arguments: try arguments(databaseId, Self.sourceURLExistsSQL(normalizedURLs: lookupURLs), UInt32(1)),
+            identity: try nativeIdentity(session)
         )
-        return try !VFSCandidDecoder.decodeSQLJSONQueryRowsResult(data).isEmpty
+        return try !result.textValue().rows.isEmpty
     }
 
     static func sourceLookupURLs(for url: URL) throws -> [String] {
@@ -144,138 +125,102 @@ struct VFSClient: @unchecked Sendable {
         content: String,
         metadataJson: String,
         expectedEtag: String?,
-        session: ICAuthSession
+        session: KinicIdentitySession
     ) async throws -> VFSWriteNodeResult {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+        let result: VFSCandidResult<VFSWriteNodeResult, VFSNodeMutationFailure> = try await client.call(
             method: "write_node",
-            arg: VFSCandidEncoder.writeNode(
+            argument: VFSWriteNodeRequest(
                 databaseId: databaseId,
                 path: path,
                 kind: kind,
                 content: content,
                 metadataJson: metadataJson,
                 expectedEtag: expectedEtag
-            ),
-            identity: session
+            ), identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeWriteNodeResult(data)
+        return try result.mutationValue()
     }
 
-    func readBrowseNode(databaseId: String, path: String, session: ICAuthSession?) async throws -> VFSNode? {
-        if let session {
-            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        }
-        let data = try await client.queryRaw(
+    func readBrowseNode(databaseId: String, path: String, session: KinicIdentitySession?) async throws -> VFSNode? {
+        let result: VFSCandidResult<VFSNode?, String> = try await client.query(
             method: "read_node",
-            arg: VFSCandidEncoder.readNode(databaseId: databaseId, path: path),
-            identity: session
+            arguments: try arguments(databaseId, path),
+            identity: try session.map(nativeIdentity)
         )
-        return try VFSCandidDecoder.decodeReadNodeResult(data)
+        return try result.textValue()
     }
 
-    func getNodePublication(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication? {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
-            method: "get_node_publication",
-            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
-            identity: session
-        )
-        return try VFSCandidDecoder.decodeOptionalNodePublicationResult(data)
+    func getNodePublication(databaseId: String, path: String, session: KinicIdentitySession) async throws -> NodePublication? {
+        let result: VFSCandidResult<NodePublication?, String> = try await client.query(method: "get_node_publication", argument: VFSPathRequest(databaseId: databaseId, path: path), identity: try nativeIdentity(session))
+        return try result.textValue()
     }
 
-    func publishNode(databaseId: String, path: String, session: ICAuthSession) async throws -> NodePublication {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
-            method: "publish_node",
-            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
-            identity: session
-        )
-        return try VFSCandidDecoder.decodeNodePublicationResult(data)
+    func publishNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> NodePublication {
+        let result: VFSCandidResult<NodePublication, String> = try await client.call(method: "publish_node", argument: VFSPathRequest(databaseId: databaseId, path: path), identity: try nativeIdentity(session))
+        return try result.textValue()
     }
 
-    func unpublishNode(databaseId: String, path: String, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
-            method: "unpublish_node",
-            arg: VFSCandidEncoder.publishNode(databaseId: databaseId, path: path),
-            identity: session
-        )
-        try VFSCandidDecoder.decodeUnitResult(data)
+    func unpublishNode(databaseId: String, path: String, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(method: "unpublish_node", argument: VFSPathRequest(databaseId: databaseId, path: path), identity: try nativeIdentity(session))
+        _ = try result.textValue()
     }
 
-    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+    func deleteNode(databaseId: String, path: String, expectedEtag: String, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<VFSDeleteNodeResult, VFSNodeMutationFailure> = try await client.call(
             method: "delete_node",
-            arg: VFSCandidEncoder.deleteNode(databaseId: databaseId, path: path, expectedEtag: expectedEtag),
-            identity: session
+            argument: VFSDeleteNodeRequest(databaseId: databaseId, path: path, expectedEtag: expectedEtag),
+            identity: try nativeIdentity(session)
         )
-        let deletedPath = try VFSCandidDecoder.decodeDeleteNodeResult(data)
+        let deletedPath = try result.mutationValue().path
         guard deletedPath == path else {
             throw VFSClientError.unexpectedDeletedPath(expected: path, actual: deletedPath)
         }
     }
 
-    func listBrowseChildren(databaseId: String, path: String, session: ICAuthSession?) async throws -> [ChildNode] {
-        if let session {
-            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        }
-        let data = try await client.queryRaw(
+    func listBrowseChildren(databaseId: String, path: String, session: KinicIdentitySession?) async throws -> [ChildNode] {
+        let result: VFSCandidResult<[ChildNode], String> = try await client.query(
             method: "list_children",
-            arg: VFSCandidEncoder.listChildren(databaseId: databaseId, path: path),
-            identity: session
+            argument: VFSPathRequest(databaseId: databaseId, path: path),
+            identity: try session.map(nativeIdentity)
         )
-        return try VFSCandidDecoder.decodeChildNodesResult(data)
-            .sorted(by: childSort)
+        return try result.textValue().sorted(by: childSort)
     }
 
-    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: ICAuthSession?) async throws -> [SearchNodeHit] {
-        if let session {
-            try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        }
-        let data = try await client.queryRaw(
+    func searchBrowseNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: KinicIdentitySession?) async throws -> [SearchNodeHit] {
+        let result: VFSCandidResult<[SearchNodeHit], String> = try await client.query(
             method: "search_nodes",
-            arg: VFSCandidEncoder.searchNodes(databaseId: databaseId, query: query, prefix: prefix, topK: limit),
-            identity: session
+            argument: VFSSearchNodesRequest(databaseId: databaseId, queryText: query, prefix: prefix, topK: limit),
+            identity: try session.map(nativeIdentity)
         )
-        return try VFSCandidDecoder.decodeSearchNodeHitsResult(data)
+        return try result.textValue()
     }
 
-    func createDatabase(name: String, session: ICAuthSession) async throws -> CreatedDatabase {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
-            method: "create_database",
-            arg: VFSCandidEncoder.createDatabase(name: name),
-            identity: session
-        )
-        return try VFSCandidDecoder.decodeCreateDatabaseResult(data)
+    func createDatabase(name: String, session: KinicIdentitySession) async throws -> CreatedDatabase {
+        let result: VFSCandidResult<CreatedDatabase, String> = try await client.call(method: "create_database", argument: VFSCreateDatabaseRequest(name: name), identity: try nativeIdentity(session))
+        return try result.textValue()
     }
 
-    func updateDatabaseMetadata(databaseId: String, name: String, description: String, llmSummary: String?, tagsJson: String, session: ICAuthSession) async throws -> DatabaseMetadata {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+    func updateDatabaseMetadata(databaseId: String, name: String, description: String, llmSummary: String?, tagsJson: String, session: KinicIdentitySession) async throws -> DatabaseMetadata {
+        let result: VFSCandidResult<DatabaseMetadata, String> = try await client.call(
             method: "update_database_metadata",
-            arg: VFSCandidEncoder.updateDatabaseMetadata(
+            argument: VFSUpdateDatabaseMetadataRequest(
                 databaseId: databaseId,
                 name: name,
                 description: description,
                 llmSummary: llmSummary,
                 tagsJson: tagsJson
-            ),
-            identity: session
+            ), identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeDatabaseMetadataResult(data)
+        return try result.textValue()
     }
 
-    func listDatabaseMembers(databaseId: String, session: ICAuthSession) async throws -> [DatabaseMember] {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
+    func listDatabaseMembers(databaseId: String, session: KinicIdentitySession) async throws -> [DatabaseMember] {
+        let result: VFSCandidResult<[DatabaseMember], String> = try await client.query(
             method: "list_database_members",
-            arg: VFSCandidEncoder.textArgsForDatabase(databaseId),
-            identity: session
+            arguments: try arguments(databaseId),
+            identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeDatabaseMembersResult(data)
+        return try result.textValue()
             .sorted { left, right in
                 if left.role != right.role {
                     return left.role.sortRank < right.role.sortRank
@@ -284,80 +229,71 @@ struct VFSClient: @unchecked Sendable {
             }
     }
 
-    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+    func grantDatabaseAccess(databaseId: String, principal: String, role: DatabaseRole, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(
             method: "grant_database_access",
-            arg: VFSCandidEncoder.grantDatabaseAccess(databaseId: databaseId, principal: principal, role: role),
-            identity: session
+            arguments: try arguments(databaseId, principal, role),
+            identity: try nativeIdentity(session)
         )
-        try VFSCandidDecoder.decodeUnitResult(data)
+        _ = try result.textValue()
     }
 
-    func revokeDatabaseAccess(databaseId: String, principal: String, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+    func revokeDatabaseAccess(databaseId: String, principal: String, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(
             method: "revoke_database_access",
-            arg: VFSCandidEncoder.revokeDatabaseAccess(databaseId: databaseId, principal: principal),
-            identity: session
+            arguments: try arguments(databaseId, principal),
+            identity: try nativeIdentity(session)
         )
-        try VFSCandidDecoder.decodeUnitResult(data)
+        _ = try result.textValue()
     }
 
-    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: ICAuthSession) async throws -> DatabaseCycleEntryPage {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
+    func listDatabaseCycleEntries(databaseId: String, cursor: UInt64?, limit: UInt32, session: KinicIdentitySession) async throws -> DatabaseCycleEntryPage {
+        let result: VFSCandidResult<DatabaseCycleEntryPage, String> = try await client.query(
             method: "list_database_cycle_entries",
-            arg: VFSCandidEncoder.listDatabaseCycleEntries(databaseId: databaseId, cursor: cursor, limit: limit),
-            identity: session
+            arguments: try arguments(databaseId, cursor, limit),
+            identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeDatabaseCycleEntryPageResult(data)
+        return try result.textValue()
     }
 
-    func listDatabaseCyclesPendingPurchases(databaseId: String, session: ICAuthSession) async throws -> [DatabaseCyclesPendingPurchase] {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.queryRaw(
+    func listDatabaseCyclesPendingPurchases(databaseId: String, session: KinicIdentitySession) async throws -> [DatabaseCyclesPendingPurchase] {
+        let result: VFSCandidResult<[DatabaseCyclesPendingPurchase], String> = try await client.query(
             method: "list_database_cycles_pending_purchases",
-            arg: VFSCandidEncoder.textArgsForDatabase(databaseId),
-            identity: session
+            arguments: try arguments(databaseId),
+            identity: try nativeIdentity(session)
         )
-        return try VFSCandidDecoder.decodeDatabaseCyclesPendingPurchasesResult(data)
+        return try result.textValue()
     }
 
-    func deleteDatabase(databaseId: String, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
+    func deleteDatabase(databaseId: String, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(
             method: "delete_database",
-            arg: VFSCandidEncoder.deleteDatabase(databaseId: databaseId),
-            identity: session
+            argument: VFSDatabaseIDRequest(databaseId: databaseId),
+            identity: try nativeIdentity(session)
         )
-        try VFSCandidDecoder.decodeUnitResult(data)
+        _ = try result.textValue()
     }
 
-    func deleteAccount(session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let data = try await client.callRaw(
-            method: "delete_account",
-            arg: VFSCandidEncoder.empty(),
-            identity: session
-        )
-        try VFSCandidDecoder.decodeUnitResult(data)
+    func deleteAccount(session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(method: "delete_account", identity: try nativeIdentity(session))
+        _ = try result.textValue()
     }
 
-    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: ICAuthSession) async throws -> CaptureSubmission {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
+    func saveSourceCaptureRequest(_ request: SourceCaptureRequest, session: KinicIdentitySession) async throws -> CaptureSubmission {
+        let identity = try nativeIdentity(session)
         let sessionNonce = UUID().uuidString.lowercased()
         if let existing = try await readNode(databaseId: request.databaseId, path: request.requestPath, session: session) {
             guard isSameSourceCaptureRequest(existing, request) else {
                 throw VFSClientError.conflictingSourceCaptureRequest(request.requestPath)
             }
         } else {
-            let writeData = try await client.callRaw(
+            let item = VFSWriteNodeItem(content: request.content, kind: .file, path: request.requestPath, expectedEtag: nil, metadataJson: request.metadataJson)
+            let result: VFSCandidResult<[VFSWriteNodeResult], VFSNodeMutationFailure> = try await client.call(
                 method: "write_nodes",
-                arg: VFSCandidEncoder.writeNodes(request),
-                identity: session
+                argument: VFSWriteNodesRequest(databaseId: request.databaseId, nodes: [item]),
+                identity: identity
             )
-            try VFSCandidDecoder.decodeWriteNodesResult(writeData)
+            _ = try result.mutationValue()
         }
         return CaptureSubmission(
             databaseId: request.databaseId,
@@ -368,17 +304,16 @@ struct VFSClient: @unchecked Sendable {
         )
     }
 
-    func triggerSourceCapture(databaseId: String, requestPath: String, sessionNonce: String, session: ICAuthSession) async throws {
-        try client.validateIdentity(session, requestCanisterId: configuration.canisterId)
-        let authorizeData = try await client.callRaw(
+    func triggerSourceCapture(databaseId: String, requestPath: String, sessionNonce: String, session: KinicIdentitySession) async throws {
+        let result: VFSCandidResult<CandidNull, String> = try await client.call(
             method: "authorize_source_capture_trigger_session",
-            arg: VFSCandidEncoder.authorizeSourceCaptureTriggerSession(
+            argument: VFSSourceCaptureTriggerSessionRequest(
                 databaseId: databaseId,
                 sessionNonce: sessionNonce
             ),
-            identity: session
+            identity: try nativeIdentity(session)
         )
-        try VFSCandidDecoder.decodeUnitResult(authorizeData)
+        _ = try result.textValue()
         let trigger = await triggerWorker(
             databaseId: databaseId,
             requestPath: requestPath,
@@ -387,6 +322,24 @@ struct VFSClient: @unchecked Sendable {
         guard trigger.accepted else {
             throw VFSClientError.workerTriggerFailed(trigger.error ?? "worker trigger failed")
         }
+    }
+
+    private func nativeIdentity(_ session: KinicIdentitySession) throws -> ICAuthSession {
+        let identity = try session.requireNativeSession()
+        try client.validateIdentity(identity, requestCanisterId: configuration.canisterId)
+        return identity
+    }
+
+    private func arguments<A: CandidConvertible>(_ a: A) throws -> CandidArguments {
+        CandidArguments([try CandidTypedValue(a)])
+    }
+
+    private func arguments<A: CandidConvertible, B: CandidConvertible>(_ a: A, _ b: B) throws -> CandidArguments {
+        CandidArguments([try CandidTypedValue(a), try CandidTypedValue(b)])
+    }
+
+    private func arguments<A: CandidConvertible, B: CandidConvertible, C: CandidConvertible>(_ a: A, _ b: B, _ c: C) throws -> CandidArguments {
+        CandidArguments([try CandidTypedValue(a), try CandidTypedValue(b), try CandidTypedValue(c)])
     }
 
 }

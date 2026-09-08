@@ -24,7 +24,7 @@ final class ShareViewController: UIViewController {
     private var databases: [DatabaseSummary] = []
     private var selectedDatabaseId: String?
     private var configuration: AppConfiguration?
-    private var session: ICAuthSession?
+    private var session: KinicIdentitySession?
     private var settingsStore: SharedDefaultsStore?
     private var submitter: ShareCaptureSubmitter?
     private var databaseClient: KinicICClient?
@@ -207,9 +207,21 @@ final class ShareViewController: UIViewController {
         self.configuration = configuration
         settingsStore = activeSettingsStore
         submitter = activeSubmitter
-        databaseClient = KinicICClient(configuration: configuration)
+        do {
+            databaseClient = try KinicICClient(configuration: configuration)
+        } catch {
+            submitSharedURL(url, captureMetadata: captureMetadata)
+            return
+        }
 
-        guard let session = KinicAuthSessionStore(configuration: configuration).restore() else {
+        let restoredSession: KinicIdentitySession?
+        do {
+            restoredSession = try KinicAuthSessionStore(configuration: configuration).restore()
+        } catch {
+            submitSharedURL(url, captureMetadata: captureMetadata)
+            return
+        }
+        guard let session = restoredSession else {
             submitSharedURL(url, captureMetadata: captureMetadata)
             return
         }
@@ -231,7 +243,7 @@ final class ShareViewController: UIViewController {
 
     private func refreshWritableDatabases(
         configuration: AppConfiguration,
-        session: ICAuthSession,
+        session: KinicIdentitySession,
         settingsStore: SharedDefaultsStore,
         fallbackWhenEmpty: Bool
     ) {
@@ -244,8 +256,8 @@ final class ShareViewController: UIViewController {
         doneButton.isHidden = true
 
         Task { [weak self] in
-            let client = KinicICClient(configuration: configuration)
             do {
+                let client = try KinicICClient(configuration: configuration)
                 let databases = try await client.listWritableDatabases(session: session)
                 await MainActor.run {
                     settingsStore.writableDatabases = databases

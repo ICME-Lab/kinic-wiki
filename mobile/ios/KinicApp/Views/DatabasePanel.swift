@@ -7,6 +7,7 @@ import SwiftUI
 struct DatabasePanel: View {
     @Bindable var model: AppModel
     @State private var isCreateSheetPresented = false
+    @State private var creditTarget: DatabaseCreditTarget?
     @State private var newDatabaseName = ""
 
     var body: some View {
@@ -23,9 +24,28 @@ struct DatabasePanel: View {
                     .buttonStyle(KinicIconButtonStyle())
                     .accessibilityLabel("Refresh databases")
                     .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+
+                Button("Add database credits", systemImage: "creditcard", action: presentSelectedCreditSheet)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(KinicIconButtonStyle())
+                    .accessibilityLabel("Add database credits")
+                    .disabled(!canAddCredits)
             }
         } content: {
             VStack(alignment: .leading, spacing: 14) {
+                if let pending = model.pendingCreatedDatabase {
+                    PendingDatabaseCreditPrompt(
+                        database: pending,
+                        onAddCredits: {
+                            presentCreditSheet(databaseId: pending.databaseId, title: pending.name)
+                        }
+                    )
+                }
+                if let error = model.databaseCreditError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
                 if model.captureDatabaseCandidates.isEmpty {
                     ContentUnavailableView(
                         model.isSignedIn ? "No writable databases" : "Sign in to load databases",
@@ -51,18 +71,48 @@ struct DatabasePanel: View {
             )
             .presentationDetents([.medium])
         }
-        .sheet(item: $model.pendingDatabaseActivation) { activation in
-            PendingDatabaseFundingSheet(
-                activation: activation,
-                onFundingPageReturned: model.startRefreshDatabases
-            )
-            .presentationDetents([.medium, .large])
+        .sheet(item: $creditTarget) { target in
+            DatabaseCreditSheet(model: model, target: target)
+                .presentationDetents([.medium, .large])
         }
+        .task {
+            model.startLoadDatabaseCreditProductsIfNeeded()
+        }
+    }
+
+    private var canAddCredits: Bool {
+        model.isSignedIn &&
+        defaultCreditTarget != nil &&
+        !model.isLoadingDatabaseCreditProducts &&
+        !model.isPurchasingDatabaseCredits
+    }
+
+    private var defaultCreditTarget: DatabaseCreditTarget? {
+        if let selected = model.selectedDatabase,
+           selected.role.canManageDatabase {
+            return DatabaseCreditTarget(id: selected.databaseId, title: selected.displayTitle)
+        }
+        if let pending = model.pendingCreatedDatabase {
+            return DatabaseCreditTarget(id: pending.databaseId, title: pending.name)
+        }
+        return nil
     }
 
     private func presentCreateSheet() {
         newDatabaseName = ""
         isCreateSheetPresented = true
+    }
+
+    private func presentSelectedCreditSheet() {
+        guard let target = defaultCreditTarget else {
+            return
+        }
+        presentCreditSheet(databaseId: target.id, title: target.title)
+    }
+
+    private func presentCreditSheet(databaseId: String, title: String) {
+        model.startLoadDatabaseCreditProductsIfNeeded()
+        creditTarget = DatabaseCreditTarget(id: databaseId, title: title)
     }
 
     private func dismissCreateSheet() {
@@ -87,7 +137,8 @@ struct DatabasePanel: View {
         let isPending = database.status == .pending
         return Button {
             if isPending {
-                model.presentFunding(for: database)
+                model.selectDatabase(database.databaseId)
+                presentCreditSheet(databaseId: database.databaseId, title: database.displayTitle)
             } else {
                 model.selectDatabase(database.databaseId)
             }
@@ -97,7 +148,8 @@ struct DatabasePanel: View {
                     database: database,
                     isSelected: isSelected,
                     isPublicReadable: model.isPublicBrowseDatabase(database.databaseId),
-                    isPurchased: model.isPurchasedBrowseDatabase(database.databaseId)
+                    isPurchased: model.isPurchasedBrowseDatabase(database.databaseId),
+                    showsCyclesBalance: true
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -141,7 +193,8 @@ struct DatabasePanel: View {
             isPurchased ? "Purchased" : nil
         ].compactMap { $0 }
         let badgeText = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
-        return "\(database.displayTitle), \(database.role.displayName)\(badgeText)"
+        let balanceText = database.cyclesBalance.map { ", balance \(DatabaseManagementFormat.cycles($0))" } ?? ""
+        return "\(database.displayTitle), \(database.role.displayName)\(badgeText)\(balanceText)"
     }
 
     nonisolated static func databaseAccessibilityValue(_ database: DatabaseSummary, isSelected: Bool) -> String {
@@ -149,7 +202,132 @@ struct DatabasePanel: View {
     }
 
     nonisolated static func databaseAccessibilityHint(_ database: DatabaseSummary) -> String {
-        database.status == .pending ? "Opens the web funding options" : "Sets the source capture database"
+        database.status == .pending ? "Opens App Store database credit options" : "Sets the source capture database"
+    }
+}
+
+private struct PendingDatabaseCreditPrompt: View {
+    let database: CreatedDatabase
+    let onAddCredits: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(database.name)
+                .font(.headline)
+            Text("Pending database needs database credits before it can be used.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("Add credits", systemImage: "creditcard", action: onAddCredits)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(KinicDesign.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+    }
+}
+
+private struct DatabaseCreditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var model: AppModel
+    let target: DatabaseCreditTarget
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.configuration.deploymentEnvironment == .sandbox {
+                    Section {
+                        Label(
+                            "Sandbox — no real charge; staging credits only",
+                            systemImage: "testtube.2"
+                        )
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                Section("Credit destination") {
+                    Text(target.title)
+                    Text(target.id)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if model.isLoadingDatabaseCreditProducts {
+                    ProgressView()
+                        .tint(KinicDesign.hotPink)
+                }
+                if model.databaseCreditProducts.isEmpty && !model.isLoadingDatabaseCreditProducts {
+                    ContentUnavailableView("No credit packs", systemImage: "creditcard")
+                } else {
+                    ForEach(model.databaseCreditProducts) { product in
+                        Section {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text(product.displayName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+
+                                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                    Text(product.displayAmountText)
+                                        .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                                        .foregroundStyle(KinicDesign.hotPink)
+                                        .minimumScaleFactor(0.8)
+
+                                    Spacer(minLength: 8)
+
+                                    Text(product.displayPrice)
+                                        .font(.title3.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                }
+
+                                Text("Adds credits to \(target.title).")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+
+                                Button {
+                                    model.startPurchaseDatabaseCredits(
+                                        productId: product.id,
+                                        databaseId: target.id
+                                    )
+                                } label: {
+                                    Text(model.isPurchasingDatabaseCredits ? "Purchasing…" : product.purchaseButtonTitle)
+                                }
+                                .buttonStyle(KinicPrimaryButtonStyle())
+                                .disabled(model.isPurchasingDatabaseCredits)
+
+                                Text("Apple purchase confirmation opens next.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+                if let error = model.databaseCreditError {
+                    Text(error)
+                        .foregroundStyle(.red)
+                }
+            }
+            .navigationTitle("Database credits")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .disabled(model.isPurchasingDatabaseCredits)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if model.isPurchasingDatabaseCredits {
+                        ProgressView()
+                            .tint(KinicDesign.hotPink)
+                    }
+                }
+            }
+        }
+        .interactiveDismissDisabled(model.isPurchasingDatabaseCredits)
+        .onChange(of: model.databaseCreditActivationRevision) {
+            if model.lastDatabaseCreditActivationDatabaseId == target.id {
+                dismiss()
+            }
+        }
     }
 }
 

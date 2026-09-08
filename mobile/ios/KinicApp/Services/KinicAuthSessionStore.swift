@@ -1,78 +1,79 @@
 // Where: mobile/ios/KinicApp/Services/KinicAuthSessionStore.swift
-// What: Shared Keychain storage for Internet Identity auth sessions.
-// Why: The app and Share Extension need the same delegation session for best-effort capture.
+// What: Shared ICNativeClient identity storage for the app and Share Extension.
+// Why: Both targets must use the same Keychain access group without exposing session private keys.
 
 import Foundation
 import ICNativeClient
-import Security
 
 final class KinicAuthSessionStore: @unchecked Sendable {
-    private let configuration: ICClientConfiguration
-    private let service: String
-    private let account: String
-    private let accessGroup: String?
+    private let loadStoredSession: () throws -> ICAuthSession?
+    private let saveStoredSession: (ICAuthSession) throws -> Void
+    private let clearStoredSession: () throws -> Void
+    let service: String
+    let account: String
+    let accessGroup: String?
 
     init(
         configuration: AppConfiguration,
         service: String? = nil,
         account: String = "internet-identity-session"
-    ) {
-        self.configuration = configuration.icClientConfiguration
+    ) throws {
         self.service = service ?? "\(configuration.canisterId).kinic-ios"
         self.account = account
         accessGroup = configuration.keychainAccessGroup
+        let store = ICIdentityStore(
+            configuration: try configuration.makeICClientConfiguration(),
+            service: self.service,
+            account: account,
+            accessGroup: accessGroup
+        )
+        loadStoredSession = { try store.load() }
+        saveStoredSession = { try store.save($0) }
+        clearStoredSession = { try store.clear() }
     }
 
-    func restore() -> ICAuthSession? {
-        var query = baseQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let session = try? JSONDecoder().decode(ICAuthSession.self, from: data) else {
-            return nil
-        }
+    init(
+        service: String,
+        account: String = "internet-identity-session",
+        accessGroup: String?,
+        loadStoredSession: @escaping () throws -> ICAuthSession?,
+        saveStoredSession: @escaping (ICAuthSession) throws -> Void = { _ in },
+        clearStoredSession: @escaping () throws -> Void
+    ) {
+        self.service = service
+        self.account = account
+        self.accessGroup = accessGroup
+        self.loadStoredSession = loadStoredSession
+        self.saveStoredSession = saveStoredSession
+        self.clearStoredSession = clearStoredSession
+    }
+
+    func restore() throws -> KinicIdentitySession? {
         do {
-            try ICIdentitySession.validateSession(session, configuration: configuration)
-            return session
+            return try loadStoredSession().map(KinicIdentitySession.init(nativeSession:))
         } catch {
-            clear()
-            return nil
+            if let clientError = error as? ICClientError,
+               case .keychainFailure = clientError {
+                throw clientError
+            }
+            try clearStoredSession()
+            throw KinicAuthSessionStoreError.reauthenticationRequired
         }
     }
 
-    func save(_ session: ICAuthSession) throws {
-        try ICIdentitySession.validateSession(session, configuration: configuration)
-        let data = try JSONEncoder().encode(session)
-        clear()
-        var query = baseQuery()
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = ICIdentityStore.keychainAccessibility
-        let status = SecItemAdd(query as CFDictionary, nil)
-        if status != errSecSuccess {
-            throw ICClientError.keychainFailure(status)
-        }
+    func save(_ session: KinicIdentitySession) throws {
+        try saveStoredSession(session.requireNativeSession())
     }
 
-    func clear() {
-        SecItemDelete(baseQuery() as CFDictionary)
+    func clear() throws {
+        try clearStoredSession()
     }
+}
 
-    func baseQueryForTesting() -> [String: Any] {
-        baseQuery()
-    }
+enum KinicAuthSessionStoreError: LocalizedError, Equatable {
+    case reauthenticationRequired
 
-    private func baseQuery() -> [String: Any] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        if let accessGroup,
-           !accessGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            query[kSecAttrAccessGroup as String] = accessGroup
-        }
-        return query
+    var errorDescription: String? {
+        "Your saved sign-in expired or is no longer compatible. Sign in again."
     }
 }

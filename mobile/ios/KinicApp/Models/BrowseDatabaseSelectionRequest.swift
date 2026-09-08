@@ -4,9 +4,25 @@
 
 import Foundation
 
+enum BrowseDatabaseSelectionPurpose: Equatable, Sendable {
+    case browse
+    case databaseCreditActivation
+}
+
 struct BrowseDatabaseSelectionRequest: Identifiable, Equatable, Sendable {
     let id: UUID
     let databaseId: String
+    let purpose: BrowseDatabaseSelectionPurpose
+
+    init(
+        id: UUID,
+        databaseId: String,
+        purpose: BrowseDatabaseSelectionPurpose = .browse
+    ) {
+        self.id = id
+        self.databaseId = databaseId
+        self.purpose = purpose
+    }
 }
 
 enum BrowseDatabaseSelectionDisposition: Equatable, Sendable {

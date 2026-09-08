@@ -209,11 +209,6 @@ pub struct VfsService {
     database_handle: fn(u16) -> Result<DbHandle, String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IndexPostMigrationAction {
-    None,
-}
-
 impl VfsService {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(index_path: PathBuf, databases_dir: PathBuf) -> Self {
@@ -1241,8 +1236,8 @@ const INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_accounts",
     "database_cycle_ledger",
     "database_free_cycle_grants",
-    "database_cycle_pending_operations",
     "database_iap_cycle_grants",
+    "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
     "market_listings",

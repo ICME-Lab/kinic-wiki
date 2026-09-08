@@ -8,6 +8,12 @@ import Testing
 
 struct AppConfigurationURLTests {
     @Test
+    func deploymentEnvironmentParsesSandbox() {
+        #expect(AppConfiguration.deploymentEnvironment(from: "sandbox") == .sandbox)
+        #expect(AppConfiguration.deploymentEnvironment(from: "production") == .production)
+    }
+
+    @Test
     func usesDirectInternetIdentityAuthorizationURL() {
         let identityProvider = AppConfiguration.preview.identityProvider
         #expect(identityProvider.scheme == "https")

@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Services/VFSCandidError.swift
-// What: Explicit errors for the tiny VFS Candid codec.
-// Why: Unsupported wire shapes must fail loudly instead of corrupting canister calls.
+// What: Domain errors returned by VFS Result variants.
+// Why: Transport and wire failures belong to ICNativeClient; callers still need VFS rejection details.
 
 import Foundation
 
@@ -20,14 +20,11 @@ struct VFSNodeMutationFailure: Equatable, Sendable {
 }
 
 enum VFSCandidError: Error, LocalizedError, Equatable {
-    case invalidPayload(String)
     case canisterRejected(String)
     case nodeMutationRejected(VFSNodeMutationFailure)
 
     var errorDescription: String? {
         switch self {
-        case .invalidPayload(let context):
-            "VFS Candid payload is invalid: \(context)."
         case .canisterRejected(let message):
             message
         case .nodeMutationRejected(let failure):

@@ -74,26 +74,11 @@ const trustPoints = [
   }
 ];
 
-const nativeAuthHashRedirectScript = `
-(() => {
-  const marker = "#/native-auth";
-  if (!location.hash.startsWith(marker)) return;
-  const queryStart = location.hash.indexOf("?");
-  if (queryStart < 0) return;
-  const query = location.hash.slice(queryStart + 1);
-  try {
-    sessionStorage.setItem("kinicNativeAuthQuery", query);
-  } catch {}
-  location.replace("/native-auth?" + query);
-})();
-`;
-
 const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2";
 
 export default function HomePage() {
   return (
     <main className="min-h-screen overflow-hidden bg-white text-ink">
-      <script dangerouslySetInnerHTML={{ __html: nativeAuthHashRedirectScript }} />
       <header className="border-b border-line bg-white px-4 py-4 sm:px-6">
         <nav className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-3" aria-label="Primary navigation">
           <Link className={`flex items-center gap-3 rounded-lg text-sm font-semibold text-ink no-underline ${focusRing}`} href="/">

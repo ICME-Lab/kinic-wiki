@@ -6,6 +6,7 @@ import SwiftUI
 
 struct ManageView: View {
     @Bindable var model: AppModel
+    @State private var hasUserSelectedManageDatabase = false
 
     var body: some View {
         Group {
@@ -50,15 +51,7 @@ struct ManageView: View {
                     .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 12) {
-                    Picker("Database", selection: manageDatabaseSelection) {
-                        ForEach(model.managementDatabases) { database in
-                            Text(pickerTitle(for: database))
-                                .tag(database.databaseId)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(KinicDesign.hotPink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    databaseMenu
 
                     Button("Refresh databases", systemImage: "arrow.clockwise", action: refreshManagement)
                         .labelStyle(.iconOnly)
@@ -71,17 +64,38 @@ struct ManageView: View {
         }
     }
 
-    private var selectedManageDatabase: DatabaseSummary? {
-        model.managementDatabases.first { $0.databaseId == model.selectedBrowseDatabaseId }
+    private var databaseMenu: some View {
+        Menu {
+            ForEach(model.managementDatabases) { database in
+                Button {
+                    selectManageDatabase(database.databaseId)
+                } label: {
+                    Text(pickerTitle(for: database))
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(selectedManageDatabase.map(pickerTitle(for:)) ?? "Select a database")
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .tint(KinicDesign.hotPink)
+        .accessibilityLabel("Database")
+        .accessibilityValue(selectedManageDatabase.map(pickerTitle(for:)) ?? "Select a database")
     }
 
-    private var manageDatabaseSelection: Binding<String> {
-        Binding(
-            get: { model.selectedBrowseDatabaseId },
-            set: { databaseId in
-                _ = model.requestBrowseDatabaseSelection(databaseId)
-            }
-        )
+    private var selectedManageDatabase: DatabaseSummary? {
+        let preferredDatabaseId = hasUserSelectedManageDatabase
+            ? model.selectedBrowseDatabaseId
+            : model.selectedDatabaseId
+        return model.managementDatabases.first { $0.databaseId == preferredDatabaseId }
+            ?? model.managementDatabases.first { $0.databaseId == model.selectedBrowseDatabaseId }
     }
 
     private func pickerTitle(for database: DatabaseSummary) -> String {
@@ -100,6 +114,11 @@ struct ManageView: View {
         if let selectedManageDatabase {
             model.startRefreshDatabaseManagementDetails(databaseId: selectedManageDatabase.databaseId)
         }
+    }
+
+    private func selectManageDatabase(_ databaseId: String) {
+        _ = model.requestBrowseDatabaseSelection(databaseId)
+        hasUserSelectedManageDatabase = true
     }
 }
 

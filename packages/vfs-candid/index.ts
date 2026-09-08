@@ -84,6 +84,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     payment_amount_e8s: idl.Nat64,
     min_expected_cycles: idl.Nat64
   });
+  const DatabaseCyclesIapGrantRequest = idl.Record({
+    database_id: idl.Text,
+    amount_cycles: idl.Nat64,
+    external_payment_id: idl.Text,
+    provider: idl.Text,
+    product_id: idl.Text,
+    purchaser_principal: idl.Text
+  });
   const MarketCreateListingRequest = idl.Record({
     database_id: idl.Text,
     payout_principal: idl.Text,
@@ -531,6 +539,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     get_initial_free_database_grant_status: idl.Func([], [ResultInitialFreeDatabaseGrantStatus], ["query"]),
     get_node_publication: idl.Func([PublishNodeRequest], [ResultOptionalNodePublication], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
+    grant_database_cycles_from_iap: idl.Func([DatabaseCyclesIapGrantRequest], [ResultCyclesPurchase], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
     icrc10_supported_standards: idl.Func([], [idl.Vec(Icrc10SupportedStandard)], ["query"]),
