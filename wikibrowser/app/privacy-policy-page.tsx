@@ -61,13 +61,13 @@ export default function PrivacyPolicyPage() {
                   </h2>
                 );
               },
-              ul({ children, ...props }) {
+              ul({ children, node: _node, ...props }) {
                 return <ul className="list-disc pl-6" {...props}>{children}</ul>;
               },
-              ol({ children, ...props }) {
+              ol({ children, node: _node, ...props }) {
                 return <ol className="list-decimal pl-6" {...props}>{children}</ol>;
               },
-              a({ href, children, ...props }) {
+              a({ href, children, node: _node, ...props }) {
                 const external = href?.startsWith("http://") || href?.startsWith("https://");
                 return (
                   <a

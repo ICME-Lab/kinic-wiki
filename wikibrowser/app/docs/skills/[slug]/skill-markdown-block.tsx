@@ -117,10 +117,10 @@ function SkillMarkdownDocument({ markdown, references }: { markdown: string; ref
         h3({ children }) {
           return <h5 className="mt-6 text-sm font-semibold text-ink">{children}</h5>;
         },
-        ul({ children, ...props }) {
+        ul({ children, node: _node, ...props }) {
           return <ul className="list-disc" {...props}>{children}</ul>;
         },
-        ol({ children, ...props }) {
+        ol({ children, node: _node, ...props }) {
           return <ol className="list-decimal" {...props}>{children}</ol>;
         },
         a({ children, href }) {

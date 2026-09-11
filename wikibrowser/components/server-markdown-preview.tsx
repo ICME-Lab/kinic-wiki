@@ -22,7 +22,7 @@ export function ServerMarkdownPreview({
   return (
     <Markdown
       components={{
-        a({ href, children, ...props }) {
+        a({ href, children, node: _node, ...props }) {
           const wikiHref = hrefForMarkdownLink(canisterId, databaseId, nodePath, href);
           if (!wikiHref) {
             return (
@@ -37,7 +37,7 @@ export function ServerMarkdownPreview({
             </a>
           );
         },
-        img({ src, alt, ...props }) {
+        img({ src, alt, node: _node, ...props }) {
           const safeSrc = safeMarkdownImageSrc(src);
           if (!safeSrc) return alt ? <span>{alt}</span> : null;
           // Markdown image hosts are user-controlled, so a fixed host allowlist is not applicable here.

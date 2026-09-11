@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Markdown } from "@/lib/markdown-renderer";
 
 function render(markdown: string, components?: Parameters<typeof Markdown>[0]["components"]): string {
-  return renderToStaticMarkup(<Markdown components={components}>{markdown}</Markdown>);
+  return renderToStaticMarkup(<Markdown components={components}>{markdown}</Markdown>).replace(/>\s+</g, "><");
 }
 
 describe("Markdown renderer", () => {
@@ -49,7 +49,7 @@ describe("Markdown renderer", () => {
 
   it("absorbs the rest of the document into an unterminated fence", () => {
     const html = render("```ts\nconst value = 1;\n# After");
-    expect(html).toContain('<pre><code class="language-ts">const value = 1;\n# After</code></pre>');
+    expect(html).toContain('<pre><code class="language-ts">const value = 1;\n# After\n</code></pre>');
     expect(html).not.toContain("<h1>After</h1>");
   });
 
@@ -66,25 +66,25 @@ describe("Markdown renderer", () => {
     expect(heading).toContain("<h1>Heading</h1>");
     const fence = render("- Foo\n```\ncode\n```");
     expect(fence).toContain("<ul><li>Foo</li></ul>");
-    expect(fence).toContain("<pre><code>code</code></pre>");
+    expect(fence).toContain("<pre><code>code\n</code></pre>");
   });
 
   it("keeps an indented heading inside a list item", () => {
     const html = render("- Foo\n  # Inside");
-    expect(html).toContain("<ul><li>Foo<h1>Inside</h1></li></ul>");
+    expect(html).toMatch(/<ul><li>Foo\s*<h1>Inside<\/h1><\/li><\/ul>/);
   });
 
   it("does not add checkboxes to plain items in a mixed task list", () => {
     const html = render("- normal item\n- [x] completed item");
-    expect(html).toContain("<ul><li>normal item</li>");
-    expect(html).toContain("<li><input type=\"checkbox\" disabled=\"\" checked=\"\"/>completed item</li>");
+    expect(html).toContain("<li>normal item</li>");
+    expect(html).toContain("<li class=\"task-list-item\"><input type=\"checkbox\" disabled=\"\" checked=\"\"/> completed item</li>");
   });
 
   it("renders hard line breaks from two trailing spaces and a backslash", () => {
     const twoSpaces = render("first  \nsecond");
-    expect(twoSpaces).toContain("<p>first<br/>second</p>");
+    expect(twoSpaces).toMatch(/<p>first<br\/>\s*second<\/p>/);
     const backslash = render("first\\\nsecond");
-    expect(backslash).toContain("<p>first<br/>second</p>");
+    expect(backslash).toMatch(/<p>first<br\/>\s*second<\/p>/);
     expect(backslash).not.toContain("first\\");
   });
 
@@ -137,7 +137,7 @@ describe("Markdown renderer", () => {
 
   it("nests nested list items", () => {
     const html = render("- one\n- two\n  - nested a\n  - nested b\n- three");
-    expect(html).toContain("<li>two<ul><li>nested a</li><li>nested b</li></ul></li>");
+    expect(html).toMatch(/<li>two\s*<ul><li>nested a<\/li><li>nested b<\/li><\/ul><\/li>/);
   });
 
   it("renders autolinks for angle-bracket URLs", () => {
@@ -155,11 +155,12 @@ describe("Markdown renderer", () => {
     expect(html).toContain("<p>© 2026 — “quoted” × 2</p>");
   });
 
-  it("autolinks bare http/https/ftp URLs", () => {
+  it("autolinks bare http/https URLs but leaves FTP as text", () => {
     const html = render("See https://example.com/a and http://x.example and ftp://files.example.org now.");
     expect(html).toContain('<a href="https://example.com/a">https://example.com/a</a>');
     expect(html).toContain('<a href="http://x.example">http://x.example</a>');
-    expect(html).toContain('<a href="ftp://files.example.org">ftp://files.example.org</a>');
+    expect(html).toContain("ftp://files.example.org");
+    expect(html).not.toContain('<a href="ftp://files.example.org"');
   });
 
   it("autolinks bare www and email, trimming trailing punctuation", () => {
@@ -178,6 +179,26 @@ describe("Markdown renderer", () => {
     const html = render("version v1.2.3 of the tool");
     expect(html).toContain("v1.2.3");
     expect(html).not.toContain("<a href");
+  });
+
+  it("requires double tildes for strikethrough", () => {
+    const html = render("~literal~ and ~~deleted~~");
+    expect(html).toContain("~literal~");
+    expect(html).toContain("<del>deleted</del>");
+  });
+
+  it("keeps raw HTML inert", () => {
+    const html = render('<script>alert(1)</script><img src="x" onerror="alert(2)">');
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("onerror=&quot;alert(2)&quot;");
+  });
+
+  it("removes executable link and image destinations", () => {
+    const html = render("[link](javascript:alert(1)) ![image](data:text/html,boom)");
+    expect(html).not.toContain("javascript:");
+    expect(html).not.toContain("data:text/html");
   });
 
   it("honors component overrides", () => {
