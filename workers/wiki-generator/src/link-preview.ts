@@ -4,7 +4,6 @@
 // Why: satori (SVG layout) + @resvg/resvg-wasm (rasterize) are used directly instead of next/og or @vercel/og,
 //      both of which load a default font via `new URL(..., import.meta.url)` at module scope and cannot
 //      initialize in the Workers runtime, where `import.meta.url` is undefined.
-import satori from "satori";
 import type { Resvg as ResvgClass } from "@resvg/resvg-wasm";
 import type { PublicDatabaseSummary } from "./types.js";
 import {
@@ -58,6 +57,8 @@ export async function renderLinkPreviewImage(input: RenderInput = {}): Promise<R
     ? [{ name: PREVIEW_FONT_NAME, data: fontData, weight: 400, style: "normal" }]
     : [];
   try {
+    // Keep Yoga's dynamic Wasm initialization off the Worker startup path.
+    const { default: satori } = await import("satori");
     const svg = await satori(
     element(
       "div",

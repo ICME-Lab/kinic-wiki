@@ -23,14 +23,14 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.44.0",
-    "@cloudflare/vitest-pool-workers": "0.12.21",
+    "@cloudflare/vitest-pool-workers": "0.20.2",
     "@cloudflare/workers-types": "4.20260702.1",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
     "@types/react": "19.2.7",
     "typescript": "7.0.2",
     "vite": "8.1.4",
-    "vitest": "^3.2.4",
+    "vitest": "4.1.11",
     "wrangler": "4.110.0"
   },
   "pnpm": {

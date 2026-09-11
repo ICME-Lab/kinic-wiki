@@ -37,7 +37,7 @@ describe("cycles billing Candid response", () => {
         }
       }
     }]);
-    const service = idlFactory({ IDL });
+    const service = idlFactory({ IDL }) as ReturnType<typeof IDL.Service>;
     const method = service._fields.find(([name]) => name === "get_cycles_billing_config")![1];
     const [decoded] = IDL.decode(method.retTypes, bytes) as [{ Ok: RawCyclesBillingConfig }];
     const config = normalizeCyclesBillingConfig(decoded.Ok);
