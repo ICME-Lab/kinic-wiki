@@ -13,7 +13,7 @@ export function PublicMarkdownPreview({ content }: { content: string }) {
           if (!isExternalHttpsUrl(href)) return <span>{children}</span>;
           return <a href={href} rel="noopener noreferrer">{children}</a>;
         },
-        img({ src, alt, ...props }) {
+        img({ src, alt, node: _node, ...props }) {
           const safeSrc = safeMarkdownImageSrc(src);
           if (!safeSrc) return alt ? <span>{alt}</span> : null;
           return <img src={safeSrc} alt={alt ?? ""} {...props} />;

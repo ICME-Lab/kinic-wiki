@@ -59,7 +59,8 @@ function renderLineWikilinks(line: string): string {
 function renderLineWikilinksText(line: string): string {
   return transformLineWikilinks(line, (raw) => {
     const parsed = parseWikilink(raw);
-    return parsed ? escapeForPlainText(parsed.label) : null;
+    const label = parsed?.label.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+    return parsed ? `[${label}](#kinic-wikilink-literal)` : null;
   }, { embeds: true });
 }
 
@@ -94,22 +95,6 @@ function transformLineWikilinks(line: string, render: (raw: string) => string | 
     index += 1;
   }
   return output;
-}
-
-function escapeForPlainText(value: string): string {
-  let output = "";
-  for (const character of value) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    output += isAsciiPunctuation(codePoint) ? `&#${codePoint};` : character;
-  }
-  return output;
-}
-
-function isAsciiPunctuation(codePoint: number): boolean {
-  return (codePoint >= 33 && codePoint <= 47)
-    || (codePoint >= 58 && codePoint <= 64)
-    || (codePoint >= 91 && codePoint <= 96)
-    || (codePoint >= 123 && codePoint <= 126);
 }
 
 function renderWikilink(raw: string): string | null {

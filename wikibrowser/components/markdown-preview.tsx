@@ -26,14 +26,14 @@ export function MarkdownPreview({
       {frontmatter && frontmatter.fields.length > 0 ? <FrontmatterSummary fields={frontmatter.fields} /> : null}
       <Markdown
         components={{
-          a({ href, children, ...props }) {
+          a({ href, children, node: _node, ...props }) {
             const wikiHref = hrefForMarkdownLink(canisterId, databaseId, nodePath, href);
             if (!wikiHref) {
               return <a href={href} {...props}>{children}</a>;
             }
             return <WikiNavigationLink href={wikiHref} {...props}>{children}</WikiNavigationLink>;
           },
-          img({ src, alt, ...props }) {
+          img({ src, alt, node: _node, ...props }) {
             const safeSrc = safeMarkdownImageSrc(src);
             if (!safeSrc) {
               return alt ? <span className="text-xs text-muted">{alt}</span> : null;
