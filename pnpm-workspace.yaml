@@ -3,6 +3,7 @@ packages:
   - wikibrowser
   - skill-registry-web
   - workers/wiki-mcp
+  - workers/wiki-assistant
   - workers/wiki-generator
   - workers/payment
   - extensions/wiki-clipper

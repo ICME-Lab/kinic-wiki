@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { RuntimeEnv } from "../vfs.js";
-import { decryptJson, encryptJson, randomOpaque, sha256, type EncryptedValueV1 } from "./crypto.js";
+import { decryptJson, encryptJson, randomOpaque, sha256, type EncryptedValueV1 } from "@kinic/ii-server/crypto";
 import {
   IiDelegationError,
   IiSessionEndedError,
@@ -12,7 +12,7 @@ import {
   type IiKeyJson,
   type IiPermission,
   type KinicDelegationMaterialV1
-} from "./internet-identity.js";
+} from "@kinic/ii-server/internet-identity";
 
 const RECORD_KEY = "record";
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;

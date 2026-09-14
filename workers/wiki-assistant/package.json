@@ -1,0 +1,28 @@
+{
+  "name": "kinic-wiki-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8791",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && vitest run --config vitest.worker.config.ts",
+    "build": "wrangler deploy --dry-run",
+    "cf-typegen": "wrangler types --env-interface AssistantEnv --strict-vars=false --include-runtime=false",
+    "test:live": "vitest run --config vitest.live.config.ts"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "6.0.0",
+    "@kinic/ii-server": "workspace:*",
+    "openai": "7.15.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260804.1",
+    "@cloudflare/vitest-pool-workers": "0.20.2",
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.119.0"
+  }
+}

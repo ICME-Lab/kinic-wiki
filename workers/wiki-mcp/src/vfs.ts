@@ -3,6 +3,7 @@
 // Why: Authenticated identities stay request-scoped while the anonymous production actor may be reused.
 
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
+import { readNodeRaw } from "@kinic/ii-server/read";
 import { Principal } from "@icp-sdk/core/principal";
 import {
   candidOptional,
@@ -493,7 +494,7 @@ export async function listNodes(env: RuntimeEnv, databaseId: string, prefix: str
 export async function readNode(env: RuntimeEnv, databaseId: string, path: string): Promise<WikiNode | null> {
   const actor = await createVfsActor(env);
   const raw = unwrap(
-    await callVfs(env, "read_node", () => actor.read_node(databaseId, path)),
+    await callVfs(env, "read_node", () => readNodeRaw(actor, databaseId, path)),
     env
   );
   return raw[0] ? normalizeNode(raw[0]) : null;

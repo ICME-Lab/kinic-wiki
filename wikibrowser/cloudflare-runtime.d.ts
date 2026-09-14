@@ -1,4 +1,5 @@
 interface CloudflareEnv {
+  WIKI_ASSISTANT?: { fetch(request: Request): Promise<Response> };
   DEEPSEEK_API_KEY?: string;
   KINIC_DEPLOYMENT_ENV?: string;
   KINIC_WIKI_CANISTER_ID: string;
