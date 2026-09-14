@@ -285,11 +285,21 @@ describe("staging OAuth discovery and registration", () => {
     await expect(tokenWithWrongResource.json()).resolves.toEqual({ error: "invalid_target" });
   });
 
-  it("authorizes the dedicated reviewer without Internet Identity setup", async () => {
-    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+  it.each([
+    "https://chatgpt.com/connector/oauth/callback",
+    "https://chat.openai.com/callback",
+    "http://127.0.0.1:43210/callback",
+    "http://localhost:43211/callback"
+  ])("authorizes the reviewer with a session-scoped form policy for %s", async (redirectUri) => {
+    const registered = await register([redirectUri, "https://chatgpt.com/unused-callback"]);
     const { client_id: clientId } = await registered.json<{ client_id: string }>();
     const verifier = "r".repeat(43);
-    const started = await fetchWorker(await authorizationUrl(clientId, verifier), { redirect: "manual" });
+    const authorizeUrl = new URL(await authorizationUrl(clientId, verifier));
+    authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+    const started = await fetchWorker(authorizeUrl.toString(), { redirect: "manual" });
+    const platformRelay = redirectUri.startsWith("https://chat") ? " https://platform.openai.com" : "";
+    const expectedPolicy = `default-src 'none'; form-action 'self' https://id.ai ${new URL(redirectUri).origin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`;
+    expect(started.headers.get("content-security-policy")).toBe(expectedPolicy);
     const html = await started.text();
     const cookie = cookieFrom(started);
     const connectState = connectStateFrom(html);
@@ -309,6 +319,7 @@ describe("staging OAuth discovery and registration", () => {
       }).toString()
     });
     expect(rejected.status).toBe(401);
+    expect(rejected.headers.get("content-security-policy")).toBe(expectedPolicy);
     expect(await rejected.text()).toContain("Sign-in failed.");
 
     const accepted = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
@@ -327,7 +338,7 @@ describe("staging OAuth discovery and registration", () => {
     });
     expect(accepted.status).toBe(302);
     const redirect = new URL(accepted.headers.get("location")!);
-    expect(redirect.origin + redirect.pathname).toBe("https://chatgpt.com/connector/oauth/callback");
+    expect(redirect.origin + redirect.pathname).toBe(redirectUri);
     expect(redirect.searchParams.get("state")).toBe("client-state");
     const code = redirect.searchParams.get("code");
     expect(code).toMatch(/^mkc1\./u);
@@ -339,7 +350,7 @@ describe("staging OAuth discovery and registration", () => {
         grant_type: "authorization_code",
         client_id: clientId,
         code: code!,
-        redirect_uri: "https://chatgpt.com/connector/oauth/callback",
+        redirect_uri: redirectUri,
         code_verifier: verifier,
         resource
       }).toString()

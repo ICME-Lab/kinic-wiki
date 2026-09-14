@@ -412,11 +412,8 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   }
   return new Response(authorizationChoicePage(connectState, reviewLoginEnabled(env)), {
     headers: {
-      "content-type": "text/html; charset=utf-8",
-      "set-cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
-      "cache-control": "no-store",
-      "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-      "referrer-policy": "no-referrer"
+      ...authorizationPageHeaders(redirectUri),
+      "set-cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`
     }
   });
 }
@@ -485,7 +482,7 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   if (!usernameMatches || !passwordMatches) {
     return new Response(authorizationChoicePage(connectState, true, "Sign-in failed."), {
       status: 401,
-      headers: authorizationPageHeaders()
+      headers: authorizationPageHeaders(pending.redirectUri)
     });
   }
   const claimed = await stub.claimConnect(connectState, cookieValue, Date.now());
@@ -548,11 +545,17 @@ function authorizationChoicePage(connectState: string, reviewEnabled: boolean, e
 <button type="submit">Continue with Internet Identity</button></form>${reviewerForm}</body></html>`;
 }
 
-function authorizationPageHeaders(): HeadersInit {
+function authorizationPageHeaders(redirectUri: string): HeadersInit {
+  // Browsers also check form-action against the redirect after a successful POST.
+  const redirectOrigin = new URL(redirectUri).origin;
+  // OpenAI's submission flow relays the ChatGPT callback to the Platform portal.
+  const platformRelay = redirectOrigin === "https://chatgpt.com" || redirectOrigin === "https://chat.openai.com"
+    ? " https://platform.openai.com"
+    : "";
   return {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "content-security-policy": `default-src 'none'; form-action 'self' ${INTERNET_IDENTITY_ORIGIN} ${redirectOrigin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "no-referrer"
   };
 }
