@@ -58,6 +58,8 @@ pnpm --dir workers/wiki-mcp review:seed -- \
 
 ## Web and mobile acceptance
 
+HTTP-only smoke tests do not enforce browser Content Security Policy. Verify a fresh browser OAuth connection through the callback and token exchange, including a failed reviewer password followed by a successful retry and the normal Internet Identity flow. Also complete the portal's Scan Tools OAuth flow: ChatGPT redirects again to OpenAI Platform. The authorization page permits form redirects to its own origin, Internet Identity, and the current session's validated callback origin; only ChatGPT callbacks additionally permit the OpenAI Platform relay.
+
 For both ChatGPT web and mobile:
 
 1. Use a clean browser profile or mobile device.
