@@ -13,24 +13,9 @@ const idl = readFileSync(new URL("../src/vfs.ts", import.meta.url), "utf8");
 
 const didTypeAliases = {
   ...sharedAliases,
-  ResultNodes: "Result_20",
-  ResultWriteNodes: "Result_46",
+  ResultNodes: "Result_23",
   ResultEditNode: "Result_6",
-  ResultMutationBatch: "Result_33",
-  ResultNodePublication: sharedAliases.ResultNodePublication,
-  ResultCyclesPurchase: sharedAliases.ResultCyclesPurchase,
-  ResultQueryContext: "Result_35",
-  ResultIndexSqlJsonQuery: "Result_36",
-  ResultNode: "Result_37",
-  ResultNodeContext: "Result_38",
-  ResultPublicNode: "Result_39",
-  ResultSearch: "Result_40",
-  ResultStorageBillingBatch: "Result_41",
-  ResultSourceEvidence: "Result_42",
-  ResultDatabaseMetadata: "Result_43",
-  ResultWikiMetrics: "Result_44",
-  ResultWikiMetricsSeries: "Result_45",
-  ResultWriteSourceForGeneration: "Result_47"
+  ResultMutationBatch: "Result_36"
 };
 
 const expectedTypes = {

@@ -7,6 +7,7 @@ import SwiftUI
 struct AskAIView: View {
     @Bindable var appModel: AppModel
     @Bindable var model: AskAIModel
+    @State private var isShowingPreview = false
     @State private var isShowingHistory = false
 
     var body: some View {
@@ -18,6 +19,9 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if appModel.voicePreview.available {
+                        Button("Voice preview", systemImage: "waveform") { isShowingPreview = true }
+                    }
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
                     }
@@ -27,6 +31,9 @@ struct AskAIView: View {
                         .labelStyle(.iconOnly)
                         .disabled(appModel.selectedAskAIDatabaseId.isEmpty)
                 }
+            }
+            .sheet(isPresented: $isShowingPreview) {
+                VoicePreviewView(appModel: appModel, model: appModel.voicePreview)
             }
             .sheet(isPresented: $isShowingHistory) {
                 AskAIHistoryView(model: model)

@@ -12,6 +12,7 @@ import { AssistantPanel } from "./assistant-panel";
 import {
   assistantRequest,
   AssistantVoice,
+  AssistantControl,
   type AssistantSnapshot,
 } from "@/lib/assistant";
 
@@ -39,7 +40,7 @@ class TestSocket {
   constructor() {
     sockets.push(this);
   }
-  send() {}
+  send(_message: string) {}
   close() {
     this.readyState = 3;
   }
@@ -89,7 +90,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 const openPanel = () =>
-  fireEvent.click(screen.getByRole("button", { name: /Ask AI 出典付き/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /Ask AI Answers with sources/ }),
+  );
 describe("Ask AI panel", () => {
   it("requires Wiki login and explicit data-transfer consent", async () => {
     render(
@@ -101,10 +104,12 @@ describe("Ask AI panel", () => {
       />,
     );
     openPanel();
-    expect(screen.getByText(/WikiにInternet Identityでログイン/)).toBeTruthy();
+    expect(
+      screen.getByText(/Sign in to the Wiki with Internet Identity/),
+    ).toBeTruthy();
     expect(screen.getByRole("checkbox").getAttribute("checked")).toBeNull();
     const button = screen.getByRole("button", {
-      name: "Internet IdentityでAsk AIを接続",
+      name: "Connect Ask AI with Internet Identity",
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox"));
@@ -124,11 +129,13 @@ describe("Ask AI panel", () => {
       />,
     );
     openPanel();
-    const start = await screen.findByRole("button", { name: "会話を始める" });
+    const start = await screen.findByRole("button", {
+      name: "Start conversation",
+    });
     expect((start as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(start);
-    await screen.findByRole("textbox", { name: "Wikiへの質問" });
+    await screen.findByRole("textbox", { name: "Question about the Wiki" });
     expect(
       requests.find((r) => r.path.endsWith("/conversations"))?.body,
     ).toEqual({ databaseId: "db", scope: "/Knowledge", consent: "2026-09-14" });
@@ -171,8 +178,10 @@ describe("Ask AI panel", () => {
     );
     openPanel();
     await screen.findByText("承認済みの色は青。");
-    fireEvent.click(screen.getByText("現在の版を確認して開く"));
-    await screen.findByText(/回答時に確認した版から更新/);
+    fireEvent.click(screen.getByText("Check current version and open"));
+    await screen.findByText(
+      /This page has changed since the answer was generated/,
+    );
     expect(openSource).toHaveBeenCalledWith("/Sources/design.md");
   });
   it("ends the previous conversation when the selected database changes", async () => {
@@ -186,7 +195,7 @@ describe("Ask AI panel", () => {
       />,
     );
     openPanel();
-    await screen.findByRole("textbox", { name: "Wikiへの質問" });
+    await screen.findByRole("textbox", { name: "Question about the Wiki" });
     rerender(
       <AssistantPanel
         databaseId="other-db"
@@ -209,7 +218,7 @@ describe("Ask AI panel", () => {
       />,
     );
     openPanel();
-    await screen.findByText(/WikiとAsk AIのアカウントが異なります/);
+    await screen.findByText(/Your Wiki and Ask AI accounts do not match/);
     expect(requests.some((r) => r.path.endsWith("/active"))).toBe(false);
   });
 });
@@ -232,7 +241,11 @@ describe("voice cleanup", () => {
         close() {}
       },
     );
-    const voice = new AssistantVoice(document.createElement("audio"), () => {});
+    const voice = new AssistantVoice(
+      document.createElement("audio"),
+      () => {},
+      new AssistantControl(),
+    );
     const pending = voice.start(id);
     voice.dispose();
     resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream);
@@ -253,7 +266,11 @@ describe("voice cleanup", () => {
         close() {}
       },
     );
-    const voice = new AssistantVoice(document.createElement("audio"), () => {});
+    const voice = new AssistantVoice(
+      document.createElement("audio"),
+      () => {},
+      new AssistantControl(),
+    );
     await expect(voice.start(id)).rejects.toThrow("microphone denied");
     expect(requests.some((r) => r.path.endsWith("/voice"))).toBe(false);
   });
@@ -265,7 +282,7 @@ it("does not expose an upstream HTML or text error as a JSON parser error", asyn
     vi.fn(async () => new Response("Worker unavailable", { status: 503 })),
   );
   await expect(assistantRequest("/status")).rejects.toThrow(
-    "Ask AIの処理に失敗しました",
+    "Ask AI could not complete the request",
   );
 });
 
@@ -339,7 +356,9 @@ it.each([
   expect(sockets).toHaveLength(1);
   if (code === "authentication_required")
     expect(
-      screen.getByRole("button", { name: "Internet IdentityでAsk AIを接続" }),
+      screen.getByRole("button", {
+        name: "Connect Ask AI with Internet Identity",
+      }),
     ).toBeTruthy();
 });
 it("stops retries at the server-provided reconnect deadline while offline", async () => {
@@ -356,7 +375,7 @@ it("stops retries at the server-provided reconnect deadline while offline", asyn
     await vi.advanceTimersByTimeAsync(120000);
   });
   expect(screen.queryByText("前の質問")).toBeNull();
-  expect(screen.getByText(/復帰猶予を過ぎた/)).toBeTruthy();
+  expect(screen.getByText(/The reconnect window has expired/)).toBeTruthy();
   const attempts = vi.mocked(fetch).mock.calls.length;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(30000);
@@ -400,7 +419,7 @@ it("releases browser audio immediately when the server marks voice stopping", as
   await mountedConversation();
   vi.spyOn(AssistantVoice.prototype, "start").mockResolvedValue();
   const dispose = vi.spyOn(AssistantVoice.prototype, "dispose");
-  fireEvent.click(screen.getByRole("button", { name: "音声を開始" }));
+  fireEvent.click(screen.getByRole("button", { name: "Start voice" }));
   await waitFor(() =>
     expect(AssistantVoice.prototype.start).toHaveBeenCalled(),
   );
@@ -409,4 +428,25 @@ it("releases browser audio immediately when the server marks voice stopping", as
   );
   expect(dispose).toHaveBeenCalled();
   expect(screen.getByText("前の質問")).toBeTruthy();
+});
+
+it("routes command responses over the control socket and rejects disconnected requests", async () => {
+  const control = new AssistantControl();
+  const socket = new TestSocket();
+  const sent = vi.spyOn(socket, "send");
+  control.attach(socket as unknown as WebSocket);
+  control.receive({ type: "snapshot", generation: 4 });
+  const result = control.command<{ ok: boolean }>("cancel", {}, id);
+  expect(sent).toHaveBeenCalledWith(expect.stringContaining('"generation":4'));
+  control.receive({
+    type: "command.result",
+    requestId: id,
+    status: 200,
+    body: { ok: true },
+  });
+  await expect(result).resolves.toEqual({ ok: true });
+  const lost = control.command("voice", {}, citationId);
+  const rejected = expect(lost).rejects.toThrow();
+  control.detach();
+  await rejected;
 });

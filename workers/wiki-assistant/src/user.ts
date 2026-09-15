@@ -1,5 +1,15 @@
+import { sha256 } from "@kinic/ii-server/crypto";
+import {
+  reserveVoice,
+  settleVoiceCharge,
+  voiceRate,
+  voicePolicy,
+  voiceReservation,
+} from "./billing";
 import OpenAI from "openai";
-import { DurableObject } from "cloudflare:workers";
+import { AssistantAuth } from "./auth";
+import { AssistantStore } from "./store";
+import { Leases, type Lease, RENEW_MS } from "./leases";
 import { z } from "zod";
 import { restoreKinicIdentity } from "@kinic/ii-server/internet-identity";
 import {
@@ -21,12 +31,12 @@ import {
   attachLive,
   cancelAgent,
   client,
+  createLive,
   createAgent,
   deleteAgent,
   inputText,
   messageText,
   sessionItems,
-  voiceInstructions,
 } from "./openai";
 import { failure, json, readJson } from "./http";
 import { requireEnabled } from "./auth";
@@ -49,13 +59,29 @@ type Transcript = {
   start: number;
   end: number;
 };
+type Charge = {
+  attempts?: number;
+  nextAttempt?: number;
+  id: string;
+  databaseId: string;
+  principal: string;
+  rate: string;
+  reserved: number;
+  started: number | null;
+  stopped: number | null;
+  expires: number;
+  confirmed: number;
+};
 type VoiceUsage = {
+  chargeId?: string;
   started: number;
   reserved: number;
   usageDay: string;
   settled: boolean;
 };
 type Conversation = {
+  native?: boolean;
+  selectedPath?: string;
   id: string;
   authId: string;
   principal: string;
@@ -84,6 +110,8 @@ type Conversation = {
   deferred: { id: string; offset: number } | null;
 };
 type Cleanup = {
+  attempts?: number;
+  nextAttempt?: number;
   sessionId: string | null;
   conversationId: string;
   unknownCreate: boolean;
@@ -91,8 +119,9 @@ type Cleanup = {
   requestId?: string;
   voiceUsage?: VoiceUsage;
 };
-type UserState = {
-  version: 1;
+export type UserState = {
+  endRequested?: number;
+  charges: Charge[];
   principal: string | null;
   day: string;
   questions: number;
@@ -102,55 +131,93 @@ type UserState = {
 };
 const day = () => new Date().toISOString().slice(0, 10);
 
-export class AssistantUser extends DurableObject<Env> {
+export class AssistantUser {
   private state!: UserState;
+  private revision = 0;
   private pumping = false;
+  private voiceStarting = false;
+  private metering = false;
   private sideband: WebSocket | null = null;
   private sidebandId: string | null = null;
   private attaching: Promise<void> | null = null;
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    ctx.blockConcurrencyWhile(async () => {
-      this.state = (await ctx.storage.get<UserState>("state")) ?? {
-        version: 1,
-        principal: null,
-        day: day(),
-        questions: 0,
-        voiceSeconds: 0,
-        conversation: null,
-        cleanup: [],
-      };
-      if (this.state.version !== 1)
-        throw new Error("unsupported_assistant_state");
-    });
+  private store: AssistantStore;
+  private leases: Leases;
+  private questionLease: Lease | null = null;
+  private connectionLease: Lease | null = null;
+  private sockets: WebSocket[] = [];
+  private nextWake = 0;
+  private driving = false;
+  private checkingDeadlines = false;
+  private connectionRenewal: ReturnType<typeof setInterval> | undefined;
+  private saveChain: Promise<void> = Promise.resolve();
+  private timer: ReturnType<typeof setInterval> | undefined;
+  constructor(
+    private readonly env: Env,
+    private readonly principal: string,
+    private readonly background: (p: Promise<unknown>) => void = (p) => {
+      void p.catch(() => {});
+    },
+    private readonly recoveryLease?: Lease,
+  ) {
+    this.store = new AssistantStore(env);
+    this.leases = new Leases(env.ASSISTANT_DB);
   }
-  private limits() {
-    return parseLimits(this.env.ASSISTANT_LIMITS);
+  async initialize() {
+    const loaded = await this.store.load(this.principal);
+    this.state = loaded.state;
+    this.revision = loaded.revision;
+    this.nextWake = this.wakeDeadline();
+    if (this.state.endRequested !== undefined && this.state.conversation)
+      await this.endOwned(
+        this.state.conversation.authId,
+        this.state.conversation.id,
+        this.state.endRequested,
+      );
+    return this;
   }
   private async save(): Promise<void> {
-    await this.ctx.storage.put("state", this.state);
-    await this.scheduleAlarm();
+    const next = this.saveChain
+      .catch(() => {})
+      .then(async () => {
+        this.nextWake = Math.min(
+          this.nextWake || Infinity,
+          this.wakeDeadline(),
+        );
+        this.revision = await this.store.save(
+          this.principal,
+          this.revision,
+          this.state,
+          this.nextWake,
+          this.questionLease ?? this.connectionLease ?? this.recoveryLease,
+        );
+      });
+    this.saveChain = next;
+    return next;
   }
-  private async scheduleAlarm(): Promise<void> {
-    const now = Date.now();
-    const c = this.state.conversation;
-    const limits = this.limits();
-    const deadlines = [
-      now + (c || this.state.cleanup.length ? 15000 : 86400000),
-    ];
+  private wakeDeadline(): number {
+    const now = Date.now(),
+      c = this.state?.conversation,
+      limits = this.limits();
+    const deadlines = [now + (c ? 15000 : 86400000)];
+    if (!c) {
+      for (const task of this.state?.cleanup ?? [])
+        deadlines.push(task.nextAttempt ?? now + 15000);
+      for (const charge of this.state?.charges ?? [])
+        deadlines.push(charge.nextAttempt ?? now + 15000, charge.expires);
+    }
     if (c) {
       deadlines.push(c.activity + limits.idleMs, c.seen + limits.reconnectMs);
       if (c.pending)
         deadlines.push(now + 1000, c.pending.started + limits.turnMs);
-      if (c.live && !c.live.stopping)
-        deadlines.push(c.live.usage.started + c.live.usage.reserved * 1000);
+      if (c.live && !c.live.stopping) deadlines.push(this.voiceDeadline(c)!);
     }
-    const next = Math.max(now, Math.min(...deadlines));
-    // Storage transactions serialize competing saves; traffic may advance, never defer, an alarm.
-    await this.ctx.storage.transaction(async (tx) => {
-      const existing = await tx.getAlarm();
-      if (existing === null || next < existing) await tx.setAlarm(next);
-    });
+    for (const b of this.state?.charges ?? [])
+      if (b.started !== null && b.stopped === null)
+        deadlines.push(b.started + b.reserved * 1000);
+    return Math.max(now, Math.min(...deadlines));
+  }
+  private limits() {
+    return parseLimits(this.env.ASSISTANT_LIMITS);
   }
   private resetDay(): void {
     if (this.state.day !== day()) {
@@ -168,7 +235,7 @@ export class AssistantUser extends DurableObject<Env> {
     c: Conversation,
     tools = emptyToolState(),
   ): Promise<KinicReader> {
-    const auth = await this.env.ASSISTANT_AUTH.getByName(c.authId).material();
+    const auth = await new AssistantAuth(this.env, c.authId).material();
     if (auth.principal !== c.principal)
       throw new AssistantError("identity_changed", 403);
     const key = auth.material.appKey;
@@ -178,6 +245,8 @@ export class AssistantUser extends DurableObject<Env> {
       this.env.ASSISTANT_DERIVATION_ORIGIN,
       Date.now(),
     );
+    if (c.native)
+      await voicePolicy(this.env, identity, c.databaseId, c.principal);
     return new KinicReader(
       createReadActor(this.env.KINIC_WIKI_CANISTER_ID, identity),
       c.databaseId,
@@ -198,17 +267,31 @@ export class AssistantUser extends DurableObject<Env> {
       reconnectGraceMs: this.limits().reconnectMs,
       messages: c.messages,
       voice: c.live ? (c.live.stopping ? "stopping" : "connected") : "off",
+      voiceDeadline: this.voiceDeadline(c),
+      voiceId: c.live?.usage.chargeId ?? null,
       progress: c.pending
         ? { calls: c.pending.tools.calls, stage: c.pending.stage }
         : null,
     };
+  }
+  private voiceDeadline(c: Conversation): number | null {
+    if (!c.live || c.live.stopping) return null;
+    const b = this.state.charges.find((b) => b.id === c.live?.usage.chargeId);
+    return Math.min(
+      c.live.usage.started + c.live.usage.reserved * 1000,
+      b
+        ? b.started !== null
+          ? b.started + b.reserved * 1000
+          : c.live.usage.started + 30000
+        : Infinity,
+    );
   }
   private broadcast(): void {
     const c = this.state.conversation;
     const payload = JSON.stringify(
       c ? { type: "snapshot", ...this.snapshot(c) } : { type: "ended" },
     );
-    for (const socket of this.ctx.getWebSockets()) {
+    for (const socket of this.sockets) {
       try {
         socket.send(payload);
       } catch {
@@ -236,6 +319,7 @@ export class AssistantUser extends DurableObject<Env> {
             databaseId: z.string().min(1).max(128),
             scope: scopeSchema,
             consent: z.literal("2026-09-14"),
+            selectedPath: z.string().max(512).optional(),
           })
           .strict()
           .parse(await readJson(request));
@@ -245,6 +329,8 @@ export class AssistantUser extends DurableObject<Env> {
           throw new AssistantError("cleanup_pending", 409);
         const c: Conversation = {
           id: crypto.randomUUID(),
+          native: request.headers.get("x-assistant-client") === "native",
+          selectedPath: input.selectedPath,
           principal,
           authId,
           databaseId: input.databaseId,
@@ -287,6 +373,15 @@ export class AssistantUser extends DurableObject<Env> {
         await this.endOwned(authId);
         return json({ ended: true });
       }
+      if (path === "/voice/stop" && request.method === "POST") {
+        const receivedAt = Number(
+          request.headers.get("x-assistant-received-at"),
+        );
+        this.stopCharge(
+          c,
+          receivedAt > 0 ? Math.min(Date.now(), receivedAt) : Date.now(),
+        );
+      }
       await (await this.reader(c)).authorize();
       if (this.state.conversation !== c)
         throw new AssistantError("conversation_ended", 410);
@@ -295,14 +390,9 @@ export class AssistantUser extends DurableObject<Env> {
         path === "/events" &&
         request.headers.get("upgrade") === "websocket"
       ) {
-        if (this.ctx.getWebSockets().length >= 2)
+        if (this.sockets.length >= 2)
           throw new AssistantError("connection_limit", 429);
-        const pair = new WebSocketPair();
-        this.ctx.acceptWebSocket(pair[1]);
-        pair[1].serializeAttachment({ conversationId: c.id, authId });
-        pair[1].send(JSON.stringify({ type: "snapshot", ...this.snapshot(c) }));
-        await this.save();
-        return new Response(null, { status: 101, webSocket: pair[0] });
+        return this.openControl(c);
       }
       if (path === "/conversation" && request.method === "GET") {
         await this.save();
@@ -320,12 +410,58 @@ export class AssistantUser extends DurableObject<Env> {
         await this.cancel(c);
         return json(this.snapshot(c));
       }
+      if (path === "/voice/quote" && request.method === "GET") {
+        const rate = await voiceRate(this.env);
+        return json({
+          rateVersion: rate.version.toString(),
+          cyclesPerMinute: rate.cycles_per_minute.toString(),
+          maximumCycles: (
+            (rate.cycles_per_minute * BigInt(this.limits().connectionSeconds) +
+              59n) /
+            60n
+          ).toString(),
+          maximumSeconds: this.limits().connectionSeconds,
+        });
+      }
       if (path === "/voice" && request.method === "POST") {
-        const { sdp } = z
-          .object({ sdp: z.string().min(1).max(60000) })
+        const { sdp, rateVersion, requestId } = z
+          .object({
+            sdp: z.string().min(1).max(60000),
+            rateVersion: z
+              .string()
+              .regex(/^[0-9]{1,19}$/)
+              .optional(),
+            requestId: z.string().uuid().optional(),
+          })
           .strict()
           .parse(await readJson(request));
-        return json(await this.startVoice(c, sdp), 201);
+        return json(await this.startVoice(c, sdp, rateVersion, requestId), 201);
+      }
+      if (path === "/voice/connected" && request.method === "POST") {
+        const { voiceId } = z
+          .object({ voiceId: z.string().uuid() })
+          .strict()
+          .parse(await readJson(request));
+        const b = this.state.charges.find((b) => b.id === voiceId);
+        if (
+          !c.live ||
+          c.live.stopping ||
+          c.live.usage.chargeId !== voiceId ||
+          !b ||
+          b.stopped !== null
+        )
+          throw new AssistantError("voice_connection_failed", 409);
+        if (b.started === null) {
+          if (Date.now() >= c.live.usage.started + 30000) {
+            await this.stopVoice(c, false);
+            throw new AssistantError("voice_connection_failed", 409);
+          }
+          b.started = Date.now();
+          c.live.usage.started = b.started;
+          await this.save();
+          this.broadcast();
+        }
+        return json(this.snapshot(c));
       }
       if (path === "/voice/stop" && request.method === "POST") {
         await this.stopVoice(c);
@@ -397,24 +533,45 @@ export class AssistantUser extends DurableObject<Env> {
     });
     await this.save();
     this.broadcast();
-    this.ctx.waitUntil(this.pump());
+    this.background(this.pump());
   }
-  private valid(c: Conversation, p: Pending): boolean {
+  private async valid(c: Conversation, p: Pending): Promise<boolean> {
     return (
+      !!this.questionLease &&
+      (await this.leases.valid(this.questionLease)) &&
       this.state.conversation === c &&
       c.pending === p &&
-      c.generation === p.generation
+      c.generation === p.generation &&
+      Date.now() <= p.started + this.limits().turnMs
     );
   }
   private async pump(): Promise<void> {
     if (this.pumping) return;
+    const id = this.state.conversation?.id;
+    if (!id) return;
     this.pumping = true;
+    let lease: Lease | null;
+    try {
+      lease = await this.leases.claim("question", id);
+    } catch (error) {
+      this.pumping = false;
+      throw error;
+    }
+    if (!lease) {
+      this.pumping = false;
+      return;
+    }
+    this.questionLease = lease;
+    const renewal = setInterval(
+      () => this.background(this.leases.renew(lease)),
+      RENEW_MS,
+    );
     const startedConversation = this.state.conversation;
     const startedPending = startedConversation?.pending;
     try {
       const c = this.state.conversation;
       const p = c?.pending;
-      if (!c || !p || !this.valid(c, p)) return;
+      if (!c || !p || !(await this.valid(c, p))) return;
       const api = client(this.env.OPENAI_API_KEY);
       if (Date.now() - p.started > this.limits().turnMs) {
         c.error = "turn_timeout";
@@ -422,7 +579,7 @@ export class AssistantUser extends DurableObject<Env> {
         return;
       }
       await (await this.reader(c)).authorize();
-      if (!this.valid(c, p)) return;
+      if (!(await this.valid(c, p))) return;
       const input = inputText(
         p.input.requestId,
         p.input.question,
@@ -433,8 +590,14 @@ export class AssistantUser extends DurableObject<Env> {
         p.stage = c.sessionId ? "sending" : "creating";
         await this.save();
         if (!c.sessionId) {
+          const intent = "agent:" + c.id + ":" + p.input.requestId;
+          await this.store.intent(intent, this.principal, c.id, "agent", {
+            requestId: p.input.requestId,
+            providerId: null,
+          });
           const result = await createAgent(api, c.id, p.input.requestId, input);
-          if (!this.valid(c, p)) {
+          await this.store.created(intent, result.id);
+          if (!(await this.valid(c, p))) {
             const uncertain = this.state.cleanup.find(
               (task) =>
                 task.conversationId === c.id &&
@@ -444,6 +607,7 @@ export class AssistantUser extends DurableObject<Env> {
             if (uncertain) {
               uncertain.sessionId = result.id;
               uncertain.unknownCreate = false;
+              uncertain.nextAttempt = 0;
             } else
               this.state.cleanup.push({
                 sessionId: result.id,
@@ -470,7 +634,7 @@ export class AssistantUser extends DurableObject<Env> {
             ],
           });
         }
-        if (!this.valid(c, p)) return;
+        if (!(await this.valid(c, p))) return;
         p.stage = "running";
         await this.save();
       }
@@ -484,6 +648,10 @@ export class AssistantUser extends DurableObject<Env> {
             session.metadata.kinic_conversation === c.id &&
             session.metadata.kinic_request === p.input.requestId
           ) {
+            await this.store.created(
+              "agent:" + c.id + ":" + p.input.requestId,
+              session.id,
+            );
             c.sessionId = session.id;
             p.stage = "running";
             await this.save();
@@ -495,7 +663,7 @@ export class AssistantUser extends DurableObject<Env> {
       }
       const sessionId = c.sessionId;
       const items = await sessionItems(api, sessionId);
-      if (!this.valid(c, p)) return;
+      if (!(await this.valid(c, p))) return;
       const userMessage = items.find(
         (item) =>
           item.type === "message" &&
@@ -505,11 +673,11 @@ export class AssistantUser extends DurableObject<Env> {
       if (!userMessage) return; // Ambiguous input submission: reconcile, never resubmit.
       p.turnId = userMessage.turn_id;
       const session = await api.beta.agents.sessions.retrieve(sessionId);
-      if (!this.valid(c, p)) return;
+      if (!(await this.valid(c, p))) return;
       if (session.status === "failed")
         throw new AssistantError("agent_failed", 502);
       for (const action of session.required_actions) {
-        if (!this.valid(c, p)) return;
+        if (!(await this.valid(c, p))) return;
         if (action.type !== "function_call" || action.turn_id !== p.turnId)
           throw new AssistantError("unexpected_agent_action", 502);
         const signature = JSON.stringify({
@@ -522,14 +690,14 @@ export class AssistantUser extends DurableObject<Env> {
         if (!result) {
           const reader = await this.reader(c, p.tools);
           const output = await reader.execute(action.name, action.arguments);
-          if (!this.valid(c, p)) return;
+          if (!(await this.valid(c, p))) return;
           result = { arguments: signature, output };
           p.results[action.call_id] = result;
           await this.save();
           this.broadcast();
         }
         await (await this.reader(c)).authorize();
-        if (!this.valid(c, p)) return;
+        if (!(await this.valid(c, p))) return;
         await api.beta.agents.sessions.events.create(sessionId, {
           events: [
             {
@@ -545,7 +713,7 @@ export class AssistantUser extends DurableObject<Env> {
       const turn = await api.beta.agents.sessions.turns.retrieve(p.turnId, {
         session_id: sessionId,
       });
-      if (!this.valid(c, p)) return;
+      if (!(await this.valid(c, p))) return;
       if (turn.status === "failed" || turn.status === "cancelled")
         throw new AssistantError("agent_" + turn.status, 502);
       if (turn.status !== "completed") return;
@@ -563,7 +731,7 @@ export class AssistantUser extends DurableObject<Env> {
         p.tools.evidence,
       );
       await (await this.reader(c)).authorize();
-      if (!this.valid(c, p)) return;
+      if (!(await this.valid(c, p))) return;
       const message = c.messages.find(
         (item) => item.requestId === p.input.requestId,
       )!;
@@ -587,7 +755,7 @@ export class AssistantUser extends DurableObject<Env> {
         try {
           await this.ensureSideband(c);
           if (this.state.conversation === c && c.generation === p.generation)
-            this.sendLive({
+            await this.sendLive({
               type: "session.commentary.append",
               event_id: crypto.randomUUID(),
               delegation_id: p.delegationId,
@@ -602,7 +770,8 @@ export class AssistantUser extends DurableObject<Env> {
       }
     } catch (error) {
       const c = startedConversation;
-      if (!c || !startedPending || !this.valid(c, startedPending)) return;
+      if (!c || !startedPending || !(await this.valid(c, startedPending)))
+        return;
       if (c && error instanceof AssistantError) {
         c.error = error.code;
         if (error.status === 401 || error.status === 403)
@@ -620,12 +789,15 @@ export class AssistantUser extends DurableObject<Env> {
         c.error = "agent_response_unavailable";
         await this.cancel(c);
       } else if (c?.pending) {
-        // Network errors are reconciled by the alarm, without duplicate input submission.
+        // Network errors are reconciled by the next owner, without duplicate input submission.
         c.error = "checking_request_status";
         await this.save();
         this.broadcast();
       }
     } finally {
+      clearInterval(renewal);
+      await this.leases.release(lease);
+      this.questionLease = null;
       this.pumping = false;
     }
   }
@@ -648,7 +820,7 @@ export class AssistantUser extends DurableObject<Env> {
     c.sessionId = null;
     c.pending = null;
     c.status = "cancelling";
-    this.sendLive({
+    await this.sendLive({
       type: "session.instructions.append",
       event_id: crypto.randomUUID(),
       delegation_id: null,
@@ -659,7 +831,11 @@ export class AssistantUser extends DurableObject<Env> {
     this.broadcast();
     await this.cleanup();
   }
-  async endOwned(authId: string, conversationId?: string): Promise<void> {
+  async endOwned(
+    authId: string,
+    conversationId?: string,
+    stoppedAt = Date.now(),
+  ): Promise<void> {
     const c = this.state.conversation;
     if (
       !c ||
@@ -668,6 +844,7 @@ export class AssistantUser extends DurableObject<Env> {
     )
       return;
     c.generation++;
+    this.stopCharge(c, stoppedAt);
     this.state.cleanup.push({
       sessionId: c.sessionId,
       conversationId: c.id,
@@ -679,13 +856,13 @@ export class AssistantUser extends DurableObject<Env> {
     this.state.conversation = null; // Drop transcripts, excerpts, and answers before remote cleanup.
     await this.save();
     this.broadcast();
-    for (const ws of this.ctx.getWebSockets())
-      ws.close(1000, "Conversation ended");
+    for (const ws of this.sockets) ws.close(1000, "Conversation ended");
     await this.cleanup();
   }
   private async cleanup(): Promise<void> {
     const api = client(this.env.OPENAI_API_KEY);
-    for (const task of [...this.state.cleanup]) {
+    for (const task of this.state.cleanup.slice()) {
+      if ((task.nextAttempt ?? 0) > Date.now()) continue;
       try {
         if (task.unknownCreate) {
           let count = 0;
@@ -697,6 +874,10 @@ export class AssistantUser extends DurableObject<Env> {
               session.metadata.kinic_conversation === task.conversationId &&
               session.metadata.kinic_request === task.requestId
             ) {
+              await this.store.created(
+                "agent:" + task.conversationId + ":" + task.requestId,
+                session.id,
+              );
               await cancelAgent(api, session.id);
               await deleteAgent(api, session.id);
               found = true;
@@ -727,6 +908,10 @@ export class AssistantUser extends DurableObject<Env> {
         }
         this.state.cleanup = this.state.cleanup.filter((item) => item !== task);
       } catch (error) {
+        task.attempts = (task.attempts ?? 0) + 1;
+        task.nextAttempt =
+          Date.now() +
+          Math.min(1800000, 60000 * 2 ** Math.min(task.attempts - 1, 5));
         if (
           error instanceof AssistantError &&
           error.code === "voice_session_gone"
@@ -750,8 +935,15 @@ export class AssistantUser extends DurableObject<Env> {
     await this.save();
     this.broadcast();
   }
-  async alarm(): Promise<void> {
+  async tick(recovery = false): Promise<void> {
+    this.nextWake = 0;
     const c = this.state.conversation;
+    if (recovery && c && (await this.leases.active("connection", c.id))) return;
+    if (recovery && c?.live) {
+      this.stopCharge(c, Math.min(c.seen, Date.now()));
+      c.live.stopping = true;
+      await this.save();
+    }
     if (c) {
       try {
         requireEnabled(this.env);
@@ -773,13 +965,41 @@ export class AssistantUser extends DurableObject<Env> {
             now - c.live.usage.started >= c.live.usage.reserved * 1000)
         )
           await this.stopVoice(c, false);
+        const b = this.state.charges.find(
+          (b) => b.id === c.live?.usage.chargeId,
+        );
+        if (
+          b &&
+          b.started === null &&
+          c.live &&
+          now >= c.live.usage.started + 30000
+        ) {
+          c.error = "voice_connection_failed";
+          await this.stopVoice(c, false);
+        }
+        if (
+          b?.started !== null &&
+          b?.started !== undefined &&
+          now >= b.started + b.reserved * 1000
+        ) {
+          c.error = "voice_budget_exhausted";
+          await this.stopVoice(c, false);
+        }
         await (await this.reader(c)).authorize();
         if (this.state.conversation !== c) return;
       } catch {
         await this.endOwned(c.authId, c.id);
         return;
       }
-      if (c.live?.id && !c.live.stopping) {
+      if (
+        recovery &&
+        c.live &&
+        !(await this.leases.active("connection", c.id))
+      ) {
+        this.stopCharge(c, Math.min(c.seen, Date.now()));
+        await this.failVoice(c);
+      }
+      if (!recovery && c.live?.id && !c.live.stopping) {
         try {
           await this.ensureSideband(c);
         } catch {
@@ -796,57 +1016,276 @@ export class AssistantUser extends DurableObject<Env> {
         }
       }
     }
+    await this.meterCharges();
     if (this.state.cleanup.length) await this.cleanup();
     if (
       !this.state.conversation &&
       !this.state.cleanup.length &&
+      !this.state.charges.length &&
       this.state.day !== day()
     ) {
-      await this.ctx.storage.deleteAll();
+      await this.store.db
+        .prepare("DELETE FROM assistant_cleanup WHERE principal=?")
+        .bind(this.principal)
+        .run();
       this.state.questions = 0;
       this.state.voiceSeconds = 0;
       this.state.day = day();
     } else await this.save();
   }
-  async webSocketMessage(
-    ws: WebSocket,
-    message: string | ArrayBuffer,
-  ): Promise<void> {
-    if (message !== "heartbeat") {
-      ws.close(1008, "Unsupported message");
-      return;
+  private async openControl(c: Conversation): Promise<Response> {
+    const lease = await this.leases.claim("connection", c.id);
+    if (!lease) throw new AssistantError("connection_already_active", 409);
+    this.connectionLease = lease;
+    this.connectionRenewal = setInterval(
+      () =>
+        this.background(
+          this.leases.renew(lease).then((ok) => {
+            if (!ok)
+              for (const socket of this.sockets)
+                socket.close(1008, "Connection lease expired");
+          }),
+        ),
+      RENEW_MS,
+    );
+    const pair = new WebSocketPair();
+    pair[1].accept();
+    this.sockets.push(pair[1]);
+    pair[1].addEventListener("message", (event) =>
+      this.background(this.controlMessage(pair[1], c, event.data)),
+    );
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      this.sockets = [];
+      clearInterval(this.timer);
+      clearInterval(this.connectionRenewal);
+      const stoppedAt = Date.now();
+      this.background(
+        (async () => {
+          try {
+            if (await this.leases.valid(lease)) {
+              const current = this.state.conversation;
+              if (current?.id === c.id && current.live) {
+                this.stopCharge(current, stoppedAt);
+                await this.failVoice(current);
+              }
+            }
+          } finally {
+            this.sideband?.close();
+            this.sideband = null;
+            await this.leases.release(lease);
+            this.connectionLease = null;
+          }
+        })(),
+      );
+    };
+    pair[1].addEventListener("close", close);
+    pair[1].addEventListener("error", close);
+    this.timer = setInterval(
+      () =>
+        this.background(
+          this.drive().catch(() => {
+            pair[1].close(1011, "Reconnect required");
+            close();
+          }),
+        ),
+      1000,
+    );
+    this.broadcast();
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  private async drive() {
+    if (!this.checkingDeadlines && this.connectionLease) {
+      this.checkingDeadlines = true;
+      try {
+        const c = this.state.conversation,
+          now = Date.now();
+        if (
+          c?.live &&
+          !c.live.stopping &&
+          now >= (this.voiceDeadline(c) ?? Infinity)
+        ) {
+          this.stopCharge(c, this.voiceDeadline(c)!);
+          await this.stopVoice(c, false);
+        }
+        if (c?.pending && now >= c.pending.started + this.limits().turnMs) {
+          c.error = "turn_timeout";
+          await this.cancel(c);
+        }
+      } finally {
+        this.checkingDeadlines = false;
+      }
     }
-    const c = this.state.conversation;
-    const attachment = ws.deserializeAttachment() as {
-      conversationId: string;
-      authId: string;
-    } | null;
-    if (
-      !c ||
-      attachment?.conversationId !== c.id ||
-      attachment.authId !== c.authId
-    ) {
-      ws.close(1008, "Conversation ended");
-      return;
-    }
+    if (this.driving || !this.connectionLease) return;
+    this.driving = true;
     try {
+      const lease = this.connectionLease;
+      if (
+        lease.expires_at - Date.now() <= 35000 &&
+        !(await this.leases.renew(lease))
+      )
+        throw new Error("lease_lost");
+      const current = await this.store.db
+        .prepare("SELECT revision FROM assistant_users WHERE principal=?")
+        .bind(this.principal)
+        .first<{ revision: number }>();
+      if (current && current.revision !== this.revision) {
+        const loaded = await this.store.load(this.principal);
+        this.state = loaded.state;
+        this.revision = loaded.revision;
+        this.broadcast();
+      }
+      if (Date.now() >= this.nextWake) await this.tick();
+    } finally {
+      this.driving = false;
+    }
+  }
+  private async controlMessage(
+    ws: WebSocket,
+    original: Conversation,
+    message: string | ArrayBuffer,
+  ) {
+    if (
+      !this.connectionLease ||
+      !(await this.leases.valid(this.connectionLease))
+    ) {
+      ws.close(1008, "Stale connection");
+      return;
+    }
+    if (message === "heartbeat") {
+      const c = this.state.conversation;
+      if (!c || c.id !== original.id) {
+        ws.close(1000, "Conversation ended");
+        return;
+      }
       await (await this.reader(c)).authorize();
       c.seen = Date.now();
-      await this.save();
-    } catch {
-      await this.endOwned(c.authId);
+      await this.store.touch(this.principal, c.id);
+      return;
+    }
+    let requestId = "";
+    try {
+      if (typeof message !== "string" || message.length > 65536)
+        throw new AssistantError("invalid_command", 400);
+      const command = z
+        .object({
+          type: z.literal("command"),
+          requestId: z.string().uuid(),
+          action: z.enum([
+            "questions",
+            "voice",
+            "voice/connected",
+            "voice/stop",
+            "cancel",
+          ]),
+          payload: z.record(z.string(), z.unknown()),
+          generation: z.number().int(),
+        })
+        .strict()
+        .parse(JSON.parse(message));
+      requestId = command.requestId;
+      const c = this.current();
+      if (c.id !== original.id) throw new AssistantError("stale_state", 409);
+      const record = await this.store.command(
+        c.id,
+        requestId,
+        await sha256(
+          JSON.stringify({
+            action: command.action,
+            payload: Object.keys(command.payload)
+              .sort()
+              .map((key) => [key, command.payload[key]]),
+          }),
+        ),
+      );
+      if (record.response) {
+        ws.send(
+          JSON.stringify({
+            type: "command.result",
+            requestId,
+            ...record.response,
+          }),
+        );
+        return;
+      }
+      if (!record.fresh && command.action !== "questions")
+        throw new AssistantError("command_outcome_pending", 409);
+      const duplicate =
+        command.action === "questions" &&
+        c.messages.some((m) => m.requestId === command.payload.requestId);
+      if (command.generation !== c.generation && !duplicate)
+        throw new AssistantError("stale_state", 409);
+      const response = await this.fetch(
+        new Request(
+          "https://assistant/api/assistant/" +
+            command.action +
+            "?conversationId=" +
+            c.id,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-assistant-principal": this.principal,
+              "x-assistant-auth-id": c.authId,
+              "x-assistant-client": c.native ? "native" : "web",
+              "x-assistant-received-at": String(Date.now()),
+            },
+            body: JSON.stringify(command.payload),
+          },
+        ),
+      );
+      const result = { status: response.status, body: await response.json() };
+      await this.store.commandResult(c.id, requestId, result);
+      ws.send(JSON.stringify({ type: "command.result", requestId, ...result }));
+    } catch (error) {
+      const response = failure(error);
+      ws.send(
+        JSON.stringify({
+          type: "command.result",
+          requestId,
+          status: response.status,
+          body: await response.json(),
+        }),
+      );
     }
   }
-  async webSocketClose(ws: WebSocket): Promise<void> {
-    ws.close();
-    await this.save();
+  // Cleanup may use an expired credential's owner binding, but never returns content.
+  async stopVoiceOwned(
+    authId: string,
+    conversationId: string,
+    receivedAt: number,
+    voiceId?: string,
+  ): Promise<void> {
+    const c = this.current();
+    if (c.authId !== authId || c.id !== conversationId)
+      throw new AssistantError("conversation_not_owned", 403);
+    if (voiceId && c.live?.usage.chargeId !== voiceId) return;
+    this.stopCharge(c, Math.min(Date.now(), receivedAt));
+    await this.stopVoice(c, false);
   }
-  async webSocketError(ws: WebSocket): Promise<void> {
-    ws.close(1011, "Connection failed");
-    await this.save();
+  private async startVoice(
+    c: Conversation,
+    sdp: string,
+    rateVersion?: string,
+    requestId?: string,
+  ) {
+    if (this.voiceStarting)
+      throw new AssistantError("voice_or_turn_in_progress", 409);
+    this.voiceStarting = true;
+    try {
+      return await this.createVoice(c, sdp, rateVersion, requestId);
+    } finally {
+      this.voiceStarting = false;
+    }
   }
-
-  private async startVoice(c: Conversation, sdp: string) {
+  private async createVoice(
+    c: Conversation,
+    sdp: string,
+    rateVersion?: string,
+    requestId?: string,
+  ) {
     if (c.live || c.pending || c.status !== "ready")
       throw new AssistantError("voice_or_turn_in_progress", 409);
     this.resetDay();
@@ -856,41 +1295,69 @@ export class AssistantUser extends DurableObject<Env> {
       limits.voiceSeconds - this.state.voiceSeconds,
     );
     if (reserved < 15) throw new AssistantError("voice_limit", 429);
+    let charge: Charge | undefined;
+    if (c.native) {
+      if (!rateVersion)
+        throw new AssistantError("voice_price_consent_required", 400);
+      if (!requestId) throw new AssistantError("invalid_voice_request", 400);
+      charge = {
+        id: requestId,
+        databaseId: c.databaseId,
+        principal: c.principal,
+        rate: rateVersion,
+        reserved: 60,
+        started: null,
+        stopped: null,
+        expires: Date.now() + 86400000,
+        confirmed: 0,
+      };
+      this.state.charges.push(charge);
+      await this.save();
+      try {
+        await reserveVoice(
+          this.env,
+          charge.id,
+          c.databaseId,
+          c.principal,
+          rateVersion,
+          60,
+        );
+      } catch (error) {
+        charge.stopped = Date.now();
+        await this.save();
+        throw error;
+      }
+      if (this.state.conversation !== c) {
+        charge.stopped = Date.now();
+        await this.save();
+        throw new AssistantError("conversation_ended", 410);
+      }
+    }
     this.state.voiceSeconds += reserved;
     c.activity = Date.now();
     const usage: VoiceUsage = {
+      chargeId: charge?.id ?? requestId ?? crypto.randomUUID(),
       started: Date.now(),
       reserved,
       usageDay: this.state.day,
       settled: false,
     };
     c.live = { id: null, usage, stopping: false };
+    const live = c.live;
     c.transcripts = [];
     c.delegations = [];
     await this.save();
     try {
-      const result = await client(this.env.OPENAI_API_KEY).live.create({
-        session: {
-          model: "gpt-live-1",
-          instructions: voiceInstructions,
-          delegation: { type: "client" },
-          store: false,
-          client: {
-            data_channel: {
-              allowed_client_events: ["session.close"],
-              allowed_server_events: [
-                "session.started",
-                "session.closed",
-                "session.input_transcript.delta",
-                "session.output_transcript.delta",
-                "error",
-              ].map((type) => ({ type })),
-            },
-          },
-        },
-        transport: { type: "webrtc", sdp },
+      const intent =
+        "live:" + c.id + ":" + (usage.chargeId ?? crypto.randomUUID());
+      await this.store.intent(intent, this.principal, c.id, "live", {
+        providerId: null,
+        voiceId: usage.chargeId ?? null,
+        requestId: usage.chargeId ?? null,
       });
-      if (this.state.conversation !== c || !c.live) {
+      const result = await createLive(client(this.env.OPENAI_API_KEY), sdp);
+      await this.store.created(intent, result.session.id);
+      if (this.state.conversation !== c || c.live !== live) {
         this.state.cleanup.push({
           sessionId: null,
           conversationId: c.id,
@@ -905,14 +1372,139 @@ export class AssistantUser extends DurableObject<Env> {
       await this.save();
       await this.ensureSideband(c);
       this.broadcast();
-      return { sdp: result.transport.sdp };
+      return {
+        sdp: result.transport.sdp,
+        voiceId: usage.chargeId,
+        voiceDeadline: this.voiceDeadline(c),
+      };
     } catch {
-      if (c.live?.id) await this.stopVoice(c);
-      else {
+      if (charge) {
+        charge.started = null;
+        charge.stopped = Date.now();
+      }
+      this.settleVoice(live.usage, 0);
+      if (c.live === live && c.live.id) await this.stopVoice(c);
+      else if (c.live === live) {
         c.live = null;
         await this.save();
-      } // Keep the reservation if creation outcome is unknown.
+      } // Keep the cleanup job if creation outcome is unknown.
       throw new AssistantError("voice_connection_failed", 502);
+    }
+  }
+  private stopCharge(c: Conversation, stoppedAt = Date.now()): void {
+    const b = this.state.charges.find((b) => b.id === c.live?.usage.chargeId);
+    if (b && b.stopped === null) b.stopped = stoppedAt;
+  }
+  private async meterCharges(): Promise<void> {
+    if (this.metering) return;
+    this.metering = true;
+    try {
+      await this.flushCharges();
+    } finally {
+      this.metering = false;
+    }
+  }
+  private async flushCharges(): Promise<void> {
+    for (const b of this.state.charges.slice()) {
+      if ((b.nextAttempt ?? 0) > Date.now() && Date.now() < b.expires) continue;
+      if (Date.now() >= b.expires) {
+        console.error(
+          JSON.stringify({ event: "voice_billing_expired", sessionId: b.id }),
+        );
+        this.state.charges = this.state.charges.filter((v) => v !== b);
+        continue; // Canister timeout releases only unconfirmed amounts.
+      }
+      const c = this.state.conversation;
+      if (b.stopped === null && c?.live?.usage.chargeId !== b.id) {
+        if (this.voiceStarting && b.started === null) continue;
+        b.stopped = Date.now();
+      }
+      if (b.started === null && b.stopped === null) continue;
+      const seconds =
+        b.started === null
+          ? 0
+          : Math.min(
+              b.reserved,
+              Math.max(
+                0,
+                Math.ceil(((b.stopped ?? Date.now()) - b.started) / 1000),
+              ),
+            );
+      const closing = b.stopped !== null;
+      try {
+        let settled;
+        try {
+          settled = await settleVoiceCharge(this.env, b.id, seconds, closing);
+        } catch (error) {
+          const known = await voiceReservation(this.env, b.id);
+          if (
+            !known ||
+            (!known.closed && Number(known.confirmed_seconds) < seconds)
+          )
+            throw error;
+          settled = known;
+        }
+        b.attempts = 0;
+        b.nextAttempt = 0;
+        b.confirmed = Number(settled.confirmed_seconds);
+        if (settled.closed) {
+          this.state.charges = this.state.charges.filter((v) => v !== b);
+          if (b.stopped === null && c?.live?.usage.chargeId === b.id) {
+            c.error = "voice_budget_exhausted";
+            await this.stopVoice(c, false);
+          }
+        } else if (
+          b.stopped === null &&
+          c?.live &&
+          b.reserved < c.live.usage.reserved &&
+          b.reserved - seconds <= 30
+        ) {
+          try {
+            const next = Math.min(
+              b.reserved + 60,
+              Math.floor(c.live.usage.reserved / 60) * 60,
+            );
+            if (next > b.reserved) {
+              let reservation;
+              try {
+                reservation = await reserveVoice(
+                  this.env,
+                  b.id,
+                  b.databaseId,
+                  b.principal,
+                  b.rate,
+                  next,
+                );
+              } catch (error) {
+                const known = await voiceReservation(this.env, b.id);
+                if (
+                  !known ||
+                  known.closed ||
+                  Number(known.reserved_seconds) < next
+                )
+                  throw error;
+                reservation = known;
+              }
+              b.reserved = Number(reservation.reserved_seconds);
+              await this.save();
+              this.broadcast();
+            }
+          } catch {
+            c.error = "voice_budget_exhausted";
+          }
+        }
+      } catch {
+        b.attempts = (b.attempts ?? 0) + 1;
+        b.nextAttempt =
+          Date.now() +
+          (b.stopped !== null
+            ? Math.min(1800000, 60000 * 2 ** Math.min(b.attempts - 1, 5))
+            : 15000);
+        console.error(
+          JSON.stringify({ event: "voice_billing_pending", sessionId: b.id }),
+        );
+      }
+      await this.save();
     }
   }
   private async ensureSideband(c: Conversation): Promise<void> {
@@ -926,13 +1518,22 @@ export class AssistantUser extends DurableObject<Env> {
   }
   private async attachSideband(c: Conversation): Promise<void> {
     const id = c.live?.id;
-    if (!id) return;
+    const conversationId = c.id;
+    const lease = this.connectionLease;
+    if (!id || !lease) return;
     if (this.sidebandId === id && this.sideband?.readyState === WebSocket.OPEN)
       return;
     this.sideband?.close();
     const ws = await attachLive(this.env.OPENAI_API_KEY!, id);
-    if (this.state.conversation !== c || c.live?.id !== id) {
-      ws.send(JSON.stringify({ type: "session.close" }));
+    const ownsConnection = await this.leases.valid(lease);
+    const current = this.state.conversation;
+    if (
+      !ownsConnection ||
+      this.connectionLease !== lease ||
+      current?.id !== conversationId ||
+      current.live?.id !== id
+    ) {
+      // Release only this attachment; persisted cleanup owns session termination.
       ws.close();
       return;
     }
@@ -940,7 +1541,7 @@ export class AssistantUser extends DurableObject<Env> {
     this.sidebandId = id;
     ws.addEventListener("message", (event) => {
       if (typeof event.data === "string")
-        this.ctx.waitUntil(this.liveEvent(c, id, event.data));
+        this.background(this.liveEvent(conversationId, id, ws, event.data));
     });
     ws.addEventListener("close", () => {
       if (this.sideband === ws) {
@@ -951,24 +1552,44 @@ export class AssistantUser extends DurableObject<Env> {
     ws.addEventListener("error", () => {
       ws.close();
     });
-    this.sendLive({
+    await this.sendLive({
       type: "session.thinking.append",
       event_id: crypto.randomUUID(),
       delegation_id: null,
-      content: `Selected Wiki scope: ${c.scope}. Use the backend for every Wiki claim.`,
+      content: `Selected Wiki scope: ${current.scope}. Use the backend for every Wiki claim.`,
     });
   }
-  private sendLive(value: unknown): void {
+  private async sendLive(value: unknown): Promise<void> {
+    const c = this.state.conversation;
+    if (
+      !c?.live ||
+      c.live.stopping ||
+      !this.connectionLease ||
+      !(await this.leases.valid(this.connectionLease)) ||
+      !(await this.store.canSend(
+        this.principal,
+        c.id,
+        c.live.usage.chargeId ?? "",
+      ))
+    )
+      return;
     if (this.sideband?.readyState === WebSocket.OPEN)
       this.sideband.send(JSON.stringify(value));
   }
   private async liveEvent(
-    c: Conversation,
+    conversationId: string,
     id: string,
+    ws: WebSocket,
     data: string,
   ): Promise<void> {
+    const lease = this.connectionLease;
+    if (!lease || !(await this.leases.valid(lease))) return;
+    const c = this.state.conversation;
     if (
-      this.state.conversation !== c ||
+      this.connectionLease !== lease ||
+      this.sideband !== ws ||
+      this.sidebandId !== id ||
+      c?.id !== conversationId ||
       c.live?.id !== id ||
       data.length > 65536
     )
@@ -1014,6 +1635,13 @@ export class AssistantUser extends DurableObject<Env> {
       await this.save();
     }
     if (event.type === "session.delegation.created") {
+      const charge = this.state.charges.find(
+        (b) => b.id === c.live?.usage.chargeId,
+      );
+      if (charge && charge.started === null) {
+        await this.stopVoice(c, false);
+        return;
+      }
       const parsed = z
         .object({
           delegation: z.object({
@@ -1068,7 +1696,8 @@ export class AssistantUser extends DurableObject<Env> {
       {
         requestId: crypto.randomUUID(),
         scope: c.scope,
-        question: `音声会話の最新の質問・訂正に答えてください。曖昧なら確認してください。\n${transcript.slice(-3600)}`,
+        selectedPath: c.selectedPath,
+        question: `Answer the latest question or correction in the voice conversation. Ask for clarification if it is ambiguous.\n${transcript.slice(-3600)}`,
       },
       id,
     );
@@ -1077,6 +1706,7 @@ export class AssistantUser extends DurableObject<Env> {
     const live = c.live;
     if (!live) return;
     this.settleVoice(live.usage, reportedSeconds);
+    this.stopCharge(c);
     c.live = null;
     c.deferred = null;
     c.transcripts = [];
@@ -1088,12 +1718,15 @@ export class AssistantUser extends DurableObject<Env> {
   private settleVoice(usage: VoiceUsage, reportedSeconds?: unknown): void {
     if (usage.settled) return;
     usage.settled = true;
+    const charge = this.state.charges.find((b) => b.id === usage.chargeId);
     const seconds =
-      typeof reportedSeconds === "number" &&
-      Number.isFinite(reportedSeconds) &&
-      reportedSeconds >= 0
-        ? Math.ceil(reportedSeconds)
-        : null;
+      charge?.started === null
+        ? 0
+        : typeof reportedSeconds === "number" &&
+            Number.isFinite(reportedSeconds) &&
+            reportedSeconds >= 0
+          ? Math.ceil(reportedSeconds)
+          : null;
     if (seconds !== null && usage.usageDay === this.state.day)
       this.state.voiceSeconds = Math.max(
         0,
@@ -1147,9 +1780,10 @@ export class AssistantUser extends DurableObject<Env> {
   }
   private async stopVoice(
     c: Conversation,
-    cancelPending = true,
+    cancelPending = false,
   ): Promise<void> {
     if (!c.live) return;
+    this.stopCharge(c);
     c.live.stopping = true;
     c.deferred = null;
     await this.save();
@@ -1185,8 +1819,8 @@ export function voiceSummary(answer: {
     answer.insufficient ||
     answer.contradictions.length ||
     answer.unverified.length
-      ? "注意：根拠不足・矛盾・未確認事項があります。画面の詳細を確認してください。\n"
-      : "詳細と出典は画面で確認できます。\n";
+      ? "Caution: evidence is incomplete, conflicting, or unverified. Check the details on screen.\n"
+      : "Details and sources are available on screen.\n";
   const encoder = new TextEncoder();
   let content = caveat;
   for (const character of answer.answer) {

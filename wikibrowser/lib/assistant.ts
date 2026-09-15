@@ -12,6 +12,8 @@ export type AssistantSnapshot = {
   error: string | null;
   generation: number;
   reconnectGraceMs: number;
+  voiceId?: string | null;
+  voiceDeadline?: number | null;
   voice: "off" | "connected" | "stopping";
   progress: { calls: number; stage: string } | null;
   messages: {
@@ -23,42 +25,43 @@ export type AssistantSnapshot = {
 };
 export const CONSENT_VERSION = "2026-09-14";
 const errors: Record<string, string> = {
-  assistant_disabled: "Ask AIはまだ公開されていません。",
-  assistant_not_configured: "Ask AIのAPI設定がまだ完了していません。",
-  authentication_required: "Ask AI用のInternet Identity接続が必要です。",
-  invitation_required: "Ask AIは招待された利用者のみ利用できます。",
-  choose_questions_only:
-    "Internet Identityで「Questions only」を選んでください。",
+  assistant_disabled: "Ask AI is not available yet.",
+  assistant_not_configured: "Ask AI has not been configured yet.",
+  authentication_required: "Connect with Internet Identity to use Ask AI.",
+  invitation_required: "Ask AI is available to invited users only.",
+  choose_questions_only: "Select “Questions only” in Internet Identity.",
   identity_changed:
-    "WikiとAsk AIのアカウントが異なります。同じアカウントで接続してください。",
+    "Your Wiki and Ask AI accounts do not match. Connect with the same account.",
   reconnect_expired:
-    "復帰猶予を過ぎたため接続を終了しました。会話を開始し直してください。",
-  conversation_ended: "会話は終了しました。",
+    "The reconnect window has expired. Start a new conversation.",
+  conversation_ended: "The conversation has ended.",
   conversation_already_active:
-    "既に会話が開かれています。元の画面で終了するか、切断後2分お待ちください。",
-  conversation_not_owned: "この会話にはアクセスできません。",
-  cleanup_pending: "前の会話の削除を確認中です。しばらくお待ちください。",
-  turn_in_progress: "回答を確認しています。待つか、処理を取り消してください。",
-  question_limit: "本日の質問回数の上限に達しました。",
-  voice_limit: "本日の音声時間の上限に達しました。",
-  turn_timeout:
-    "確認に時間がかかりすぎました。質問を絞って再度お試しください。",
-  wiki_read_denied: "Wikiの読み取り権限を確認できませんでした。",
-  voice_connection_failed:
-    "音声に接続できませんでした。テキストで続けられます。",
-  voice_close_pending: "音声の終了を確認しています。",
-  invalid_citation: "出典を検証できないため、回答を表示できません。",
-  unsupported_answer: "回答を支える出典を確認できませんでした。",
-  checking_request_status: "通信が途切れたため、処理結果を確認しています。",
-  cancel_requested: "処理の取消を要求しました。",
+    "A conversation is already open. End it in the original tab or wait two minutes after disconnecting.",
+  conversation_not_owned: "You do not have access to this conversation.",
+  cleanup_pending:
+    "Confirming deletion of the previous conversation. Please wait.",
+  turn_in_progress: "A question is being processed. Please wait or cancel it.",
+  question_limit: "You have reached your daily question limit.",
+  voice_limit: "You have reached your daily voice limit.",
+  turn_timeout: "The request timed out. Try a more specific question.",
+  wiki_read_denied: "Unable to verify read access to this Wiki.",
+  voice_connection_failed: "Unable to connect voice. You can continue in text.",
+  voice_close_pending: "Confirming that the voice session has ended.",
+  invalid_citation:
+    "The sources could not be verified, so the answer cannot be displayed.",
+  unsupported_answer: "No verified sources support this answer.",
+  checking_request_status:
+    "The connection was interrupted. Checking the request status.",
+  cancel_requested: "Cancellation requested.",
   voice_transcript_missing:
-    "音声の質問を確認できませんでした。もう一度お話しください。",
+    "The spoken question could not be identified. Please try again.",
   voice_context_limit:
-    "音声会話の長さの上限に達しました。テキストで続けられます。",
+    "The voice conversation has reached its length limit. You can continue in text.",
 };
 export function assistantError(code: string): string {
   return (
-    errors[code] ?? "Ask AIの処理に失敗しました。接続と設定を確認してください。"
+    errors[code] ??
+    "Ask AI could not complete the request. Check your connection and settings."
   );
 }
 export class AssistantRequestError extends Error {
@@ -99,15 +102,101 @@ export async function assistantRequest<T>(
   return value as T;
 }
 
+export class AssistantControl {
+  private socket: WebSocket | null = null;
+  private generation = 0;
+  private pending = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  attach(socket: WebSocket) {
+    this.detach();
+    this.generation = 0;
+    this.socket = socket;
+  }
+  detach() {
+    this.socket = null;
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new AssistantRequestError("connection_lost"));
+    }
+    this.pending.clear();
+  }
+  receive(value: {
+    type?: string;
+    generation?: number;
+    requestId?: string;
+    status?: number;
+    body?: unknown;
+  }) {
+    if (value.type === "snapshot" && typeof value.generation === "number")
+      this.generation = Math.max(this.generation, value.generation);
+    if (value.type !== "command.result" || !value.requestId) return false;
+    const p = this.pending.get(value.requestId);
+    if (p) {
+      clearTimeout(p.timer);
+      this.pending.delete(value.requestId);
+      if ((value.status ?? 500) < 300) p.resolve(value.body);
+      else
+        p.reject(
+          new AssistantRequestError(
+            (value.body as { error?: string })?.error ?? "request_failed",
+          ),
+        );
+    }
+    return true;
+  }
+  command<T>(
+    action: string,
+    payload: Record<string, unknown>,
+    requestId: string = crypto.randomUUID(),
+  ): Promise<T> {
+    if (this.socket?.readyState !== WebSocket.OPEN)
+      return Promise.reject(new AssistantRequestError("connection_lost"));
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new AssistantRequestError("command_outcome_pending"));
+      }, 95000);
+      this.pending.set(requestId, {
+        resolve: (value) => resolve(value as T),
+        reject,
+        timer,
+      });
+      try {
+        this.socket!.send(
+          JSON.stringify({
+            type: "command",
+            action,
+            payload,
+            requestId,
+            generation: this.generation,
+          }),
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(error);
+      }
+    });
+  }
+}
+
 export class AssistantVoice {
   private peer: RTCPeerConnection | null = null;
   private microphone: MediaStream | null = null;
   private channel: RTCDataChannel | null = null;
   private disposed = false;
   private opened = false;
+  private voiceId: string | null = null;
   constructor(
     private audio: HTMLAudioElement,
     private onStatus: (status: string) => void,
+    private control: AssistantControl,
   ) {}
   get isClosed(): boolean {
     return this.disposed;
@@ -121,9 +210,7 @@ export class AssistantVoice {
         this.audio.srcObject = new MediaStream([event.track]);
         void this.audio
           .play()
-          .catch(() =>
-            this.onStatus("音声プレーヤーの再生ボタンを押してください。"),
-          );
+          .catch(() => this.onStatus("Press Play on the audio player."));
       });
       const microphone = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -142,20 +229,20 @@ export class AssistantVoice {
           const value = JSON.parse(event.data);
           if (value.type === "session.started") {
             this.opened = true;
-            this.onStatus("音声で話せます。出典は画面に表示します。");
+            this.onStatus("Voice is ready. Sources will appear on screen.");
           }
           if (value.type === "session.closed") {
             this.dispose();
-            this.onStatus("音声を終了しました。");
+            this.onStatus("Voice has ended.");
           }
         } catch {
-          this.onStatus("音声イベントを確認できませんでした。");
+          this.onStatus("Unable to read the voice event.");
         }
       });
       channel.addEventListener("close", () => {
         if (!this.disposed) {
           this.dispose();
-          this.onStatus("音声接続が切れました。テキストで続けられます。");
+          this.onStatus("Voice disconnected. You can continue in text.");
         }
       });
       await peer.setLocalDescription(await peer.createOffer());
@@ -163,7 +250,7 @@ export class AssistantVoice {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => {
             peer.removeEventListener("icegatheringstatechange", check);
-            reject(new Error("音声接続の準備がタイムアウトしました。"));
+            reject(new Error("Voice connection setup timed out."));
           }, 10000);
           const check = () => {
             if (peer.iceGatheringState === "complete") {
@@ -176,23 +263,25 @@ export class AssistantVoice {
           check();
         });
       if (this.disposed) return;
-      const result = await assistantRequest<{ sdp: string }>("/voice", {
-        conversationId,
-        body: { sdp: peer.localDescription?.sdp },
-      });
+      const result = await this.control.command<{
+        sdp: string;
+        voiceId: string;
+      }>("voice", { sdp: peer.localDescription?.sdp });
+      this.voiceId = result.voiceId;
       if (this.disposed) {
         void assistantRequest("/voice/stop", {
           conversationId,
-          body: {},
+          body: { voiceId: this.voiceId },
         }).catch(() => {});
         return;
       }
       await peer.setRemoteDescription({ type: "answer", sdp: result.sdp });
     } catch (error) {
       this.dispose();
-      void assistantRequest("/voice/stop", { conversationId, body: {} }).catch(
-        () => {},
-      );
+      void assistantRequest("/voice/stop", {
+        conversationId,
+        body: { voiceId: this.voiceId },
+      }).catch(() => {});
       throw error;
     }
   }
@@ -204,7 +293,11 @@ export class AssistantVoice {
     if (this.opened && this.channel?.readyState === "open")
       this.channel.send(JSON.stringify({ type: "session.close" }));
     try {
-      await assistantRequest("/voice/stop", { conversationId, body: {} });
+      if (this.voiceId)
+        await assistantRequest("/voice/stop", {
+          conversationId,
+          body: { voiceId: this.voiceId },
+        });
     } finally {
       this.dispose();
     }

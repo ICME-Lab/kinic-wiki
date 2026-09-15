@@ -272,9 +272,9 @@ extension DatabaseMember: CandidConvertible {
 }
 
 extension DatabaseCycleEntry: CandidConvertible {
-    static let candidType: CandidType = .record(fields([("method", Optional<String>.candidType), ("payment_amount_e8s", Optional<UInt64>.candidType), ("kind", .text), ("balance_after_cycles", .nat64), ("created_at_ms", .int64), ("cycles_per_kinic", Optional<UInt64>.candidType), ("ledger_block_index", Optional<UInt64>.candidType), ("database_id", .text), ("amount_cycles", .int64), ("caller", .text), ("cycles_delta", Optional<UInt64>.candidType), ("entry_id", .nat64)]))
-    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); method = try r.required("method"); paymentAmountE8s = try r.required("payment_amount_e8s"); kind = try r.required("kind"); balanceAfterCycles = try r.required("balance_after_cycles"); createdAtMs = try r.required("created_at_ms"); cyclesPerKinic = try r.required("cycles_per_kinic"); ledgerBlockIndex = try r.required("ledger_block_index"); databaseId = try r.required("database_id"); amountCycles = try r.required("amount_cycles"); caller = try r.required("caller"); cyclesDelta = try r.required("cycles_delta"); entryId = try r.required("entry_id") }
-    var candidValue: CandidValue { recordValue(Self.candidType, [("method", method.candidValue), ("payment_amount_e8s", paymentAmountE8s.candidValue), ("kind", kind.candidValue), ("balance_after_cycles", balanceAfterCycles.candidValue), ("created_at_ms", createdAtMs.candidValue), ("cycles_per_kinic", cyclesPerKinic.candidValue), ("ledger_block_index", ledgerBlockIndex.candidValue), ("database_id", databaseId.candidValue), ("amount_cycles", amountCycles.candidValue), ("caller", caller.candidValue), ("cycles_delta", cyclesDelta.candidValue), ("entry_id", entryId.candidValue)]) }
+    static let candidType: CandidType = .record(fields([("voice_session_id", Optional<String>.candidType), ("voice_seconds", Optional<UInt64>.candidType), ("voice_rate_version", Optional<UInt64>.candidType), ("method", Optional<String>.candidType), ("payment_amount_e8s", Optional<UInt64>.candidType), ("kind", .text), ("balance_after_cycles", .nat64), ("created_at_ms", .int64), ("cycles_per_kinic", Optional<UInt64>.candidType), ("ledger_block_index", Optional<UInt64>.candidType), ("database_id", .text), ("amount_cycles", .int64), ("caller", .text), ("cycles_delta", Optional<UInt64>.candidType), ("entry_id", .nat64)]))
+    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); voiceSessionId = try r.required("voice_session_id"); voiceSeconds = try r.required("voice_seconds"); voiceRateVersion = try r.required("voice_rate_version"); method = try r.required("method"); paymentAmountE8s = try r.required("payment_amount_e8s"); kind = try r.required("kind"); balanceAfterCycles = try r.required("balance_after_cycles"); createdAtMs = try r.required("created_at_ms"); cyclesPerKinic = try r.required("cycles_per_kinic"); ledgerBlockIndex = try r.required("ledger_block_index"); databaseId = try r.required("database_id"); amountCycles = try r.required("amount_cycles"); caller = try r.required("caller"); cyclesDelta = try r.required("cycles_delta"); entryId = try r.required("entry_id") }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("voice_session_id", voiceSessionId.candidValue), ("voice_seconds", voiceSeconds.candidValue), ("voice_rate_version", voiceRateVersion.candidValue), ("method", method.candidValue), ("payment_amount_e8s", paymentAmountE8s.candidValue), ("kind", kind.candidValue), ("balance_after_cycles", balanceAfterCycles.candidValue), ("created_at_ms", createdAtMs.candidValue), ("cycles_per_kinic", cyclesPerKinic.candidValue), ("ledger_block_index", ledgerBlockIndex.candidValue), ("database_id", databaseId.candidValue), ("amount_cycles", amountCycles.candidValue), ("caller", caller.candidValue), ("cycles_delta", cyclesDelta.candidValue), ("entry_id", entryId.candidValue)]) }
 }
 
 extension DatabaseCycleEntryPage: CandidConvertible { static let candidType: CandidType = .record(fields([("entries", [DatabaseCycleEntry].candidType), ("next_cursor", Optional<UInt64>.candidType)])); init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); entries = try r.required("entries"); nextCursor = try r.required("next_cursor") }; var candidValue: CandidValue { recordValue(Self.candidType, [("entries", entries.candidValue), ("next_cursor", nextCursor.candidValue)]) } }
@@ -314,3 +314,20 @@ struct VFSNode: Identifiable, Equatable, Sendable {
 
 struct VFSNodeMutationAck: Equatable, Sendable { let path: String; let kind: VFSNodeKind; let updatedAt: Int64; let etag: String }
 struct VFSWriteNodeResult: Equatable, Sendable { let created: Bool; let node: VFSNodeMutationAck }
+
+struct VoicePolicyInput: CandidConvertible {
+    let databaseId: String
+    let principal: String
+    let enabled: Bool
+    let budget: UInt64
+    init(databaseId: String, principal: String, enabled: Bool, budget: UInt64) {
+        self.databaseId = databaseId; self.principal = principal; self.enabled = enabled; self.budget = budget
+    }
+    static let candidType: CandidType = .record(fields([("database_id", .text), ("principal", .text), ("enabled", .bool), ("daily_budget_cycles", .nat64)]))
+    init(candidValue: CandidValue) throws {
+        let r = try CandidRecord(candidValue)
+        databaseId = try r.required("database_id"); principal = try r.required("principal")
+        enabled = try r.required("enabled"); budget = try r.required("daily_budget_cycles")
+    }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("database_id", databaseId.candidValue), ("principal", principal.candidValue), ("enabled", enabled.candidValue), ("daily_budget_cycles", budget.candidValue)]) }
+}

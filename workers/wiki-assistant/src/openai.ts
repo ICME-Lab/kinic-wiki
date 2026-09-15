@@ -38,6 +38,29 @@ export async function createAgent(
     input,
   });
 }
+export async function createLive(api: OpenAI, sdp: string) {
+  return api.live.create({
+    session: {
+      model: "gpt-live-1",
+      instructions: voiceInstructions,
+      delegation: { type: "client" },
+      store: false,
+      client: {
+        data_channel: {
+          allowed_client_events: ["session.close"],
+          allowed_server_events: [
+            "session.started",
+            "session.closed",
+            "session.input_transcript.delta",
+            "session.output_transcript.delta",
+            "error",
+          ].map((type) => ({ type })),
+        },
+      },
+    },
+    transport: { type: "webrtc", sdp },
+  });
+}
 export function messageText(item: AgentSessionItem): string {
   return item.type === "message"
     ? item.content.map((part) => ("text" in part ? part.text : "")).join("")

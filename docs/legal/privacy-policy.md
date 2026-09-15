@@ -27,7 +27,7 @@ The Service processes the following information when needed to provide features 
 - Notes, wiki documents, source material, and other content the user writes, imports, or generates.
 - Database names, descriptions, tags, access-control settings, and related metadata.
 
-This content is stored in Internet Computer canister state. Kinic does not create a separate centralized copy of the user's knowledge-base content and does not routinely inspect it.
+This content is stored in Internet Computer canister state. Except for the consented, bounded preview excerpts described below, Kinic does not create a separate centralized copy of the user's knowledge-base content and does not routinely inspect it.
 
 ### Cycles and transaction information
 
@@ -42,9 +42,21 @@ When the user submits an Ask AI question, the iOS app sends the following inform
 - Up to six recent conversation messages, subject to a character limit.
 - Relevant excerpts and bounded portions of notes selected from that database.
 
-Kinic directly operates the AI service and does not forward this information to a third-party AI provider. The information is used only to generate search queries and the requested answer. Request bodies are not retained in logs, caches, databases, analytics systems, or training datasets. They are discarded after the request completes, fails, or is cancelled.
+For the existing text Ask AI service, Kinic directly operates the AI service and does not forward this information to a third-party AI provider. The information is used only to generate search queries and the requested answer. Request bodies are not retained in logs, caches, databases, analytics systems, or training datasets. They are discarded after the request completes, fails, or is cancelled.
 
 Ask AI conversation history is stored locally on the iOS device. It is not uploaded as server-side conversation history, although the bounded recent messages described above are transmitted transiently with a later question when needed to understand that question.
+
+### Optional voice preview (disabled pending release acceptance)
+
+The optional iOS Voice preview is separate from existing text Ask AI and its local history. When enabled for an invited user and permitted by the selected database owner, it asks for consent before sending questions, conversation context and necessary Wiki excerpts to OpenAI. Starting voice also sends microphone audio directly to OpenAI. Voice continues while the device is locked or another app is foreground until the user stops it, an interruption occurs, or a server limit ends it. Muting stops microphone audio from being sent without ending the connection.
+
+OpenAI Agents sessions are stored in the United States and do not support Zero Data Retention. Kinic keeps encrypted bounded conversation content, tool results and short-lived authorization material in Cloudflare D1 to operate and recover the preview. Bearer tokens are stored as hashes. The iOS app may also keep a temporary preview cache in a device-protected area excluded from backups; it restores that cache only after checking authorization and server conversation state, and never automatically restarts recording. New preview conversations are not added to the existing local QA history. Kinic does not persist voice recordings.
+
+Ending the conversation, signing out, changing database or account, or reaching the session deadline removes application conversation content and requests deletion of the OpenAI session. This does not promise immediate erasure of every provider record. Failed cleanup retains provider and reservation identifiers and retry metadata, without conversation content. Removing current D1 records does not immediately remove prior encrypted copies from Cloudflare backup history. D1 Time Travel retains recovery history according to the applicable service retention period; see [Cloudflare Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/). The temporary device cache is removed on conversation end, logout or database/account change. Content-free billing records retain database, authorized user, session identifier, rate version, confirmed duration and cycles amounts; access follows the database's billing-history permissions.
+
+The preview charges the selected database's service credits, denominated in cycles, at the displayed connection-time rate. Silence, microphone mute and device-lock time are included. Reservations protect the agreed budget; unused reservations are released. Existing StoreKit purchase verification remains unchanged. The operator pays infrastructure and AI providers separately.
+
+The preview remains disabled until staging, device, pricing and privacy-disclosure acceptance are complete. Publication dates and App Store disclosures must be updated before activation.
 
 ## 3. How we store and secure information
 
@@ -69,7 +81,7 @@ No system can be guaranteed completely secure. Users should not store secrets su
 
 ## 5. Sharing and disclosure
 
-We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. Ask AI data is not sent to a third-party AI provider.
+We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. Existing text Ask AI data is not sent to a third-party AI provider. The optional voice preview described above uses OpenAI when enabled and explicitly selected.
 
 Information may be processed or disclosed only to:
 

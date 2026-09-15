@@ -26,3 +26,7 @@ pnpm ios:store-screenshots
 ```
 
 The command fails if an input is missing, if the manifest does not contain exactly five scenes, or if a generated PNG has the wrong dimensions or an alpha channel. Outputs are written to `mobile/ios/build/AppStoreScreenshots/output/` and remain untracked.
+
+## Optional voice preview release gate
+
+The preview is disabled in the bundle and server by default. Before enabling it, review App Privacy answers against actual OpenAI/Cloudflare transmission and retention of questions, audio and Wiki excerpts, identity-linked service-credit billing records, and provider deletion behavior. Confirm the existing DB credits IAP description covers optional AI connection time. Existing text QA/history and the optional preview have different processing; do not describe all Ask AI requests as first-party-only. Never claim ZDR or instantaneous provider erasure. Live pricing, release dates and device/background acceptance remain pending.

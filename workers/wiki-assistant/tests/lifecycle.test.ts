@@ -12,6 +12,15 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   read: vi.fn(),
   attach: vi.fn(),
+  reserve: vi.fn(),
+  charge: vi.fn(),
+}));
+vi.mock("../src/billing", () => ({
+  voiceReservation: async () => null,
+  reserveVoice: mocks.reserve,
+  settleVoiceCharge: mocks.charge,
+  voicePolicy: async () => ({ enabled: true, daily_budget_cycles: 1000n }),
+  voiceRate: async () => ({ version: 1n, cycles_per_minute: 60n }),
 }));
 vi.mock("../src/openai", () => ({
   client: () => ({
@@ -27,6 +36,7 @@ vi.mock("../src/openai", () => ({
     },
   }),
   createAgent: mocks.create,
+  createLive: mocks.create,
   sessionItems: mocks.items,
   cancelAgent: mocks.cancel,
   deleteAgent: mocks.remove,
@@ -73,52 +83,119 @@ vi.mock("../src/kinic", () => ({
     };
   },
 }));
+vi.mock("../src/auth", () => ({
+  requireEnabled: (env: Env) => {
+    if (env.ASSISTANT_ENABLED !== "true") throw new Error("disabled");
+  },
+  AssistantAuth: class {
+    async material() {
+      return { principal: "owner", material: { appKey: ["a", "b"] } };
+    }
+  },
+}));
+vi.mock("../src/leases", () => ({
+  RENEW_MS: 10000,
+  Leases: class {
+    async claim(scope: string, id: string) {
+      return {
+        scope,
+        id,
+        owner: "test",
+        generation: 1,
+        expires_at: Date.now() + 45000,
+      };
+    }
+    async renew() {
+      return true;
+    }
+    async valid() {
+      return true;
+    }
+    async active() {
+      return false;
+    }
+    async release() {}
+  },
+}));
+vi.mock("../src/store", () => ({
+  AssistantStore: class {
+    private memory: {
+      storage: Map<string, unknown>;
+      wake: number | null;
+      revision: number;
+    };
+    constructor(env: Env) {
+      this.memory = (
+        env as unknown as {
+          memory: {
+            storage: Map<string, unknown>;
+            wake: number | null;
+            revision: number;
+          };
+        }
+      ).memory;
+    }
+    db = {
+      prepare: () => ({
+        bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }),
+      }),
+    };
+    async load(principal: string) {
+      return {
+        revision: this.memory.revision,
+        state: structuredClone(
+          this.memory.storage.get("state") ?? {
+            principal,
+            day: new Date().toISOString().slice(0, 10),
+            questions: 0,
+            voiceSeconds: 0,
+            conversation: null,
+            cleanup: [],
+            charges: [],
+          },
+        ),
+      };
+    }
+    async save(
+      _principal: string,
+      revision: number,
+      state: unknown,
+      next: number,
+    ) {
+      this.memory.storage.set("state", structuredClone(state));
+      this.memory.wake = next;
+      return (this.memory.revision = revision + 1);
+    }
+    async intent() {}
+    async created() {}
+    async touch() {}
+    async canSend() {
+      return true;
+    }
+  },
+}));
 async function harness() {
   const storage = new Map<string, unknown>();
   const background: Promise<unknown>[] = [];
-  let ready: Promise<unknown> = Promise.resolve();
-  let alarmAt: number | null = null;
-  const ctx = {
-    storage: {
-      get: async (key: string) => structuredClone(storage.get(key)),
-      put: async (key: string, value: unknown) => {
-        storage.set(key, structuredClone(value));
-      },
-      getAlarm: async () => alarmAt,
-      setAlarm: async (at: number) => {
-        alarmAt = at;
-      },
-      transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
-        fn(ctx.storage),
-      deleteAll: async () => {
-        storage.clear();
-      },
-    },
-    blockConcurrencyWhile: (fn: () => Promise<unknown>) => {
-      ready = fn();
-    },
-    waitUntil: (p: Promise<unknown>) => {
-      background.push(p);
-    },
-    getWebSockets: () => [],
-  } as unknown as DurableObjectState;
+  const memory = { storage, wake: null as number | null, revision: 0 };
   const env = {
     ASSISTANT_ENABLED: "true",
     OPENAI_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
     ASSISTANT_LIMITS: '{"questions":2}',
     ASSISTANT_DERIVATION_ORIGIN: "origin",
-    ASSISTANT_AUTH: {
-      getByName: () => ({
-        material: async () => ({
-          principal: "owner",
-          material: { appKey: ["a", "b"] },
-        }),
-      }),
-    },
+    memory,
   } as unknown as Env;
-  const user = new AssistantUser(ctx, env);
-  await ready;
+  const user = await new AssistantUser(env, "owner", (p) =>
+    background.push(p),
+  ).initialize();
+  user["connectionLease"] = {
+    scope: "connection",
+    id: "test",
+    owner: "test",
+    generation: 1,
+    expires_at: Infinity,
+  };
   let id = "";
   const call = async (path: string, body?: unknown, overrideId?: string) =>
     user.fetch(
@@ -146,10 +223,10 @@ async function harness() {
   id = ((await created.json()) as { id: string }).id;
   return {
     user,
-    alarmAt: () => alarmAt,
+    alarmAt: () => memory.wake,
     fireAlarm: async () => {
-      alarmAt = null;
-      await user.alarm();
+      memory.wake = null;
+      await user.tick();
     },
     call,
     id,
@@ -162,6 +239,16 @@ async function harness() {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.authorize.mockResolvedValue(undefined);
+  mocks.reserve.mockImplementation(
+    async (_env, _id, _db, _principal, _rate, seconds) => ({
+      reserved_seconds: BigInt(seconds),
+      closed: false,
+    }),
+  );
+  mocks.charge.mockImplementation(async (_env, _id, seconds, closed) => ({
+    confirmed_seconds: BigInt(seconds),
+    closed,
+  }));
   mocks.create.mockResolvedValue({ id: "session-1" });
   mocks.items.mockResolvedValue([]);
   mocks.retrieve.mockResolvedValue({
@@ -247,6 +334,10 @@ describe("conversation lifecycle", () => {
     const stored = JSON.stringify(h.storage.get("state"));
     expect(stored).toContain("session-1");
     expect(stored).not.toContain("What is the decision?");
+    await h.fireAlarm();
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+    vi.setSystemTime(h.user["state"].cleanup[0].nextAttempt!);
     await h.fireAlarm();
     expect(mocks.remove).toHaveBeenCalledTimes(2);
   });
@@ -367,7 +458,7 @@ it("bounds voice summaries including caveats without splitting Unicode character
     unverified: [],
   });
   expect(new TextEncoder().encode(summary).length).toBeLessThanOrEqual(450);
-  expect(summary).toContain("根拠不足");
+  expect(summary).toContain("evidence is incomplete");
   expect(summary).not.toContain("\uFFFD");
 });
 
@@ -536,6 +627,10 @@ it("retains only voice accounting metadata during failed cleanup then settles on
   expect(h.user["state"].cleanup[0].voiceUsage?.reserved).toBe(600);
   mocks.attach.mockResolvedValue(new ClosingSocket());
   await h.fireAlarm();
+  expect(h.user["state"].voiceSeconds).toBe(600);
+  vi.useFakeTimers();
+  vi.setSystemTime(h.user["state"].cleanup[0].nextAttempt!);
+  await h.fireAlarm();
   expect(h.user["state"].voiceSeconds).toBe(7);
   expect(h.user["state"].cleanup).toEqual([]);
 });
@@ -551,4 +646,297 @@ it("does not refund yesterday's reservation against today's usage", async () => 
   h.user["state"].voiceSeconds = 123;
   await h.user.endOwned("auth");
   expect(h.user["state"].voiceSeconds).toBe(123);
+});
+
+async function withCharge() {
+  const h = await withVoice();
+  h.c.live!.usage.chargeId = "charge-1";
+  const charge = {
+    id: "charge-1",
+    databaseId: "db",
+    principal: "owner",
+    rate: "1",
+    reserved: 60,
+    started: Date.now(),
+    stopped: null as number | null,
+    expires: Date.now() + 86400000,
+    confirmed: 0,
+  };
+  h.user["state"].charges.push(charge);
+  await h.user["save"]();
+  return { ...h, charge };
+}
+it("reserves the next minute when thirty funded seconds remain", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  vi.setSystemTime(h.charge.started + 30000);
+  await h.fireAlarm();
+  expect(mocks.reserve).toHaveBeenCalledWith(
+    expect.anything(),
+    "charge-1",
+    "db",
+    "owner",
+    "1",
+    120,
+  );
+  expect(h.charge.reserved).toBe(120);
+});
+it("stops at funded deadline when extensions fail without cancelling text", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  await h.call("/questions", question());
+  await h.drain();
+  mocks.reserve.mockRejectedValue(new Error("offline"));
+  vi.setSystemTime(h.charge.started + 30000);
+  await h.fireAlarm();
+  vi.setSystemTime(h.charge.started + 60000);
+  await h.fireAlarm();
+  expect(h.c.live).toBeNull();
+  expect(h.c.pending).not.toBeNull();
+  expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(mocks.charge).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    60,
+    true,
+  );
+});
+it("fixes charge duration at logout even when cleanup takes longer", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  vi.setSystemTime(h.charge.started + 7000);
+  await h.user.endOwned("auth");
+  vi.setSystemTime(h.charge.started + 60000);
+  await h.fireAlarm();
+  expect(mocks.charge).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    7,
+    true,
+  );
+  expect(h.user["state"].charges).toEqual([]);
+});
+it("retains content-free charge metadata on canister outage and retries idempotently", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  vi.setSystemTime(h.charge.started + 7000);
+  await h.user.endOwned("auth");
+  mocks.charge.mockRejectedValueOnce(new Error("offline"));
+  await h.fireAlarm();
+  expect(h.user["state"].charges).toHaveLength(1);
+  expect(h.user["state"].conversation).toBeNull();
+  await h.fireAlarm();
+  expect(mocks.charge).toHaveBeenCalledTimes(1);
+  vi.setSystemTime(h.user["state"].charges[0].nextAttempt!);
+  await h.fireAlarm();
+  expect(h.user["state"].charges).toEqual([]);
+  expect(mocks.charge).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    7,
+    true,
+  );
+});
+
+it("accepts only the owning cleanup binding and fixes a delayed stop request's billing cutoff", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  vi.setSystemTime(h.charge.started + 20000);
+  await expect(
+    h.user.stopVoiceOwned("other", h.c.id, h.charge.started + 7000),
+  ).rejects.toThrow("conversation_not_owned");
+  expect(h.charge.stopped).toBeNull();
+  await h.user.stopVoiceOwned("auth", h.c.id, h.charge.started + 7000);
+  await h.fireAlarm();
+  expect(mocks.charge).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    7,
+    true,
+  );
+});
+
+it("starts billing only after a matching connection acknowledgment and keeps its first timestamp", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  const id = crypto.randomUUID();
+  h.charge.id = id;
+  h.c.live!.usage.chargeId = id;
+  const createdAt = h.c.live!.usage.started;
+  Object.assign(h.charge, { started: null });
+  vi.setSystemTime(createdAt + 5000);
+  expect(
+    (await h.call("/voice/connected", { voiceId: crypto.randomUUID() })).status,
+  ).toBe(409);
+  expect((await h.call("/voice/connected", { voiceId: id })).status).toBe(200);
+  const started = h.charge.started;
+  vi.setSystemTime(createdAt + 8000);
+  expect((await h.call("/voice/connected", { voiceId: id })).status).toBe(200);
+  expect(h.charge.started).toBe(started);
+  expect(h.user["snapshot"](h.c).voiceDeadline).toBe(started + 60000);
+  await h.user.stopVoiceOwned("auth", h.c.id, Date.now());
+  await h.fireAlarm();
+  expect(mocks.charge).toHaveBeenLastCalledWith(expect.anything(), id, 3, true);
+});
+it("releases the reservation without billing if transport setup is never acknowledged", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  Object.assign(h.charge, { started: null });
+  vi.setSystemTime(h.c.live!.usage.started + 30000);
+  await h.fireAlarm();
+  expect(h.c.live).toBeNull();
+  expect(mocks.charge).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    0,
+    true,
+  );
+  expect(h.user["state"].voiceSeconds).toBe(0);
+});
+
+it("returns the daily voice quota when Live setup fails before acknowledgment", async () => {
+  const h = await harness();
+  const c = h.user["state"].conversation!;
+  c.native = true;
+  mocks.create.mockRejectedValueOnce(new Error("transport failed"));
+  await expect(
+    h.user["startVoice"](c, "v=0", "1", crypto.randomUUID()),
+  ).rejects.toThrow("voice_connection_failed");
+  expect(h.user["state"].voiceSeconds).toBe(0);
+});
+
+it("does not stop the replacement connection for a delayed old native stop", async () => {
+  const h = await withCharge();
+  await h.user.stopVoiceOwned("auth", h.c.id, Date.now(), "old-voice");
+  expect(h.c.live).not.toBeNull();
+  expect(h.charge.stopped).toBeNull();
+});
+
+describe("sideband across D1 reloads", () => {
+  async function connected() {
+    const h = await withVoice();
+    h.user["sideband"] = null;
+    mocks.attach.mockResolvedValue(h.ws);
+    await h.user["ensureSideband"](h.c);
+    const emit = async (event: unknown) => {
+      h.ws.dispatchEvent(
+        new MessageEvent("message", { data: JSON.stringify(event) }),
+      );
+      await h.drain();
+    };
+    const reload = async () => {
+      const state = structuredClone(h.user["state"]);
+      const revision = h.user["revision"] + 1;
+      vi.spyOn(h.user["store"].db, "prepare").mockReturnValue({
+        bind: () => ({ first: async () => ({ revision }) }),
+      } as unknown as D1PreparedStatement);
+      vi.spyOn(h.user["store"], "load").mockResolvedValue({ revision, state });
+      h.user["nextWake"] = Infinity;
+      await h.user["drive"]();
+      return state.conversation!;
+    };
+    return { ...h, emit, reload };
+  }
+  const transcript = {
+    type: "session.input_transcript.delta",
+    delta: "Question",
+    start_ms: 0,
+    end_ms: 100,
+  };
+  it("keeps transcripts and delegation on the current conversation after drive reloads D1", async () => {
+    const h = await connected();
+    await h.emit(transcript);
+    const current = await h.reload();
+    await h.user["ensureSideband"](current);
+    await h.emit(transcript);
+    expect(current.transcripts).toHaveLength(2);
+    const delegate = vi
+      .spyOn(
+        h.user as unknown as { delegate: (typeof h.user)["delegate"] },
+        "delegate",
+      )
+      .mockResolvedValue(undefined);
+    await h.emit({
+      type: "session.delegation.created",
+      delegation: { id: "d", target: "client" },
+      offset_ms: 100,
+    });
+    expect(delegate).toHaveBeenCalledWith(current, "d", 100);
+    expect(mocks.attach).toHaveBeenCalledTimes(1);
+  });
+  it("settles a stopping session once after reload and ignores new input", async () => {
+    const h = await connected();
+    const current = await h.reload();
+    current.live!.stopping = true;
+    await h.emit(transcript);
+    expect(current.transcripts).toHaveLength(0);
+    await h.emit({ type: "session.closed", usage: { seconds: 7 } });
+    expect(current.live).toBeNull();
+    expect(h.user["state"].voiceSeconds).toBe(7);
+    await h.emit({ type: "session.closed", usage: { seconds: 7 } });
+    expect(h.user["state"].voiceSeconds).toBe(7);
+  });
+  it.each(["ended", "session", "socket", "lease"])(
+    "rejects old events after %s changes",
+    async (change) => {
+      const h = await connected();
+      const current = await h.reload();
+      if (change === "ended") h.user["state"].conversation = null;
+      if (change === "session") current.live!.id = "replacement";
+      if (change === "socket")
+        h.user["sideband"] = new ClosingSocket() as unknown as WebSocket;
+      if (change === "lease")
+        vi.spyOn(h.user["leases"], "valid").mockResolvedValue(false);
+      await h.emit(transcript);
+      await h.emit({ type: "session.closed", usage: { seconds: 7 } });
+      expect(current.transcripts).toHaveLength(0);
+      expect(current.live).not.toBeNull();
+      expect(h.user["state"].voiceSeconds).toBe(600);
+    },
+  );
+  it("adopts an in-flight attachment after the same session is reloaded", async () => {
+    const h = await withVoice();
+    h.user["sideband"] = null;
+    let resolve!: (ws: WebSocket) => void;
+    mocks.attach.mockImplementation(
+      () =>
+        new Promise<WebSocket>((r) => {
+          resolve = r;
+        }),
+    );
+    const pending = h.user["ensureSideband"](h.c);
+    h.user["state"] = structuredClone(h.user["state"]);
+    resolve(h.ws as unknown as WebSocket);
+    await pending;
+    expect(h.user["sideband"]).toBe(h.ws);
+    expect(h.ws.send).not.toHaveBeenCalledWith(
+      expect.stringContaining('"session.close"'),
+    );
+  });
+  it.each(["ended", "session", "lease"])(
+    "does not terminate a provider session from a stale pending attachment after %s",
+    async (change) => {
+      const h = await withVoice();
+      h.user["sideband"] = null;
+      let resolve!: (ws: WebSocket) => void;
+      mocks.attach.mockImplementation(
+        () =>
+          new Promise<WebSocket>((r) => {
+            resolve = r;
+          }),
+      );
+      const pending = h.user["ensureSideband"](h.c);
+      if (change === "ended") h.user["state"].conversation = null;
+      if (change === "session") h.c.live!.id = "replacement";
+      if (change === "lease")
+        vi.spyOn(h.user["leases"], "valid").mockResolvedValue(false);
+      resolve(h.ws as unknown as WebSocket);
+      await pending;
+      expect(h.user["sideband"]).toBeNull();
+      expect(h.ws.readyState).toBe(3);
+      expect(h.ws.send).not.toHaveBeenCalledWith(
+        expect.stringContaining('"session.close"'),
+      );
+    },
+  );
 });

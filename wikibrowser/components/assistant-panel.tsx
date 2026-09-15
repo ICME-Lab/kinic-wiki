@@ -7,6 +7,7 @@ import {
   assistantError,
   AssistantRequestError,
   AssistantVoice,
+  AssistantControl,
   CONSENT_VERSION,
   type AssistantSnapshot,
   type Citation,
@@ -39,7 +40,7 @@ export function AssistantPanel({
         <MessageCircle size={16} />
         Ask AI{" "}
         <span className="ml-auto text-xs font-normal text-muted">
-          出典付きの会話 · 招待制
+          Answers with sources · Invite only
         </span>
       </button>
       {open && (
@@ -78,6 +79,7 @@ function Conversation({
   const [busy, setBusy] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("");
   const idRef = useRef<string | null>(null);
+  const [control] = useState(() => new AssistantControl());
   const voice = useRef<AssistantVoice | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const live = useRef(true);
@@ -90,9 +92,7 @@ function Conversation({
   } | null>(null);
   const report = (cause: unknown) => {
     if (live.current)
-      setError(
-        cause instanceof Error ? cause.message : "接続できませんでした。",
-      );
+      setError(cause instanceof Error ? cause.message : "Unable to connect.");
   };
   useEffect(() => {
     live.current = true;
@@ -252,10 +252,12 @@ function Conversation({
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(url);
       socket = ws;
+      control.attach(ws);
       ws.onmessage = (event) => {
         if (disposed || attempt !== generation) return;
         try {
           const value = JSON.parse(event.data);
+          if (control.receive(value)) return;
           if (value.type === "snapshot" && value.id === id) {
             clearTimeout(deadline);
             deadline = undefined;
@@ -267,12 +269,15 @@ function Conversation({
           }
           if (value.type === "ended") ended("conversation_ended");
         } catch {
-          setError("会話の状態を読み取れませんでした。");
+          setError("Unable to read the conversation state.");
         }
       };
       ws.onclose = () => {
         if (disposed || attempt !== generation) return;
         generation++;
+        control.detach();
+        voice.current?.dispose();
+        voice.current = null;
         if (deadline === undefined)
           deadline = setTimeout(() => ended("reconnect_expired"), grace);
         retry = setTimeout(() => void reconnect(), 3000);
@@ -282,18 +287,19 @@ function Conversation({
     const heartbeat = setInterval(() => {
       if (!disposed && socket?.readyState === WebSocket.OPEN)
         socket.send("heartbeat");
-    }, 15000);
+    }, 10000);
     return () => {
       disposed = true;
       generation++;
       release();
+      control.detach();
       clearInterval(heartbeat);
     };
-  }, [snapshot?.id, snapshot?.reconnectGraceMs]);
+  }, [snapshot?.id, snapshot?.reconnectGraceMs, control]);
   useEffect(() => {
     if (snapshot?.voice === "stopping" || snapshot?.voice === "off") {
       if (voice.current)
-        setVoiceStatus("音声を終了しました。テキストで続けられます。");
+        setVoiceStatus("Voice has ended. You can continue in text.");
       voice.current?.dispose();
       voice.current = null;
     }
@@ -311,7 +317,7 @@ function Conversation({
         body: { consent: CONSENT_VERSION },
       });
       if (!popup.current)
-        throw new Error("ポップアップを許可して、もう一度接続してください。");
+        throw new Error("Allow pop-ups and try connecting again.");
       popup.current.location.href = result.url;
     } catch (cause) {
       popup.current?.close();
@@ -357,10 +363,11 @@ function Conversation({
           };
     pendingQuestion.current = body;
     try {
-      const next = await assistantRequest<AssistantSnapshot>("/questions", {
-        conversationId: snapshot.id,
+      const next = await control.command<AssistantSnapshot>(
+        "questions",
         body,
-      });
+        body.requestId,
+      );
       if (live.current && idRef.current === next.id) {
         setSnapshot((current) =>
           current && current.generation > next.generation ? current : next,
@@ -378,10 +385,7 @@ function Conversation({
     if (!snapshot) return;
     voice.current?.muteOutput();
     try {
-      const next = await assistantRequest<AssistantSnapshot>("/cancel", {
-        conversationId: snapshot.id,
-        body: {},
-      });
+      const next = await control.command<AssistantSnapshot>("cancel", {});
       if (live.current && idRef.current === next.id)
         setSnapshot((current) =>
           current && current.generation > next.generation ? current : next,
@@ -403,15 +407,19 @@ function Conversation({
         else
           await assistantRequest("/voice/stop", {
             conversationId: snapshot.id,
-            body: {},
+            body: { voiceId: snapshot.voiceId },
           });
         voice.current = null;
       } else {
         audio.current.muted = false;
-        voice.current = new AssistantVoice(audio.current, (status) => {
-          if (live.current) setVoiceStatus(status);
-        });
-        setVoiceStatus("音声に接続しています…");
+        voice.current = new AssistantVoice(
+          audio.current,
+          (status) => {
+            if (live.current) setVoiceStatus(status);
+          },
+          control,
+        );
+        setVoiceStatus("Connecting voice…");
         await voice.current.start(snapshot.id);
       }
     } catch (cause) {
@@ -440,12 +448,12 @@ function Conversation({
   }
   return (
     <section
-      aria-label="Ask AI 会話"
+      aria-label="Ask AI conversation"
       className="flex max-h-[65vh] min-h-0 flex-col gap-3 overflow-y-auto px-4 pb-4 text-sm"
     >
       {!principal && (
         <p className="text-muted">
-          WikiにInternet Identityでログインしてから利用できます。
+          Sign in to the Wiki with Internet Identity to use Ask AI.
         </p>
       )}
       {error && (
@@ -459,7 +467,8 @@ function Conversation({
       {!snapshot && (
         <>
           <p className="text-muted">
-            選択したDBの本文と出典を確認して答えます。Wikiの編集は行いません。
+            Answers use verified content and sources from the selected database.
+            Ask AI cannot edit your Wiki.
           </p>
           <label className="flex items-start gap-2">
             <input
@@ -469,11 +478,15 @@ function Conversation({
               className="mt-1"
             />
             <span>
-              質問・必要なWikiの抜粋・音声をOpenAIへ送信することに同意します。会話状態は米国に保存され、終了時に削除を要求します。提供者の全記録が即時消去されることを意味しません。音声ファイルと会話履歴一覧は保存しません。
+              I consent to sending my questions, necessary Wiki excerpts, and
+              audio to OpenAI. Conversation state is stored in the United
+              States, and deletion is requested when the conversation ends. This
+              does not mean all provider records are erased immediately. The app
+              does not retain audio recordings or a conversation history list.
             </span>
           </label>
           <label className="flex items-center gap-2">
-            検索範囲
+            Search scope
             <select
               className="rounded border border-line bg-white p-2"
               value={scope}
@@ -484,8 +497,9 @@ function Conversation({
             </select>
           </label>
           <p className="text-xs text-muted">
-            1日50質問・音声20分、音声1回10分が初期上限です。II接続では「Questions
-            only」を選択してください。
+            Default limits: 50 questions and 20 minutes of voice per day, with
+            10 minutes per voice session. Select “Questions only” when
+            connecting with Internet Identity.
           </p>
           <button
             type="button"
@@ -494,17 +508,17 @@ function Conversation({
             onClick={() => void (authorized ? start() : authorize())}
           >
             {busy
-              ? "接続中…"
+              ? "Connecting…"
               : authorized
-                ? "会話を始める"
-                : "Internet IdentityでAsk AIを接続"}
+                ? "Start conversation"
+                : "Connect Ask AI with Internet Identity"}
           </button>
         </>
       )}
       {snapshot && (
         <>
           <div className="flex items-center justify-between text-xs text-muted">
-            <span>{scope} · このDBのみ</span>
+            <span>{scope} · This database only</span>
             <button
               type="button"
               onClick={() => void end()}
@@ -512,13 +526,14 @@ function Conversation({
               className="flex items-center gap-1 rounded px-2 py-1 hover:bg-paper"
             >
               <X size={14} />
-              会話を終了
+              End conversation
             </button>
           </div>
           <div className="space-y-4" aria-live="polite">
             {snapshot.messages.length === 0 && (
               <p className="py-5 text-muted">
-                Wikiについて質問してください。確認した本文と出典を表示します。
+                Ask a question about this Wiki. Verified content and sources
+                will appear here.
               </p>
             )}
             {snapshot.messages.map((m) => (
@@ -536,17 +551,17 @@ function Conversation({
                     </p>
                     {m.answer.insufficient && (
                       <p className="font-medium text-amber-800">
-                        十分な根拠を確認できていません。
+                        There is not enough verified evidence.
                       </p>
                     )}
                     {m.answer.contradictions.map((text, i) => (
                       <p key={i} className="text-amber-800">
-                        矛盾：{text}
+                        Conflicts: {text}
                       </p>
                     ))}
                     {m.answer.unverified.map((text, i) => (
                       <p key={i} className="text-muted">
-                        未確認：{text}
+                        Unverified: {text}
                       </p>
                     ))}
                     <div className="space-y-2">
@@ -566,7 +581,7 @@ function Conversation({
           </div>
           {snapshot.progress && (
             <output className="text-muted">
-              Wikiの根拠を確認中…（{snapshot.progress.calls}回取得）
+              Checking Wiki sources… ({snapshot.progress.calls} tool calls)
             </output>
           )}
           {snapshot.error && (
@@ -582,19 +597,19 @@ function Conversation({
             className="flex items-end gap-2"
           >
             <label className="flex-1">
-              <span className="sr-only">Wikiへの質問</span>
+              <span className="sr-only">Question about the Wiki</span>
               <textarea
                 rows={2}
                 maxLength={4000}
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
-                placeholder="このWikiについて質問する…"
+                placeholder="Ask a question about this Wiki…"
                 className="w-full resize-y rounded-lg border border-line bg-white p-3"
               />
             </label>
             <button
               type="submit"
-              aria-label="質問を送信"
+              aria-label="Send question"
               disabled={busy || !question.trim() || snapshot.status !== "ready"}
               className="rounded-lg bg-ink p-3 text-white disabled:opacity-40"
             >
@@ -612,7 +627,7 @@ function Conversation({
               className="flex items-center gap-1 rounded-lg border border-line bg-white px-3 py-2 disabled:opacity-40"
             >
               <Mic size={16} />
-              {snapshot.voice === "off" ? "音声を開始" : "音声を停止"}
+              {snapshot.voice === "off" ? "Start voice" : "Stop voice"}
             </button>
             {snapshot.status !== "ready" && (
               <button
@@ -623,8 +638,8 @@ function Conversation({
               >
                 <Square size={13} />
                 {snapshot.status === "cancelling"
-                  ? "取消確認中…"
-                  : "処理を取り消す"}
+                  ? "Cancelling…"
+                  : "Cancel request"}
               </button>
             )}
           </div>
@@ -661,15 +676,17 @@ function Source({
       }>("/citation", { conversationId, body: { citationId: citation.id } });
       setNotice(
         result.missing
-          ? "参照ページは現在見つかりません。"
+          ? "The source page is no longer available."
           : result.changed
-            ? "回答時に確認した版から更新されています。以下は回答時の抜粋です。"
-            : "回答時と同じ版です。",
+            ? "This page has changed since the answer was generated. The excerpt below is from the version used for the answer."
+            : "This is the same version used for the answer.",
       );
       if (!result.missing) onOpenSource(citation.path);
     } catch (cause) {
       setNotice(
-        cause instanceof Error ? cause.message : "版を確認できませんでした。",
+        cause instanceof Error
+          ? cause.message
+          : "Unable to check the current version.",
       );
     }
   }
@@ -682,7 +699,7 @@ function Source({
         {citation.excerpt}
       </blockquote>
       <p className="break-all text-xs text-muted">
-        位置 {citation.start}–{citation.end} · etag {citation.etag} ·{" "}
+        Position {citation.start}–{citation.end} · etag {citation.etag} ·{" "}
         {citation.retrievedAt}
       </p>
       <button
@@ -690,7 +707,7 @@ function Source({
         className="mt-2 underline"
         onClick={() => void openSource()}
       >
-        現在の版を確認して開く
+        Check current version and open
       </button>
       {notice && <output className="mt-2 text-amber-800">{notice}</output>}
     </details>

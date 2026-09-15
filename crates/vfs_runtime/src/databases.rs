@@ -824,6 +824,8 @@ pub(crate) fn delete_database_index_rows(
     database_id: &str,
 ) -> Result<(), String> {
     for table in [
+        "voice_policies",
+        "voice_reservations",
         "database_cycle_pending_operations",
         "database_cycle_ledger",
         "database_cycle_accounts",
@@ -848,6 +850,8 @@ fn delete_database_index_rows_preserving_transaction_records(
     database_id: &str,
 ) -> Result<(), String> {
     for table in [
+        "voice_policies",
+        "voice_reservations",
         "database_cycle_pending_operations",
         "database_cycle_accounts",
         "market_entitlements",
@@ -1087,6 +1091,10 @@ pub(crate) fn map_database_cycles_entry(
     let cycles_per_kinic: Option<i64> = crate::sqlite::row_get(row, 9)?;
     let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 10)?;
     Ok(DatabaseCycleEntry {
+        voice_session_id: crate::sqlite::row_get(row, 12)?,
+        voice_seconds: crate::sqlite::row_get::<Option<i64>>(row, 13)?.map(|v| v.max(0) as u64),
+        voice_rate_version: crate::sqlite::row_get::<Option<i64>>(row, 14)?
+            .map(|v| v.max(0) as u64),
         entry_id: entry_id.max(0) as u64,
         database_id: crate::sqlite::row_get(row, 1)?,
         kind: crate::sqlite::row_get(row, 2)?,

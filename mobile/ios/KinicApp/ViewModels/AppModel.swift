@@ -125,6 +125,16 @@ extension AppModel: AskAIKnowledgeProviding {
         )
     }
 
+    func saveVoicePolicy(principal: String, enabled: Bool, budget: UInt64) async throws {
+        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
+        let native = ICClient(configuration: try configuration.makeICClientConfiguration())
+        let result: VFSCandidResult<CandidNull, String> = try await native.call(
+            method: "set_voice_policy",
+            arguments: CandidArguments([try CandidTypedValue(VoicePolicyInput(databaseId: selectedAskAIDatabaseId, principal: principal, enabled: enabled, budget: budget))]),
+            identity: try session.requireNativeSession())
+        _ = try result.textValue()
+    }
+
     func openAskAISource(databaseId: String, path: String) {
         let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else { return }
@@ -266,6 +276,7 @@ final class AppModel {
     @ObservationIgnored private var browseSearchTask: Task<Void, Never>?
     private var activeBrowseSearchRequest: BrowseSearchRequest?
 
+    let voicePreview: VoicePreviewModel
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String
@@ -457,6 +468,7 @@ final class AppModel {
         initialSession: KinicIdentitySession? = nil
     ) {
         self.configuration = configuration
+        voicePreview = VoicePreviewModel(configuration: configuration)
         self.authService = authService
         self.client = client
         self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration)
@@ -1312,6 +1324,7 @@ final class AppModel {
     }
 
     func signOut() {
+        voicePreview.end()
         do {
             try authService.signOut()
         } catch {

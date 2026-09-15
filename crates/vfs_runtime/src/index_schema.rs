@@ -71,6 +71,7 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_now(&tx, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    apply_voice_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -111,6 +112,7 @@ fn run_index_migrations_in_tx(
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_CURRENT)?;
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    apply_voice_migration(conn)?;
     validate_index_schema(conn)?;
     Ok(())
 }
@@ -176,6 +178,10 @@ fn apply_pending_index_migrations(
     if version_refs == INDEX_SCHEMA_VERSIONS {
         return Ok(());
     }
+    if version_refs == INDEX_SCHEMA_VERSIONS[..4] {
+        apply_voice_migration(conn)?;
+        return Ok(());
+    }
     if version_refs == [INDEX_SCHEMA_VERSION_INITIAL] {
         conn.execute_batch(INDEX_SCHEMA_MIGRATION_002)
             .map_err(|error| error.to_string())?;
@@ -234,6 +240,7 @@ fn apply_pending_index_migrations(
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
     #[cfg(target_arch = "wasm32")]
     insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS)?;
+    apply_voice_migration(conn)?;
     Ok(())
 }
 
@@ -285,6 +292,9 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
         "schema_migrations",
+        "voice_rates",
+        "voice_policies",
+        "voice_reservations",
         "databases",
         "database_members",
         "database_mount_history",
@@ -632,4 +642,14 @@ fn sqlite_master_entry_exists(
     .optional()
     .map(|row| row.is_some())
     .map_err(|error| error.to_string())
+}
+
+fn apply_voice_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(include_str!("../migrations/index_db/005_voice_billing.sql"))
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_VOICE)?;
+    #[cfg(target_arch = "wasm32")]
+    insert_schema_migration_zero(conn, INDEX_SCHEMA_VERSION_VOICE)?;
+    Ok(())
 }

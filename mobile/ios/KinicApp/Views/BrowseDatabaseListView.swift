@@ -629,6 +629,9 @@ private struct CycleEntryRow: View {
         DisclosureGroup {
             selectableContent("Entry", value: "\(entry.entryId)")
             LabeledContent("Kind", value: entry.kind)
+            if let seconds = entry.voiceSeconds { LabeledContent("Confirmed voice time", value: "\(seconds) seconds") }
+            if let version = entry.voiceRateVersion { LabeledContent("Voice price version", value: "\(version)") }
+            if let id = entry.voiceSessionId { selectableContent("Voice session", value: id) }
             selectableContent("Caller", value: entry.caller)
             LabeledContent("Amount", value: DatabaseManagementFormat.signedCycles(entry.amountCycles))
             LabeledContent("Balance after", value: DatabaseManagementFormat.cycles(entry.balanceAfterCycles))

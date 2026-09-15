@@ -5,6 +5,7 @@ mod accounts;
 mod billing;
 mod cycles;
 mod databases;
+mod voice;
 #[cfg(any(test, debug_assertions))]
 pub use databases::generated_database_id_for_test;
 pub(crate) use databases::*;
@@ -66,11 +67,13 @@ const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:001_initial";
 const INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS: &str = "database_index:002_node_publications";
 const INDEX_SCHEMA_VERSION_CURRENT: &str = "database_index:003_publication_mutation_recovery";
 const INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS: &str = "database_index:004_iap_cycle_grants";
+const INDEX_SCHEMA_VERSION_VOICE: &str = "database_index:005_voice_billing";
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_INITIAL,
     INDEX_SCHEMA_VERSION_NODE_PUBLICATIONS,
     INDEX_SCHEMA_VERSION_CURRENT,
     INDEX_SCHEMA_VERSION_IAP_CYCLE_GRANTS,
+    INDEX_SCHEMA_VERSION_VOICE,
 ];
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -1227,6 +1230,9 @@ fn set_cycles_billing_config_value(
 }
 
 const INDEX_SCHEMA_TABLES: &[&str] = &[
+    "voice_rates",
+    "voice_policies",
+    "voice_reservations",
     "databases",
     "database_members",
     "database_mount_history",

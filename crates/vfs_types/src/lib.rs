@@ -1,3 +1,5 @@
+mod voice;
+pub use voice::*;
 // Where: crates/vfs_types/src/lib.rs
 // What: FS-first shared contracts exposed as the reusable VFS public boundary.
 // Why: VFS consumers should depend on stable node contracts without importing wiki-specific crates.

@@ -101,6 +101,9 @@ struct DatabaseMember: Identifiable, Equatable, Sendable {
 }
 
 struct DatabaseCycleEntry: Identifiable, Equatable, Sendable {
+    var voiceSessionId: String? = nil
+    var voiceSeconds: UInt64? = nil
+    var voiceRateVersion: UInt64? = nil
     let entryId: UInt64
     let databaseId: String
     let kind: String
@@ -119,7 +122,13 @@ struct DatabaseCycleEntry: Identifiable, Equatable, Sendable {
     }
 
     var displayTitle: String {
-        method?.isEmpty == false ? method ?? kind : kind
+        switch kind {
+        case "voice_reserve": "Voice credit reservation"
+        case "voice_release": "Unused voice credits returned"
+        case "voice_settle": "Voice usage confirmed"
+        case "voice_expired_release": "Unconfirmed voice credits returned"
+        default: method?.isEmpty == false ? method ?? kind : kind
+        }
     }
 }
 

@@ -403,7 +403,7 @@ impl VfsService {
                 .prepare(
                     "SELECT entry_id, database_id, kind, amount_cycles, balance_after_cycles,
                             payment_amount_e8s, caller, method, cycles_delta, cycles_per_kinic,
-                            ledger_block_index, created_at_ms
+                            ledger_block_index, created_at_ms, voice_session_id, voice_seconds, voice_rate_version
                      FROM database_cycle_ledger
                      WHERE database_id = ?1 AND entry_id > ?2
                      ORDER BY entry_id ASC

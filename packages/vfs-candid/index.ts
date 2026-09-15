@@ -252,6 +252,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text
   });
   const DatabaseCycleEntry = idl.Record({
+    voice_session_id: idl.Opt(idl.Text),
+    voice_seconds: idl.Opt(idl.Nat64),
+    voice_rate_version: idl.Opt(idl.Nat64),
     method: idl.Opt(idl.Text),
     cycles_per_kinic: idl.Opt(idl.Nat64),
     payment_amount_e8s: idl.Opt(idl.Nat64),

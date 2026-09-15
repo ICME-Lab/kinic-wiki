@@ -146,6 +146,9 @@ pub struct InitialFreeDatabaseGrantStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseCycleEntry {
+    pub voice_session_id: Option<String>,
+    pub voice_seconds: Option<u64>,
+    pub voice_rate_version: Option<u64>,
     pub entry_id: u64,
     pub database_id: String,
     pub kind: String,

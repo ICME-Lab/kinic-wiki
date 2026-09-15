@@ -5,6 +5,7 @@
 import SwiftUI
 
 struct HomeView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Bindable var model: AppModel
     @State private var askAIModel: AskAIModel
     @State private var selectedTab = AppTab.home
@@ -46,6 +47,14 @@ struct HomeView: View {
             }
             .tag(AppTab.manage)
         }
+        .onChange(of: model.principalText) {
+            if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
+            else { model.voicePreview.end() }
+        }
+        .onChange(of: model.selectedAskAIDatabaseId) {
+            if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
+        }
+        .onChange(of: scenePhase) { _, phase in model.voicePreview.sceneChanged(active: phase == .active) }
         .tint(KinicDesign.hotPink)
         .onChange(of: model.rootNavigationID) {
             selectedTab = .browse

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --port 8791",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && vitest run --config vitest.worker.config.ts",
+    "test": "vitest run && vitest run --config vitest.worker.config.ts && node --test tests/*.node-test.mjs",
     "build": "wrangler deploy --dry-run",
     "cf-typegen": "wrangler types --env-interface AssistantEnv --strict-vars=false --include-runtime=false",
     "test:live": "vitest run --config vitest.live.config.ts"

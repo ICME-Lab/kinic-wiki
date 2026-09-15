@@ -1,0 +1,11 @@
+CREATE TABLE assistant_leases (scope TEXT NOT NULL, id TEXT NOT NULL, owner TEXT NOT NULL, generation INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (scope,id));
+CREATE TABLE assistant_auth (id TEXT PRIMARY KEY, phase TEXT NOT NULL, expires_at INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE INDEX assistant_auth_expiry ON assistant_auth(expires_at);
+CREATE TABLE assistant_users (principal TEXT PRIMARY KEY, revision INTEGER NOT NULL, commit_id TEXT NOT NULL, conversation_id TEXT UNIQUE, auth_id TEXT, voice_id TEXT, data TEXT, usage_day TEXT NOT NULL, questions INTEGER NOT NULL, voice_seconds INTEGER NOT NULL, seen INTEGER NOT NULL, activity INTEGER NOT NULL, next_attempt INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX assistant_users_due ON assistant_users(next_attempt);
+CREATE TABLE assistant_requests (principal TEXT NOT NULL, conversation_id TEXT NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(conversation_id,request_id));
+CREATE TABLE assistant_jobs (id TEXT PRIMARY KEY, principal TEXT NOT NULL, conversation_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, next_attempt INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX assistant_jobs_owner ON assistant_jobs(principal,state);
+CREATE TABLE assistant_cleanup (principal TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE assistant_commands (conversation_id TEXT NOT NULL, request_id TEXT NOT NULL, input_hash TEXT NOT NULL, response TEXT, PRIMARY KEY(conversation_id,request_id));
+CREATE TABLE assistant_stops (conversation_id TEXT NOT NULL, voice_id TEXT NOT NULL, stopped_at INTEGER NOT NULL, PRIMARY KEY(conversation_id,voice_id));

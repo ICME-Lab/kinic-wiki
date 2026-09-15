@@ -987,7 +987,7 @@ function WikiBrowserContent() {
               />
             </>
           )}
-          <AssistantPanel databaseId={databaseId} principal={authPrincipal || null} selectedPath={selectedPath} onOpenSource={(path) => navigate(hrefForPath(canisterId, databaseId, path, "markdown", tab))} />
+          {import.meta.env.VITE_ASSISTANT_WEB_ENABLED === "true" && <AssistantPanel databaseId={databaseId} principal={authPrincipal || null} selectedPath={selectedPath} onOpenSource={(path) => navigate(hrefForPath(canisterId, databaseId, path, "markdown", tab))} />}
         </section>
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
           <details className="order-3 rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">

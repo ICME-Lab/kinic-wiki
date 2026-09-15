@@ -5,33 +5,80 @@
   "compatibility_date": "2026-08-08",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true,
+  },
   "vars": {
     "ASSISTANT_ENABLED": "false",
+    "ASSISTANT_NATIVE_ENABLED": "false",
+    "ASSISTANT_WEB_ENABLED": "false",
     "ASSISTANT_INVITED_PRINCIPALS": "[]",
     "ASSISTANT_LIMITS": "{}",
     "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "ASSISTANT_ORIGIN": "https://wiki.kinic.xyz",
-    "ASSISTANT_DERIVATION_ORIGIN": "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io"
+    "ASSISTANT_DERIVATION_ORIGIN": "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
   },
-  "durable_objects": { "bindings": [
-    { "name": "ASSISTANT_AUTH", "class_name": "AssistantAuth" },
-    { "name": "ASSISTANT_USERS", "class_name": "AssistantUser" }
-  ] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AssistantAuth", "AssistantUser"] }],
-  "unsafe": { "bindings": [{ "name": "AUTH_RATE_LIMIT", "type": "ratelimit", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } }] },
-  "env": { "staging": {
-    "name": "kinic-wiki-assistant-staging",
-    "vars": {
-      "ASSISTANT_ENABLED": "false", "ASSISTANT_INVITED_PRINCIPALS": "[]", "ASSISTANT_LIMITS": "{}",
-      "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
-      "ASSISTANT_ORIGIN": "https://kinic-wiki-browser-staging.hude.workers.dev",
-      "ASSISTANT_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io"
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "AUTH_RATE_LIMIT",
+        "type": "ratelimit",
+        "namespace_id": "4101",
+        "simple": {
+          "limit": 10,
+          "period": 60,
+        },
+      },
+    ],
+  },
+  "env": {
+    "staging": {
+      "name": "kinic-wiki-assistant-staging",
+      "vars": {
+        "ASSISTANT_ENABLED": "false",
+        "ASSISTANT_NATIVE_ENABLED": "false",
+        "ASSISTANT_WEB_ENABLED": "false",
+        "ASSISTANT_INVITED_PRINCIPALS": "[]",
+        "ASSISTANT_LIMITS": "{}",
+        "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+        "ASSISTANT_ORIGIN": "https://kinic-wiki-browser-staging.hude.workers.dev",
+        "ASSISTANT_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io",
+      },
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "AUTH_RATE_LIMIT",
+            "type": "ratelimit",
+            "namespace_id": "4102",
+            "simple": {
+              "limit": 10,
+              "period": 60,
+            },
+          },
+        ],
+      },
+      "d1_databases": [
+        {
+          "binding": "ASSISTANT_DB",
+          "database_name": "kinic-wiki-assistant-staging",
+          "database_id": "00000000-0000-0000-0000-000000000001",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "triggers": {
+        "crons": ["* * * * *"],
+      },
     },
-    "durable_objects": { "bindings": [
-      { "name": "ASSISTANT_AUTH", "class_name": "AssistantAuth" },
-      { "name": "ASSISTANT_USERS", "class_name": "AssistantUser" }
-    ] },
-    "unsafe": { "bindings": [{ "name": "AUTH_RATE_LIMIT", "type": "ratelimit", "namespace_id": "4102", "simple": { "limit": 10, "period": 60 } }] }
-  } }
+  },
+  "d1_databases": [
+    {
+      "binding": "ASSISTANT_DB",
+      "database_name": "kinic-wiki-assistant",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
 }

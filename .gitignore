@@ -100,3 +100,6 @@ extensions/wiki-clipper/release/
 
 # Keep ic-hybrid-sqlite as its own repo for now
 /ic-hybrid-sqlite/
+
+# Local iOS preview verification artifacts
+/mobile/ios/.derivedData/

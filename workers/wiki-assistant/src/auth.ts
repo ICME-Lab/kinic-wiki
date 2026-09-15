@@ -1,4 +1,4 @@
-import { DurableObject } from "cloudflare:workers";
+import { AssistantStore } from "./store";
 import {
   generateIiKey,
   restoreIiKey,
@@ -20,7 +20,17 @@ import {
 import { AssistantError } from "./contracts";
 import type { Env } from "./env";
 
+import { voicePolicy } from "./billing";
+import { nativeDelegation, publicKeyBase64 } from "./native-delegation";
+import { createReadActor } from "@kinic/ii-server/read";
+
 type AuthRecord = {
+  native?: {
+    requestId: string;
+    databaseId: string;
+    expectedPrincipal: string;
+    maxExpiry: number;
+  };
   id: string;
   tokenHash: string;
   stateHash: string;
@@ -50,7 +60,14 @@ export function invited(env: Env, principal: string): boolean {
     Array.isArray(list) && list.includes(principal) && principal !== "2vxsx-fae"
   );
 }
-export class AssistantAuth extends DurableObject<Env> {
+export class AssistantAuth {
+  private readonly store: AssistantStore;
+  constructor(
+    private readonly env: Env,
+    private readonly id: string,
+  ) {
+    this.store = new AssistantStore(env);
+  }
   private minting: Promise<Authorization> | null = null;
   private encryptionKey(): string {
     const key = this.env.ASSISTANT_KEY_ENCRYPTION_KEY;
@@ -60,7 +77,7 @@ export class AssistantAuth extends DurableObject<Env> {
   async begin(
     id: string,
   ): Promise<{ token: string; state: string; registrationKey: string }> {
-    if (await this.ctx.storage.get("auth"))
+    if (await this.store.auth(this.id))
       throw new AssistantError("auth_already_started");
     const token = randomOpaque();
     const state = randomOpaque();
@@ -82,8 +99,7 @@ export class AssistantAuth extends DurableObject<Env> {
       cached: null,
       cachedUntil: 0,
     };
-    await this.ctx.storage.put("auth", record);
-    await this.ctx.storage.setAlarm(record.expiresAt);
+    await this.store.insertAuth(record);
     return {
       token,
       state,
@@ -92,8 +108,103 @@ export class AssistantAuth extends DurableObject<Env> {
       ),
     };
   }
+  async beginNative(id: string, databaseId: string, expectedPrincipal: string) {
+    const pending = await this.begin(id);
+    const record = await this.record(pending.token);
+    const key = restoreIiKey(
+      await decryptJson<IiKeyJson>(
+        record.key,
+        this.encryptionKey(),
+        id + ":key",
+      ),
+    );
+    const requestId = crypto.randomUUID();
+    record.registration = null;
+    record.native = {
+      requestId,
+      databaseId,
+      expectedPrincipal,
+      maxExpiry: Date.now() + 3600000,
+    };
+    await this.store.saveAuth(record);
+    return {
+      token: pending.token,
+      state: pending.state,
+      requestId,
+      publicKey: publicKeyBase64(key),
+      maxTimeToLive: "3000000000000",
+      derivationOrigin: this.env.ASSISTANT_DERIVATION_ORIGIN,
+    };
+  }
+  async completeNative(
+    token: string,
+    state: string,
+    response: unknown,
+  ): Promise<Authorization> {
+    const record = await this.record(token);
+    if (
+      !record.native ||
+      record.phase !== "pending" ||
+      !(await secretEquals(record.stateHash, state))
+    )
+      throw new AssistantError("invalid_auth_state", 403);
+    const claimed = await this.store.claimAuth(this.id);
+    if (!claimed) throw new AssistantError("invalid_auth_state", 403);
+    const key = restoreIiKey(
+      await decryptJson<IiKeyJson>(
+        record.key,
+        this.encryptionKey(),
+        record.id + ":key",
+      ),
+    );
+    const minted = nativeDelegation(
+      response,
+      record.native.requestId,
+      key,
+      this.env.ASSISTANT_DERIVATION_ORIGIN,
+      this.env.KINIC_WIKI_CANISTER_ID,
+      record.native.maxExpiry,
+    );
+    const principal = minted.identity.getPrincipal().toText();
+    // expectedPrincipal is only an equality constraint, never authentication evidence.
+    if (principal !== record.native.expectedPrincipal)
+      throw new AssistantError("identity_changed", 403);
+    if (!invited(this.env, principal))
+      throw new AssistantError("invitation_required", 403);
+    const result = await createReadActor(
+      this.env.KINIC_WIKI_CANISTER_ID,
+      minted.identity,
+    ).read_node(record.native.databaseId, "/Knowledge");
+    if ("Err" in result)
+      throw new AssistantError("database_access_denied", 403);
+    await voicePolicy(
+      this.env,
+      minted.identity,
+      record.native.databaseId,
+      principal,
+    );
+    if ((await this.store.auth<AuthRecord>(this.id))?.phase !== "claiming")
+      throw new AssistantError("authentication_required", 401);
+    record.phase = "active";
+    record.stateHash = "";
+    record.principal = principal;
+    record.expiresAt = minted.material.expiresAt;
+    record.cachedUntil = record.expiresAt;
+    record.cached = await encryptJson(
+      minted.material,
+      this.encryptionKey(),
+      record.id + ":delegation",
+    );
+    await this.store.saveAuth(record);
+    return {
+      authId: record.id,
+      principal,
+      material: minted.material,
+      expiresAt: record.expiresAt,
+    };
+  }
   private async record(token?: string): Promise<AuthRecord> {
-    const record = await this.ctx.storage.get<AuthRecord>("auth");
+    const record = await this.store.auth<AuthRecord>(this.id);
     if (
       !record ||
       record.expiresAt <= Date.now() ||
@@ -115,13 +226,7 @@ export class AssistantAuth extends DurableObject<Env> {
     )
       throw new AssistantError("invalid_auth_state", 403);
     // Claim before external I/O. A failed exchange must be restarted, never replayed.
-    const claimed = await this.ctx.storage.transaction(async (tx) => {
-      const current = await tx.get<AuthRecord>("auth");
-      if (!current || current.phase !== "pending") return false;
-      current.phase = "claiming";
-      await tx.put("auth", current);
-      return true;
-    });
+    const claimed = await this.store.claimAuth(this.id);
     if (!claimed) throw new AssistantError("invalid_auth_state", 403);
     const registration = restoreIiKey(
       await decryptJson<IiKeyJson>(
@@ -158,11 +263,10 @@ export class AssistantAuth extends DurableObject<Env> {
       record.id + ":delegation",
     );
     record.cachedUntil = minted.material.expiresAt;
-    const current = await this.ctx.storage.get<AuthRecord>("auth");
+    const current = await this.store.auth<AuthRecord>(this.id);
     if (!current || current.phase !== "claiming")
       throw new AssistantError("authentication_required", 401);
-    await this.ctx.storage.put("auth", record);
-    await this.ctx.storage.setAlarm(record.expiresAt);
+    await this.store.saveAuth(record);
     return {
       authId: record.id,
       principal,
@@ -177,7 +281,7 @@ export class AssistantAuth extends DurableObject<Env> {
   async ownerForCleanup(
     token: string,
   ): Promise<{ authId: string; principal: string } | null> {
-    const record = await this.ctx.storage.get<AuthRecord>("auth");
+    const record = await this.store.auth<AuthRecord>(this.id);
     if (!record?.principal || !(await secretEquals(record.tokenHash, token)))
       return null;
     return { authId: record.id, principal: record.principal };
@@ -200,8 +304,17 @@ export class AssistantAuth extends DurableObject<Env> {
       !invited(this.env, record.principal)
     )
       throw new AssistantError("authentication_required", 401);
+    if (
+      (record.native
+        ? this.env.ASSISTANT_NATIVE_ENABLED
+        : this.env.ASSISTANT_WEB_ENABLED) !== "true"
+    )
+      throw new AssistantError("assistant_disabled", 503);
     let material: KinicDelegationMaterialV1;
-    if (record.cached && record.cachedUntil > Date.now() + 30000) {
+    if (
+      record.cached &&
+      record.cachedUntil > Date.now() + (record.native ? 0 : 30000)
+    ) {
       material = await decryptJson<KinicDelegationMaterialV1>(
         record.cached,
         this.encryptionKey(),
@@ -213,6 +326,8 @@ export class AssistantAuth extends DurableObject<Env> {
         Date.now(),
       );
     } else {
+      if (record.native)
+        throw new AssistantError("authentication_required", 401);
       const key = restoreIiKey(
         await decryptJson<IiKeyJson>(
           record.key,
@@ -233,9 +348,9 @@ export class AssistantAuth extends DurableObject<Env> {
         record.id + ":delegation",
       );
       record.cachedUntil = material.expiresAt;
-      if (!(await this.ctx.storage.get("auth")))
+      if (!(await this.store.auth(this.id)))
         throw new AssistantError("authentication_required", 401);
-      await this.ctx.storage.put("auth", record);
+      await this.store.saveAuth(record);
     }
     return {
       authId: record.id,
@@ -246,9 +361,6 @@ export class AssistantAuth extends DurableObject<Env> {
   }
   async revoke(token: string): Promise<void> {
     await this.record(token);
-    await this.ctx.storage.deleteAll();
-  }
-  async alarm(): Promise<void> {
-    await this.ctx.storage.deleteAll();
+    await this.store.deleteAuth(this.id);
   }
 }
