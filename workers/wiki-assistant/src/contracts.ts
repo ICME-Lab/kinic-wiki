@@ -98,21 +98,6 @@ export const DEFAULT_LIMITS: Limits = {
   reconnectMs: 120000,
   idleMs: 600000,
 };
-export function parseLimits(text?: string): Limits {
-  const schema = z
-    .object(
-      Object.fromEntries(
-        Object.keys(DEFAULT_LIMITS).map((key) => [
-          key,
-          z.number().int().positive().max(86400000),
-        ]),
-      ),
-    )
-    .partial()
-    .strict();
-  return { ...DEFAULT_LIMITS, ...schema.parse(JSON.parse(text || "{}")) };
-}
-
 export const toolDefinitions = [
   {
     type: "function" as const,

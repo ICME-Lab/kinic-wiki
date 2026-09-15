@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>KINIC_VOICE_PREVIEW_ENABLED</key>
-	<false/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Use your microphone for a voice conversation with your selected Wiki. Audio is sent to OpenAI.</string>
 	<key>UIBackgroundModes</key>

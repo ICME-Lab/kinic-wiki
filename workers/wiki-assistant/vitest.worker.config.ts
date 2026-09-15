@@ -13,8 +13,6 @@ export default defineConfig({
             "utf8",
           ),
           ASSISTANT_ENABLED: "true",
-          ASSISTANT_WEB_ENABLED: "true",
-          ASSISTANT_NATIVE_ENABLED: "true",
           OPENAI_API_KEY: "test-not-a-real-key",
           ASSISTANT_KEY_ENCRYPTION_KEY:
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",

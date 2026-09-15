@@ -28,7 +28,7 @@ export async function createAgent(
   return api.beta.agents.sessions.create({
     environment: { type: "none" },
     agent: {
-      model: "gpt-6-astra",
+      model: "gpt-5.6-luna",
       instructions,
       tools: toolDefinitions,
       multi_agent: { enabled: false },

@@ -14,7 +14,7 @@ import { z } from "zod";
 import { restoreKinicIdentity } from "@kinic/ii-server/internet-identity";
 import {
   AssistantError,
-  parseLimits,
+  DEFAULT_LIMITS,
   questionSchema,
   scopeSchema,
   validateAnswer,
@@ -217,7 +217,7 @@ export class AssistantUser {
     return Math.max(now, Math.min(...deadlines));
   }
   private limits() {
-    return parseLimits(this.env.ASSISTANT_LIMITS);
+    return DEFAULT_LIMITS;
   }
   private resetDay(): void {
     if (this.state.day !== day()) {

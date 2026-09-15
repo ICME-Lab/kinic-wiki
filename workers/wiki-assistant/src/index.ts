@@ -28,15 +28,8 @@ export default {
           throw new AssistantError("invalid_origin", 403);
       }
       // Cleanup stays available when the kill switch is engaged.
-      if (path !== "/logout" && path !== "/end" && path !== "/voice/stop") {
+      if (path !== "/logout" && path !== "/end" && path !== "/voice/stop")
         requireEnabled(env);
-        if (
-          (native
-            ? env.ASSISTANT_NATIVE_ENABLED
-            : env.ASSISTANT_WEB_ENABLED) !== "true"
-        )
-          throw new AssistantError("assistant_disabled", 503);
-      }
       if (path === "/status" && request.method === "GET")
         return json({ available: true });
       if (native && path === "/auth/start" && request.method === "POST") {
@@ -253,7 +246,7 @@ function callbackPage(): Response {
     `<!doctype html><html lang="en"><meta charset="utf-8"><title>Connect Ask AI</title><body><p id="status">Checking your connection…</p><script>
 (async()=>{const p=new URLSearchParams(location.hash.slice(1));history.replaceState(null,"",location.pathname);
 const status=document.getElementById("status");try{const r=await fetch("/api/assistant/auth/complete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({state:p.get("state"),delegation:p.get("delegation")})});
-const b=await r.json();if(!r.ok){status.textContent=b.error==="choose_questions_only"?"Select Questions only and try connecting again.":"Unable to connect. Check your invitation and Internet Identity authorization.";return;}
+const b=await r.json();if(!r.ok){status.textContent=b.error==="choose_questions_only"?"Select Questions only and try connecting again.":"Unable to connect. Check your database permission and Internet Identity authorization.";return;}
 status.textContent="Connected. Close this window and return to the Wiki.";if(window.opener){window.opener.postMessage({type:"kinic-assistant-connected"},location.origin);window.close();}}
 catch{status.textContent="Unable to connect. Return to the Wiki and try again."}})();</script></body></html>`,
     {

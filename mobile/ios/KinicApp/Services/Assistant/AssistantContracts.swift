@@ -49,7 +49,6 @@ struct AssistantHTTPError: LocalizedError {
     var errorDescription: String? {
         switch code {
         case "assistant_disabled": "Voice preview is not available."
-        case "invitation_required": "Voice preview requires an invitation."
         case "voice_permission_required": "The database owner must allow your preview access."
         case "choose_questions_only": "Select Questions only in Internet Identity."
         case "identity_changed": "Use the same Internet Identity account as your Wiki sign-in."

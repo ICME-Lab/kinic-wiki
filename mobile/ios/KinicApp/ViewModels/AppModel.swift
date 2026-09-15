@@ -125,12 +125,12 @@ extension AppModel: AskAIKnowledgeProviding {
         )
     }
 
-    func saveVoicePolicy(principal: String, enabled: Bool, budget: UInt64) async throws {
+    func saveVoicePolicy(databaseId: String, principal: String, enabled: Bool, budget: UInt64) async throws {
         guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
         let native = ICClient(configuration: try configuration.makeICClientConfiguration())
         let result: VFSCandidResult<CandidNull, String> = try await native.call(
             method: "set_voice_policy",
-            arguments: CandidArguments([try CandidTypedValue(VoicePolicyInput(databaseId: selectedAskAIDatabaseId, principal: principal, enabled: enabled, budget: budget))]),
+            arguments: CandidArguments([try CandidTypedValue(VoicePolicyInput(databaseId: databaseId, principal: principal, enabled: enabled, budget: budget))]),
             identity: try session.requireNativeSession())
         _ = try result.textValue()
     }

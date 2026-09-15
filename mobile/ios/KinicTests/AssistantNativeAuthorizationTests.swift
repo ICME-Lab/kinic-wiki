@@ -45,6 +45,24 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         XCTAssertFalse(AssistantHTTPError(status: 502, code: "request_failed").terminal)
     }
 
+    func testPreviewKeepsConversationForItsBoundContext() {
+        let model = VoicePreviewModel(configuration: .preview)
+        model.loadScreenshotFixture()
+
+        model.contextChanged(databaseId: "demo", principal: "owner")
+
+        XCTAssertEqual(model.snapshot?.databaseId, "demo")
+    }
+
+    func testPreviewEndsConversationWhenBoundDatabaseChanges() {
+        let model = VoicePreviewModel(configuration: .preview)
+        model.loadScreenshotFixture()
+
+        model.contextChanged(databaseId: "other", principal: "owner")
+
+        XCTAssertNil(model.snapshot)
+    }
+
     func testPreviewCacheIsProtectedExcludedFromBackupAndSeparateFromHistory() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

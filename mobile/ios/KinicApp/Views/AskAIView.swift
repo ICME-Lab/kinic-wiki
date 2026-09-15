@@ -19,9 +19,7 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if appModel.voicePreview.available {
-                        Button("Voice preview", systemImage: "waveform") { isShowingPreview = true }
-                    }
+                    Button("Voice preview", systemImage: "waveform") { isShowingPreview = true }
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
                     }

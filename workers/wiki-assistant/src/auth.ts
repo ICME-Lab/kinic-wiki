@@ -54,12 +54,6 @@ export function requireEnabled(env: Env): void {
   if (!env.OPENAI_API_KEY || !env.ASSISTANT_KEY_ENCRYPTION_KEY)
     throw new AssistantError("assistant_not_configured", 503);
 }
-export function invited(env: Env, principal: string): boolean {
-  const list: unknown = JSON.parse(env.ASSISTANT_INVITED_PRINCIPALS);
-  return (
-    Array.isArray(list) && list.includes(principal) && principal !== "2vxsx-fae"
-  );
-}
 export class AssistantAuth {
   private readonly store: AssistantStore;
   constructor(
@@ -169,8 +163,6 @@ export class AssistantAuth {
     // expectedPrincipal is only an equality constraint, never authentication evidence.
     if (principal !== record.native.expectedPrincipal)
       throw new AssistantError("identity_changed", 403);
-    if (!invited(this.env, principal))
-      throw new AssistantError("invitation_required", 403);
     const result = await createReadActor(
       this.env.KINIC_WIKI_CANISTER_ID,
       minted.identity,
@@ -250,8 +242,6 @@ export class AssistantAuth {
       this.env.ASSISTANT_DERIVATION_ORIGIN,
     );
     const principal = minted.identity.getPrincipal().toText();
-    if (!invited(this.env, principal))
-      throw new AssistantError("invitation_required", 403);
     record.phase = "active";
     record.registration = null;
     record.stateHash = "";
@@ -298,18 +288,8 @@ export class AssistantAuth {
   }
   private async loadMaterial(): Promise<Authorization> {
     const record = await this.record();
-    if (
-      record.phase !== "active" ||
-      !record.principal ||
-      !invited(this.env, record.principal)
-    )
+    if (record.phase !== "active" || !record.principal)
       throw new AssistantError("authentication_required", 401);
-    if (
-      (record.native
-        ? this.env.ASSISTANT_NATIVE_ENABLED
-        : this.env.ASSISTANT_WEB_ENABLED) !== "true"
-    )
-      throw new AssistantError("assistant_disabled", 503);
     let material: KinicDelegationMaterialV1;
     if (
       record.cached &&

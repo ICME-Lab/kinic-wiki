@@ -1,17 +1,17 @@
 # Kinic Wiki Assistant
 
-Invite-only, database-scoped text and GPT-Live conversations for iOS, with the Web implementation retained behind a separate disabled flag. Disabled by default. Index migration 005 adds DB voice billing; Wiki content, search schema and the public MCP tool contract are unchanged.
+Database-scoped text and GPT-Live conversations for iOS. The retained Web implementation is disconnected from the product UI and public proxy. The service has one emergency kill switch and is disabled by default. Index migration 005 adds DB voice billing; Wiki content, search schema and the public MCP tool contract are unchanged.
 
 ## Architecture revision
 
 [The implemented architecture](architecture.md) uses ordinary Workers, D1 and an
 iOS cache. The Wiki canister remains the only financial authority. D1 stores
 encrypted recovery state and content-free cleanup/reconciliation intent. Assistant
-DO classes and bindings are removed; there is no fallback. All flags remain disabled.
+DO classes and bindings are removed; there is no fallback.
 
 ## Configuration
 
-The browser proxies `/api/assistant/*` through the `WIKI_ASSISTANT` service binding. Deploy the assistant Worker before a browser build that uses this binding. Production and staging have separate Workers, D1 databases, invitations, secrets, and database targets.
+The browser Worker proxies only `/api/assistant/native/*` through the `WIKI_ASSISTANT` service binding for the iOS app. The Web panel implementation remains in source but is not mounted or proxied. Production and staging have separate Workers, D1 databases, secrets and database targets.
 
 Worker secrets:
 
@@ -21,16 +21,16 @@ Worker secrets:
 Worker settings:
 
 - `ASSISTANT_ENABLED`: `false` by default; the kill switch also terminates active conversations on their next connected check, or scheduled recovery after its connection lease expires.
-- `ASSISTANT_INVITED_PRINCIPALS`: JSON array of Wiki principals. An empty array admits nobody.
 - `ASSISTANT_DERIVATION_ORIGIN`: must equal the **browser's** effective II derivation origin. Production uses the existing `.icp0.io` origin; do not substitute the Private MCP Worker's `.ic0.app` origin.
 - `ASSISTANT_ORIGIN`: exact public Web origin for same-origin request checks and II callback generation.
-- `ASSISTANT_LIMITS`: optional JSON overrides of `questions`, `voiceSeconds`, `connectionSeconds`, `calls`, `characters`, `turnMs`, `reconnectMs`, `idleMs`. Defaults are 50/day, 1200/day, 600/connection, 12/turn, 24000/turn, 90000, 120000, 600000. Quotas use UTC days. A voice reservation spanning midnight remains charged to the day it started.
+
+Safety and usage limits are code constants: 50 questions/day, 1200 voice seconds/day, 600 seconds/connection, 12 tool calls/turn, 24000 characters/turn, a 90-second turn deadline, a 120-second reconnect window and a 600-second idle deadline. Quotas use UTC days. A voice reservation spanning midnight remains charged to the day it started.
 
 Wrangler 4.119.0 and the existing test runtime support compatibility date 2026-08-08; this is intentionally pinned to the tested runtime instead of requiring a newer workerd binary.
 
 ## Authentication and data handling
 
-The existing MCP II registration, five-minute app delegation, encryption, and basic node-read invocation are shared in `@kinic/ii-server`. Users select **Questions only** in II. The Web verifies that the separately authorized principal equals the signed-in Wiki principal. The server independently mints the identity, enforces invitations, binds each conversation to one DB and scope, and checks canister read access before tools, responses and reconnects.
+The existing MCP II registration, five-minute app delegation, encryption, and basic node-read invocation are shared in `@kinic/ii-server`. Users select **Questions only** in II. The server independently mints the identity, matches the signed-in principal, binds each conversation to one DB and scope, checks canister read access and requires the database owner's voice policy before activation.
 
 The read actor has only four query methods. Its Candid record projections decode the fields used by the assistant. The model receives only `wiki_query`, `wiki_read`, `wiki_sources`; database selection and credentials are never tool arguments. Raw source reads require prior discovery through a previously read node. Skill and session roots are excluded. Body positions are UTF-16 string offsets, matching JavaScript slicing.
 
@@ -42,7 +42,7 @@ Agents API state lives at OpenAI as well as the encrypted active application sta
 
 The browser receives snapshots over a WebSocket and sends presence heartbeats. Reconnect is allowed for two minutes (the server supplies `reconnectGraceMs` in snapshots); the browser checks HTTP state before retrying and clears stale content on terminal errors or grace expiry. Absolute deadlines and the earliest existing alarm are preserved across saves. Heartbeats do not extend the ten-minute inactivity deadline. The agent responder uses bounded session/item polling, so recovery does not depend on replaying an OpenAI event stream. Requests are marked before external submission. An uncertain submission is reconciled against stored session metadata and user items; it is never blindly resubmitted. Tool results are persisted by call ID before submission.
 
-Cancellation invalidates the request generation and deletes its agent session before another turn is accepted. The conversation can continue in a new agent session after cancellation. An ambiguous session creation leaves a cleanup record until the matching provider session can be found; absent results are not treated as proof of deletion. Operations should investigate `assistant_cleanup_pending` logs, including the supplied conversation ID, and configure log-based notification for that event before enabling invitations. Do not clear these records to silence an error without reconciling the provider state.
+Cancellation invalidates the request generation and deletes its agent session before another turn is accepted. The conversation can continue in a new agent session after cancellation. An ambiguous session creation leaves a cleanup record until the matching provider session can be found; absent results are not treated as proof of deletion. Operations should investigate `assistant_cleanup_pending` logs, including the supplied conversation ID, and configure log-based notification before enabling the service. Do not clear these records to silence an error without reconciling the provider state.
 
 Voice is WebRTC with server-owned client delegation and a sideband. Frontend data-channel commands are limited to closing the session. Only server-verified results are appended for speech. Transcripts are bounded; exceeding their budget stops voice while text remains available. A speech interruption alone does not cancel tools. Application cancellation suppresses old generations; UI playback is muted until the user restarts voice. A failed sideband reconnection stops only voice; the pending question still completes on screen. Voice time is reserved before creation and settled once using provider-reported seconds, including after conversation end. Cleanup records retain only IDs and reservation accounting metadata, never content. Unknown creation/close usage conservatively retains the reservation; settlement never changes another UTC day’s quota. Reflected audio is ignored and never persisted.
 
@@ -83,7 +83,7 @@ Official API contracts: [Agents configuration](https://developers.openai.com/api
 
 Native requests use `/api/assistant/native/` and an Authorization Bearer header, including WebSocket upgrades. The direct ICRC-167 flow delegates to a Worker-generated key; it does not export the existing iOS key or use the Web MCP registration bridge. The configured Wiki canister is fixed per environment; signed targets are optional, but if present must permit that canister. The effective grant must be query-only. A signed canister read must succeed before activation; structural parser tests do not verify signatures on their own.
 
-Set `ASSISTANT_NATIVE_ENABLED` and `ASSISTANT_WEB_ENABLED` separately from the global `ASSISTANT_ENABLED` kill switch. All default to false. The iOS bundle's `KINIC_VOICE_PREVIEW_ENABLED` and Web's `VITE_ASSISTANT_WEB_ENABLED` also default to false. `ASSISTANT_BILLING_KEY` is a Worker secret containing an Ed25519 identity JSON for the dedicated voice charging authority; it is separate from II credentials, the existing billing administrator and the IAP grant authority.
+`ASSISTANT_ENABLED` is the only feature switch. The iOS entry point is always present and reports server availability; the Web entry point remains disconnected. Access is controlled by the selected database's owner policy and the caller's read permission instead of a second invitation list. `ASSISTANT_BILLING_KEY` is a Worker secret containing an Ed25519 identity JSON for the dedicated voice charging authority; it is separate from II credentials, the existing billing administrator and the IAP grant authority.
 
 The billing administrator configures a strictly increasing `VoiceRate` using `configure_voice_rate`. Database owners set member permissions and UTC daily budgets using `set_voice_policy`. No configured rate or permission means no paid connection. Query-only user credentials never perform these updates. Native preview text is free within the existing daily limit and requires an enabled owner policy.
 

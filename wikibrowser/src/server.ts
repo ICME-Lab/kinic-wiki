@@ -26,7 +26,7 @@ export default createServerEntry({
       return Response.redirect(url, 308);
     }
 
-    if (url.pathname.startsWith("/api/assistant/")) {
+    if (url.pathname.startsWith("/api/assistant/native/")) {
       if (!env.WIKI_ASSISTANT) return Response.json({ error: "assistant_not_configured" }, { status: 503, headers: { "cache-control": "no-store" } });
       try { return await env.WIKI_ASSISTANT.fetch(request); }
       catch { return Response.json({ error: "assistant_not_configured" }, { status: 503, headers: { "cache-control": "no-store" } }); }

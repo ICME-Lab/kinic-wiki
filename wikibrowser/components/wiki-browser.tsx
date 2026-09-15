@@ -10,8 +10,6 @@ import { GitBranch, PanelRight } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { NodePublicationControls } from "@/components/node-publication-controls";
 import { LocalImportDialog, type LocalImportDialogState } from "@/components/local-import-dialog";
-import { assistantRequest } from "@/lib/assistant";
-import { AssistantPanel } from "@/components/assistant-panel";
 import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
 import { GraphPanel } from "@/components/graph-panel";
@@ -393,7 +391,6 @@ function WikiBrowserContent() {
 
   const logout = useCallback(async () => {
     if (!authClient) return;
-    void assistantRequest("/logout", { body: {}, keepalive: true }).catch(() => {});
     await authClient.logout();
     setReadIdentity(null);
     setAuthError(null);
@@ -987,7 +984,6 @@ function WikiBrowserContent() {
               />
             </>
           )}
-          {import.meta.env.VITE_ASSISTANT_WEB_ENABLED === "true" && <AssistantPanel databaseId={databaseId} principal={authPrincipal || null} selectedPath={selectedPath} onOpenSource={(path) => navigate(hrefForPath(canisterId, databaseId, path, "markdown", tab))} />}
         </section>
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
           <details className="order-3 rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">

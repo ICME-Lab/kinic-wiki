@@ -39,7 +39,6 @@ export function failure(error: unknown): Response {
   const code = error instanceof Error ? error.message : "";
   const known = [
     "authentication_required",
-    "invitation_required",
     "identity_changed",
     "invalid_auth_state",
     "choose_questions_only",

@@ -28,7 +28,6 @@ const errors: Record<string, string> = {
   assistant_disabled: "Ask AI is not available yet.",
   assistant_not_configured: "Ask AI has not been configured yet.",
   authentication_required: "Connect with Internet Identity to use Ask AI.",
-  invitation_required: "Ask AI is available to invited users only.",
   choose_questions_only: "Select “Questions only” in Internet Identity.",
   identity_changed:
     "Your Wiki and Ask AI accounts do not match. Connect with the same account.",

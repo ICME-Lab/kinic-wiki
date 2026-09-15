@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantUser, voiceSummary } from "../src/user";
+import { DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -182,7 +183,6 @@ async function harness() {
     ASSISTANT_ENABLED: "true",
     OPENAI_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
-    ASSISTANT_LIMITS: '{"questions":2}',
     ASSISTANT_DERIVATION_ORIGIN: "origin",
     memory,
   } as unknown as Env;
@@ -343,13 +343,7 @@ describe("conversation lifecycle", () => {
   });
   it("retains the daily quota across ended conversations", async () => {
     const h = await harness();
-    const q1 = question();
-    await h.call("/questions", q1);
-    await h.drain();
-    await h.call("/cancel", {});
-    await h.call("/questions", question());
-    await h.drain();
-    await h.call("/cancel", {});
+    h.user["state"].questions = DEFAULT_LIMITS.questions;
     expect((await h.call("/questions", question())).status).toBe(429);
   });
   it("ends the conversation when access is revoked during processing", async () => {

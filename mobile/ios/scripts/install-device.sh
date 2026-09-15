@@ -98,8 +98,10 @@ build_command=(xcodebuild build \
   -project "$project" \
   -scheme "$scheme" \
   -destination "platform=iOS,id=$device_id" \
-  -derivedDataPath "$derived_data" \
-  "${sandbox_build_settings[@]}")
+  -derivedDataPath "$derived_data")
+if [[ "${#sandbox_build_settings[@]}" -gt 0 ]]; then
+  build_command+=("${sandbox_build_settings[@]}")
+fi
 if [[ "${#build_args[@]}" -gt 0 ]]; then
   build_command+=("${build_args[@]}")
 fi

@@ -28,10 +28,9 @@ final class VoicePreviewModel {
     @ObservationIgnored private var background = false
     @ObservationIgnored private let cache = AssistantConversationCache()
     @ObservationIgnored private var boundPrincipal: String?
+    @ObservationIgnored private var boundDatabaseId: String?
     @ObservationIgnored private var commands: [String: (attempt: UUID, continuation: CheckedContinuation<Data, Error>)] = [:]
     @ObservationIgnored private var retryingQuestion = false
-    var available: Bool { Bundle.main.object(forInfoDictionaryKey: "KINIC_VOICE_PREVIEW_ENABLED") as? Bool == true }
-
     init(configuration: AppConfiguration) {
         self.configuration = configuration
         http = AssistantHTTPClient(configuration: configuration)
@@ -46,17 +45,23 @@ final class VoicePreviewModel {
         {"id":"preview","databaseId":"demo","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"voice":"off","progress":null,"messages":[{"requestId":"example","question":"What does this Wiki say?","error":null,"answer":{"answer":"This answer is grounded in the selected Wiki.","citations":[{"id":"source","databaseId":"demo","path":"/Knowledge/Overview","excerpt":"A short verified source excerpt.","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
         """
         snapshot = try? JSONDecoder().decode(AssistantSnapshot.self, from: Data(text.utf8))
+        boundPrincipal = "owner"
+        boundDatabaseId = "demo"
     }
 #endif
     func contextChanged(databaseId: String, principal: String) {
-        if boundPrincipal != nil || snapshot != nil { end(); return }
+        if let boundPrincipal, let boundDatabaseId {
+            if boundPrincipal != principal || boundDatabaseId != databaseId { end() }
+            return
+        }
+        if boundPrincipal != nil || boundDatabaseId != nil || snapshot != nil { end(); return }
         guard !principal.isEmpty, !databaseId.isEmpty else { return }
         do {
             if let saved = try cache.load(), saved.principal != principal || saved.snapshot.databaseId != databaseId { end() }
         } catch { end() }
     }
     func restore(databaseId: String, principal: String) async {
-        guard available, !busy, snapshot == nil, !principal.isEmpty else { return }
+        guard !busy, snapshot == nil, !principal.isEmpty else { return }
         do {
             guard let saved = try cache.load() else { return }
             guard saved.principal == principal, saved.snapshot.databaseId == databaseId else { end(); return }
@@ -72,6 +77,7 @@ final class VoicePreviewModel {
             let state = try await http.data("conversation", conversation: saved.snapshot.id)
             guard epoch == generation else { return }
             boundPrincipal = principal
+            boundDatabaseId = databaseId
             try apply(state, database: databaseId)
             if let voiceId = snapshot?.voiceId {
                 _ = try await http.data("voice/stop", conversation: saved.snapshot.id, method: "POST", body: ["voiceId": voiceId])
@@ -125,6 +131,7 @@ final class VoicePreviewModel {
         let generation = epoch
         busy = true
         boundPrincipal = principal
+        boundDatabaseId = databaseId
         error = nil
         defer { if epoch == generation { busy = false } }
         do {
@@ -272,6 +279,7 @@ final class VoicePreviewModel {
         activeVoiceId = nil
         rejectCommands()
         boundPrincipal = nil
+        boundDatabaseId = nil
         do { try cache.clear() } catch { self.error = "Unable to remove the preview cache." }
         snapshot = nil; quote = nil; pendingQuestion = nil; draft = ""
         voiceActive = false; muted = false; busy = false; reconnecting = false

@@ -10,7 +10,6 @@ import {
 import {
   DEFAULT_LIMITS,
   isReadablePath,
-  parseLimits,
   validateAnswer,
 } from "../src/contracts";
 
@@ -320,11 +319,8 @@ describe("read tools and citations", () => {
       },
     ]);
   });
-  it("validates server limit configuration", () => {
-    expect(parseLimits()).toEqual(DEFAULT_LIMITS);
-    expect(parseLimits('{"questions":3}').questions).toBe(3);
-    expect(() => parseLimits('{"questions":-1}')).toThrow();
-    expect(() => parseLimits('{"unknown":1}')).toThrow();
+  it("uses fixed server limits and rejects unsafe paths", () => {
+    expect(DEFAULT_LIMITS.questions).toBe(50);
     expect(isReadablePath("/Knowledge/a?b")).toBe(false);
   });
 });

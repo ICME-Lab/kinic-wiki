@@ -2,7 +2,7 @@
 
 The Assistant runs without Durable Objects. The unpublished DO classes, bindings,
 migration and test shim have been removed. There is no compatibility migration or
-DO fallback. All feature flags remain false, and no cloud resources were created
+DO fallback. The single service kill switch remains false, and no cloud resources were created
 or deployed.
 
 ## Responsibilities
@@ -85,9 +85,9 @@ delivery remain release gates. Unknown Live creation cannot currently be resolve
 automatically without its provider ID; its job is retained and emits a content-free
 `assistant_live_creation_unresolved` operational event with the conversation, request,
 and voice identifiers already stored in D1. SDP is not persisted, and the scheduled
-Worker never retries Live creation. The native and Web preview flags must remain off
-until an official idempotent-create or reconciliation API is verified against the real
-service. No alternate API or authority expansion is used.
+Worker never retries Live creation. The service kill switch must remain off until an
+official idempotent-create or reconciliation API is verified against the real service.
+No alternate API or authority expansion is used.
 
 Wrangler database IDs are explicit unprovisioned placeholders. Provision separate
 staging/production D1 databases, replace their IDs, apply migrations and configure

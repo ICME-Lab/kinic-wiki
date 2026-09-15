@@ -207,11 +207,7 @@ function Conversation({
       voice.current = null;
       setVoiceStatus("");
       if (
-        [
-          "authentication_required",
-          "identity_changed",
-          "invitation_required",
-        ].includes(code)
+        ["authentication_required", "identity_changed"].includes(code)
       )
         setAuthorized(false);
       if (["assistant_disabled", "assistant_not_configured"].includes(code))
@@ -223,7 +219,6 @@ function Conversation({
       "conversation_not_owned",
       "authentication_required",
       "identity_changed",
-      "invitation_required",
       "assistant_disabled",
       "assistant_not_configured",
       "wiki_read_denied",
