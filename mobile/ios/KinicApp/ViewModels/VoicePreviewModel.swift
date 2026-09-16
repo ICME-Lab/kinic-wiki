@@ -125,8 +125,9 @@ final class VoicePreviewModel {
         }
         return true
     }
-    func connect(databaseId: String, principal: String, selectedPath: String? = nil) async {
+    func connect(databaseId: String, identity: KinicIdentitySession, selectedPath: String? = nil) async {
         guard !busy, snapshot == nil else { return }
+        let principal = identity.principal
         epoch += 1
         let generation = epoch
         busy = true
@@ -140,7 +141,7 @@ final class VoicePreviewModel {
             guard let pending = try JSONSerialization.jsonObject(with: data) as? [String: Any], let token = pending["token"] as? String,
                   let state = pending["state"] as? String else { throw URLError(.cannotParseResponse) }
             try http.setToken(token)
-            let response = try await authorization.authorize(configuration: configuration, pending: pending)
+            let response = try authorization.authorize(configuration: configuration, pending: pending, identity: identity)
             guard epoch == generation else { return }
             let authenticated = try await http.data("auth/complete", method: "POST", body: ["state": state, "response": response])
             guard epoch == generation else { return }
@@ -159,6 +160,9 @@ final class VoicePreviewModel {
             http.clearToken()
             if let revoke { _ = try? await http.send(revoke) }
         }
+    }
+    func authenticationUnavailable() {
+        error = AssistantHTTPError(status: 401, code: "kinic_session_expired").localizedDescription
     }
     func send() async {
         guard let snapshot, !busy, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -271,7 +275,6 @@ final class VoicePreviewModel {
         epoch += 1
         voiceEpoch += 1
         voiceDeadlineTask?.cancel()
-        authorization.cancel()
         audio.stop()
         eventTask?.cancel(); heartbeat?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)

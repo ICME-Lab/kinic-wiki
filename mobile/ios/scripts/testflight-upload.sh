@@ -185,12 +185,12 @@ fi
 [[ -n "$asc_profile" ]] || fail "ASC_PROFILE is required"
 
 resolve_next_build_number() {
-  local build_json latest
+  local build_json upload_json latest_build latest_upload
   if ! build_json="$(asc --profile "$asc_profile" builds info \
       --app "$asc_app_id" --latest --platform IOS --output json)"; then
     fail "Could not read the latest App Store Connect build with profile $asc_profile"
   fi
-  latest="$(printf '%s' "$build_json" | node -e '
+  latest_build="$(printf '%s' "$build_json" | node -e '
     let input = "";
     process.stdin.on("data", (chunk) => { input += chunk; });
     process.stdin.on("end", () => {
@@ -204,7 +204,25 @@ resolve_next_build_number() {
       process.stdout.write(String(candidate));
     });
   ')" || fail "Could not parse the latest App Store Connect build number"
-  printf '%s\n' "$((latest + 1))"
+  if ! upload_json="$(asc --profile "$asc_profile" builds uploads list \
+      --app "$asc_app_id" --platform IOS --sort=-cfBundleVersion --limit 1 --output json)"; then
+    fail "Could not read the latest App Store Connect upload with profile $asc_profile"
+  fi
+  latest_upload="$(printf '%s' "$upload_json" | node -e '
+    let input = "";
+    process.stdin.on("data", (chunk) => { input += chunk; });
+    process.stdin.on("end", () => {
+      const value = JSON.parse(input);
+      const candidate = value?.data?.[0]?.attributes?.cfBundleVersion ?? "0";
+      if (!/^\d+$/.test(String(candidate))) process.exit(2);
+      process.stdout.write(String(candidate));
+    });
+  ')" || fail "Could not parse the latest App Store Connect upload number"
+  if (( latest_upload > latest_build )); then
+    printf '%s\n' "$((latest_upload + 1))"
+  else
+    printf '%s\n' "$((latest_build + 1))"
+  fi
 }
 
 if [[ "$sandbox_mode" == "1" || -z "$build_number" ]]; then
@@ -307,5 +325,26 @@ asc --profile "$asc_profile" builds upload \
   --version "$marketing_version" \
   --build-number "$build_number" \
   --wait
+
+upload_json="$(asc --profile "$asc_profile" builds uploads list \
+  --app "$asc_app_id" \
+  --cf-bundle-short-version "$marketing_version" \
+  --cf-bundle-version "$build_number" \
+  --platform IOS \
+  --output json)" || fail "Could not verify the App Store Connect upload"
+upload_state="$(printf '%s' "$upload_json" | node -e '
+  let input = "";
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => {
+    const value = JSON.parse(input);
+    const records = value?.data ?? [];
+    if (records.length !== 1) process.exit(2);
+    const state = records[0]?.attributes?.state?.state;
+    if (typeof state !== "string") process.exit(2);
+    process.stdout.write(state);
+  });
+')" || fail "Could not resolve the App Store Connect upload state"
+[[ "$upload_state" == "COMPLETE" ]] \
+  || fail "App Store Connect rejected or has not completed the upload (state: $upload_state)"
 
 printf 'Uploaded KinicWiki %s (%s) to TestFlight (%s).\n' "$marketing_version" "$build_number" "$distribution"

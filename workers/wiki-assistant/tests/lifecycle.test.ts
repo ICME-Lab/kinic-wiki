@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import OpenAI from "openai";
 import { AssistantUser, voiceSummary } from "../src/user";
 import { DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
@@ -7,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   items: vi.fn(),
   retrieve: vi.fn(),
   turn: vi.fn(),
+  list: vi.fn(),
   send: vi.fn(),
   cancel: vi.fn(),
   remove: vi.fn(),
@@ -15,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   reserve: vi.fn(),
   charge: vi.fn(),
+  discardIntent: vi.fn(),
 }));
 vi.mock("../src/billing", () => ({
   voiceReservation: async () => null,
@@ -31,7 +34,7 @@ vi.mock("../src/openai", () => ({
           retrieve: mocks.retrieve,
           events: { create: mocks.send },
           turns: { retrieve: mocks.turn },
-          list: async function* () {},
+          list: mocks.list,
         },
       },
     },
@@ -169,6 +172,9 @@ vi.mock("../src/store", () => ({
     }
     async intent() {}
     async created() {}
+    async discardUncreatedAgentIntent(...args: unknown[]) {
+      return mocks.discardIntent(...args);
+    }
     async touch() {}
     async canSend() {
       return true;
@@ -256,9 +262,11 @@ beforeEach(() => {
     required_actions: [],
   });
   mocks.turn.mockResolvedValue({ status: "in_progress" });
+  mocks.list.mockImplementation(async function* () {});
   mocks.cancel.mockResolvedValue(undefined);
   mocks.remove.mockResolvedValue(undefined);
   mocks.send.mockResolvedValue(undefined);
+  mocks.discardIntent.mockResolvedValue(true);
 });
 const question = () => ({
   requestId: crypto.randomUUID(),
@@ -300,6 +308,48 @@ describe("conversation lifecycle", () => {
     await h.fireAlarm();
     expect(mocks.create).toHaveBeenCalledTimes(1);
     expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.discardIntent).not.toHaveBeenCalled();
+  });
+  it.each([400, 401, 403, 404])(
+    "discards the Agent intent after a definitive %s creation rejection",
+    async (status) => {
+      const failure = Object.assign(Object.create(OpenAI.APIError.prototype), {
+        status,
+      });
+      mocks.create.mockRejectedValue(failure);
+      const h = await harness();
+      const q = question();
+      await h.call("/questions", q);
+      await h.drain();
+      expect(mocks.discardIntent).toHaveBeenCalledWith(
+        "agent:" + h.id + ":" + q.requestId,
+        expect.objectContaining({ scope: "question", id: h.id }),
+      );
+      const conversation = h.user["state"].conversation!;
+      expect(conversation.pending).toBeNull();
+      expect(conversation.status).toBe("ready");
+      expect(conversation.messages.at(-1)?.error).toBe(
+        "agent_response_unavailable",
+      );
+      expect(h.user["state"].cleanup).toEqual([]);
+      expect(mocks.list).not.toHaveBeenCalled();
+    },
+  );
+  it("keeps a rejected creation unresolved when intent deletion is not fenced", async () => {
+    const failure = Object.assign(Object.create(OpenAI.APIError.prototype), {
+      status: 400,
+    });
+    mocks.create.mockRejectedValue(failure);
+    mocks.discardIntent.mockResolvedValue(false);
+    const h = await harness();
+    await h.call("/questions", question());
+    await h.drain();
+    expect(h.user["state"].conversation?.pending?.stage).toBe("creating");
+    expect(h.user["state"].conversation?.error).toBe(
+      "checking_request_status",
+    );
+    await h.fireAlarm();
+    expect(mocks.create).toHaveBeenCalledTimes(1);
   });
   it("discards a delayed creation result after the conversation has ended", async () => {
     let release!: (v: { id: string }) => void;

@@ -42,4 +42,14 @@ describe("native delegation structural gate (IC query must additionally verify s
     value.result.signerDelegation.unshift({ ...leaf, delegation: { ...leaf.delegation, pubkey: publicKeyBase64(root), expiration: String(BigInt(now + 86400000) * 1000000n) } });
     expect(parse(value).material.expiresAt).toBe(now + 10000);
   });
+  it("accepts a parent chain followed by a query-only child for the Worker key", () => {
+    const value = fixture(); const intermediate = Ed25519KeyIdentity.generate();
+    value.result.signerDelegation = [
+      { delegation: { pubkey: publicKeyBase64(intermediate), expiration: String(BigInt(now + 60000) * 1000000n), targets: ["aaaaa-aa"], permissions: "all" }, signature: btoa("parent signature") },
+      { delegation: { pubkey: publicKeyBase64(key), expiration: String(BigInt(now + 10000) * 1000000n), targets: ["aaaaa-aa"], permissions: "queries" }, signature: btoa("child signature") },
+    ];
+    const { material } = parse(value);
+    expect(material.delegation.delegations).toHaveLength(2);
+    expect(material.delegation.delegations[1].delegation.permissions).toBe("queries");
+  });
 });

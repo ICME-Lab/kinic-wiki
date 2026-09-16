@@ -14,6 +14,77 @@ beforeAll(async () => {
 });
 const origin = "https://wiki.kinic.xyz";
 describe("assistant HTTP and D1 authentication boundary", () => {
+  it("discards only fenced provider-free Agent intents", async () => {
+    const store = new AssistantStore(bindings);
+    const leases = new Leases(bindings.ASSISTANT_DB);
+    const conversation = crypto.randomUUID();
+    const valid = await leases.claim("question", conversation);
+    expect(valid).not.toBeNull();
+
+    const removable = "agent:" + crypto.randomUUID();
+    await store.intent(removable, "intent-owner", conversation, "agent", {
+      providerId: null,
+      requestId: "removable",
+    });
+    expect(await store.discardUncreatedAgentIntent(removable, valid!)).toBe(
+      true,
+    );
+    expect(
+      await bindings.ASSISTANT_DB.prepare(
+        "SELECT 1 FROM assistant_jobs WHERE id=?",
+      )
+        .bind(removable)
+        .first(),
+    ).toBeNull();
+
+    const known = "agent:" + crypto.randomUUID();
+    await store.intent(known, "intent-owner", conversation, "agent", {
+      providerId: null,
+      requestId: "known",
+    });
+    await store.created(known, "provider-session");
+    expect(await store.discardUncreatedAgentIntent(known, valid!)).toBe(false);
+
+    const mismatched = "agent:" + crypto.randomUUID();
+    await store.intent(mismatched, "intent-owner", conversation, "agent", {
+      providerId: null,
+      requestId: "mismatched",
+    });
+    const otherLease = await leases.claim("question", crypto.randomUUID());
+    expect(otherLease).not.toBeNull();
+    expect(
+      await store.discardUncreatedAgentIntent(mismatched, otherLease!),
+    ).toBe(false);
+    expect(await store.discardUncreatedAgentIntent(mismatched, valid!)).toBe(
+      true,
+    );
+    await leases.release(otherLease!);
+
+    const stale = "agent:" + crypto.randomUUID();
+    await store.intent(stale, "intent-owner", conversation, "agent", {
+      providerId: null,
+      requestId: "stale",
+    });
+    await bindings.ASSISTANT_DB.prepare(
+      "UPDATE assistant_leases SET expires_at=0 WHERE scope='question' AND id=?",
+    )
+      .bind(conversation)
+      .run();
+    expect(await store.discardUncreatedAgentIntent(stale, valid!)).toBe(false);
+    const replacement = await leases.claim("question", conversation);
+    expect(replacement).not.toBeNull();
+    expect(await store.discardUncreatedAgentIntent(stale, valid!)).toBe(false);
+    expect(
+      await store.discardUncreatedAgentIntent(stale, replacement!),
+    ).toBe(true);
+
+    await bindings.ASSISTANT_DB.prepare(
+      "DELETE FROM assistant_jobs WHERE id=?",
+    )
+      .bind(known)
+      .run();
+    await leases.release(replacement!);
+  });
   it("keeps an uncertain Live create without storing or replaying SDP", async () => {
     const id = "live:" + crypto.randomUUID();
     const store = new AssistantStore(bindings);

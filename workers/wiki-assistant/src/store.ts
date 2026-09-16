@@ -357,6 +357,22 @@ export class AssistantStore {
       .bind(providerId, id)
       .run();
   }
+  async discardUncreatedAgentIntent(id: string, fence: Lease) {
+    if (fence.scope !== "question") return false;
+    const result = await this.db
+      .prepare(
+        "DELETE FROM assistant_jobs WHERE id=?1 AND conversation_id=?2 AND kind='agent' AND state='active' AND json_extract(data,'$.providerId') IS NULL AND EXISTS(SELECT 1 FROM assistant_leases WHERE scope='question' AND id=?2 AND owner=?3 AND generation=?4 AND expires_at>?5)",
+      )
+      .bind(
+        id,
+        fence.id,
+        fence.owner,
+        fence.generation,
+        Date.now(),
+      )
+      .run();
+    return result.meta.changes === 1;
+  }
   async command(id: string, requestId: string, hash: string) {
     const result = await this.db
       .prepare(

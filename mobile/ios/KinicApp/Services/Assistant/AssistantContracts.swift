@@ -49,8 +49,11 @@ struct AssistantHTTPError: LocalizedError {
     var errorDescription: String? {
         switch code {
         case "assistant_disabled": "Voice preview is not available."
+        case "assistant_not_configured": "Voice preview is not configured on the server."
         case "voice_permission_required": "The database owner must allow your preview access."
-        case "choose_questions_only": "Select Questions only in Internet Identity."
+        case "database_access_denied": "Your Kinic account cannot read this database."
+        case "kinic_session_expired": "Your Kinic sign-in has expired. Sign in again, then reconnect the preview."
+        case "choose_questions_only", "invalid_delegation", "invalid_delegation_key", "invalid_delegation_target", "invalid_delegation_expiry": "The preview could not verify your read-only Kinic permission. Sign in again and retry."
         case "identity_changed": "Use the same Internet Identity account as your Wiki sign-in."
         case "voice_connection_failed": "The voice connection failed. You can continue this conversation with text."
         case "voice_close_pending": "Voice is stopping. Your text answer can still arrive."
@@ -59,6 +62,7 @@ struct AssistantHTTPError: LocalizedError {
         case "voice_price_consent_required": "Review the connection price before starting voice."
         case "authentication_required": "Your preview authorization expired. Connect again."
         case "voice_billing_denied", "voice_budget_exhausted": "Voice stopped because the available budget could not be reserved."
+        case "rate_limit": "Too many preview connection attempts. Wait a moment and try again."
         default: "The preview request failed. Please try again."
         }
     }

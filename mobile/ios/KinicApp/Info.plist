@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Voice Preview uses an audio-only WebRTC connection. The bundled connection library includes camera support, but Kinic does not capture or send camera video.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Use your microphone for a voice conversation with your selected Wiki. Audio is sent to OpenAI.</string>
 	<key>UIBackgroundModes</key>

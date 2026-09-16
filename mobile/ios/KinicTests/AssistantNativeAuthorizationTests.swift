@@ -1,3 +1,5 @@
+import CryptoKit
+import ICNativeClient
 import XCTest
 @testable import Kinic
 
@@ -7,37 +9,69 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         XCTAssertEqual(AssistantAudioSession.eventChannelLabel, "oai-events")
     }
 
-    private let callback = URL(string: "https://wiki.kinic.xyz/ios-auth-callback")!
-    private func url(state: String = "state", id: String = "request") -> URL {
-        let object: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": ["publicKey": "test"]]
-        var fragment = URLComponents()
-        fragment.queryItems = [URLQueryItem(name: "state", value: state), URLQueryItem(name: "message", value: String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self))]
-        var result = URLComponents(url: callback, resolvingAgainstBaseURL: false)!
-        result.percentEncodedFragment = fragment.percentEncodedQuery
-        return result.url!
+    private func identity(configuration: AppConfiguration = .preview) throws -> KinicIdentitySession {
+        let session = try ICAuthSession.delegating(
+            ed25519PrivateKey: Data(repeating: 7, count: 32),
+            configuration: configuration.makeICClientConfiguration(),
+            options: ICAuthenticationOptions(
+                maxTimeToLiveNanoseconds: 3_600_000_000_000,
+                targets: [configuration.canisterId]
+            )
+        )
+        return KinicIdentitySession(nativeSession: session)
     }
-    func testValidCallbackPreservesResponseForServerVerification() throws {
-        let response = try AssistantNativeAuthorization.response(from: url(), callback: callback, state: "state", requestID: "request")
-        XCTAssertNotNil(response as? [String: Any])
+
+    private func workerPublicKey() -> Data {
+        Data([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00])
+            + Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
     }
-    func testWrongStateAndRequestAreRejected() {
-        XCTAssertThrowsError(try AssistantNativeAuthorization.response(from: url(state: "old"), callback: callback, state: "state", requestID: "request"))
-        XCTAssertThrowsError(try AssistantNativeAuthorization.response(from: url(id: "old"), callback: callback, state: "state", requestID: "request"))
+
+    private func pending(configuration: AppConfiguration = .preview, key: Data? = nil) -> [String: Any] {
+        [
+            "requestId": "request",
+            "publicKey": (key ?? workerPublicKey()).base64EncodedString(),
+            "maxTimeToLive": "3000000000000",
+            "derivationOrigin": configuration.derivationOrigin,
+        ]
     }
-    func testCallbackQueryAndDuplicateParametersAreRejected() {
-        var value = URLComponents(url: url(), resolvingAgainstBaseURL: false)!
-        value.query = "token=secret"
-        XCTAssertThrowsError(try AssistantNativeAuthorization.response(from: value.url!, callback: callback, state: "state", requestID: "request"))
-        value.query = nil
-        value.percentEncodedFragment! += "&state=state"
-        XCTAssertThrowsError(try AssistantNativeAuthorization.response(from: value.url!, callback: callback, state: "state", requestID: "request"))
+
+    func testExistingSessionCreatesQueryOnlyCanisterScopedChildDelegation() throws {
+        let identity = try identity()
+        let key = workerPublicKey()
+        let value = try AssistantNativeAuthorization().authorize(
+            configuration: .preview,
+            pending: pending(key: key),
+            identity: identity
+        ) as! [String: Any]
+        let result = value["result"] as! [String: Any]
+        let delegations = result["signerDelegation"] as! [[String: Any]]
+        let leaf = delegations.last!["delegation"] as! [String: Any]
+
+        XCTAssertEqual(value["id"] as? String, "request")
+        XCTAssertEqual(result["publicKey"] as? String, try identity.requireNativeSession().delegation.publicKey.base64EncodedString())
+        XCTAssertEqual(leaf["pubkey"] as? String, key.base64EncodedString())
+        XCTAssertEqual(leaf["permissions"] as? String, "queries")
+        XCTAssertEqual(leaf["targets"] as? [String], [AppConfiguration.preview.canisterId])
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: value))
     }
-    func testDifferentOriginAndPathAreRejected() {
-        for replacement in ["https://evil.example/ios-auth-callback", "https://wiki.kinic.xyz/other"] {
-            var value = URLComponents(string: replacement)!
-            value.percentEncodedFragment = URLComponents(url: url(), resolvingAgainstBaseURL: false)!.percentEncodedFragment
-            XCTAssertThrowsError(try AssistantNativeAuthorization.response(from: value.url!, callback: callback, state: "state", requestID: "request"))
-        }
+
+    func testChildDelegationRejectsInvalidServerBoundsAndExpiredParent() throws {
+        let identity = try identity()
+        var value = pending()
+        value["publicKey"] = "not-base64"
+        XCTAssertThrowsError(try AssistantNativeAuthorization().authorize(configuration: .preview, pending: value, identity: identity))
+        value = pending()
+        value["maxTimeToLive"] = "3600000000001"
+        XCTAssertThrowsError(try AssistantNativeAuthorization().authorize(configuration: .preview, pending: value, identity: identity))
+        value = pending()
+        value["derivationOrigin"] = "https://evil.example"
+        XCTAssertThrowsError(try AssistantNativeAuthorization().authorize(configuration: .preview, pending: value, identity: identity))
+        XCTAssertThrowsError(try AssistantNativeAuthorization().authorize(
+            configuration: .preview,
+            pending: pending(),
+            identity: identity,
+            now: Date().addingTimeInterval(3_601)
+        ))
     }
     func testTerminalAndTransientRecoveryErrors() {
         XCTAssertTrue(AssistantHTTPError(status: 401, code: "authentication_required").terminal)

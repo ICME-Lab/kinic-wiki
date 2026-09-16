@@ -784,10 +784,31 @@ export class AssistantUser {
           (error instanceof OpenAI.APIError &&
             [400, 401, 403, 404].includes(error.status ?? 0)))
       ) {
-        if (error instanceof OpenAI.APIError && c.pending?.stage === "creating")
-          c.pending.stage = "running";
+        let unknownCreate: boolean | undefined;
+        if (error instanceof OpenAI.APIError && c.pending?.stage === "creating") {
+          const intent = "agent:" + c.id + ":" + c.pending.input.requestId;
+          let discarded = false;
+          try {
+            if (this.questionLease)
+              discarded = await this.store.discardUncreatedAgentIntent(
+                intent,
+                this.questionLease,
+              );
+          } catch {
+            console.error(
+              JSON.stringify({ event: "assistant_job_finalization_pending" }),
+            );
+          }
+          if (!discarded) {
+            c.error = "checking_request_status";
+            await this.save();
+            this.broadcast();
+            return;
+          }
+          unknownCreate = false;
+        }
         c.error = "agent_response_unavailable";
-        await this.cancel(c);
+        await this.cancel(c, unknownCreate);
       } else if (c?.pending) {
         // Network errors are reconciled by the next owner, without duplicate input submission.
         c.error = "checking_request_status";
@@ -801,7 +822,10 @@ export class AssistantUser {
       this.pumping = false;
     }
   }
-  private async cancel(c: Conversation): Promise<void> {
+  private async cancel(
+    c: Conversation,
+    unknownCreateOverride?: boolean,
+  ): Promise<void> {
     c.generation++;
     c.deferred = null;
     if (c.pending) {
@@ -813,7 +837,9 @@ export class AssistantUser {
     this.state.cleanup.push({
       sessionId: c.sessionId,
       conversationId: c.id,
-      unknownCreate: c.pending?.stage === "creating" && !c.sessionId,
+      unknownCreate:
+        unknownCreateOverride ??
+        (c.pending?.stage === "creating" && !c.sessionId),
       requestId: c.pending?.input.requestId,
       liveId: null,
     });

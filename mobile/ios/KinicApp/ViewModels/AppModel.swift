@@ -1323,6 +1323,14 @@ final class AppModel {
         }
     }
 
+    func connectVoicePreview(databaseId: String, selectedPath: String?) async {
+        guard let session else {
+            voicePreview.authenticationUnavailable()
+            return
+        }
+        await voicePreview.connect(databaseId: databaseId, identity: session, selectedPath: selectedPath)
+    }
+
     func signOut() {
         voicePreview.end()
         do {

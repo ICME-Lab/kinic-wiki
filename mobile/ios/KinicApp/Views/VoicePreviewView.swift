@@ -54,7 +54,7 @@ struct VoicePreviewView: View {
                             let selectedPath = selectedDatabaseId == appModel.selectedAskAIDatabaseId
                                 ? appModel.selectedBrowseNodePath
                                 : nil
-                            Task { await model.connect(databaseId: selectedDatabaseId, principal: appModel.principalText, selectedPath: selectedPath) }
+                            Task { await appModel.connectVoicePreview(databaseId: selectedDatabaseId, selectedPath: selectedPath) }
                         }.disabled(!consent || model.busy || !appModel.isSignedIn || selectedDatabaseId.isEmpty)
                     }
                 } else {
