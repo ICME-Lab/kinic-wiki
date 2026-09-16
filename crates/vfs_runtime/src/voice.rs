@@ -117,8 +117,8 @@ impl VfsService {
     pub fn initialize_voice_policy(&self, caller: &str, db: &str) -> Result<VoicePolicy, String> {
         self.require_database_role(db, caller, RequiredRole::Owner)?;
         self.write_index(|tx| {
-            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM voice_policies WHERE database_id=?1 AND principal=?2)", params![db, caller], |r| crate::sqlite::row_get(r, 0)).map_err(|e| e.to_string())?;
-            if !exists {
+            let exists: i64 = tx.query_row("SELECT EXISTS(SELECT 1 FROM voice_policies WHERE database_id=?1 AND principal=?2)", params![db, caller], |r| crate::sqlite::row_get(r, 0)).map_err(|e| e.to_string())?;
+            if exists == 0 {
                 let budget = cost(latest_rate(tx)?.cycles_per_minute, 600)?;
                 tx.execute("INSERT INTO voice_policies(database_id,principal,enabled,daily_budget_cycles) VALUES (?1,?2,1,?3)", params![db, caller, budget as i64]).map_err(|e| e.to_string())?;
             }
