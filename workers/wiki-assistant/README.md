@@ -94,3 +94,16 @@ The Worker schedules the funded deadline, and the iOS audio manager independentl
 Release still requires real II and GPT-Live connectivity, semantic evaluation of 20 representative questions, physical-device locked/background audio, interruptions and routing, actual settlement, cleanup notifications, and App Store/IAP disclosure review. API provisioning is deferred. Nothing in the offline tests authorizes deployment or enables the feature.
 
 Apply canister index migration 005 before distributing this iOS build: its cycle-ledger decoder expects the new voice fields. No legacy reply shim is included.
+
+
+## Voice interaction revision (2026-09-16)
+
+The iOS voice button performs access preflight, versioned consent and connection in one flow. `initialize_voice_policy(database_id)` is an authenticated owner-only, insert-once operation: an absent owner policy becomes enabled with ten minutes of the current rate as its daily cycles budget. It never changes an existing disabled or zero-budget policy. `get_voice_access(database_id, principal)` returns policy, current rate, remaining UTC-day budget and database balance. Budgets are fixed cycles amounts; rate changes never raise them automatically.
+
+Voice settings live under Settings → Voice, with database and member selection. Consent is account/version scoped, and a new rate version requires confirmation. Transcript events are deduplicated by provider event ID and grouped into stable utterance IDs. Snapshots carry utterances to the existing account-scoped Ask AI history. Historical context is bounded to 20 messages of 4,000 characters and 12,000 UTF-8 JSON bytes in total, is untrusted, and cannot substitute for current Wiki retrieval. Audio recordings are never persisted.
+
+The app stops the microphone immediately, requests server stop, fetches final state and acknowledges history persistence before logout. Failed persistence keeps a protected account-scoped recovery copy and exposes retry. Ending voice does not delete Ask AI history.
+
+Rollout order: upgrade the Wiki canister with the two new methods, deploy this Worker, then install/distribute iOS. Conversation format 2 deliberately retires previous temporary active sessions through the existing cleanup path; it does not reinterpret or migrate their encrypted content. New sessions must be started after the Worker upgrade. No SQLite table migration is needed for the new policy methods. Existing Ask AI history format is unchanged. Verify actual microphone audio, final settlement and server cleanup on the selected device before distribution.
+
+Voice finalization treats HTTP stop success as acceptance, not completion. The connection owner serializes received transcript/lifecycle events and drains their persistence before completing the provider close handshake. A recovery invocation may claim an idle connection lease to finish cleanup. The iOS client waits up to 30 seconds for the persisted `voice: off` state, then saves history before logout and local recovery deletion. A separate protected ending marker preserves retry-only behavior across application restarts. Expired remote sessions retain the last received local history with an explicit incomplete-final-state warning. Answer caveats are included both on screen and in the existing history message text.

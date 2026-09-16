@@ -105,18 +105,24 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         try Data("existing history".utf8).write(to: history)
         let cache = AssistantConversationCache(directory: root.appending(path: "preview", directoryHint: .isDirectory))
         let data = Data("""
-        {"id":"conversation","databaseId":"db","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"messages":[],"voice":"off"}
+        {"id":"conversation","databaseId":"db","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"messages":[],"utterances":[],"voice":"off"}
         """.utf8)
         let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
-        try cache.save(principal: "owner", snapshot: snapshot)
+        try cache.save(principal: "owner", snapshot: snapshot, conversationID: UUID(), databaseTitle: "Test")
         XCTAssertEqual(try cache.load()?.principal, "owner")
         XCTAssertEqual(try cache.load()?.snapshot.id, "conversation")
         XCTAssertEqual(try cache.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
         #if !targetEnvironment(simulator)
-        let attributes = try FileManager.default.attributesOfItem(atPath: cache.directory.appending(path: "conversation.json").path)
+        let attributes = try FileManager.default.attributesOfItem(atPath: cache.directory.appending(path: "conversation-v2.json").path)
         XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .completeUntilFirstUserAuthentication)
         #endif
+        let conversationID = try XCTUnwrap(cache.load()?.conversationID)
+        try cache.markEnding(conversationID: conversationID)
+        let reopened = AssistantConversationCache(directory: cache.directory)
+        XCTAssertTrue(try reopened.isEnding(conversationID: conversationID))
+        XCTAssertFalse(try reopened.isEnding(conversationID: UUID()))
         try cache.clear()
+        XCTAssertFalse(try reopened.isEnding(conversationID: conversationID))
         XCTAssertNil(try cache.load())
         XCTAssertEqual(try String(contentsOf: history, encoding: .utf8), "existing history")
     }

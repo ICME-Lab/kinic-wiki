@@ -23,7 +23,7 @@ export type AssistantSnapshot = {
     error: string | null;
   }[];
 };
-export const CONSENT_VERSION = "2026-09-14";
+export const CONSENT_VERSION = "2026-09-16";
 const errors: Record<string, string> = {
   assistant_disabled: "Ask AI is not available yet.",
   assistant_not_configured: "Ask AI has not been configured yet.",

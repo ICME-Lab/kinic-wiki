@@ -331,3 +331,28 @@ struct VoicePolicyInput: CandidConvertible {
     }
     var candidValue: CandidValue { recordValue(Self.candidType, [("database_id", databaseId.candidValue), ("principal", principal.candidValue), ("enabled", enabled.candidValue), ("daily_budget_cycles", budget.candidValue)]) }
 }
+
+struct VoiceRateInfo: CandidConvertible {
+    let version: UInt64
+    let cyclesPerMinute: UInt64
+    let authority: String
+    static let candidType: CandidType = .record(fields([("version", .nat64), ("cycles_per_minute", .nat64), ("authority", .text)]))
+    init(candidValue: CandidValue) throws {
+        let r = try CandidRecord(candidValue)
+        version = try r.required("version"); cyclesPerMinute = try r.required("cycles_per_minute"); authority = try r.required("authority")
+    }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("version", version.candidValue), ("cycles_per_minute", cyclesPerMinute.candidValue), ("authority", authority.candidValue)]) }
+}
+struct VoiceAccessInfo: CandidConvertible {
+    let policy: VoicePolicyInput
+    let rate: VoiceRateInfo
+    let remainingCycles: UInt64
+    let balanceCycles: UInt64
+    static let candidType: CandidType = .record(fields([("policy", VoicePolicyInput.candidType), ("rate", VoiceRateInfo.candidType), ("remaining_cycles", .nat64), ("balance_cycles", .nat64)]))
+    init(candidValue: CandidValue) throws {
+        let r = try CandidRecord(candidValue)
+        policy = try r.required("policy"); rate = try r.required("rate")
+        remainingCycles = try r.required("remaining_cycles"); balanceCycles = try r.required("balance_cycles")
+    }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("policy", policy.candidValue), ("rate", rate.candidValue), ("remaining_cycles", remainingCycles.candidValue), ("balance_cycles", balanceCycles.candidValue)]) }
+}

@@ -4,40 +4,16 @@ import { AssistantUser } from "./user";
 import { Leases } from "./leases";
 import {
   client,
-  attachLive,
+  closeLiveSession,
   cancelAgent,
   deleteAgent,
 } from "./openai";
 import { AssistantError } from "./contracts";
 export async function closeLive(env: Env, id: string) {
   try {
-    const ws = await attachLive(env.OPENAI_API_KEY!, id);
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        ws.close();
-        reject(new Error("voice_close_unconfirmed"));
-      }, 5000);
-      ws.addEventListener("message", (e) => {
-        if (typeof e.data !== "string") return;
-        try {
-          if (JSON.parse(e.data).type === "session.closed") {
-            clearTimeout(timer);
-            ws.close();
-            resolve();
-          }
-        } catch {
-          /* Not a lifecycle event. */
-        }
-      });
-      try {
-        ws.send(JSON.stringify({ type: "session.close" }));
-      } catch (e) {
-        clearTimeout(timer);
-        ws.close();
-        reject(e);
-      }
-    });
+    await closeLiveSession(env.OPENAI_API_KEY!, id);
   } catch (e) {
+    // A session the provider no longer knows is already closed.
     if (!(e instanceof AssistantError && e.code === "voice_session_gone"))
       throw e;
   }

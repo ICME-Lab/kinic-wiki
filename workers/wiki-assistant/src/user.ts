@@ -31,6 +31,7 @@ import {
   attachLive,
   cancelAgent,
   client,
+  closeLiveSession,
   createLive,
   createAgent,
   deleteAgent,
@@ -80,8 +81,11 @@ type VoiceUsage = {
   settled: boolean;
 };
 type Conversation = {
+  format: 2;
   native?: boolean;
   selectedPath?: string;
+  history: { role: "user" | "assistant"; text: string }[];
+  utterances: { id: string; voiceId: string; events: string[]; end: number; role: "user" | "assistant"; text: string }[];
   id: string;
   authId: string;
   principal: string;
@@ -95,6 +99,7 @@ type Conversation = {
   status: "ready" | "working" | "cancelling";
   error: string | null;
   messages: {
+    voice: boolean;
     requestId: string;
     question: string;
     answer: Answer | null;
@@ -130,6 +135,19 @@ export type UserState = {
   cleanup: Cleanup[];
 };
 const day = () => new Date().toISOString().slice(0, 10);
+const safeJson = (value: string): unknown => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+};
+// A voice session stops settling while the sideband is down, so recovery must
+// not wait for the next maintenance tick (the cron runs once a minute).
+export const SIDEBAND_RETRY_BASE_MS = 1000;
+export const SIDEBAND_RETRY_MAX_MS = 15000;
+export const sidebandRetryDelay = (attempt: number) =>
+  Math.min(SIDEBAND_RETRY_MAX_MS, SIDEBAND_RETRY_BASE_MS * 2 ** attempt);
 
 export class AssistantUser {
   private state!: UserState;
@@ -139,7 +157,11 @@ export class AssistantUser {
   private metering = false;
   private sideband: WebSocket | null = null;
   private sidebandId: string | null = null;
+  private sidebandRetry: ReturnType<typeof setTimeout> | undefined;
+  private sidebandAttempt = 0;
   private attaching: Promise<void> | null = null;
+  private liveEvents: Promise<void> = Promise.resolve();
+  private stopping: Promise<void> | null = null;
   private store: AssistantStore;
   private leases: Leases;
   private questionLease: Lease | null = null;
@@ -166,6 +188,11 @@ export class AssistantUser {
     const loaded = await this.store.load(this.principal);
     this.state = loaded.state;
     this.revision = loaded.revision;
+    // Format 2 adds durable utterances. Retire earlier temporary sessions once;
+    // never reinterpret an older encrypted conversation as the new format.
+    if (this.state.conversation && this.state.conversation.format !== 2) {
+      await this.endOwned(this.state.conversation.authId, this.state.conversation.id);
+    }
     this.nextWake = this.wakeDeadline();
     if (this.state.endRequested !== undefined && this.state.conversation)
       await this.endOwned(
@@ -266,6 +293,7 @@ export class AssistantUser {
       generation: c.generation,
       reconnectGraceMs: this.limits().reconnectMs,
       messages: c.messages,
+      utterances: c.utterances.map(({ id, role, text }) => ({ id, role, text })),
       voice: c.live ? (c.live.stopping ? "stopping" : "connected") : "off",
       voiceDeadline: this.voiceDeadline(c),
       voiceId: c.live?.usage.chargeId ?? null,
@@ -318,8 +346,9 @@ export class AssistantUser {
           .object({
             databaseId: z.string().min(1).max(128),
             scope: scopeSchema,
-            consent: z.literal("2026-09-14"),
+            consent: z.literal("2026-09-16"),
             selectedPath: z.string().max(512).optional(),
+            history: z.array(z.object({role: z.enum(["user", "assistant"]), text: z.string().max(4000)}).strict()).max(20).refine((items) => new TextEncoder().encode(JSON.stringify(items)).length <= 12000).default([]),
           })
           .strict()
           .parse(await readJson(request));
@@ -328,9 +357,12 @@ export class AssistantUser {
         if (this.state.cleanup.length)
           throw new AssistantError("cleanup_pending", 409);
         const c: Conversation = {
+          format: 2,
           id: crypto.randomUUID(),
           native: request.headers.get("x-assistant-client") === "native",
           selectedPath: input.selectedPath,
+          history: input.history,
+          utterances: [],
           principal,
           authId,
           databaseId: input.databaseId,
@@ -526,6 +558,7 @@ export class AssistantUser {
       delegationId,
     };
     c.messages.push({
+      voice: delegationId !== null,
       requestId: input.requestId,
       question: input.question,
       answer: null,
@@ -585,6 +618,7 @@ export class AssistantUser {
         p.input.question,
         c.scope,
         p.input.selectedPath,
+        c.history,
       );
       if (p.stage === "new") {
         p.stage = c.sessionId ? "sending" : "creating";
@@ -928,7 +962,7 @@ export class AssistantUser {
             this.sidebandId === task.liveId && this.sideband
               ? this.sideband
               : await attachLive(this.env.OPENAI_API_KEY!, task.liveId);
-          const seconds = await this.closeSocketSession(ws);
+          const seconds = await this.closeSocketSession(task.liveId, ws);
           if (task.voiceUsage) this.settleVoice(task.voiceUsage, seconds);
           task.liveId = null;
         }
@@ -1099,6 +1133,7 @@ export class AssistantUser {
               }
             }
           } finally {
+            this.clearSidebandRetry();
             this.sideband?.close();
             this.sideband = null;
             await this.leases.release(lease);
@@ -1153,17 +1188,22 @@ export class AssistantUser {
         !(await this.leases.renew(lease))
       )
         throw new Error("lease_lost");
+      const receivedEvents = this.liveEvents;
+      await receivedEvents;
+      const expectedRevision = this.revision;
       const current = await this.store.db
         .prepare("SELECT revision FROM assistant_users WHERE principal=?")
         .bind(this.principal)
         .first<{ revision: number }>();
       if (current && current.revision !== this.revision) {
         const loaded = await this.store.load(this.principal);
+        // Do not overwrite an event received while the snapshot was loading.
+        if (this.liveEvents !== receivedEvents || this.revision !== expectedRevision) return;
         this.state = loaded.state;
         this.revision = loaded.revision;
         this.broadcast();
       }
-      if (Date.now() >= this.nextWake) await this.tick();
+      if (this.state.conversation?.live?.stopping || Date.now() >= this.nextWake) await this.tick();
     } finally {
       this.driving = false;
     }
@@ -1180,16 +1220,30 @@ export class AssistantUser {
       ws.close(1008, "Stale connection");
       return;
     }
-    if (message === "heartbeat") {
-      const c = this.state.conversation;
-      if (!c || c.id !== original.id) {
-        ws.close(1000, "Conversation ended");
+    if (typeof message === "string" && message.length <= 65536) {
+      const heartbeat = z
+        .object({ type: z.literal("heartbeat"), requestId: z.string().uuid() })
+        .strict()
+        .safeParse(safeJson(message));
+      if (heartbeat.success) {
+        const c = this.state.conversation;
+        if (!c || c.id !== original.id) {
+          ws.close(1000, "Conversation ended");
+          return;
+        }
+        await (await this.reader(c)).authorize();
+        c.seen = Date.now();
+        await this.store.touch(this.principal, c.id);
+        // The client cannot tell a quiet session from a dead peer without a
+        // reply, so every heartbeat is echoed.
+        ws.send(
+          JSON.stringify({
+            type: "heartbeat",
+            requestId: heartbeat.data.requestId,
+          }),
+        );
         return;
       }
-      await (await this.reader(c)).authorize();
-      c.seen = Date.now();
-      await this.store.touch(this.principal, c.id);
-      return;
     }
     let requestId = "";
     try {
@@ -1369,6 +1423,7 @@ export class AssistantUser {
       settled: false,
     };
     c.live = { id: null, usage, stopping: false };
+    this.sidebandAttempt = 0;
     const live = c.live;
     c.transcripts = [];
     c.delegations = [];
@@ -1381,7 +1436,7 @@ export class AssistantUser {
         voiceId: usage.chargeId ?? null,
         requestId: usage.chargeId ?? null,
       });
-      const result = await createLive(client(this.env.OPENAI_API_KEY), sdp);
+      const result = await createLive(client(this.env.OPENAI_API_KEY), sdp, c.history);
       await this.store.created(intent, result.session.id);
       if (this.state.conversation !== c || c.live !== live) {
         this.state.cleanup.push({
@@ -1547,9 +1602,14 @@ export class AssistantUser {
     const conversationId = c.id;
     const lease = this.connectionLease;
     if (!id || !lease) return;
+    // Readiness, not the tracked id, decides whether coverage already exists: a
+    // socket that closed after attach leaves the id behind.
     if (this.sidebandId === id && this.sideband?.readyState === WebSocket.OPEN)
       return;
     this.sideband?.close();
+    this.sideband = null;
+    this.sidebandId = null;
+    this.clearSidebandRetry();
     const ws = await attachLive(this.env.OPENAI_API_KEY!, id);
     const ownsConnection = await this.leases.valid(lease);
     const current = this.state.conversation;
@@ -1565,15 +1625,29 @@ export class AssistantUser {
     }
     this.sideband = ws;
     this.sidebandId = id;
+    // The attempt counter is deliberately not reset here: an attachment that
+    // closes immediately would otherwise retry at the floor interval forever.
     ws.addEventListener("message", (event) => {
-      if (typeof event.data === "string")
-        this.background(this.liveEvent(conversationId, id, ws, event.data));
+      if (typeof event.data !== "string") return;
+      const data = event.data;
+      const accepted = this.sideband === ws && this.sidebandId === id;
+      if (!accepted) return;
+      if ((safeJson(data) as { type?: unknown } | undefined)?.type === "session.closed") {
+        this.clearSidebandRetry();
+        const live = this.state.conversation?.live;
+        if (live?.id === id) live.stopping = true;
+      }
+      // Capture ownership on receipt: a subsequent socket close must not discard
+      // already received transcript fragments waiting for their D1 write.
+      this.liveEvents = this.liveEvents.catch(() => {}).then(() => this.liveEvent(conversationId, id, ws, data, true));
+      this.background(this.liveEvents);
     });
     ws.addEventListener("close", () => {
       if (this.sideband === ws) {
         this.sideband = null;
         this.sidebandId = null;
       }
+      this.scheduleSidebandRetry(id);
     });
     ws.addEventListener("error", () => {
       ws.close();
@@ -1584,6 +1658,64 @@ export class AssistantUser {
       delegation_id: null,
       content: `Selected Wiki scope: ${current.scope}. Use the backend for every Wiki claim.`,
     });
+    // A socket can already be closed when it is adopted, and such a socket may
+    // never emit `close`; without this the session would stay uncovered.
+    if (ws.readyState !== WebSocket.OPEN) {
+      if (this.sideband === ws) {
+        this.sideband = null;
+        this.sidebandId = null;
+      }
+      this.scheduleSidebandRetry(id);
+    }
+  }
+  private clearSidebandRetry(): void {
+    if (this.sidebandRetry !== undefined) {
+      clearTimeout(this.sidebandRetry);
+      this.sidebandRetry = undefined;
+    }
+  }
+  private scheduleSidebandRetry(id: string): void {
+    // Reattachment is only useful while this user still owns a live voice
+    // session; stopping sessions are settled by stopVoice and cleanup.
+    const c = this.state.conversation;
+    const lease = this.connectionLease;
+    if (this.sidebandRetry !== undefined || !lease || c?.live?.id !== id) return;
+    if (c.live.stopping) return;
+    // Only a socket that is still open keeps the session covered. A socket that
+    // closed just after attach leaves the id behind, so readiness, not the id,
+    // decides whether recovery is still needed.
+    if (this.sidebandId === id && this.sideband?.readyState === WebSocket.OPEN)
+      return;
+    const attempt = this.sidebandAttempt++;
+    this.sidebandRetry = setTimeout(() => {
+      this.sidebandRetry = undefined;
+      this.background(
+        (async () => {
+          const current = this.state.conversation;
+          if (!current || current.live?.id !== id || current.live.stopping)
+            return;
+          if (!this.connectionLease) return;
+          if (!(await this.leases.valid(this.connectionLease))) return;
+          if (this.sideband?.readyState === WebSocket.OPEN) return;
+          try {
+            await this.ensureSideband(current);
+          } catch (error) {
+            if (
+              error instanceof AssistantError &&
+              error.code === "voice_session_gone"
+            ) {
+              this.finishVoice(current);
+              await this.save();
+              this.broadcast();
+            } else this.scheduleSidebandRetry(id);
+            return;
+          }
+          // The attachment may have closed while it was being adopted; coverage
+          // is only restored once the socket is actually open.
+          this.scheduleSidebandRetry(id);
+        })(),
+      );
+    }, sidebandRetryDelay(attempt));
   }
   private async sendLive(value: unknown): Promise<void> {
     const c = this.state.conversation;
@@ -1607,14 +1739,14 @@ export class AssistantUser {
     id: string,
     ws: WebSocket,
     data: string,
+    accepted = false,
   ): Promise<void> {
     const lease = this.connectionLease;
     if (!lease || !(await this.leases.valid(lease))) return;
     const c = this.state.conversation;
     if (
       this.connectionLease !== lease ||
-      this.sideband !== ws ||
-      this.sidebandId !== id ||
+      (!accepted && (this.sideband !== ws || this.sidebandId !== id)) ||
       c?.id !== conversationId ||
       c.live?.id !== id ||
       data.length > 65536
@@ -1635,14 +1767,36 @@ export class AssistantUser {
       this.broadcast();
       return;
     }
-    if (c.live.stopping) return;
     if (
       (event.type === "session.input_transcript.delta" ||
         event.type === "session.output_transcript.delta") &&
-      typeof event.delta === "string" &&
+      typeof event.delta === "string" && event.delta.length > 0 &&
       typeof event.start_ms === "number" &&
-      typeof event.end_ms === "number"
+      typeof event.end_ms === "number" &&
+      typeof event.event_id === "string" && event.event_id.length <= 200
     ) {
+      const role = event.type === "session.input_transcript.delta" ? "user" : "assistant";
+      const voiceId = id;
+      const eventId = event.event_id;
+      if (c.utterances.some((item) => item.voiceId === voiceId && item.events.includes(eventId))) return;
+      if (c.utterances.length >= 500 || c.utterances.reduce((n, item) => n + item.events.length, 0) >= 2000) {
+        c.error = "voice_context_limit";
+        this.background(this.stopVoice(c));
+        return;
+      }
+      const last = c.utterances.at(-1);
+      if (last && last.voiceId === voiceId && last.role === role && event.start_ms - last.end < 2000 && last.text.length + event.delta.length <= 4000 && last.events.length < 200) {
+        last.text += event.delta;
+        last.end = event.end_ms;
+        last.events.push(eventId);
+      } else {
+        c.utterances.push({ id: crypto.randomUUID(), voiceId, events: [eventId], end: event.end_ms, role, text: event.delta.slice(0, 4000) });
+      }
+      if (c.utterances.reduce((n, item) => n + item.text.length, 0) > 48000) {
+        c.error = "voice_context_limit";
+        this.background(this.stopVoice(c));
+        return;
+      }
       c.transcripts.push({
         role:
           event.type === "session.input_transcript.delta"
@@ -1655,17 +1809,19 @@ export class AssistantUser {
       c.activity = Date.now();
       if (c.transcripts.reduce((n, t) => n + t.text.length, 0) > 24000) {
         c.error = "voice_context_limit";
-        await this.stopVoice(c);
+        this.background(this.stopVoice(c));
         return;
       }
       await this.save();
+      this.broadcast();
     }
+    if (c.live?.stopping) return;
     if (event.type === "session.delegation.created") {
       const charge = this.state.charges.find(
         (b) => b.id === c.live?.usage.chargeId,
       );
       if (charge && charge.started === null) {
-        await this.stopVoice(c, false);
+        this.background(this.stopVoice(c, false));
         return;
       }
       const parsed = z
@@ -1737,6 +1893,7 @@ export class AssistantUser {
     c.deferred = null;
     c.transcripts = [];
     c.delegations = [];
+    this.clearSidebandRetry();
     this.sideband?.close();
     this.sideband = null;
     this.sidebandId = null;
@@ -1771,44 +1928,23 @@ export class AssistantUser {
     c.error = "voice_connection_failed";
     await this.stopVoice(c, false);
   }
-  private async closeSocketSession(ws: WebSocket): Promise<unknown> {
-    return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        ws.removeEventListener("message", handler);
-        ws.close();
-        reject(new Error("voice_close_unconfirmed"));
-      }, 5000);
-      const handler = (event: MessageEvent) => {
-        if (typeof event.data !== "string") return;
-        let seconds: unknown;
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type !== "session.closed") return;
-          seconds = data.usage?.seconds;
-        } catch {
-          return;
-        }
-        clearTimeout(timer);
-        ws.removeEventListener("message", handler);
-        ws.close();
-        resolve(seconds);
-      };
-      ws.addEventListener("message", handler);
-      try {
-        ws.send(JSON.stringify({ type: "session.close" }));
-      } catch (error) {
-        clearTimeout(timer);
-        ws.removeEventListener("message", handler);
-        ws.close();
-        reject(error);
-      }
-    });
+  private async closeSocketSession(
+    id: string,
+    ws: WebSocket,
+  ): Promise<unknown> {
+    return closeLiveSession(this.env.OPENAI_API_KEY!, id, ws, () => this.liveEvents);
   }
   private async stopVoice(
     c: Conversation,
     cancelPending = false,
   ): Promise<void> {
+    if (this.stopping) return this.stopping;
+    this.stopping = this.stopVoiceOnce(c, cancelPending);
+    try { await this.stopping; } finally { this.stopping = null; }
+  }
+  private async stopVoiceOnce(c: Conversation, cancelPending: boolean): Promise<void> {
     if (!c.live) return;
+    this.clearSidebandRetry();
     this.stopCharge(c);
     c.live.stopping = true;
     c.deferred = null;
@@ -1816,10 +1952,19 @@ export class AssistantUser {
     this.broadcast();
     if (cancelPending && c.pending?.delegationId) await this.cancel(c);
     if (c.live?.id) {
+      let temporaryLease: Lease | null = null;
       try {
+        if (!this.connectionLease) {
+          temporaryLease = await this.leases.claim("connection", c.id);
+          if (!temporaryLease) return;
+          this.connectionLease = temporaryLease;
+        }
         await this.ensureSideband(c);
         if (!this.sideband) throw new Error("voice_close_unconfirmed");
-        const seconds = await this.closeSocketSession(this.sideband);
+        const seconds = await this.closeSocketSession(
+          c.live.id,
+          this.sideband,
+        );
         this.finishVoice(c, seconds);
       } catch (error) {
         if (
@@ -1828,6 +1973,12 @@ export class AssistantUser {
         )
           this.finishVoice(c);
         else c.error = "voice_close_pending";
+      } finally {
+        if (temporaryLease) {
+          this.sideband?.close(); this.sideband = null; this.sidebandId = null;
+          this.connectionLease = null;
+          await this.leases.release(temporaryLease);
+        }
       }
     } else c.live = null;
     await this.save();

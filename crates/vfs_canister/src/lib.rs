@@ -1,5 +1,5 @@
 use vfs_types::{
-    VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
+    VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
 };
 // Where: crates/vfs_canister/src/lib.rs
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
@@ -781,6 +781,17 @@ fn configure_voice_rate(rate: VoiceRate) -> Result<(), String> {
 #[query]
 fn get_voice_rate() -> Result<VoiceRate, String> {
     with_service(|s| s.get_voice_rate())
+}
+#[update]
+fn initialize_voice_policy(database_id: String) -> Result<VoicePolicy, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("initialize_voice_policy", None, |s, caller, _| {
+        s.initialize_voice_policy(caller, &database_id)
+    })
+}
+#[query]
+fn get_voice_access(database_id: String, principal: String) -> Result<VoiceAccess, String> {
+    with_service(|s| s.get_voice_access(&caller_text(), &database_id, &principal, now_millis()))
 }
 #[update]
 fn set_voice_policy(policy: VoicePolicy) -> Result<(), String> {

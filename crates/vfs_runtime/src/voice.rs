@@ -1,7 +1,7 @@
 // Voice reservations share the DB balance transaction; no external calls occur here.
 use super::*;
 use vfs_types::{
-    VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
+    VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
 };
 
 fn cost(rate: u64, seconds: u64) -> Result<u64, String> {
@@ -112,6 +112,44 @@ impl VfsService {
     }
     pub fn get_voice_rate(&self) -> Result<VoiceRate, String> {
         self.read_index(latest_rate)
+    }
+    /// Initialize only an absent owner policy. Explicit opt-outs must survive.
+    pub fn initialize_voice_policy(&self, caller: &str, db: &str) -> Result<VoicePolicy, String> {
+        self.require_database_role(db, caller, RequiredRole::Owner)?;
+        self.write_index(|tx| {
+            let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM voice_policies WHERE database_id=?1 AND principal=?2)", params![db, caller], |r| crate::sqlite::row_get(r, 0)).map_err(|e| e.to_string())?;
+            if !exists {
+                let budget = cost(latest_rate(tx)?.cycles_per_minute, 600)?;
+                tx.execute("INSERT INTO voice_policies(database_id,principal,enabled,daily_budget_cycles) VALUES (?1,?2,1,?3)", params![db, caller, budget as i64]).map_err(|e| e.to_string())?;
+            }
+            policy(tx, db, caller)
+        })
+    }
+    pub fn get_voice_access(
+        &self,
+        caller: &str,
+        db: &str,
+        principal: &str,
+        now: i64,
+    ) -> Result<VoiceAccess, String> {
+        self.require_database_role(
+            db,
+            caller,
+            if caller == principal {
+                RequiredRole::Reader
+            } else {
+                RequiredRole::Owner
+            },
+        )?;
+        self.read_index(|conn| {
+            let policy = policy(conn, db, principal)?;
+            let used: i64 = conn.query_row("SELECT COALESCE(SUM(held_cycles + charged_cycles),0) FROM voice_reservations WHERE database_id=?1 AND principal=?2 AND usage_day=?3", params![db, principal, now / DAY_MS], |r| crate::sqlite::row_get(r, 0)).map_err(|e|e.to_string())?;
+            Ok(VoiceAccess {
+                remaining_cycles: policy.daily_budget_cycles.saturating_sub(used.max(0) as u64),
+                balance_cycles: billing::load_storage_cycle_account(conn, db)?.balance_cycles.max(0) as u64,
+                policy, rate: latest_rate(conn)?,
+            })
+        })
     }
     pub fn set_voice_policy(&self, caller: &str, value: VoicePolicy) -> Result<(), String> {
         validate_principal_text(&value.principal)?;
@@ -316,6 +354,64 @@ mod tests {
             rate_version: 1,
             reserved_seconds: seconds,
         }
+    }
+    #[test]
+    fn owner_defaults_preserve_explicit_policy_and_rate_budget() {
+        let (_dir, s) = setup();
+        s.write_index(|tx| {
+            tx.execute("DELETE FROM voice_policies", params![])
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(s.initialize_voice_policy(WORKER, "wiki").is_err());
+        let p = s.initialize_voice_policy(USER, "wiki").unwrap();
+        assert!(p.enabled);
+        assert_eq!(p.daily_budget_cycles, 610);
+        assert_eq!(p, s.initialize_voice_policy(USER, "wiki").unwrap());
+        let admin = s.cycles_billing_config().unwrap().billing_authority_id;
+        s.configure_voice_rate(
+            &admin,
+            VoiceRate {
+                version: 2,
+                cycles_per_minute: 122,
+                authority: WORKER.into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.initialize_voice_policy(USER, "wiki")
+                .unwrap()
+                .daily_budget_cycles,
+            610
+        );
+        s.set_voice_policy(
+            USER,
+            VoicePolicy {
+                enabled: false,
+                daily_budget_cycles: 0,
+                ..p
+            },
+        )
+        .unwrap();
+        let preserved = s.initialize_voice_policy(USER, "wiki").unwrap();
+        assert!(!preserved.enabled);
+        assert_eq!(preserved.daily_budget_cycles, 0);
+    }
+    #[test]
+    fn access_reports_reserved_budget_and_utc_reset() {
+        let (_dir, s) = setup();
+        s.reserve_voice(WORKER, request("access", 60), 0).unwrap();
+        let access = s.get_voice_access(USER, "wiki", USER, 0).unwrap();
+        assert_eq!(access.remaining_cycles, 139);
+        assert_eq!(access.balance_cycles, 939);
+        assert_eq!(
+            s.get_voice_access(USER, "wiki", USER, DAY_MS)
+                .unwrap()
+                .remaining_cycles,
+            200
+        );
+        assert!(s.get_voice_access(WORKER, "wiki", USER, 0).is_err());
     }
     #[test]
     fn reservation_and_partial_close_are_idempotent() {

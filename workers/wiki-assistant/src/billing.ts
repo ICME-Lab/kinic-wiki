@@ -118,7 +118,16 @@ function actor(
   });
 }
 function unwrap<T>(r: Result<T>): T {
-  if ("Err" in r) throw new AssistantError("voice_billing_denied", 403);
+  if ("Err" in r) {
+    const codes: Record<string, string> = {
+      "voice permission required": "voice_permission_required",
+      "voice daily budget exceeded": "voice_budget_exhausted",
+      "insufficient database cycles": "voice_balance_insufficient",
+      "voice rate or reservation changed": "voice_price_consent_required",
+      "voice billing not configured": "voice_billing_not_configured",
+    };
+    throw new AssistantError(codes[r.Err] ?? "voice_billing_denied", 403);
+  }
   return r.Ok;
 }
 export async function voicePolicy(

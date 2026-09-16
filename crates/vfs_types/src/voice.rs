@@ -44,3 +44,11 @@ pub struct VoiceReservation {
     pub charged_cycles: u64,
     pub closed: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct VoiceAccess {
+    pub policy: VoicePolicy,
+    pub rate: VoiceRate,
+    pub remaining_cycles: u64,
+    pub balance_cycles: u64,
+}

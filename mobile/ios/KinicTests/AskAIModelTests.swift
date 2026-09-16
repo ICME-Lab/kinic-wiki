@@ -9,6 +9,73 @@ import Testing
 @MainActor
 struct AskAIModelTests {
     @Test
+    func voiceCaveatsSurviveReloadAndRepeatedSnapshots() async throws {
+        let store = AskAIStoreStub()
+        let model = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: store)
+        await model.load()
+        let id = UUID()
+        let data = Data("""
+        {"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"internal","answer":{"answer":"Answer","citations":[],"insufficient":true,"contradictions":["First contradiction","Second contradiction"],"unverified":["Unverified claim"]}}]}
+        """.utf8)
+        let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
+        try await model.saveVoiceSnapshot(snapshot, conversationID: id, title: "Wiki", scope: .guest)
+        try await model.saveVoiceSnapshot(snapshot, conversationID: id, title: "Wiki", scope: .guest)
+        let stored = try await store.load()
+        let reloaded = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: AskAIStoreStub(savedConversations: stored))
+        await reloaded.load()
+        let text = try #require(reloaded.conversations.first?.messages.first?.text)
+        #expect(text.contains("根拠が不足しています。"))
+        #expect(text.contains("矛盾する情報"))
+        #expect(text.contains("Second contradiction"))
+        #expect(text.contains("未検証の情報"))
+        #expect(text.components(separatedBy: "Unverified claim").count == 2)
+        #expect(reloaded.conversations.first?.messages.count == 1)
+    }
+
+    @Test
+    func voiceHistorySaveFailureCanRetryWithoutDuplicateMessages() async throws {
+        let store = AskAIStoreStub(saveFailuresRemaining: 1)
+        let model = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: store)
+        await model.load()
+        let id = UUID()
+        let value = Data("""
+        {"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"Internal instruction","answer":{"answer":"Answer","citations":[{"id":"S1","databaseId":"db_test","path":"/Knowledge/Note","excerpt":"Evidence","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
+        """.utf8)
+        let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: value)
+        await #expect(throws: AskAIStoreStubError.self) {
+            try await model.saveVoiceSnapshot(snapshot, conversationID: id, title: "Wiki", scope: .guest)
+        }
+        try await model.saveVoiceSnapshot(snapshot, conversationID: id, title: "Wiki", scope: .guest)
+        #expect(model.messages.count == 1)
+        #expect(model.messages.first?.text == "Answer")
+        #expect(model.messages.first?.sources.first?.path == "/Knowledge/Note")
+        #expect(await store.savedConversations.count == 1)
+    }
+
+    @Test
+    func voiceSnapshotsUpdateStableMessagesWithoutCrossingAccounts() async throws {
+        let store = AskAIStoreStub()
+        let model = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: store)
+        await model.load()
+        let id = UUID()
+        func snapshot(_ text: String) throws -> AssistantSnapshot {
+            let value: [String: Any] = ["id": "voice-session", "databaseId": "db_test", "scope": "/Knowledge", "status": "ready", "generation": 0, "reconnectGraceMs": 120000, "voice": "off", "messages": [], "utterances": [["id": "stable", "role": "user", "text": text]]]
+            return try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+        try await model.saveVoiceSnapshot(snapshot("Hello"), conversationID: id, title: "Wiki", scope: .guest)
+        let messageID = try #require(model.messages.first?.id)
+        try await model.saveVoiceSnapshot(snapshot("Hello world"), conversationID: id, title: "Wiki", scope: .guest)
+        #expect(model.messages.count == 1)
+        #expect(model.messages.first?.id == messageID)
+        #expect(model.messages.first?.text == "Hello world")
+        #expect(await store.savedConversations.first?.messages.first?.text == "Hello world")
+        await #expect(throws: CancellationError.self) {
+            try await model.saveVoiceSnapshot(snapshot("Wrong account"), conversationID: id, title: "Wiki", scope: AskAIHistoryScope(principal: "aaaaa-aa"))
+        }
+        #expect(model.messages.first?.text == "Hello world")
+    }
+
+    @Test
     func currentSourcesUsesOnlyLatestCompletedAssistantSources() {
         let previousSource = contextSource(id: "S1").source
         let latestSource = contextSource(id: "S2").source
@@ -1647,6 +1714,7 @@ private actor AskAICompletionStub: AskAICompleting {
 private actor AskAIStoreStub: AskAIConversationPersisting {
     private(set) var savedConversations: [AskAIConversation]
     private var loadFailuresRemaining: Int
+    private var saveFailuresRemaining: Int
     private var deleteFailuresRemaining: Int
     private var storedConversationData: Bool
     private(set) var saveCount = 0
@@ -1656,11 +1724,13 @@ private actor AskAIStoreStub: AskAIConversationPersisting {
     init(
         savedConversations: [AskAIConversation] = [],
         loadFailuresRemaining: Int = 0,
+        saveFailuresRemaining: Int = 0,
         hasStoredConversationData: Bool? = nil,
         deleteFailuresRemaining: Int = 0
     ) {
         self.savedConversations = savedConversations
         self.loadFailuresRemaining = loadFailuresRemaining
+        self.saveFailuresRemaining = saveFailuresRemaining
         self.deleteFailuresRemaining = deleteFailuresRemaining
         storedConversationData = hasStoredConversationData ?? !savedConversations.isEmpty
     }
@@ -1679,6 +1749,7 @@ private actor AskAIStoreStub: AskAIConversationPersisting {
 
     func save(_ conversations: [AskAIConversation]) async throws {
         saveCount += 1
+        if saveFailuresRemaining > 0 { saveFailuresRemaining -= 1; throw AskAIStoreStubError.loadFailed }
         savedConversations = conversations
         storedConversationData = true
     }

@@ -138,7 +138,7 @@ describe("Ask AI panel", () => {
     await screen.findByRole("textbox", { name: "Question about the Wiki" });
     expect(
       requests.find((r) => r.path.endsWith("/conversations"))?.body,
-    ).toEqual({ databaseId: "db", scope: "/Knowledge", consent: "2026-09-14" });
+    ).toEqual({ databaseId: "db", scope: "/Knowledge", consent: "2026-09-16" });
   });
   it("shows the exact citation excerpt and a changed-version notice", async () => {
     active = snapshot();

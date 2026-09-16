@@ -125,6 +125,23 @@ extension AppModel: AskAIKnowledgeProviding {
         )
     }
 
+    func voiceAccess(databaseId: String, principal: String, initializeOwner: Bool = false) async throws -> VoiceAccessInfo {
+        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
+        let native = ICClient(configuration: try configuration.makeICClientConfiguration())
+        let identity = try session.requireNativeSession()
+        if initializeOwner {
+            let result: VFSCandidResult<VoicePolicyInput, String> = try await native.call(method: "initialize_voice_policy", arguments: CandidArguments([try CandidTypedValue(databaseId)]), identity: identity)
+            _ = try result.textValue()
+        }
+        let result: VFSCandidResult<VoiceAccessInfo, String> = try await native.query(method: "get_voice_access", arguments: CandidArguments([try CandidTypedValue(databaseId), try CandidTypedValue(principal)]), identity: identity)
+        return try result.textValue()
+    }
+
+    func voiceMembers(databaseId: String) async throws -> [DatabaseMember] {
+        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
+        return try await client.listDatabaseMembers(databaseId: databaseId, session: session)
+    }
+
     func saveVoicePolicy(databaseId: String, principal: String, enabled: Bool, budget: UInt64) async throws {
         guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
         let native = ICClient(configuration: try configuration.makeICClientConfiguration())
@@ -1323,12 +1340,12 @@ final class AppModel {
         }
     }
 
-    func connectVoicePreview(databaseId: String, selectedPath: String?) async {
+    func connectVoicePreview(databaseId: String, selectedPath: String?, history: [[String: String]] = []) async {
         guard let session else {
             voicePreview.authenticationUnavailable()
             return
         }
-        await voicePreview.connect(databaseId: databaseId, identity: session, selectedPath: selectedPath)
+        await voicePreview.connect(databaseId: databaseId, identity: session, selectedPath: selectedPath, history: history)
     }
 
     func signOut() {
@@ -1397,6 +1414,8 @@ final class AppModel {
         }
 
         var localCleanupFailureCount = 0
+        do { try await voicePreview.deleteAccountRecovery(principal: session.principal) }
+        catch { localCleanupFailureCount += 1 }
         do {
             if let coordinatedHistoryDeletion {
                 try await coordinatedHistoryDeletion(historyScope)

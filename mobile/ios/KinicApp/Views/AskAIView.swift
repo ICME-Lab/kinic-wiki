@@ -19,7 +19,8 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Voice preview", systemImage: "waveform") { isShowingPreview = true }
+                    Button("音声対話", systemImage: "waveform") { isShowingPreview = true }
+                        .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
                     }
@@ -30,8 +31,8 @@ struct AskAIView: View {
                         .disabled(appModel.selectedAskAIDatabaseId.isEmpty)
                 }
             }
-            .sheet(isPresented: $isShowingPreview) {
-                VoicePreviewView(appModel: appModel, model: appModel.voicePreview)
+            .fullScreenCover(isPresented: $isShowingPreview) {
+                VoicePreviewView(appModel: appModel, model: appModel.voicePreview, historyModel: model)
             }
             .sheet(isPresented: $isShowingHistory) {
                 AskAIHistoryView(model: model)

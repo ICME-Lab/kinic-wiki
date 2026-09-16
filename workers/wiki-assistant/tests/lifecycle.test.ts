@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import OpenAI from "openai";
-import { AssistantUser, voiceSummary } from "../src/user";
-import { DEFAULT_LIMITS } from "../src/contracts";
+import {
+  AssistantUser,
+  SIDEBAND_RETRY_BASE_MS,
+  SIDEBAND_RETRY_MAX_MS,
+  sidebandRetryDelay,
+  voiceSummary,
+} from "../src/user";
+import { AssistantError, DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -58,6 +64,31 @@ vi.mock("../src/openai", () => ({
     }),
   messageText: (item: { text?: string }) => item.text ?? "",
   attachLive: mocks.attach,
+  // Deliberately minimal: the real handshake is covered by
+  // close-live.worker.test.ts against the actual implementation. Copying that
+  // logic here would let the two drift apart while staying green.
+  closeLiveSession: async (
+    _apiKey: string,
+    _id: string,
+    ws?: WebSocket,
+    drainEvents: () => Promise<void> = async () => {},
+  ): Promise<unknown> => {
+    const socket = ws ?? ((await mocks.attach(_apiKey, _id)) as WebSocket);
+    let seconds: unknown;
+    socket.addEventListener("message", (event) => {
+      const data = JSON.parse(String((event as MessageEvent).data)) as {
+        type?: unknown;
+        usage?: { seconds?: unknown };
+      };
+      if (data.type === "session.closed") seconds = data.usage?.seconds;
+    });
+    socket.send(JSON.stringify({ type: "session.close" }));
+    // ClosingSocket answers on a microtask, so let it deliver before reading.
+    await Promise.resolve();
+    await Promise.resolve();
+    await drainEvents();
+    return seconds;
+  },
   voiceInstructions: "test",
 }));
 vi.mock("@kinic/ii-server/internet-identity", () => ({
@@ -224,7 +255,7 @@ async function harness() {
   const created = await call("/conversations", {
     databaseId: "db",
     scope: "/Knowledge",
-    consent: "2026-09-14",
+    consent: "2026-09-16",
   });
   id = ((await created.json()) as { id: string }).id;
   return {
@@ -292,7 +323,7 @@ describe("conversation lifecycle", () => {
         await h.call("/conversations", {
           databaseId: "other",
           scope: "/Knowledge",
-          consent: "2026-09-14",
+          consent: "2026-09-16",
         })
       ).status,
     ).toBe(409);
@@ -549,6 +580,13 @@ async function withVoice() {
   await h.user["save"]();
   return { ...h, c, ws };
 }
+it("coalesces simultaneous stop requests into one provider close", async () => {
+  const h = await withVoice();
+  const spy = vi.spyOn(h.ws, "send");
+  await Promise.all([h.user["stopVoice"](h.c), h.user["stopVoice"](h.c)]);
+  expect(spy.mock.calls.filter(([data]) => JSON.parse(data).type === "session.close")).toHaveLength(1);
+  expect(h.c.live).toBeNull();
+});
 it("never postpones an alarm under frequent saves and heartbeats", async () => {
   vi.useFakeTimers();
   const h = await withVoice();
@@ -647,7 +685,7 @@ it.each(["end", "db-change", "logout"])(
     const h = await withVoice();
     const usage = h.c.live!.usage;
     h.c.messages.push({
-      requestId: crypto.randomUUID(),
+      voice: false,      requestId: crypto.randomUUID(),
       question: "private question",
       answer: null,
       error: null,
@@ -884,16 +922,44 @@ describe("sideband across D1 reloads", () => {
   const transcript = {
     type: "session.input_transcript.delta",
     delta: "Question",
+    event_id: "transcript-1",
     start_ms: 0,
     end_ms: 100,
   };
+  it("persists received final fragments before closing even if the socket closes immediately", async () => {
+    const h = await connected();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const originalSave = h.user["save"].bind(h.user);
+    let intercepted = false;
+    vi.spyOn(h.user as unknown as { save: () => Promise<void> }, "save").mockImplementation(async () => {
+      if (!intercepted) { intercepted = true; await blocked; }
+      await originalSave();
+    });
+    const emit = (event: unknown) => h.ws.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(event) }));
+    emit(transcript);
+    emit({ type: "session.closed", usage: { seconds: 7 } });
+    h.ws.dispatchEvent(new Event("close"));
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.c.live).not.toBeNull();
+    release();
+    await h.drain();
+    expect(h.c.utterances[0].text).toBe("Question");
+    expect(h.c.live).toBeNull();
+  });
   it("keeps transcripts and delegation on the current conversation after drive reloads D1", async () => {
     const h = await connected();
     await h.emit(transcript);
     const current = await h.reload();
     await h.user["ensureSideband"](current);
     await h.emit(transcript);
-    expect(current.transcripts).toHaveLength(2);
+    expect(current.transcripts).toHaveLength(1);
+    expect(current.utterances).toHaveLength(1);
+    const originalID = current.utterances[0].id;
+    await h.emit({ ...transcript, event_id: "transcript-2", delta: " continued", start_ms: 100, end_ms: 200 });
+    expect(current.utterances[0].text).toBe("Question continued");
+    expect(current.utterances[0].id).toBe(originalID);
+    expect(h.user["snapshot"](current).utterances[0].id).toBe(originalID);
     const delegate = vi
       .spyOn(
         h.user as unknown as { delegate: (typeof h.user)["delegate"] },
@@ -908,12 +974,12 @@ describe("sideband across D1 reloads", () => {
     expect(delegate).toHaveBeenCalledWith(current, "d", 100);
     expect(mocks.attach).toHaveBeenCalledTimes(1);
   });
-  it("settles a stopping session once after reload and ignores new input", async () => {
+  it("settles a stopping session once and retains final transcript fragments", async () => {
     const h = await connected();
     const current = await h.reload();
     current.live!.stopping = true;
     await h.emit(transcript);
-    expect(current.transcripts).toHaveLength(0);
+    expect(current.utterances).toHaveLength(1);
     await h.emit({ type: "session.closed", usage: { seconds: 7 } });
     expect(current.live).toBeNull();
     expect(h.user["state"].voiceSeconds).toBe(7);
@@ -983,4 +1049,133 @@ describe("sideband across D1 reloads", () => {
       );
     },
   );
+});
+
+describe("sideband reconnection", () => {
+  async function live() {
+    const h = await withVoice();
+    h.user["sideband"] = null;
+    mocks.attach.mockResolvedValue(h.ws);
+    await h.user["ensureSideband"](h.c);
+    // withVoice seeds the socket directly; attach once so the close handler is
+    // registered on a socket the retry path can actually re-attach.
+    return h;
+  }
+  it("reattaches the sideband after an unexpected close", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    expect(mocks.attach).toHaveBeenCalledTimes(1);
+    h.ws.dispatchEvent(new Event("close"));
+    expect(h.user["sideband"]).toBeNull();
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_BASE_MS + 1);
+    await h.drain();
+    expect(mocks.attach).toHaveBeenCalledTimes(2);
+    expect(h.user["sideband"]).toBe(h.ws);
+  });
+  it("does not reattach once the session is stopping", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    h.c.live!.stopping = true;
+    h.ws.dispatchEvent(new Event("close"));
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS + 1);
+    await h.drain();
+    expect(mocks.attach).toHaveBeenCalledTimes(1);
+  });
+  it("does not reattach after the conversation ended", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    h.ws.dispatchEvent(new Event("close"));
+    h.user["state"].conversation = null;
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS + 1);
+    await h.drain();
+    expect(mocks.attach).toHaveBeenCalledTimes(1);
+  });
+  it("does not reattach when the connection lease is gone", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    vi.spyOn(h.user["leases"], "valid").mockResolvedValue(false);
+    h.ws.dispatchEvent(new Event("close"));
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS + 1);
+    await h.drain();
+    expect(mocks.attach).toHaveBeenCalledTimes(1);
+  });
+  it("settles the session when the provider reports it is gone", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    mocks.attach.mockRejectedValue(
+      new AssistantError("voice_session_gone", 410),
+    );
+    h.ws.dispatchEvent(new Event("close"));
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_BASE_MS + 1);
+    await h.drain();
+    expect(h.c.live).toBeNull();
+    const attempts = mocks.attach.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS * 2);
+    await h.drain();
+    expect(mocks.attach).toHaveBeenCalledTimes(attempts);
+  });
+  it("keeps the retry delay bounded when attachments keep failing", () => {
+    expect(sidebandRetryDelay(0)).toBe(SIDEBAND_RETRY_BASE_MS);
+    expect(sidebandRetryDelay(1)).toBe(SIDEBAND_RETRY_BASE_MS * 2);
+    expect(sidebandRetryDelay(2)).toBe(SIDEBAND_RETRY_BASE_MS * 4);
+    expect(sidebandRetryDelay(8)).toBe(SIDEBAND_RETRY_MAX_MS);
+    expect(sidebandRetryDelay(50)).toBe(SIDEBAND_RETRY_MAX_MS);
+  });
+
+
+  it("never stalls when fresh attachments keep dying on arrival", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    // Every reattachment is already closed when adopted, and such a socket may
+    // never emit `close`. Recovery must still keep advancing.
+    mocks.attach.mockImplementation(async () => {
+      const socket = new ClosingSocket();
+      socket.readyState = 3;
+      return socket as unknown as WebSocket;
+    });
+    h.ws.dispatchEvent(new Event("close"));
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS + 1);
+    await h.drain();
+    const afterFirst = mocks.attach.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(1);
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS * 6);
+    await h.drain();
+    expect(mocks.attach.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+  it("recovers onto a healthy attachment after a dead one", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    let attempt = 0;
+    mocks.attach.mockImplementation(async () => {
+      const socket = new ClosingSocket();
+      if (++attempt === 1) socket.readyState = 3; // dead on arrival
+      return socket as unknown as WebSocket;
+    });
+    h.ws.dispatchEvent(new Event("close"));
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS * 2);
+    await h.drain();
+    const socket = h.user["sideband"] as unknown as { readyState: number } | null;
+    expect(socket).not.toBeNull();
+    expect(socket!.readyState).toBe(WebSocket.OPEN);
+    expect(h.user["sidebandId"]).toBe("live-1");
+  });
+  it("does not resurrect a session that stopVoice just closed", async () => {
+    vi.useFakeTimers();
+    const h = await live();
+    mocks.attach.mockClear();
+    await h.user["stopVoice"](h.c);
+    expect(h.c.live).toBeNull();
+    await vi.advanceTimersByTimeAsync(SIDEBAND_RETRY_MAX_MS + 1);
+    await h.drain();
+    expect(mocks.attach).not.toHaveBeenCalled();
+  });
+});
+
+it("retires the previous temporary conversation format through cleanup", async () => {
+  const h = await withVoice();
+  const state = structuredClone(h.user["state"]);
+  state.conversation!.format = 1 as 2;
+  vi.spyOn(h.user["store"], "load").mockResolvedValue({ revision: h.user["revision"], state });
+  await h.user.initialize();
+  expect(h.user["state"].conversation).toBeNull();
 });

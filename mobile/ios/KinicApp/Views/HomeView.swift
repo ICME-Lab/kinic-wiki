@@ -54,7 +54,11 @@ struct HomeView: View {
         .onChange(of: model.selectedAskAIDatabaseId) {
             if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
         }
-        .onChange(of: scenePhase) { _, phase in model.voicePreview.sceneChanged(active: phase == .active) }
+        .onChange(of: scenePhase) { _, phase in
+            // Permission prompts make the scene inactive without backgrounding it.
+            // Keep the control connection while the user grants microphone access.
+            if phase != .inactive { model.voicePreview.sceneChanged(active: phase == .active) }
+        }
         .tint(KinicDesign.hotPink)
         .onChange(of: model.rootNavigationID) {
             selectedTab = .browse
