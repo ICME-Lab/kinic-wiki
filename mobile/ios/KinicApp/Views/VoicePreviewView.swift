@@ -29,10 +29,10 @@ struct VoicePreviewView: View {
                         .font(.title2).accessibilityIdentifier("voice.status")
                     if preparing || model.busy || model.finishing { ProgressView() }
                     if needsConsent, let access {
-                        Text("質問、マイク音声と関連するWikiの内容をOpenAIに送信します。文字の会話はこの端末のAsk AI履歴に残ります。")
-                        Text("料金はこのDBの残高から支払います。毎分 \(DatabaseManagementFormat.cycles(access.rate.cyclesPerMinute))、1日上限 \(DatabaseManagementFormat.cycles(access.policy.budget))。無音・ミュート中も接続時間に含まれます。")
-                        Button("データの取り扱い") { showDetails = true }
-                        Button("同意して開始") {
+                        Text("Your questions, microphone audio, and relevant Wiki content will be sent to OpenAI. The text conversation will remain in Ask AI history on this device.")
+                        Text("Charges are paid from this database's balance. The rate is \(DatabaseManagementFormat.cycles(access.rate.cyclesPerMinute)) per minute, with a daily limit of \(DatabaseManagementFormat.cycles(access.policy.budget)). Silence and muted time still count as connected time.")
+                        Button("How Your Data Is Used") { showDetails = true }
+                        Button("Agree and Start") {
                             UserDefaults.standard.set(true, forKey: consentKey)
                             UserDefaults.standard.set(String(access.rate.version), forKey: rateKey)
                             needsConsent = false
@@ -41,7 +41,7 @@ struct VoicePreviewView: View {
                     }
                     ForEach(model.snapshot?.utterances ?? []) { utterance in
                         VStack(alignment: .leading) {
-                            Text(utterance.role == "user" ? "あなた" : "Kinic").font(.caption).foregroundStyle(.secondary)
+                            Text(utterance.role == "user" ? "You" : "Kinic").font(.caption).foregroundStyle(.secondary)
                             Text(utterance.text).textSelection(.enabled)
                         }
                     }
@@ -59,41 +59,41 @@ struct VoicePreviewView: View {
                     }
                     if let error = model.error {
                         Text(error).foregroundStyle(.red).accessibilityIdentifier("voice.error")
-                        Button(model.historyError || model.endingRequested ? "終了処理を再試行" : "再試行") {
+                        Button(model.historyError || model.endingRequested ? "Retry Ending" : "Retry") {
                             if model.endingRequested { close() }
                             else if model.historyError && model.snapshot == nil {
                                 Task { await model.restore(databaseId: databaseID, principal: appModel.principalText); if !model.historyError { launch() } }
                             } else if model.historyError { close() } else { launch() }
                         }.disabled(preparing || model.busy || closing)
                         if model.failureCode == "microphone_denied" {
-                            Link("iPhoneのマイク設定", destination: URL(string: UIApplication.openSettingsURLString)!)
-                        } else { Button("音声設定") { showSettings = true } }
+                            Link("iPhone Microphone Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
+                        } else { Button("Voice Settings") { showSettings = true } }
                     }
                     if model.snapshot != nil, !model.voiceActive, !preparing, !needsConsent, model.error == nil {
-                        Button("音声を開始") { launch() }.buttonStyle(.borderedProminent)
+                        Button("Start Voice") { launch() }.buttonStyle(.borderedProminent)
                     }
                 }.padding()
             }
-            .navigationTitle("音声対話")
+            .navigationTitle("Voice Conversation")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 32) {
                     Button { model.toggleMute() } label: {
-                        Label(model.muted ? "ミュート解除" : "ミュート", systemImage: model.muted ? "mic.slash.fill" : "mic.fill")
+                        Label(model.muted ? "Unmute" : "Mute", systemImage: model.muted ? "mic.slash.fill" : "mic.fill")
                     }.disabled(!model.voiceActive || closing).buttonStyle(.bordered)
-                    Button(action: close) { Label("終了", systemImage: "xmark") }
+                    Button(action: close) { Label("End", systemImage: "xmark") }
                         .buttonStyle(.borderedProminent).disabled(closing)
                         .accessibilityIdentifier("voice.end")
                 }.padding().frame(maxWidth: .infinity).background(.bar)
             }
             .interactiveDismissDisabled()
-            .alert("履歴を保存しました", isPresented: $showFinalizationWarning) {
-                Button("閉じる") { dismiss() }
+            .alert("History Saved", isPresented: $showFinalizationWarning) {
+                Button("Close") { dismiss() }
             } message: { Text(model.finalizationWarning ?? "") }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
-                    ScrollView { Text("音声と質問、会話の文脈、関連するWikiの抜粋をOpenAIに送ります。Kinicは音声録音を保存しません。文字の会話と出典は端末に保存され、Ask AI履歴から削除できます。中断から復旧するためサーバーにも一時的に会話を保存します。終了処理後にKinicの一時会話を削除し、OpenAIのAgentセッションの削除を要求します。OpenAIのAgentセッションは米国で保存され、Zero Data Retentionには対応しません。提供元の記録やバックアップは各保持期間中残る場合があります。") .padding() }
-                        .navigationTitle("データの取り扱い")
+                    ScrollView { Text("Voice audio, questions, conversation context, and relevant Wiki excerpts are sent to OpenAI. Kinic does not save audio recordings. Text conversations and citations are stored on this device and can be deleted from Ask AI history. The conversation is also stored temporarily on the server so it can recover from interruptions. After ending, Kinic deletes its temporary conversation and requests deletion of the OpenAI Agent session. OpenAI Agent sessions are stored in the United States and do not support Zero Data Retention. Provider logs or backups may remain for their applicable retention periods.") .padding() }
+                        .navigationTitle("How Your Data Is Used")
                 }
             }
             .sheet(isPresented: $showSettings) { NavigationStack { VoiceSettingsView(appModel: appModel) } }
@@ -127,12 +127,12 @@ struct VoicePreviewView: View {
         }
     }
     private var status: String {
-        if model.finishing || closing { return "終了しています…" }
-        if model.reconnecting { return "再接続しています…" }
-        if preparing || model.busy { return "接続しています…" }
-        if model.snapshot?.status == "working" { return "Wikiを調べて回答しています…" }
-        if model.voiceActive { return model.muted ? "マイクはミュート中です" : "話しかけてください" }
-        return needsConsent ? "音声対話を始める" : "音声は停止しています"
+        if model.finishing || closing { return "Ending…" }
+        if model.reconnecting { return "Reconnecting…" }
+        if preparing || model.busy { return "Connecting…" }
+        if model.snapshot?.status == "working" { return "Searching the Wiki and preparing an answer…" }
+        if model.voiceActive { return model.muted ? "Microphone muted" : "Start speaking" }
+        return needsConsent ? "Start a voice conversation" : "Voice stopped"
     }
     private func launch() {
         guard !preparing, !closing, !model.voiceActive, !model.endingRequested else { return }

@@ -24,10 +24,10 @@ struct AskAIModelTests {
         let reloaded = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: AskAIStoreStub(savedConversations: stored))
         await reloaded.load()
         let text = try #require(reloaded.conversations.first?.messages.first?.text)
-        #expect(text.contains("根拠が不足しています。"))
-        #expect(text.contains("矛盾する情報"))
+        #expect(text.contains("There is not enough supporting evidence."))
+        #expect(text.contains("Conflicting information"))
         #expect(text.contains("Second contradiction"))
-        #expect(text.contains("未検証の情報"))
+        #expect(text.contains("Unverified information"))
         #expect(text.components(separatedBy: "Unverified claim").count == 2)
         #expect(reloaded.conversations.first?.messages.count == 1)
     }
