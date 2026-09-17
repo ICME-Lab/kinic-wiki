@@ -227,25 +227,17 @@ final class ShareViewController: UIViewController {
         }
         self.session = session
 
-        let cachedDatabases = activeSettingsStore.writableDatabases
-        if !cachedDatabases.isEmpty {
-            showDatabaseSelection(cachedDatabases, savedDatabaseId: activeSettingsStore.databaseId)
-            return
-        }
-
         refreshWritableDatabases(
             configuration: configuration,
             session: session,
-            settingsStore: activeSettingsStore,
-            fallbackWhenEmpty: true
+            settingsStore: activeSettingsStore
         )
     }
 
     private func refreshWritableDatabases(
         configuration: AppConfiguration,
         session: KinicIdentitySession,
-        settingsStore: SharedDefaultsStore,
-        fallbackWhenEmpty: Bool
+        settingsStore: SharedDefaultsStore
     ) {
         titleLabel.text = "Choose database"
         messageLabel.text = "Loading writable databases..."
@@ -263,8 +255,7 @@ final class ShareViewController: UIViewController {
                     settingsStore.writableDatabases = databases
                     self?.showDatabaseSelection(
                         databases,
-                        savedDatabaseId: settingsStore.databaseId,
-                        fallbackWhenEmpty: fallbackWhenEmpty
+                        savedDatabaseId: settingsStore.selectedDatabase(configuration: configuration, principal: session.principal)
                     )
                 }
             } catch {
@@ -275,13 +266,8 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func showDatabaseSelection(_ loadedDatabases: [DatabaseSummary], savedDatabaseId: String, fallbackWhenEmpty: Bool = false) {
+    private func showDatabaseSelection(_ loadedDatabases: [DatabaseSummary], savedDatabaseId: String) {
         guard !loadedDatabases.isEmpty else {
-            if fallbackWhenEmpty {
-                settingsStore?.databaseId = ""
-                submitSharedURL(sharedURL, captureMetadata: sharedMetadata)
-                return
-            }
             databases = []
             selectedDatabaseId = nil
             titleLabel.text = "Choose database"
@@ -431,7 +417,9 @@ final class ShareViewController: UIViewController {
         guard let selectedDatabaseId else {
             return
         }
-        settingsStore?.databaseId = selectedDatabaseId
+        if let configuration, let session {
+            settingsStore?.selectDatabase(selectedDatabaseId, configuration: configuration, principal: session.principal)
+        }
         cancelSourceLookup()
         let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.shareSelectionTitleText ?? "Untitled database"
         titleLabel.text = "Saving to KinicWiki..."
@@ -455,8 +443,7 @@ final class ShareViewController: UIViewController {
         refreshWritableDatabases(
             configuration: configuration,
             session: session,
-            settingsStore: settingsStore,
-            fallbackWhenEmpty: false
+            settingsStore: settingsStore
         )
     }
 

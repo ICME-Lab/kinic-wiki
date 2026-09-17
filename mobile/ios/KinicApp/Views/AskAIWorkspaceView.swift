@@ -13,7 +13,17 @@ struct AskAIWorkspaceView: View {
             KinicDesign.appBackground
                 .ignoresSafeArea()
 
-            AskAIConversationView(model: model)
+            if appModel.selectedDatabaseId.isEmpty && appModel.isLoadingDatabases {
+                ProgressView("データベースを読み込み中")
+            } else if appModel.selectedDatabaseId.isEmpty, let error = appModel.databaseListError {
+                ContentUnavailableView {
+                    Label("データベースを読み込めません", systemImage: "wifi.exclamationmark")
+                } description: { Text(error) } actions: {
+                    Button("再試行", action: appModel.startRefreshDatabases)
+                }
+            } else {
+                AskAIConversationView(model: model)
+            }
         }
         .safeAreaInset(edge: .bottom) {
             AskAIComposerView(model: model)

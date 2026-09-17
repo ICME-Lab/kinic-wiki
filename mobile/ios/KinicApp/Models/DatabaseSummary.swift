@@ -101,6 +101,9 @@ struct DatabaseMember: Identifiable, Equatable, Sendable {
 }
 
 struct DatabaseCycleEntry: Identifiable, Equatable, Sendable {
+    var voiceSessionId: String? = nil
+    var voiceSeconds: UInt64? = nil
+    var voiceRateVersion: UInt64? = nil
     let entryId: UInt64
     let databaseId: String
     let kind: String
@@ -119,7 +122,13 @@ struct DatabaseCycleEntry: Identifiable, Equatable, Sendable {
     }
 
     var displayTitle: String {
-        method?.isEmpty == false ? method ?? kind : kind
+        switch kind {
+        case "voice_reserve": "Voice credit reservation"
+        case "voice_release": "Unused voice credits returned"
+        case "voice_settle": "Voice usage confirmed"
+        case "voice_expired_release": "Unconfirmed voice credits returned"
+        default: method?.isEmpty == false ? method ?? kind : kind
+        }
     }
 }
 
@@ -291,5 +300,49 @@ private extension String {
             text.removeLast()
         }
         return text
+    }
+}
+
+// Exact decimal editing; display rounding must never change a stored budget.
+enum CycleBudgetUnit: Int, CaseIterable, Identifiable {
+    case cycles = 0, million = 6, billion = 9, trillion = 12
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .cycles: "cycles"
+        case .million: "M cycles"
+        case .billion: "B cycles"
+        case .trillion: "T cycles"
+        }
+    }
+    static func preferred(for value: UInt64) -> Self {
+        if value >= 1_000_000_000_000 { return .trillion }
+        if value >= 1_000_000_000 { return .billion }
+        if value >= 1_000_000 { return .million }
+        return .cycles
+    }
+    func text(for value: UInt64) -> String {
+        guard rawValue > 0 else { return String(value) }
+        let digits = String(repeating: "0", count: rawValue) + String(value)
+        let split = digits.index(digits.endIndex, offsetBy: -rawValue)
+        let whole = String(digits[..<split]).drop(while: { $0 == "0" })
+        var fraction = String(digits[split...])
+        while fraction.last == "0" { fraction.removeLast() }
+        return (whole.isEmpty ? "0" : String(whole)) + (fraction.isEmpty ? "" : "." + fraction)
+    }
+    func cycles(from input: String) -> UInt64? {
+        let separator = Locale.current.decimalSeparator ?? "."
+        let normalized = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: separator, with: ".")
+        let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, !normalized.isEmpty,
+              parts.allSatisfy({ $0.utf8.allSatisfy { $0 >= 48 && $0 <= 57 } }),
+              parts.contains(where: { !$0.isEmpty }) else { return nil }
+        var fraction = parts.count == 2 ? String(parts[1]) : ""
+        while fraction.last == "0" { fraction.removeLast() }
+        guard fraction.count <= rawValue else { return nil }
+        let digits = String(parts[0]) + fraction + String(repeating: "0", count: rawValue - fraction.count)
+        guard let value = UInt64(digits), value <= UInt64(Int64.max) else { return nil }
+        return value
     }
 }

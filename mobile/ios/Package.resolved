@@ -1,13 +1,13 @@
 {
-  "originHash" : "07965aa04e8be9537fbd2e0590aa08211b73c5fab5580e70c4804eeb28e5f2f1",
+  "originHash" : "bcb9673bcc74e4fbaae4aeab229cbb4d7ae67bdf9a274c4505797edcea8c77c9",
   "pins" : [
     {
       "identity" : "icnativeclient",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/humandebri/ICNativeClient",
       "state" : {
-        "revision" : "dc517cfa9c1af38c33497878c599a955b34973f4",
-        "version" : "0.7.5"
+        "revision" : "994dbea1614d51f3d60183553de5683b508c8070",
+        "version" : "0.8.0"
       }
     },
     {
@@ -35,6 +35,15 @@
       "state" : {
         "revision" : "01b51875a5406eefc95f52a058cb059e7bc94dc4",
         "version" : "0.5.0"
+      }
+    },
+    {
+      "identity" : "webrtc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stasel/WebRTC",
+      "state" : {
+        "revision" : "4266157cd08f92115de885ab12d87196a8db87e1",
+        "version" : "153.0.0"
       }
     }
   ],

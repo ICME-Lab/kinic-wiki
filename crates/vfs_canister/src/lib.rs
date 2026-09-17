@@ -1,3 +1,7 @@
+use vfs_types::{
+    VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
+    VoiceStopRequest,
+};
 // Where: crates/vfs_canister/src/lib.rs
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
 // Why: The canister now exposes node-oriented operations directly and keeps the runtime boundary thin.
@@ -769,6 +773,65 @@ async fn purchase_database_cycles(
 }
 
 #[update]
+fn configure_voice_rate(rate: VoiceRate) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("configure_voice_rate", None, |service, caller, _| {
+        service.configure_voice_rate(caller, rate)
+    })
+}
+#[query]
+fn get_voice_rate() -> Result<VoiceRate, String> {
+    with_service(|s| s.get_voice_rate())
+}
+#[update]
+fn initialize_voice_policy(database_id: String) -> Result<VoicePolicy, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("initialize_voice_policy", None, |s, caller, _| {
+        s.initialize_voice_policy(caller, &database_id)
+    })
+}
+#[query]
+fn get_voice_access(database_id: String, principal: String) -> Result<VoiceAccess, String> {
+    with_service(|s| s.get_voice_access(&caller_text(), &database_id, &principal, now_millis()))
+}
+#[update]
+fn set_voice_policy(policy: VoicePolicy) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("set_voice_policy", None, |s, caller, _| {
+        s.set_voice_policy(caller, policy)
+    })
+}
+#[query]
+fn get_voice_policy(database_id: String, principal: String) -> Result<VoicePolicy, String> {
+    with_service(|s| s.get_voice_policy(&caller_text(), &database_id, &principal))
+}
+#[update]
+fn reserve_voice(request: VoiceReserveRequest) -> Result<VoiceReservation, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("reserve_voice", None, |s, caller, now| {
+        s.reserve_voice(caller, request, now)
+    })
+}
+#[update]
+fn settle_voice(request: VoiceSettleRequest) -> Result<VoiceReservation, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("settle_voice", None, |s, caller, now| {
+        s.settle_voice(caller, request, now)
+    })
+}
+#[update]
+fn stop_voice(request: VoiceStopRequest) -> Result<VoiceReservation, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("stop_voice", None, |s, caller, now| {
+        s.stop_voice(caller, request, now)
+    })
+}
+#[query]
+fn get_voice_reservation(session_id: String) -> Result<Option<VoiceReservation>, String> {
+    with_service(|s| s.get_voice_reservation(&caller_text(), &session_id))
+}
+
+#[update]
 fn grant_database_cycles_from_iap(
     request: DatabaseCyclesIapGrantRequest,
 ) -> Result<CyclesPurchaseResult, String> {
@@ -1394,6 +1457,13 @@ fn initialize_upgrade_or_trap(config: Option<CyclesBillingConfig>) {
 fn schedule_storage_billing_timer() {
     #[cfg(target_arch = "wasm32")]
     {
+        set_timer_interval(Duration::from_secs(60), || async {
+            match with_service(|s| s.expire_voice_reservations(now_millis())) {
+                Ok(count) if count > 0 => ic_cdk::println!("voice_billing_expired count={count}"),
+                Err(error) => ic_cdk::println!("voice_billing_expiry_failed: {error}"),
+                _ => {}
+            }
+        });
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
         set_timer(Duration::ZERO, async {
             run_cycles_top_up_check_from_timer().await;

@@ -3,6 +3,7 @@
 // Why: Ask AI views stay declarative while every conversation remains pinned to one database.
 
 import Foundation
+import CryptoKit
 import Observation
 
 @MainActor
@@ -13,6 +14,7 @@ final class AskAIModel {
     private let knowledgeProvider: AskAIKnowledgeProviding
     private let client: AskAICompleting
     private var store: AskAIConversationPersisting
+    @ObservationIgnored private var deleteVoiceRecovery: ((UUID?) throws -> Void)?
     private let generationTimeout: Duration
     @ObservationIgnored private var generationTask: Task<Void, Never>?
     @ObservationIgnored private var generationTimeoutTask: Task<Void, Never>?
@@ -63,6 +65,10 @@ final class AskAIModel {
             store: AskAIConversationStore.live(scope: historyScope),
             historyScope: historyScope
         )
+        deleteVoiceRecovery = { [weak appModel] id in
+            guard let appModel else { return }
+            try appModel.voicePreview.forgetRecovery(conversationID: id, principal: appModel.principalText)
+        }
     }
 
     var messages: [AskAIMessage] {
@@ -301,6 +307,8 @@ final class AskAIModel {
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
+        do { try deleteVoiceRecovery?(conversation.id) }
+        catch { errorMessage = "音声の復旧用データを削除できませんでした。再試行してください。"; return }
         if currentConversation?.id == conversation.id {
             cancelGeneration(persistFailure: false)
             currentConversation = nil
@@ -313,6 +321,8 @@ final class AskAIModel {
     }
 
     func deleteAllConversations() {
+        do { try deleteVoiceRecovery?(nil) }
+        catch { errorMessage = "音声の復旧用データを削除できませんでした。再試行してください。"; return }
         cancelGeneration(persistFailure: false)
         conversations = []
         currentConversation = nil
@@ -809,7 +819,7 @@ final class AskAIModel {
         switch knowledgeProvider.selectAskAIDatabase(databaseId) {
         case .unchanged, .applied:
             pendingBrowseDatabaseIntent = nil
-            return true
+            return knowledgeProvider.selectedAskAIDatabaseId == databaseId
         case .awaitingDiscard(let request):
             pendingBrowseDatabaseIntent = PendingBrowseDatabaseIntent(
                 requestId: request.id,
@@ -848,6 +858,48 @@ final class AskAIModel {
         }
         currentConversation = makeConversation(databaseId: databaseId, title: knowledgeProvider.selectedAskAIDatabaseTitle)
         errorMessage = nil
+    }
+
+    /// Acknowledges durable storage before the voice session may be deleted.
+    func saveVoiceSnapshot(_ snapshot: AssistantSnapshot, conversationID: UUID, title: String, scope: AskAIHistoryScope) async throws {
+        guard historyScope == scope, loadState == .loaded else { throw CancellationError() }
+        let contextID = historyContextID
+        var conversation = conversations.first { $0.id == conversationID }
+            ?? currentConversation.flatMap { $0.id == conversationID ? $0 : nil }
+            ?? AskAIConversation(id: conversationID, databaseId: snapshot.databaseId, databaseTitle: title)
+        guard conversation.databaseId == snapshot.databaseId else { throw CancellationError() }
+        func stableID(_ key: String) -> UUID {
+            let bytes = Array(SHA256.hash(data: Data((snapshot.id + key).utf8)).prefix(16))
+            return bytes.withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
+        }
+        func put(_ message: AskAIMessage) {
+            if let index = conversation.messages.firstIndex(where: { $0.id == message.id }) { conversation.messages[index] = message }
+            else { conversation.messages.append(message) }
+        }
+        for utterance in snapshot.utterances {
+            put(AskAIMessage(id: stableID(utterance.id), role: utterance.role == "user" ? .user : .assistant, text: utterance.text))
+        }
+        for message in snapshot.messages {
+            if !message.voice { put(AskAIMessage(id: stableID(message.requestId + ":question"), role: .user, text: message.question)) }
+            if let answer = message.answer {
+                put(AskAIMessage(id: stableID(message.requestId + ":answer"), role: .assistant, text: answer.displayText,
+                    sources: answer.citations.map { AskAISource(id: $0.id, path: $0.path, excerpt: $0.excerpt, score: 0, matchReasons: []) }))
+            }
+        }
+        guard !conversation.messages.isEmpty else { return }
+        conversation.title = String(conversation.messages.first(where: { $0.role == .user })?.text.prefix(60) ?? "音声対話")
+        conversation.updatedAt = .now
+        conversations.removeAll { $0.id == conversationID }
+        conversations.insert(conversation, at: 0)
+        currentConversation = conversation
+        let previous = persistenceTask
+        let targetStore = store
+        let all = conversations
+        let operation = Task { await previous?.value; try await targetStore.save(all) }
+        persistenceTask = Task { _ = await operation.result }
+        try await operation.value
+        guard historyScope == scope, historyContextID == contextID else { throw CancellationError() }
+        hasStoredConversationData = true
     }
 
     private func persistCurrentConversation() {

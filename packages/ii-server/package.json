@@ -1,0 +1,14 @@
+{
+  "name": "@kinic/ii-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./internet-identity": "./internet-identity.ts",
+    "./crypto": "./crypto.ts",
+    "./read": "./read.ts"
+  },
+  "dependencies": {
+    "@icp-sdk/core": "6.0.0"
+  }
+}

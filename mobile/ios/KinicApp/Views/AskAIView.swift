@@ -7,10 +7,12 @@ import SwiftUI
 struct AskAIView: View {
     @Bindable var appModel: AppModel
     @Bindable var model: AskAIModel
+    @State private var isShowingPreview = false
     @State private var isShowingHistory = false
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
+            .onChange(of: isShowingPreview) { _, showing in appModel.voicePresentationActive = showing }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
@@ -18,6 +20,8 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("音声対話", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
+                        .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
                     }
@@ -27,6 +31,9 @@ struct AskAIView: View {
                         .labelStyle(.iconOnly)
                         .disabled(appModel.selectedAskAIDatabaseId.isEmpty)
                 }
+            }
+            .fullScreenCover(isPresented: $isShowingPreview) {
+                VoicePreviewView(appModel: appModel, model: appModel.voicePreview, historyModel: model)
             }
             .sheet(isPresented: $isShowingHistory) {
                 AskAIHistoryView(model: model)

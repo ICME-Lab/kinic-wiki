@@ -368,13 +368,13 @@ struct ShareInboxTests {
         }
 
         let strictStore = try SharedDefaultsStore(appGroupId: suiteName, strict: true)
-        strictStore.databaseId = "db_demo"
-        #expect(strictStore.databaseId == "db_demo")
+        strictStore.selectDatabase("db_demo", configuration: .preview, principal: "aaaaa-aa")
+        #expect(strictStore.selectedDatabase(configuration: .preview, principal: "aaaaa-aa") == "db_demo")
 
         let fallbackStore = try SharedDefaultsStore(appGroupId: nil)
-        fallbackStore.databaseId = "db_preview"
-        #expect(fallbackStore.databaseId == "db_preview")
-        fallbackStore.databaseId = ""
+        fallbackStore.selectDatabase("db_preview", configuration: .preview, principal: "aaaaa-aa")
+        #expect(fallbackStore.selectedDatabase(configuration: .preview, principal: "aaaaa-aa") == "db_preview")
+        fallbackStore.selectDatabase("", configuration: .preview, principal: "aaaaa-aa")
     }
 
     @Test
@@ -860,7 +860,7 @@ struct ShareInboxTests {
         let historyMarker = historyDirectory.appending(path: "account-history.json")
         try Data("private".utf8).write(to: historyMarker)
         let settings = SharedDefaultsStore(defaults: defaults)
-        settings.databaseId = "db_private"
+        settings.selectDatabase("db_private", configuration: .preview, principal: "aaaaa-aa")
         settings.isDarkAppearanceEnabled = true
         settings.wikiOutputLanguage = .japanese
         settings.showPublicBrowseDatabases = false
@@ -888,7 +888,7 @@ struct ShareInboxTests {
         #expect(model.accountDeletionError == nil)
         #expect(inbox.loadPendingURLs().isEmpty)
         #expect(!FileManager.default.fileExists(atPath: historyMarker.path()))
-        #expect(settings.databaseId.isEmpty)
+        #expect(settings.selectedDatabase(configuration: .preview, principal: "aaaaa-aa").isEmpty)
         #expect(settings.isDarkAppearanceEnabled)
         #expect(settings.wikiOutputLanguage == .japanese)
         #expect(await probe.remotePrincipals() == ["aaaaa-aa"])
@@ -964,7 +964,7 @@ struct ShareInboxTests {
         let historyMarker = historyDirectory.appending(path: "account-history.json")
         try Data("private".utf8).write(to: historyMarker)
         let settings = SharedDefaultsStore(defaults: defaults)
-        settings.databaseId = "db_private"
+        settings.selectDatabase("db_private", configuration: .preview, principal: "aaaaa-aa")
         settings.showPublicBrowseDatabases = false
         let cleanupProbe = AccountLocalCleanupProbe()
         let model = AppModel(
@@ -1009,7 +1009,7 @@ struct ShareInboxTests {
             FileManager.default.fileExists(atPath: historyMarker.path())
                 == (failingCleanup == .captureHistory)
         )
-        #expect(settings.databaseId.isEmpty)
+        #expect(settings.selectedDatabase(configuration: .preview, principal: "aaaaa-aa").isEmpty)
         #expect(model.statusMessage?.contains("some on-device data could not be removed") == true)
     }
 

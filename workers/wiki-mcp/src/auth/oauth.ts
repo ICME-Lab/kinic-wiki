@@ -8,7 +8,7 @@ import {
   randomOpaque,
   secretEquals,
   sha256
-} from "./crypto.js";
+} from "@kinic/ii-server/crypto";
 import {
   generateIiKey,
   IiDelegationError,
@@ -19,7 +19,7 @@ import {
   restoreIiKey,
   restoreKinicIdentity,
   type KinicDelegationMaterialV1
-} from "./internet-identity.js";
+} from "@kinic/ii-server/internet-identity";
 import { restoreReviewServiceIdentity } from "./review-identity.js";
 import {
   OAUTH_CLIENT_IDLE_TTL_MS,

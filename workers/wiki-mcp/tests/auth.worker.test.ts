@@ -1,8 +1,8 @@
 import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { DelegationChain } from "@icp-sdk/core/identity";
 import { describe, expect, it } from "vitest";
-import { encryptJson, sha256 } from "../src/auth/crypto.js";
-import { generateIiKey, type KinicDelegationMaterialV1 } from "../src/auth/internet-identity.js";
+import { encryptJson, sha256 } from "@kinic/ii-server/crypto";
+import { generateIiKey, type KinicDelegationMaterialV1 } from "@kinic/ii-server/internet-identity";
 import {
   DELEGATION_REFRESH_MARGIN_MS,
   OAUTH_CLIENT_IDLE_TTL_MS,

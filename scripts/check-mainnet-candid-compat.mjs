@@ -37,7 +37,23 @@ const liveMethods = serviceMethods(live);
 const candidateMethods = serviceMethods(candidate);
 const removedMethods = [...liveMethods].filter((method) => !candidateMethods.has(method));
 const addedMethods = [...candidateMethods].filter((method) => !liveMethods.has(method));
-if (removedMethods.length !== 0 || addedMethods.join(",") !== "grant_database_cycles_from_iap") {
+const expectedAddedMethods = [
+  "configure_voice_rate",
+  "get_voice_access",
+  "get_voice_policy",
+  "get_voice_rate",
+  "get_voice_reservation",
+  "grant_database_cycles_from_iap",
+  "initialize_voice_policy",
+  "reserve_voice",
+  "set_voice_policy",
+  "settle_voice",
+  "stop_voice",
+];
+if (
+  removedMethods.length !== 0 ||
+  addedMethods.join(",") !== expectedAddedMethods.join(",")
+) {
   throw new Error(
     `unexpected service method delta; removed=[${removedMethods}] added=[${addedMethods}]`,
   );
@@ -47,6 +63,8 @@ const requiredFragments = [
   /type CyclesBillingConfig = record \{[^}]*iap_authority_id : opt text;/s,
   /type CyclesBillingConfigUpdate = record \{[^}]*iap_authority_id : opt text;/s,
   /grant_database_cycles_from_iap\s*:\s*\(DatabaseCyclesIapGrantRequest\)\s*->\s*\(\s*Result_\d+,?\s*\);/s,
+  /type VoiceReservation = record \{[^}]*stopped_seconds : opt nat64;/s,
+  /stop_voice\s*:\s*\(VoiceStopRequest\)\s*->\s*\(Result_\d+\);/s,
 ];
 for (const fragment of requiredFragments) {
   if (!fragment.test(candidate)) {

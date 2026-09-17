@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateIiKey } from "../src/auth/internet-identity.js";
+import { generateIiKey } from "@kinic/ii-server/internet-identity";
 import { restoreReviewServiceIdentity } from "../src/auth/review-identity.js";
 
 describe("review service identity", () => {

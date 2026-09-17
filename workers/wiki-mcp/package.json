@@ -22,7 +22,8 @@
     "@icp-sdk/core": "6.0.0",
     "@kinic/vfs-client-core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@kinic/ii-server": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.20.2",

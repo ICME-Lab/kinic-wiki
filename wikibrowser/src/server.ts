@@ -26,6 +26,12 @@ export default createServerEntry({
       return Response.redirect(url, 308);
     }
 
+    if (url.pathname.startsWith("/api/assistant/native/")) {
+      if (!env.WIKI_ASSISTANT) return Response.json({ error: "assistant_not_configured" }, { status: 503, headers: { "cache-control": "no-store" } });
+      try { return await env.WIKI_ASSISTANT.fetch(request); }
+      catch { return Response.json({ error: "assistant_not_configured" }, { status: 503, headers: { "cache-control": "no-store" } }); }
+    }
+
     const ttlSeconds = request.method === "GET" && url.search === "" ? publicCacheTtl(url.pathname) : null;
     const cache = ttlSeconds !== null && typeof caches !== "undefined" ? (caches as unknown as { default: Cache }).default : null;
     const cacheKey = new Request(url, { method: "GET" });

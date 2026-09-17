@@ -12,7 +12,7 @@ struct KinicApp: App {
 
     init() {
 #if DEBUG
-        if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
+        if ["ask-ai", "voice-preview", "voice-settings"].contains(ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] ?? "") {
             _model = State(initialValue: .preview())
         } else {
             _model = State(initialValue: .live())
@@ -31,7 +31,13 @@ struct KinicApp: App {
     @ViewBuilder
     private var rootView: some View {
 #if DEBUG
-        if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
+        if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "voice-settings" {
+            NavigationStack { VoiceSettingsView(appModel: model) }
+                .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["KINIC_LARGE_TEXT"] == "1" ? .accessibility3 : .large)
+        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "voice-preview" {
+            VoicePreviewView(appModel: model, model: model.voicePreview)
+                .task { model.voicePreview.loadScreenshotFixture() }
+        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
             AskAIScreenshotPreview()
                 .tint(KinicDesign.hotPink)
                 .preferredColorScheme(.light)

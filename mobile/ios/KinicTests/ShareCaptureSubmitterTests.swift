@@ -398,7 +398,7 @@ private struct ShareCaptureHarness {
             restoreSession: {
                 session
             },
-            selectedDatabaseId: {
+            selectedDatabaseId: { _ in
                 databaseId
             },
             enqueueURL: resolvedEnqueueURL,

@@ -129,6 +129,9 @@ impl VfsApi for MockClient {
             .push(database_id.to_string());
         Ok(DatabaseCycleEntryPage {
             entries: vec![DatabaseCycleEntry {
+                voice_session_id: None,
+                voice_seconds: None,
+                voice_rate_version: None,
                 entry_id: 1,
                 database_id: database_id.to_string(),
                 kind: "cycles_purchase".to_string(),

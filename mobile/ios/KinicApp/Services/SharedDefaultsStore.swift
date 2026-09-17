@@ -5,7 +5,6 @@
 import Foundation
 
 struct SharedDefaultsStore: @unchecked Sendable {
-    private static let databaseIdKey = "kinic.database-id.v1"
     private static let isDarkAppearanceEnabledKey = "kinic.appearance-is-dark.v1"
     private static let browseDatabaseVisibilityDefaultsVersionKey = "kinic.browse-database-visibility-defaults-version"
     private static let currentBrowseDatabaseVisibilityDefaultsVersion = 2
@@ -27,13 +26,17 @@ struct SharedDefaultsStore: @unchecked Sendable {
         migrateBrowseDatabaseVisibilityDefaults()
     }
 
-    var databaseId: String {
-        get {
-            defaults.string(forKey: Self.databaseIdKey) ?? ""
-        }
-        nonmutating set {
-            defaults.set(newValue, forKey: Self.databaseIdKey)
-        }
+    private func selectionKey(configuration: AppConfiguration, principal: String) -> String {
+        let components = [configuration.deploymentEnvironment.rawValue, configuration.apiBaseURL.absoluteString, configuration.canisterId, principal]
+        return "kinic.selected-database.v2." + components.map { Data($0.utf8).base64EncodedString() }.joined(separator: ".")
+    }
+
+    func selectedDatabase(configuration: AppConfiguration, principal: String) -> String {
+        defaults.string(forKey: selectionKey(configuration: configuration, principal: principal)) ?? ""
+    }
+
+    func selectDatabase(_ id: String, configuration: AppConfiguration, principal: String) {
+        defaults.set(id, forKey: selectionKey(configuration: configuration, principal: principal))
     }
 
     var isDarkAppearanceEnabled: Bool {

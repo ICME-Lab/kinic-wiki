@@ -13,7 +13,7 @@ import {
   restoreKinicIdentity,
   restoreRegistrationIdentity,
   type InternetIdentityActor
-} from "../src/auth/internet-identity.js";
+} from "@kinic/ii-server/internet-identity";
 import {
   authenticationBoundaryResponse,
   authenticationMode,

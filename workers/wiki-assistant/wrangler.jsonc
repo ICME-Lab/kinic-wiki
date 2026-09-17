@@ -1,0 +1,76 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-wiki-assistant",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "ASSISTANT_ENABLED": "false",
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "ASSISTANT_ORIGIN": "https://wiki.kinic.xyz",
+    "ASSISTANT_DERIVATION_ORIGIN": "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
+  },
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "AUTH_RATE_LIMIT",
+        "type": "ratelimit",
+        "namespace_id": "4101",
+        "simple": {
+          "limit": 10,
+          "period": 60,
+        },
+      },
+    ],
+  },
+  "env": {
+    "staging": {
+      "name": "kinic-wiki-assistant-staging",
+      "vars": {
+        "ASSISTANT_ENABLED": "true",
+        "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+        "ASSISTANT_ORIGIN": "https://kinic-wiki-browser-staging.hude.workers.dev",
+        "ASSISTANT_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io",
+      },
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "AUTH_RATE_LIMIT",
+            "type": "ratelimit",
+            "namespace_id": "4102",
+            "simple": {
+              "limit": 10,
+              "period": 60,
+            },
+          },
+        ],
+      },
+      "d1_databases": [
+        {
+          "binding": "ASSISTANT_DB",
+          "database_name": "kinic-wiki-assistant-staging",
+          "database_id": "81d9a64a-6f68-4cb5-a91d-5513fa9cf57d",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "triggers": {
+        "crons": ["* * * * *"],
+      },
+    },
+  },
+  "d1_databases": [
+    {
+      "binding": "ASSISTANT_DB",
+      "database_name": "kinic-wiki-assistant",
+      "database_id": "51dcc15a-a8f9-4d00-93d9-5ad8e0684584",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+}
