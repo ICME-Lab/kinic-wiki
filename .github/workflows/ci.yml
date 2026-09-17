@@ -19,6 +19,7 @@ jobs:
       extension: ${{ steps.paths.outputs.extension }}
       wiki_generator: ${{ steps.paths.outputs.wiki_generator }}
       wiki_mcp: ${{ steps.paths.outputs.wiki_mcp }}
+      wiki_assistant: ${{ steps.paths.outputs.wiki_assistant }}
       payment: ${{ steps.paths.outputs.payment }}
       skill_registry_web: ${{ steps.paths.outputs.skill_registry_web }}
       ios: ${{ steps.paths.outputs.ios }}
@@ -53,6 +54,7 @@ jobs:
               echo "extension=true"
               echo "wiki_generator=true"
               echo "wiki_mcp=true"
+              echo "wiki_assistant=true"
               echo "payment=true"
               echo "skill_registry_web=true"
               echo "ios=true"
@@ -87,6 +89,7 @@ jobs:
           set_output extension "($js_workspace|^extensions/wiki-clipper/)"
           set_output wiki_generator "($js_workspace|^workers/wiki-generator/)"
           set_output wiki_mcp "($js_workspace|^workers/wiki-mcp/)"
+          set_output wiki_assistant "($js_workspace|^packages/ii-server/|^workers/wiki-assistant/|^\.github/workflows/ci\.yml$)"
           set_output payment "($js_workspace|^workers/payment/|^packages/|^\.github/workflows/ci\.yml$)"
           set_output skill_registry_web "($js_workspace|^packages/vfs-candid/|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
           set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
@@ -205,6 +208,29 @@ jobs:
         run: pnpm build
       - name: Verify Worker deploy path from clean artifacts
         run: pnpm exec wrangler deploy --dry-run
+
+  wiki-assistant-check:
+    needs: changes
+    if: needs.changes.outputs.wiki_assistant == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/wiki-assistant
+    steps:
+      - uses: actions/checkout@v5
+      - name: Enable corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.8 --activate
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm build
 
   payment-check:
     needs: changes

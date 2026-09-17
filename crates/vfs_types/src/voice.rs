@@ -29,6 +29,11 @@ pub struct VoiceSettleRequest {
     pub close: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct VoiceStopRequest {
+    pub session_id: String,
+    pub final_seconds: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct VoiceReservation {
     pub session_id: String,
     pub database_id: String,
@@ -43,6 +48,7 @@ pub struct VoiceReservation {
     pub held_cycles: u64,
     pub charged_cycles: u64,
     pub closed: bool,
+    pub stopped_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

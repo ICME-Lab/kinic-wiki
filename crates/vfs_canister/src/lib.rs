@@ -1,5 +1,6 @@
 use vfs_types::{
     VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
+    VoiceStopRequest,
 };
 // Where: crates/vfs_canister/src/lib.rs
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
@@ -816,6 +817,13 @@ fn settle_voice(request: VoiceSettleRequest) -> Result<VoiceReservation, String>
     require_authenticated_caller()?;
     with_unmetered_update("settle_voice", None, |s, caller, now| {
         s.settle_voice(caller, request, now)
+    })
+}
+#[update]
+fn stop_voice(request: VoiceStopRequest) -> Result<VoiceReservation, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("stop_voice", None, |s, caller, now| {
+        s.stop_voice(caller, request, now)
     })
 }
 #[query]

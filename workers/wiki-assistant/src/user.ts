@@ -2,6 +2,7 @@ import { sha256 } from "@kinic/ii-server/crypto";
 import {
   reserveVoice,
   settleVoiceCharge,
+  stopVoiceCharge,
   voiceRate,
   voicePolicy,
   voiceReservation,
@@ -64,6 +65,7 @@ type Charge = {
   attempts?: number;
   nextAttempt?: number;
   id: string;
+  conversationId: string;
   databaseId: string;
   principal: string;
   rate: string;
@@ -285,6 +287,7 @@ export class AssistantUser {
   }
   private snapshot(c: Conversation) {
     return {
+      revision: this.revision,
       id: c.id,
       databaseId: c.databaseId,
       scope: c.scope,
@@ -292,14 +295,56 @@ export class AssistantUser {
       error: c.error,
       generation: c.generation,
       reconnectGraceMs: this.limits().reconnectMs,
-      messages: c.messages,
-      utterances: c.utterances.map(({ id, role, text }) => ({ id, role, text })),
       voice: c.live ? (c.live.stopping ? "stopping" : "connected") : "off",
       voiceDeadline: this.voiceDeadline(c),
       voiceId: c.live?.usage.chargeId ?? null,
       progress: c.pending
         ? { calls: c.pending.tools.calls, stage: c.pending.stage }
         : null,
+    };
+  }
+  private historyPage(c: Conversation, revision: number, cursor: number) {
+    if (revision !== this.revision) throw new AssistantError("stale_state", 409);
+    const entries = [
+      ...c.messages.map((value) => ({ kind: "message" as const, value })),
+      ...c.utterances.map(({ id, role, text }) => ({
+        kind: "utterance" as const,
+        value: { id, role, text },
+      })),
+    ];
+    if (cursor < 0 || cursor > entries.length)
+      throw new AssistantError("invalid_cursor", 400);
+    const items: (typeof entries)[number][] = [];
+    let index = cursor;
+    while (index < entries.length && items.length < 10) {
+      const candidate = [...items, entries[index]];
+      const payload = {
+        revision,
+        messages: candidate
+          .filter((item) => item.kind === "message")
+          .map((item) => item.value),
+        utterances: candidate
+          .filter((item) => item.kind === "utterance")
+          .map((item) => item.value),
+        nextCursor: index + 1 < entries.length ? String(index + 1) : null,
+      };
+      if (new TextEncoder().encode(JSON.stringify(payload)).length > 512000) {
+        if (items.length === 0)
+          throw new AssistantError("history_item_too_large", 500);
+        break;
+      }
+      items.push(entries[index]);
+      index++;
+    }
+    return {
+      revision,
+      messages: items
+        .filter((item) => item.kind === "message")
+        .map((item) => item.value),
+      utterances: items
+        .filter((item) => item.kind === "utterance")
+        .map((item) => item.value),
+      nextCursor: index < entries.length ? String(index) : null,
     };
   }
   private voiceDeadline(c: Conversation): number | null {
@@ -429,6 +474,14 @@ export class AssistantUser {
       if (path === "/conversation" && request.method === "GET") {
         await this.save();
         return json(this.snapshot(c));
+      }
+      if (path === "/history" && request.method === "GET") {
+        const url = new URL(request.url);
+        const revision = Number(url.searchParams.get("revision"));
+        const cursorValue = url.searchParams.get("cursor") ?? "0";
+        if (!Number.isSafeInteger(revision) || !/^\d+$/.test(cursorValue))
+          throw new AssistantError("invalid_cursor", 400);
+        return json(this.historyPage(c, revision, Number(cursorValue)));
       }
       if (path === "/questions" && request.method === "POST") {
         await this.enqueue(
@@ -1316,7 +1369,16 @@ export class AssistantUser {
           },
         ),
       );
-      const result = { status: response.status, body: await response.json() };
+      const responseBody = await response.json();
+      const result = {
+        status: response.status,
+        body:
+          response.ok && command.action !== "voice"
+            ? { revision: this.revision }
+            : response.ok
+              ? { ...(responseBody as Record<string, unknown>), revision: this.revision }
+              : responseBody,
+      };
       await this.store.commandResult(c.id, requestId, result);
       ws.send(JSON.stringify({ type: "command.result", requestId, ...result }));
     } catch (error) {
@@ -1382,6 +1444,7 @@ export class AssistantUser {
       if (!requestId) throw new AssistantError("invalid_voice_request", 400);
       charge = {
         id: requestId,
+        conversationId: c.id,
         databaseId: c.databaseId,
         principal: c.principal,
         rate: rateVersion,
@@ -1487,8 +1550,11 @@ export class AssistantUser {
   }
   private async flushCharges(): Promise<void> {
     for (const b of this.state.charges.slice()) {
+      const persistedStop = await this.store.stopAt(b.conversationId, b.id);
+      if (persistedStop !== null)
+        b.stopped = Math.min(b.stopped ?? Infinity, persistedStop);
       if ((b.nextAttempt ?? 0) > Date.now() && Date.now() < b.expires) continue;
-      if (Date.now() >= b.expires) {
+      if (Date.now() >= b.expires && b.stopped === null) {
         console.error(
           JSON.stringify({ event: "voice_billing_expired", sessionId: b.id }),
         );
@@ -1515,12 +1581,18 @@ export class AssistantUser {
       try {
         let settled;
         try {
-          settled = await settleVoiceCharge(this.env, b.id, seconds, closing);
+          settled = closing
+            ? await stopVoiceCharge(this.env, b.id, seconds)
+            : await settleVoiceCharge(this.env, b.id, seconds, false);
         } catch (error) {
           const known = await voiceReservation(this.env, b.id);
           if (
             !known ||
-            (!known.closed && Number(known.confirmed_seconds) < seconds)
+            (closing
+              ? !known.closed ||
+                known.stopped_seconds.length === 0 ||
+                Number(known.stopped_seconds[0]) > seconds
+              : !known.closed && Number(known.confirmed_seconds) < seconds)
           )
             throw error;
           settled = known;
@@ -1530,6 +1602,14 @@ export class AssistantUser {
         b.confirmed = Number(settled.confirmed_seconds);
         if (settled.closed) {
           this.state.charges = this.state.charges.filter((v) => v !== b);
+          await this.store.clearStop(
+            b.conversationId,
+            b.id,
+            !this.state.charges.some(
+              (charge) => charge.conversationId === b.conversationId,
+            ),
+            b.stopped ?? Date.now(),
+          );
           if (b.stopped === null && c?.live?.usage.chargeId === b.id) {
             c.error = "voice_budget_exhausted";
             await this.stopVoice(c, false);

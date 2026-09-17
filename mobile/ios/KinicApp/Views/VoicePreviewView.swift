@@ -30,7 +30,7 @@ struct VoicePreviewView: View {
                     if preparing || model.busy || model.finishing { ProgressView() }
                     if needsConsent, let access {
                         Text("質問、マイク音声と関連するWikiの内容をOpenAIに送信します。文字の会話はこの端末のAsk AI履歴に残ります。")
-                        Text("料金はこのDBの残高から支払います。毎分 \(access.rate.cyclesPerMinute) cycles、1日上限 \(access.policy.budget) cycles。無音・ミュート中も接続時間に含まれます。")
+                        Text("料金はこのDBの残高から支払います。毎分 \(DatabaseManagementFormat.cycles(access.rate.cyclesPerMinute))、1日上限 \(DatabaseManagementFormat.cycles(access.policy.budget))。無音・ミュート中も接続時間に含まれます。")
                         Button("データの取り扱い") { showDetails = true }
                         Button("同意して開始") {
                             UserDefaults.standard.set(true, forKey: consentKey)

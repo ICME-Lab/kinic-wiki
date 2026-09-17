@@ -8,6 +8,40 @@ import Testing
 @testable import Kinic
 
 struct BrowseDocumentEditingTests {
+    @MainActor @Test
+    func sharedSelectionWaitsForVoiceAndPreservesDraftOnCancel() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        model.readableDatabases.append(DatabaseSummary(databaseId: "shared", title: "Shared", description: "", metadata: nil, role: .reader, status: .active, logicalSizeBytes: 0, cyclesBalance: nil, cyclesSuspendedAtMs: nil, deletedAtMs: nil))
+        fixture.settings.selectDatabase("shared", configuration: .preview, principal: model.principalText)
+        model.voicePresentationActive = true
+        model.restoreSharedDatabaseSelection()
+        #expect(model.selectedDatabaseId == "db_edit")
+        model.voicePresentationActive = false
+        model.voiceSettingsHasChanges = true
+        model.restoreSharedDatabaseSelection()
+        #expect(model.selectedDatabaseId == "db_edit")
+        model.voiceSettingsHasChanges = false
+        #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
+        model.updateBrowseDocumentDraft("keep me")
+        model.restoreSharedDatabaseSelection()
+        let request = try #require(model.requestedBrowseDatabaseSelection)
+        model.cancelBrowseDatabaseSelection(request)
+        #expect(model.selectedDatabaseId == "db_edit")
+        #expect(model.documentEditSession?.draftContent == "keep me")
+        #expect(fixture.settings.selectedDatabase(configuration: .preview, principal: model.principalText) == "db_edit")
+        model.discardBrowseDocumentEdits()
+        fixture.settings.selectDatabase("shared", configuration: .preview, principal: model.principalText)
+        model.restoreSharedDatabaseSelection()
+        #expect(model.selectedDatabaseId == "shared")
+        #expect(model.selectedAskAIDatabaseId == "shared")
+        #expect(model.selectedBrowseDatabaseId == "shared")
+        #expect(model.selectedDatabase?.role == .reader)
+        #expect(!model.canEditBrowseDocument("/Knowledge/Page.md"))
+    }
+
     @MainActor
     @Test
     func editEligibilityRequiresWritableActiveMarkdownOutsideSources() throws {
@@ -635,6 +669,7 @@ private func setDatabaseAccess(
 @MainActor
 private final class BrowseEditingFixture {
     let model: AppModel
+    let settings: SharedDefaultsStore
     private let suiteName: String
     private let queueDirectory: URL
 
@@ -649,12 +684,13 @@ private final class BrowseEditingFixture {
         queueDirectory = FileManager.default.temporaryDirectory
             .appending(path: "kinic-browse-editing-tests")
             .appending(path: UUID().uuidString)
+        settings = SharedDefaultsStore(defaults: defaults)
         model = AppModel(
             configuration: .preview,
             authService: makeTestAuthService(),
             client: try! KinicICClient(configuration: .preview),
             shareInbox: try ShareInbox(testQueueDirectory: queueDirectory),
-            settingsStore: SharedDefaultsStore(defaults: defaults),
+            settingsStore: settings,
             writeBrowseDocumentRemotely: { request, _ in
                 if let probe {
                     return try await probe.write(request)

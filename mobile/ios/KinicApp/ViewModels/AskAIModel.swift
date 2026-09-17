@@ -819,7 +819,7 @@ final class AskAIModel {
         switch knowledgeProvider.selectAskAIDatabase(databaseId) {
         case .unchanged, .applied:
             pendingBrowseDatabaseIntent = nil
-            return true
+            return knowledgeProvider.selectedAskAIDatabaseId == databaseId
         case .awaitingDiscard(let request):
             pendingBrowseDatabaseIntent = PendingBrowseDatabaseIntent(
                 requestId: request.id,

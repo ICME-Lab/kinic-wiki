@@ -82,7 +82,7 @@ final class VoicePreviewModel {
 #if DEBUG
     func loadScreenshotFixture() {
         let text = """
-        {"id":"preview","databaseId":"demo","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"voice":"off","progress":null,"utterances":[],"messages":[{"voice":false,"requestId":"example","question":"What does this Wiki say?","error":null,"answer":{"answer":"This answer is grounded in the selected Wiki.","citations":[{"id":"source","databaseId":"demo","path":"/Knowledge/Overview","excerpt":"A short verified source excerpt.","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
+        {"revision":1,"id":"preview","databaseId":"demo","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"voice":"off","progress":null,"utterances":[],"messages":[{"voice":false,"requestId":"example","question":"What does this Wiki say?","error":null,"answer":{"answer":"This answer is grounded in the selected Wiki.","citations":[{"id":"source","databaseId":"demo","path":"/Knowledge/Overview","excerpt":"A short verified source excerpt.","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
         """
         let state = ProcessInfo.processInfo.environment["KINIC_VOICE_STATE"] ?? "ready"
         var fixture = text
@@ -160,7 +160,7 @@ final class VoicePreviewModel {
             guard (try JSONSerialization.jsonObject(with: auth) as? [String: Any])?["principal"] as? String == principal else {
                 throw AssistantHTTPError(status: 403, code: "identity_changed")
             }
-            let state = try await http.data("conversation", conversation: saved.snapshot.id)
+            let state = try await http.snapshot(conversation: saved.snapshot.id)
             guard epoch == generation else { return }
             boundPrincipal = principal
             boundDatabaseId = databaseId
@@ -237,7 +237,10 @@ final class VoicePreviewModel {
             if let selectedPath { creation["selectedPath"] = selectedPath }
             let created = try await http.data("conversations", method: "POST", body: creation)
             guard epoch == generation else { return }
-            try apply(created, database: databaseId)
+            let metadata = try JSONDecoder().decode(AssistantSnapshot.self, from: created)
+            let snapshotState = try await http.snapshot(conversation: metadata.id, metadata: created)
+            guard epoch == generation else { return }
+            try apply(snapshotState, database: databaseId)
             listen(generation: generation)
         } catch {
             guard epoch == generation else { return }
@@ -294,10 +297,13 @@ final class VoicePreviewModel {
                     request.timeoutInterval = min(20, remaining)
                     let data = try await http.send(request)
                     guard epoch == generation else { throw CancellationError() }
-                    try apply(data, database: current.databaseId)
-                    return try JSONDecoder().decode(AssistantSnapshot.self, from: data)
+                    let metadata = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
+                    let state = try await http.snapshot(conversation: metadata.id, metadata: data)
+                    guard epoch == generation else { throw CancellationError() }
+                    try apply(state, database: current.databaseId)
+                    return state
                 }
-                try apply(JSONEncoder().encode(finalState), database: current.databaseId)
+                try apply(finalState, database: current.databaseId)
             } catch let failure as AssistantHTTPError where failure.terminal {
                 finalizationWarning = "サーバーの会話を確認できなかったため、最後に受信した内容を保存しました。最終部分が欠けている可能性があります。"
             }
@@ -338,9 +344,9 @@ final class VoicePreviewModel {
     }
     private func submitPending(snapshot: AssistantSnapshot, generation: Int) async throws {
         guard let pendingQuestion else { return }
-        let data = try await command("questions", body: ["requestId": pendingQuestion.id, "question": pendingQuestion.text, "scope": snapshot.scope], requestId: pendingQuestion.id)
+        _ = try await command("questions", body: ["requestId": pendingQuestion.id, "question": pendingQuestion.text, "scope": snapshot.scope], requestId: pendingQuestion.id)
         guard epoch == generation else { return }
-        try apply(data, database: snapshot.databaseId)
+        try apply(try await http.snapshot(conversation: snapshot.id), database: snapshot.databaseId)
         self.pendingQuestion = nil
         draft = ""
     }
@@ -374,9 +380,9 @@ final class VoicePreviewModel {
             try await audio.waitUntilConnected()
             guard epoch == generation, voiceEpoch == voiceGeneration else { audio.stop(); return }
             guard let voiceId = response["voiceId"] as? String else { throw URLError(.cannotParseResponse) }
-            let connected = try await command("voice/connected", body: ["voiceId": voiceId])
+            _ = try await command("voice/connected", body: ["voiceId": voiceId])
             guard epoch == generation, voiceEpoch == voiceGeneration else { audio.stop(); return }
-            try apply(connected, database: snapshot.databaseId)
+            try apply(try await http.snapshot(conversation: snapshot.id), database: snapshot.databaseId)
             guard self.snapshot?.voice == "connected", let deadline = self.snapshot?.voiceDeadline else { throw URLError(.cannotParseResponse) }
             voiceActive = true
             audio.activateMicrophone()
@@ -419,8 +425,10 @@ final class VoicePreviewModel {
         guard let snapshot else { return }
         let generation = epoch
         do {
-            let data = try await command("cancel")
-            if epoch == generation { try apply(data, database: snapshot.databaseId) }
+            _ = try await command("cancel")
+            if epoch == generation {
+                try apply(try await http.snapshot(conversation: snapshot.id), database: snapshot.databaseId)
+            }
         } catch { if epoch == generation { self.report(error) } }
     }
     func citationChanged(_ citation: AssistantCitation) async throws -> Bool {
@@ -464,8 +472,14 @@ final class VoicePreviewModel {
     }
     private func apply(_ data: Data, database: String) throws {
         let next = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
+        try apply(next, database: database)
+    }
+    private func apply(_ next: AssistantSnapshot, database: String) throws {
         guard next.databaseId == database, snapshot == nil || next.id == snapshot?.id else { throw URLError(.cannotParseResponse) }
-        if let snapshot, next.generation < snapshot.generation { return }
+        guard AssistantSnapshotOrdering.shouldApply(
+            currentRevision: snapshot?.revision,
+            incomingRevision: next.revision
+        ) else { return }
         snapshot = next
         if let saveHistory {
             pendingHistory = (next, historyConversationID, historyDatabaseTitle, epoch, saveHistory)
@@ -507,7 +521,7 @@ final class VoicePreviewModel {
                     end(); error = "再接続の有効時間が過ぎました。会話を開始し直してください。"; return
                 }
                 do {
-                    let status = try await http.data("conversation", conversation: current.id)
+                    let status = try await http.snapshot(conversation: current.id)
                     guard epoch == generation, !Task.isCancelled else { return }
                     try apply(status, database: current.databaseId)
                     var request = try http.request("events", conversation: current.id)
@@ -552,7 +566,12 @@ final class VoicePreviewModel {
                             if !finishing { end(); error = "この会話の接続は終了しました。" }
                             return
                         }
-                        try apply(data, database: current.databaseId)
+                        guard let revision = value["revision"] as? Int else { throw URLError(.cannotParseResponse) }
+                        if revision > (snapshot?.revision ?? -1) {
+                            let state = try await http.snapshot(conversation: current.id)
+                            guard epoch == generation, !Task.isCancelled else { return }
+                            try apply(state, database: current.databaseId)
+                        }
                         controlReady = true
                         disconnectedAt = nil; reconnecting = false
                         if pendingQuestion != nil, !retryingQuestion {

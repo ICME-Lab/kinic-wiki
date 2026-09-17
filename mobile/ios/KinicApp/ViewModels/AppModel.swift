@@ -277,6 +277,7 @@ final class AppModel {
     private let removeAllSharedURLs: () throws -> Void
     private let removeAllCaptureHistory: () throws -> Void
     private let writeBrowseDocumentRemotely: @Sendable (BrowseDocumentWriteRequest, KinicIdentitySession) async throws -> VFSWriteNodeResult
+    private let saveSourceCaptureRemotely: @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission
     private let searchBrowseNodesRemotely: @Sendable (BrowseSearchRequest, KinicIdentitySession?) async throws -> [SearchNodeHit]
     private let readBrowseNodeRemotely: @Sendable (String, String, KinicIdentitySession?) async throws -> VFSNode?
     private let listBrowseChildrenRemotely: @Sendable (String, String, KinicIdentitySession?) async throws -> [ChildNode]
@@ -296,7 +297,33 @@ final class AppModel {
     let voicePreview: VoicePreviewModel
     let configuration: AppConfiguration
     var selectedDatabaseId: String
-    var selectedBrowseDatabaseId: String
+    var selectedBrowseDatabaseId: String {
+        get { selectedDatabaseId }
+        set { selectedDatabaseId = newValue }
+    }
+    var databaseListError: String?
+    private var databaseRefreshGeneration = 0
+    var voiceSettingsHasChanges = false
+    var voicePresentationActive = false
+    var databaseSelectionLocked: Bool {
+        voicePresentationActive || voicePreview.busy || voicePreview.voiceActive || voicePreview.finishing || voicePreview.endingRequested || voicePreview.snapshot != nil
+    }
+    static let databaseSelectionLockMessage = "音声を終了すると切り替えられます"
+
+    func restoreSharedDatabaseSelection() {
+        guard !databaseSelectionLocked, !voiceSettingsHasChanges, !isLoadingDatabases, requestedBrowseDatabaseSelection == nil else { return }
+        let saved = settingsStore.selectedDatabase(configuration: configuration, principal: principalText)
+        guard !saved.isEmpty, saved != selectedDatabaseId,
+              readableDatabases.contains(where: { $0.databaseId == saved && $0.status != .deleted }) else { return }
+        _ = requestBrowseDatabaseSelection(saved)
+    }
+
+    static func initialDatabaseID(_ databases: [DatabaseSummary], saved: String) -> String {
+        if databases.contains(where: { $0.databaseId == saved && $0.status != .deleted }) { return saved }
+        let available = databases.filter { $0.status == .active }
+        func rank(_ db: DatabaseSummary) -> Int { db.role == .owner ? 0 : db.canWrite ? 1 : 2 }
+        return available.sorted { rank($0) == rank($1) ? $0.databaseId < $1.databaseId : rank($0) < rank($1) }.first?.databaseId ?? ""
+    }
     var isDarkAppearanceEnabled: Bool {
         didSet {
             settingsStore.isDarkAppearanceEnabled = isDarkAppearanceEnabled
@@ -424,7 +451,7 @@ final class AppModel {
     }
 
     var selectedDatabase: DatabaseSummary? {
-        databases.first { $0.databaseId == selectedDatabaseId }
+        readableDatabases.first { $0.databaseId == selectedDatabaseId }
     }
 
     var selectedBrowseDatabase: DatabaseSummary? {
@@ -479,6 +506,7 @@ final class AppModel {
         removeAllSharedURLs: (() throws -> Void)? = nil,
         removeAllCaptureHistory: (() throws -> Void)? = nil,
         writeBrowseDocumentRemotely: (@Sendable (BrowseDocumentWriteRequest, KinicIdentitySession) async throws -> VFSWriteNodeResult)? = nil,
+        saveSourceCaptureRemotely: (@Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission)? = nil,
         searchBrowseNodesRemotely: (@Sendable (BrowseSearchRequest, KinicIdentitySession?) async throws -> [SearchNodeHit])? = nil,
         readBrowseNodeRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> VFSNode?)? = nil,
         listBrowseChildrenRemotely: (@Sendable (String, String, KinicIdentitySession?) async throws -> [ChildNode])? = nil,
@@ -515,6 +543,9 @@ final class AppModel {
                 session: session
             )
         }
+        self.saveSourceCaptureRemotely = saveSourceCaptureRemotely ?? { request, session in
+            try await client.saveSourceCaptureRequest(request, session: session)
+        }
         self.searchBrowseNodesRemotely = searchBrowseNodesRemotely ?? { request, session in
             try await client.searchBrowseNodes(
                 databaseId: request.databaseId,
@@ -532,8 +563,7 @@ final class AppModel {
         }
         logger = Logger(subsystem: "xyz.kinic.ios.KinicWiki", category: "AppModel")
         databaseCreditTransactionUpdatesTask = nil
-        selectedDatabaseId = settingsStore.databaseId
-        selectedBrowseDatabaseId = ""
+        selectedDatabaseId = ""
         isDarkAppearanceEnabled = settingsStore.isDarkAppearanceEnabled
         showPublicBrowseDatabases = settingsStore.showPublicBrowseDatabases
         showPurchasedBrowseDatabases = settingsStore.showPurchasedBrowseDatabases
@@ -775,12 +805,7 @@ final class AppModel {
     }
 
     func selectDatabase(_ databaseId: String) {
-        setSelectedDatabase(databaseId)
-        statusMessage = nil
-        Task {
-            await refreshSourceCaptureHistory()
-        }
-        autoSubmitPendingURL()
+        _ = requestBrowseDatabaseSelection(databaseId)
     }
 
     func startRefreshSourceCaptureHistory(refreshAll: Bool = false) {
@@ -809,11 +834,13 @@ final class AppModel {
         guard !databaseId.isEmpty else {
             return .unchanged
         }
+        guard !databaseSelectionLocked || databaseId == selectedDatabaseId else {
+            statusMessage = Self.databaseSelectionLockMessage
+            return .unchanged
+        }
         if databaseId == selectedBrowseDatabaseId {
-            let changesCaptureDatabase = purpose == .databaseCreditActivation
-                && selectedDatabaseId != databaseId
             applyBrowseDatabaseSelectionPurpose(purpose, databaseId: databaseId)
-            return changesCaptureDatabase ? .applied : .unchanged
+            return .unchanged
         }
 
         cancelRequestedBrowseDeepLink()
@@ -837,7 +864,7 @@ final class AppModel {
     }
 
     func applyBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
-        guard requestedBrowseDatabaseSelection == request else { return }
+        guard requestedBrowseDatabaseSelection == request, !databaseSelectionLocked else { return }
         requestedBrowseDatabaseSelection = nil
         documentEditSession = nil
         applySelectedBrowseDatabase(request.databaseId)
@@ -851,6 +878,7 @@ final class AppModel {
 
     func cancelBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
         guard requestedBrowseDatabaseSelection == request else { return }
+        settingsStore.selectDatabase(selectedDatabaseId, configuration: configuration, principal: principalText)
         requestedBrowseDatabaseSelection = nil
         browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
             requestId: request.id,
@@ -1134,6 +1162,7 @@ final class AppModel {
     }
 
     private func openBrowseDeepLink(databaseId: String, nodePath: String) {
+        guard !databaseSelectionLocked else { statusMessage = Self.databaseSelectionLockMessage; return }
         cancelRequestedBrowseDatabaseSelection()
         requestedBrowseDeepLink = nil
         deepLinkResolveRequestID += 1
@@ -1146,7 +1175,7 @@ final class AppModel {
     }
 
     func applyBrowseDeepLink(_ request: BrowseDeepLinkRequest) {
-        guard requestedBrowseDeepLink == request else { return }
+        guard requestedBrowseDeepLink == request, !databaseSelectionLocked else { return }
         requestedBrowseDeepLink = nil
         documentEditSession = nil
         directBrowseDatabaseIds.insert(request.databaseId)
@@ -1289,14 +1318,14 @@ final class AppModel {
 
     private func setSelectedDatabase(_ databaseId: String) {
         selectedDatabaseId = databaseId
-        settingsStore.databaseId = databaseId
+        settingsStore.selectDatabase(databaseId, configuration: configuration, principal: principalText)
     }
 
     private func setSelectedBrowseDatabase(_ databaseId: String) {
         if selectedBrowseDatabaseId != databaseId {
             resetDatabaseManagementState()
         }
-        selectedBrowseDatabaseId = databaseId
+        setSelectedDatabase(databaseId)
     }
 
     private func applySelectedBrowseDatabase(_ databaseId: String) {
@@ -1305,6 +1334,8 @@ final class AppModel {
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID += 1
         startLoadBrowsePath(currentPath)
+        Task { await refreshSourceCaptureHistory() }
+        autoSubmitPendingURL()
     }
 
     private func applyBrowseDatabaseSelectionPurpose(
@@ -1367,9 +1398,7 @@ final class AppModel {
         purchasedBrowseDatabaseIds = []
         directBrowseDatabaseIds = []
         selectedDatabaseId = ""
-        settingsStore.databaseId = ""
         settingsStore.writableDatabases = []
-        setSelectedBrowseDatabase("")
         resetBrowseStateForRoot()
         resetDatabaseManagementState()
         cyclesBillingConfig = nil
@@ -1414,6 +1443,7 @@ final class AppModel {
         }
 
         var localCleanupFailureCount = 0
+        settingsStore.selectDatabase("", configuration: configuration, principal: session.principal)
         do { try await voicePreview.deleteAccountRecovery(principal: session.principal) }
         catch { localCleanupFailureCount += 1 }
         do {
@@ -1572,7 +1602,7 @@ final class AppModel {
                 tagsJson: tagsJson,
                 session: session
             )
-            await refreshDatabases(selectFirstIfNeeded: false)
+            await refreshDatabases()
             statusMessage = nil
             return true
         } catch {
@@ -1658,7 +1688,7 @@ final class AppModel {
         do {
             try await client.deleteDatabase(databaseId: databaseId, session: session)
             resetDatabaseManagementState()
-            await refreshDatabases(selectFirstIfNeeded: true)
+            await refreshDatabases()
             statusMessage = nil
             return true
         } catch {
@@ -1756,7 +1786,15 @@ final class AppModel {
             let authenticatedSession = try await authService.signIn { [client] candidate in
                 _ = try await client.listReadableDatabases(session: candidate)
             }
-            if let previousPrincipal, previousPrincipal != authenticatedSession.principal {
+            if previousPrincipal != authenticatedSession.principal {
+                voicePreview.end()
+                cancelRequestedBrowseDatabaseSelection()
+                cancelRequestedBrowseDeepLink()
+                directBrowseDatabaseIds = []
+                selectedDatabaseId = ""
+                readableDatabases = []
+                databases = []
+                voiceSettingsHasChanges = false
                 documentEditSession = nil
                 resetBrowseStateForRoot()
             }
@@ -1792,13 +1830,11 @@ final class AppModel {
         }
         do {
             let created = try await client.createDatabase(name: trimmedName, session: session)
-            await refreshDatabases(selectFirstIfNeeded: false)
+            await refreshDatabases()
             if created.initialFreeGrantApplied || created.status == .active {
                 pendingCreatedDatabase = nil
-                setSelectedDatabase(created.databaseId)
-                setSelectedBrowseDatabase(created.databaseId)
-                statusMessage = nil
-                await loadBrowsePath("/")
+                _ = requestBrowseDatabaseSelection(created.databaseId)
+                await loadBrowsePath(currentPath)
                 if !pendingURLs.isEmpty {
                     await submitNextPendingURL()
                 }
@@ -1812,10 +1848,14 @@ final class AppModel {
         }
     }
 
-    private func refreshDatabases(selectFirstIfNeeded: Bool = true) async {
+    private func refreshDatabases() async {
+        databaseRefreshGeneration += 1
+        let generation = databaseRefreshGeneration
+        let account = principalText
         isLoadingDatabases = true
+        databaseListError = nil
         defer {
-            isLoadingDatabases = false
+            if generation == databaseRefreshGeneration { isLoadingDatabases = false }
         }
         do {
             let currentSession = session
@@ -1831,7 +1871,7 @@ final class AppModel {
             }
             let publicDatabases = publicRefresh.databases
             if let errorMessage = publicRefresh.errorMessage {
-                statusMessage = errorMessage
+                throw NSError(domain: "DatabaseList", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMessage])
             }
 
             var purchasedIds = purchasedBrowseDatabaseIds
@@ -1854,6 +1894,7 @@ final class AppModel {
                 showPublic: showPublicBrowseDatabases,
                 showPurchased: showPurchasedBrowseDatabases
             )
+            guard generation == databaseRefreshGeneration, account == principalText else { return }
             readableDatabases = merged.databases
             memberBrowseDatabaseIds = merged.memberDatabaseIds
             publicBrowseDatabaseIds = merged.publicDatabaseIds
@@ -1864,15 +1905,13 @@ final class AppModel {
             reconcileBrowseDatabaseAccessAfterRefresh()
             settingsStore.writableDatabases = databases
             databaseListLastRefreshed = Date()
-            if !selectedDatabaseId.isEmpty,
-               !databases.contains(where: { $0.databaseId == selectedDatabaseId }) {
-                selectedDatabaseId = ""
-                settingsStore.databaseId = ""
-            }
-            if selectFirstIfNeeded,
-               selectedDatabaseId.isEmpty,
-               let first = databases.first {
-                selectDatabase(first.databaseId)
+            if !databaseSelectionLocked && !voiceSettingsHasChanges && documentEditSession?.hasChanges != true && !directBrowseDatabaseIds.contains(selectedDatabaseId) {
+                let saved = settingsStore.selectedDatabase(configuration: configuration, principal: principalText)
+                let desired = Self.initialDatabaseID(readableDatabases, saved: saved.isEmpty ? selectedDatabaseId : saved)
+                if desired != selectedDatabaseId {
+                    if desired.isEmpty { clearBrowseSelectionAndState() }
+                    else { _ = requestBrowseDatabaseSelection(desired) }
+                }
             }
             if !selectedBrowseDatabaseId.isEmpty {
                 await loadBrowsePath(currentPath)
@@ -1888,12 +1927,14 @@ final class AppModel {
                 databaseCreditError = nil
             }
         } catch {
+            guard generation == databaseRefreshGeneration, account == principalText else { return }
+            databaseListError = error.localizedDescription
             statusMessage = error.localizedDescription
         }
     }
 
     private func refreshDatabaseManagementInfo() async {
-        await refreshDatabases(selectFirstIfNeeded: false)
+        await refreshDatabases()
         await loadCyclesBillingConfig(force: true)
     }
 
@@ -2199,7 +2240,7 @@ final class AppModel {
         if pendingCreatedDatabase?.databaseId == activation.databaseId {
             pendingCreatedDatabase = nil
         }
-        await refreshDatabases(selectFirstIfNeeded: false)
+        await refreshDatabases()
         guard origin == .explicitPurchase else { return }
         if let balance = databases.first(where: { $0.databaseId == activation.databaseId })?.cyclesBalance {
             statusMessage = "Database credits added. Balance: \(DatabaseManagementFormat.cycles(balance))."
@@ -2409,6 +2450,7 @@ final class AppModel {
 
     func reconcileBrowseDatabaseAccessAfterRefresh() {
         reconcileBrowseDocumentWriteRestriction()
+        guard !databaseSelectionLocked, !voiceSettingsHasChanges else { return }
         guard !selectedBrowseDatabaseId.isEmpty,
               !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }),
               !directBrowseDatabaseIds.contains(selectedBrowseDatabaseId) else {
@@ -2653,7 +2695,7 @@ final class AppModel {
                 databaseId: databaseId,
                 requestedBy: session.principal
             )
-            let submission = try await client.saveSourceCaptureRequest(request, session: session)
+            let submission = try await saveSourceCaptureRemotely(request, session)
             guard let sourceCaptureHistoryStore else {
                 statusMessage = "Source request saved, but local history is unavailable. It remains queued for retry."
                 return

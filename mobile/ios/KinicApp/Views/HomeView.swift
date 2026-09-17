@@ -47,6 +47,7 @@ struct HomeView: View {
             }
             .tag(AppTab.manage)
         }
+        .task { model.startRefreshDatabases() }
         .onChange(of: model.principalText) {
             if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
             else { model.voicePreview.end() }
@@ -54,7 +55,14 @@ struct HomeView: View {
         .onChange(of: model.selectedAskAIDatabaseId) {
             if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
         }
+        .onChange(of: model.voiceSettingsHasChanges) { _, blocked in
+            if !blocked { model.restoreSharedDatabaseSelection() }
+        }
+        .onChange(of: model.databaseSelectionLocked) { _, locked in
+            if !locked { model.restoreSharedDatabaseSelection() }
+        }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.restoreSharedDatabaseSelection() }
             // Permission prompts make the scene inactive without backgrounding it.
             // Keep the control connection while the user grants microphone access.
             if phase != .inactive { model.voicePreview.sceneChanged(active: phase == .active) }
@@ -128,6 +136,9 @@ private struct CaptureView: View {
         }
         .sheet(isPresented: $isShowingIngest) {
             IngestSheet(model: model)
+        }
+        .onChange(of: model.requestedBrowseDatabaseSelection) { _, request in
+            if request != nil { isShowingSettings = false }
         }
         .sheet(isPresented: $isShowingSettings) {
             NavigationStack {

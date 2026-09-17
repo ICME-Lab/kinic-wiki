@@ -4,7 +4,8 @@ export type {
   Citation,
   Scope,
 } from "../../workers/wiki-assistant/src/contracts";
-export type AssistantSnapshot = {
+export type AssistantState = {
+  revision: number;
   id: string;
   databaseId: string;
   scope: Scope;
@@ -16,13 +17,29 @@ export type AssistantSnapshot = {
   voiceDeadline?: number | null;
   voice: "off" | "connected" | "stopping";
   progress: { calls: number; stage: string } | null;
-  messages: {
-    requestId: string;
-    question: string;
-    answer: Answer | null;
-    error: string | null;
-  }[];
 };
+export type AssistantMessage = {
+  requestId: string;
+  question: string;
+  answer: Answer | null;
+  error: string | null;
+};
+export type AssistantUtterance = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+export type AssistantSnapshot = AssistantState & {
+  utterances: AssistantUtterance[];
+  messages: AssistantMessage[];
+};
+export type AssistantHistoryPage = {
+  revision: number;
+  messages: AssistantMessage[];
+  utterances: AssistantUtterance[];
+  nextCursor: string | null;
+};
+export type AssistantCommandResult = { revision: number };
 export const CONSENT_VERSION = "2026-09-16";
 const errors: Record<string, string> = {
   assistant_disabled: "Ask AI is not available yet.",
@@ -68,29 +85,41 @@ export class AssistantRequestError extends Error {
     super(assistantError(code));
   }
 }
-export function assistantUrl(path: string, conversationId?: string): string {
-  return `/api/assistant${path}${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`;
+export function assistantUrl(
+  path: string,
+  conversationId?: string,
+  query: Record<string, string> = {},
+): string {
+  const parameters = new URLSearchParams(query);
+  if (conversationId) parameters.set("conversationId", conversationId);
+  const suffix = parameters.size ? `?${parameters}` : "";
+  return `/api/assistant${path}${suffix}`;
 }
 export async function assistantRequest<T>(
   path: string,
   options: {
     body?: unknown;
     conversationId?: string;
+    query?: Record<string, string>;
     signal?: AbortSignal;
     keepalive?: boolean;
   } = {},
 ): Promise<T> {
-  const response = await fetch(assistantUrl(path, options.conversationId), {
-    method: options.body === undefined ? "GET" : "POST",
-    credentials: "same-origin",
-    signal: options.signal,
-    keepalive: options.keepalive,
-    headers:
-      options.body === undefined
-        ? undefined
-        : { "content-type": "application/json" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  const response = await fetch(
+    assistantUrl(path, options.conversationId, options.query),
+    {
+      method: options.body === undefined ? "GET" : "POST",
+      credentials: "same-origin",
+      signal: options.signal,
+      keepalive: options.keepalive,
+      headers:
+        options.body === undefined
+          ? undefined
+          : { "content-type": "application/json" },
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
+    },
+  );
   const value = await response.json().catch(() => {
     throw new AssistantRequestError("request_failed");
   });
@@ -99,6 +128,52 @@ export async function assistantRequest<T>(
       typeof value?.error === "string" ? value.error : "request_failed",
     );
   return value as T;
+}
+
+export async function assistantSnapshot(
+  conversationId: string,
+  initialState?: AssistantState,
+  signal?: AbortSignal,
+): Promise<AssistantSnapshot> {
+  let initial = initialState;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const state =
+      initial ??
+      (await assistantRequest<AssistantState>("/conversation", {
+        conversationId,
+        signal,
+      }));
+    initial = undefined;
+    if (state.id !== conversationId)
+      throw new AssistantRequestError("request_failed");
+    const messages: AssistantMessage[] = [];
+    const utterances: AssistantUtterance[] = [];
+    let cursor: string | null = "0";
+    try {
+      while (cursor !== null) {
+        const page: AssistantHistoryPage =
+          await assistantRequest<AssistantHistoryPage>("/history", {
+            conversationId,
+            query: { revision: String(state.revision), cursor },
+            signal,
+          });
+        if (page.revision !== state.revision)
+          throw new AssistantRequestError("stale_state");
+        messages.push(...page.messages);
+        utterances.push(...page.utterances);
+        cursor = page.nextCursor;
+      }
+      return { ...state, messages, utterances };
+    } catch (error) {
+      if (
+        error instanceof AssistantRequestError &&
+        error.code === "stale_state"
+      )
+        continue;
+      throw error;
+    }
+  }
+  throw new AssistantRequestError("stale_state");
 }
 
 export class AssistantControl {

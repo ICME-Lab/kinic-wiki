@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { MessageCircle, Mic, Send, Square, X } from "lucide-react";
 import {
   assistantRequest,
+  assistantSnapshot,
   assistantUrl,
   assistantError,
   AssistantRequestError,
@@ -10,6 +11,8 @@ import {
   AssistantControl,
   CONSENT_VERSION,
   type AssistantSnapshot,
+  type AssistantState,
+  type AssistantCommandResult,
   type Citation,
   type Scope,
 } from "@/lib/assistant";
@@ -90,6 +93,18 @@ function Conversation({
     scope: Scope;
     selectedPath: string;
   } | null>(null);
+  const refreshSnapshot = useRef<
+    ((revision: number) => Promise<void>) | null
+  >(null);
+  const latestRevision = useRef<{ id: string; revision: number } | null>(null);
+  useEffect(() => {
+    if (
+      snapshot &&
+      (latestRevision.current?.id !== snapshot.id ||
+        latestRevision.current.revision < snapshot.revision)
+    )
+      latestRevision.current = { id: snapshot.id, revision: snapshot.revision };
+  }, [snapshot]);
   const report = (cause: unknown) => {
     if (live.current)
       setError(cause instanceof Error ? cause.message : "Unable to connect.");
@@ -117,9 +132,14 @@ function Conversation({
         }
         setAuthorized(true);
         try {
-          const active = await assistantRequest<AssistantSnapshot>("/active", {
+          const metadata = await assistantRequest<AssistantState>("/active", {
             signal: controller.signal,
           });
+          const active = await assistantSnapshot(
+            metadata.id,
+            metadata,
+            controller.signal,
+          );
           if (!live.current || controller.signal.aborted) return;
           if (active.databaseId !== databaseId) {
             await assistantRequest("/end", {
@@ -184,10 +204,50 @@ function Conversation({
     let retry: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | null = null;
+    const stateController = new AbortController();
+    let appliedRevision =
+      latestRevision.current?.id === id ? latestRevision.current.revision : 0;
+    let requestedRevision = appliedRevision;
+    let stateRefresh: Promise<void> | null = null;
+    const applySnapshot = (next: AssistantSnapshot) => {
+      if (next.revision <= appliedRevision) return;
+      appliedRevision = next.revision;
+      setSnapshot((current) =>
+        current && current.revision >= next.revision ? current : next,
+      );
+    };
+    const requestRefresh = (revision: number): Promise<void> => {
+      requestedRevision = Math.max(requestedRevision, revision);
+      if (stateRefresh) return stateRefresh;
+      let failed = false;
+      stateRefresh = (async () => {
+        try {
+          while (!disposed && appliedRevision < requestedRevision) {
+            const next = await assistantSnapshot(
+              id,
+              undefined,
+              stateController.signal,
+            );
+            if (disposed) return;
+            applySnapshot(next);
+          }
+        } catch (cause) {
+          failed = true;
+          throw cause;
+        } finally {
+          stateRefresh = null;
+          if (!failed && !disposed && appliedRevision < requestedRevision)
+            void requestRefresh(requestedRevision).catch(report);
+        }
+      })();
+      return stateRefresh;
+    };
+    refreshSnapshot.current = requestRefresh;
     const release = () => {
       clearTimeout(retry);
       clearTimeout(deadline);
       controller?.abort();
+      stateController.abort();
       if (socket) {
         socket.onclose = null;
         socket.onmessage = null;
@@ -229,10 +289,8 @@ function Conversation({
       controller?.abort();
       controller = new AbortController();
       try {
-        await assistantRequest<AssistantSnapshot>("/conversation", {
-          conversationId: id,
-          signal: controller.signal,
-        });
+        const next = await assistantSnapshot(id, undefined, controller.signal);
+        applySnapshot(next);
         if (!disposed && attempt === generation) connect();
       } catch (cause) {
         if (disposed || attempt !== generation) return;
@@ -256,11 +314,10 @@ function Conversation({
           if (value.type === "snapshot" && value.id === id) {
             clearTimeout(deadline);
             deadline = undefined;
-            setSnapshot((current) =>
-              current && current.generation > value.generation
-                ? current
-                : value,
-            );
+            if (typeof value.revision !== "number")
+              throw new Error("Unable to read the conversation state.");
+            if (value.revision > appliedRevision)
+              void requestRefresh(value.revision).catch(report);
           }
           if (value.type === "ended") ended("conversation_ended");
         } catch {
@@ -288,6 +345,8 @@ function Conversation({
       generation++;
       release();
       control.detach();
+      if (refreshSnapshot.current === requestRefresh)
+        refreshSnapshot.current = null;
       clearInterval(heartbeat);
     };
   }, [snapshot?.id, snapshot?.reconnectGraceMs, control]);
@@ -325,9 +384,10 @@ function Conversation({
     setBusy(true);
     setError(null);
     try {
-      const c = await assistantRequest<AssistantSnapshot>("/conversations", {
+      const metadata = await assistantRequest<AssistantState>("/conversations", {
         body: { databaseId, scope, consent: CONSENT_VERSION },
       });
+      const c = await assistantSnapshot(metadata.id, metadata);
       if (!live.current) {
         void assistantRequest("/end", { conversationId: c.id, body: {} }).catch(
           () => {},
@@ -358,15 +418,13 @@ function Conversation({
           };
     pendingQuestion.current = body;
     try {
-      const next = await control.command<AssistantSnapshot>(
+      const result = await control.command<AssistantCommandResult>(
         "questions",
         body,
         body.requestId,
       );
-      if (live.current && idRef.current === next.id) {
-        setSnapshot((current) =>
-          current && current.generation > next.generation ? current : next,
-        );
+      await refreshSnapshot.current?.(result.revision);
+      if (live.current && idRef.current === snapshot.id) {
         setQuestion("");
         pendingQuestion.current = null;
       }
@@ -380,11 +438,11 @@ function Conversation({
     if (!snapshot) return;
     voice.current?.muteOutput();
     try {
-      const next = await control.command<AssistantSnapshot>("cancel", {});
-      if (live.current && idRef.current === next.id)
-        setSnapshot((current) =>
-          current && current.generation > next.generation ? current : next,
-        );
+      const result = await control.command<AssistantCommandResult>(
+        "cancel",
+        {},
+      );
+      await refreshSnapshot.current?.(result.revision);
     } catch (cause) {
       report(cause);
     }

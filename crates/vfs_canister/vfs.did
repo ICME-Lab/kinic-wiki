@@ -733,6 +733,7 @@ type VoiceReservation = record {
   session_id : text;
   rate_version : nat64;
   confirmed_seconds : nat64;
+  stopped_seconds : opt nat64;
   usage_day : int64;
   created_at_ms : int64;
   held_cycles : nat64;
@@ -754,6 +755,7 @@ type VoiceSettleRequest = record {
   confirmed_seconds : nat64;
   close : bool;
 };
+type VoiceStopRequest = record { session_id : text; final_seconds : nat64 };
 type WikiMetrics = record {
   charged_kinic_30d_e8s : nat64;
   users_active_30d : nat64;
@@ -897,6 +899,7 @@ service : (CyclesBillingConfig) -> {
   settle_voice : (VoiceSettleRequest) -> (Result_44);
   source_evidence : (SourceEvidenceRequest) -> (Result_47) query;
   status : (text) -> (Status) query;
+  stop_voice : (VoiceStopRequest) -> (Result_44);
   unpublish_node : (PublishNodeRequest) -> (Result_1);
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
   update_database_metadata : (UpdateDatabaseMetadataRequest) -> (Result_48);

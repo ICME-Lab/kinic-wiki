@@ -356,3 +356,20 @@ struct VoiceAccessInfo: CandidConvertible {
     }
     var candidValue: CandidValue { recordValue(Self.candidType, [("policy", policy.candidValue), ("rate", rate.candidValue), ("remaining_cycles", remainingCycles.candidValue), ("balance_cycles", balanceCycles.candidValue)]) }
 }
+
+#if DEBUG
+extension VoiceRateInfo {
+    static var settingsPreview: Self { Self(version: 1, cyclesPerMinute: 30_000_000_000, authority: "preview") }
+    private init(version: UInt64, cyclesPerMinute: UInt64, authority: String) {
+        self.version = version; self.cyclesPerMinute = cyclesPerMinute; self.authority = authority
+    }
+}
+extension VoiceAccessInfo {
+    static var settingsPreview: Self {
+        Self(policy: VoicePolicyInput(databaseId: "preview", principal: "", enabled: true, budget: 300_000_000_000), rate: .settingsPreview, remainingCycles: 300_000_000_000, balanceCycles: 3_999_460_636_530)
+    }
+    private init(policy: VoicePolicyInput, rate: VoiceRateInfo, remainingCycles: UInt64, balanceCycles: UInt64) {
+        self.policy = policy; self.rate = rate; self.remainingCycles = remainingCycles; self.balanceCycles = balanceCycles
+    }
+}
+#endif

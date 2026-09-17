@@ -56,4 +56,39 @@ final class AssistantHTTPClient {
         guard data.count <= 1_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
         return data
     }
+    func snapshot(conversation: String, metadata initialMetadata: Data? = nil) async throws -> AssistantSnapshot {
+        var initial = initialMetadata
+        for _ in 0..<3 {
+            let metadata: Data
+            if let initial { metadata = initial }
+            else { metadata = try await data("conversation", conversation: conversation) }
+            initial = nil
+            let state = try JSONDecoder().decode(AssistantSnapshot.self, from: metadata)
+            guard state.id == conversation else { throw URLError(.cannotParseResponse) }
+            var messages: [AssistantMessage] = []
+            var utterances: [AssistantUtterance] = []
+            var cursor: String? = "0"
+            do {
+                while let currentCursor = cursor {
+                    var request = try request("history", conversation: conversation)
+                    var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+                    var query = components.queryItems ?? []
+                    query.append(URLQueryItem(name: "revision", value: String(state.revision)))
+                    query.append(URLQueryItem(name: "cursor", value: currentCursor))
+                    components.queryItems = query
+                    request.url = components.url
+                    let pageData = try await send(request)
+                    let page = try JSONDecoder().decode(AssistantHistoryPage.self, from: pageData)
+                    guard page.revision == state.revision else { throw AssistantHTTPError(status: 409, code: "stale_state") }
+                    messages.append(contentsOf: page.messages)
+                    utterances.append(contentsOf: page.utterances)
+                    cursor = page.nextCursor
+                }
+                return state.withHistory(messages: messages, utterances: utterances)
+            } catch let error as AssistantHTTPError where error.status == 409 && error.code == "stale_state" {
+                continue
+            }
+        }
+        throw AssistantHTTPError(status: 409, code: "stale_state")
+    }
 }

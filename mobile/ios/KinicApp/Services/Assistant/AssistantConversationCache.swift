@@ -12,7 +12,7 @@ struct AssistantConversationCache {
     init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "VoicePreviewCache", directoryHint: .isDirectory)) {
         self.directory = directory
     }
-    private var file: URL { directory.appending(path: "conversation-v2.json") }
+    private var file: URL { directory.appending(path: "conversation-v3.json") }
     func load() throws -> Entry? {
         guard FileManager.default.fileExists(atPath: file.path) else { return nil }
         return try JSONDecoder().decode(Entry.self, from: Data(contentsOf: file))

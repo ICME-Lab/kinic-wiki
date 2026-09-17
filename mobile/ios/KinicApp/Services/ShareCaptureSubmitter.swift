@@ -9,7 +9,7 @@ struct ShareCaptureSubmitter: Sendable {
     private let configuration: AppConfiguration
     private let timeoutNanoseconds: UInt64?
     private let restoreSession: @Sendable () throws -> KinicIdentitySession?
-    private let selectedDatabaseId: @Sendable () -> String
+    private let selectedDatabaseId: @Sendable (String) -> String
     private let enqueueURL: @Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void
     private let saveRequest: @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission
     private let saveHistory: @Sendable (SourceCaptureRequest, Date) throws -> Void
@@ -27,8 +27,8 @@ struct ShareCaptureSubmitter: Sendable {
             restoreSession: {
                 try sessionStore.restore()
             },
-            selectedDatabaseId: {
-                settingsStore.databaseId
+            selectedDatabaseId: { principal in
+                settingsStore.selectedDatabase(configuration: configuration, principal: principal)
             },
             enqueueURL: { url, receivedAt, requestId, databaseId, outputLanguage, captureMetadata in
                 let inbox = try ShareInbox(strictAppGroupId: configuration.appGroupId)
@@ -63,7 +63,7 @@ struct ShareCaptureSubmitter: Sendable {
         configuration: AppConfiguration,
         timeoutNanoseconds: UInt64?,
         restoreSession: @escaping @Sendable () throws -> KinicIdentitySession?,
-        selectedDatabaseId: @escaping @Sendable () -> String,
+        selectedDatabaseId: @escaping @Sendable (String) -> String,
         enqueueURL: @escaping @Sendable (URL, Date, String?, String?, WikiOutputLanguage, ShareCaptureMetadata?) throws -> Void,
         saveRequest: @escaping @Sendable (SourceCaptureRequest, KinicIdentitySession) async throws -> CaptureSubmission,
         saveHistory: @escaping @Sendable (SourceCaptureRequest, Date) throws -> Void = { _, _ in },
@@ -117,7 +117,7 @@ struct ShareCaptureSubmitter: Sendable {
            !overrideDatabaseId.isEmpty {
             databaseId = overrideDatabaseId
         } else {
-            databaseId = selectedDatabaseId().trimmingCharacters(in: .whitespacesAndNewlines)
+            databaseId = selectedDatabaseId(session.principal).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard !databaseId.isEmpty else {
             return queue(

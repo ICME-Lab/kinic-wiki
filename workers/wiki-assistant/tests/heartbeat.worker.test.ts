@@ -10,6 +10,11 @@ vi.mock("../src/billing", () => ({
   voiceReservation: async () => null,
   reserveVoice: async () => ({}),
   settleVoiceCharge: async () => ({ confirmed_seconds: 0n, closed: false }),
+  stopVoiceCharge: async (_env: unknown, _id: string, seconds: number) => ({
+    confirmed_seconds: BigInt(seconds),
+    stopped_seconds: [BigInt(seconds)],
+    closed: true,
+  }),
   voicePolicy: async () => ({ enabled: true, daily_budget_cycles: 1000n }),
   voiceRate: async () => ({ version: 1n, cycles_per_minute: 60n }),
 }));

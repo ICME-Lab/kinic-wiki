@@ -12,14 +12,16 @@ const leaseCode = stripTypeScriptTypes(
   await readFile(new URL("../src/leases.ts", import.meta.url), "utf8"),
   { mode: "transform" },
 );
-const migration = await readFile(
-  new URL("../migrations/0001_assistant.sql", import.meta.url),
-  "utf8",
+const [initialMigration, chargeMigration] = await Promise.all(
+  ["0001_assistant.sql", "0002_charge_conversation.sql"].map((name) =>
+    readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8"),
+  ),
 );
+const executableChargeMigration = chargeMigration.replace(/\s+/g, " ");
 const script = `${leaseCode.replaceAll("export ", "")}
 export default { async fetch(request,env) {
  const path=new URL(request.url).pathname;
- if(path==='/init'){await env.DB.exec(${JSON.stringify(migration)});return new Response('initialized');}
+ if(path==='/init'){await env.DB.exec(${JSON.stringify(initialMigration)});await env.DB.exec(${JSON.stringify(executableChargeMigration)});return new Response('initialized');}
  if(path==='/expire'){await env.DB.prepare("UPDATE assistant_leases SET expires_at=0").run();return new Response('expired');}
  if(path==='/state')return Response.json(await env.DB.prepare("SELECT * FROM assistant_leases").first());
  const leases=new Leases(env.DB),lease=await leases.claim('connection','conversation');

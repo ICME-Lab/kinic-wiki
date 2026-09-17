@@ -105,7 +105,7 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         try Data("existing history".utf8).write(to: history)
         let cache = AssistantConversationCache(directory: root.appending(path: "preview", directoryHint: .isDirectory))
         let data = Data("""
-        {"id":"conversation","databaseId":"db","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"messages":[],"utterances":[],"voice":"off"}
+        {"revision":1,"id":"conversation","databaseId":"db","scope":"/Knowledge","status":"ready","error":null,"generation":1,"reconnectGraceMs":120000,"messages":[],"utterances":[],"voice":"off"}
         """.utf8)
         let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
         try cache.save(principal: "owner", snapshot: snapshot, conversationID: UUID(), databaseTitle: "Test")

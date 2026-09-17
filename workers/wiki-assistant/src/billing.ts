@@ -25,6 +25,7 @@ export type Reservation = {
   held_cycles: bigint;
   charged_cycles: bigint;
   closed: boolean;
+  stopped_seconds: bigint[];
 };
 type BillingActor = {
   get_voice_reservation(id: string): Promise<Result<Reservation[]>>;
@@ -44,6 +45,10 @@ type BillingActor = {
     session_id: string;
     confirmed_seconds: bigint;
     close: boolean;
+  }): Promise<Result<Reservation>>;
+  stop_voice(input: {
+    session_id: string;
+    final_seconds: bigint;
   }): Promise<Result<Reservation>>;
 };
 const factory: Parameters<typeof Actor.createActor>[0] = ({ IDL: i }) => {
@@ -66,6 +71,7 @@ const factory: Parameters<typeof Actor.createActor>[0] = ({ IDL: i }) => {
     held_cycles: i.Nat64,
     charged_cycles: i.Nat64,
     closed: i.Bool,
+    stopped_seconds: i.Opt(i.Nat64),
   });
   const result = (t: Parameters<typeof i.Opt>[0]) =>
     i.Variant({ Ok: t, Err: i.Text });
@@ -98,6 +104,11 @@ const factory: Parameters<typeof Actor.createActor>[0] = ({ IDL: i }) => {
           close: i.Bool,
         }),
       ],
+      [result(R)],
+      [],
+    ),
+    stop_voice: i.Func(
+      [i.Record({ session_id: i.Text, final_seconds: i.Nat64 })],
       [result(R)],
       [],
     ),
@@ -203,6 +214,21 @@ export async function settleVoiceCharge(
         session_id: id,
         confirmed_seconds: BigInt(seconds),
         close,
+      }),
+    ),
+  );
+}
+
+export async function stopVoiceCharge(
+  env: Env,
+  id: string,
+  seconds: number,
+) {
+  return unwrap(
+    await billingCall(env, (actor) =>
+      actor.stop_voice({
+        session_id: id,
+        final_seconds: BigInt(seconds),
       }),
     ),
   );

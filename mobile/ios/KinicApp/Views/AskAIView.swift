@@ -12,6 +12,7 @@ struct AskAIView: View {
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
+            .onChange(of: isShowingPreview) { _, showing in appModel.voicePresentationActive = showing }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
@@ -19,7 +20,7 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("音声対話", systemImage: "waveform") { isShowingPreview = true }
+                    Button("音声対話", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
                         .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true

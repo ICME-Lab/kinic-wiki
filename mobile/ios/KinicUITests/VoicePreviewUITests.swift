@@ -61,4 +61,20 @@ final class VoicePreviewUITests: XCTestCase {
         let app = launch("responding")
         XCTAssertTrue(app.staticTexts["Wikiを調べて回答しています…"].waitForExistence(timeout: 10))
     }
+    @MainActor
+    func testVoiceSettingsUsesCompactAmountsWithLargeText() {
+        let app = XCUIApplication()
+        app.launchEnvironment["KINIC_SCREENSHOT_MODE"] = "voice-settings"
+        app.launchEnvironment["KINIC_LARGE_TEXT"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["音声設定"].waitForExistence(timeout: 10))
+        let rate = app.descendants(matching: .any)["voice.cycles.料金／分"].firstMatch
+        for _ in 0..<4 where !rate.isHittable { app.swipeUp() }
+        XCTAssertTrue(rate.exists)
+        XCTAssertEqual((rate.value as? String)?.filter(\.isNumber), "30000000000")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Voice settings large text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
 }

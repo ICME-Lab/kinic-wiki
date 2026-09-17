@@ -34,9 +34,10 @@ struct AskAIDatabaseMenu: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+        .disabled(appModel.databaseSelectionLocked)
         .tint(KinicDesign.hotPink)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Selects the database Ask AI may search")
+        .accessibilityHint(appModel.databaseSelectionLocked ? AppModel.databaseSelectionLockMessage : "Selects the database Ask AI may search")
         .frame(maxWidth: 180, alignment: .leading)
     }
 

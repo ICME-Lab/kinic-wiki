@@ -11,6 +11,9 @@ beforeAll(async () => {
   await bindings.ASSISTANT_DB.exec(
     (env as Env & { TEST_MIGRATION: string }).TEST_MIGRATION,
   );
+  await bindings.ASSISTANT_DB.exec(
+    (env as Env & { TEST_CHARGE_MIGRATION: string }).TEST_CHARGE_MIGRATION,
+  );
 });
 const origin = "https://wiki.kinic.xyz";
 describe("assistant HTTP and D1 authentication boundary", () => {
@@ -484,6 +487,7 @@ it("persists a stop before the handling invocation disappears and ignores old vo
   user["state"].charges = [
     {
       id: voiceId,
+      conversationId: id,
       databaseId: "db",
       principal,
       rate: "1",
@@ -505,4 +509,31 @@ it("persists a stop before the handling invocation disappears and ignores old vo
   const recovered = (await new AssistantStore(bindings).load(principal)).state;
   expect(recovered.conversation?.live?.stopping).toBe(true);
   expect(recovered.charges[0].stopped).toBe(now + 10000);
+});
+
+it("keeps an earlier stop that arrives while a later cutoff is being finalized", async () => {
+  const store = new AssistantStore(bindings);
+  const conversationId = crypto.randomUUID();
+  const voiceId = crypto.randomUUID();
+  const started = Date.now();
+  await bindings.ASSISTANT_DB.batch([
+    bindings.ASSISTANT_DB.prepare(
+      "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) VALUES (?,?,?)",
+    ).bind(conversationId, voiceId, started + 45000),
+    bindings.ASSISTANT_DB.prepare(
+      "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) VALUES (?,?,?)",
+    ).bind(conversationId, "*", started + 55000),
+  ]);
+
+  await store.clearStop(conversationId, voiceId, true, started + 50000);
+  expect(await store.stopAt(conversationId, voiceId)).toBe(started + 45000);
+  const rows = await bindings.ASSISTANT_DB.prepare(
+    "SELECT voice_id FROM assistant_stops WHERE conversation_id=? ORDER BY voice_id",
+  )
+    .bind(conversationId)
+    .all<{ voice_id: string }>();
+  expect(rows.results.map((row) => row.voice_id)).toEqual([voiceId]);
+
+  await store.clearStop(conversationId, voiceId, true, started + 45000);
+  expect(await store.stopAt(conversationId, voiceId)).toBeNull();
 });

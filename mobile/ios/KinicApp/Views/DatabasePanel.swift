@@ -46,16 +46,19 @@ struct DatabasePanel: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-                if model.captureDatabaseCandidates.isEmpty {
+                if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
+                if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
+                    ProgressView("データベースを読み込み中")
+                } else if model.browseListDatabases.isEmpty {
                     ContentUnavailableView(
-                        model.isSignedIn ? "No writable databases" : "Sign in to load databases",
+                        model.isSignedIn ? "利用できるデータベースがありません" : "Sign in to load databases",
                         systemImage: "externaldrive",
-                        description: Text(model.isSignedIn ? "Create a database or refresh existing Owner and Writer databases." : "Internet Identity unlocks your writable databases.")
+                        description: Text(model.isSignedIn ? "データベースを作成するか、再読み込みしてください。" : "Internet Identity unlocks your writable databases.")
                     )
                     .frame(maxWidth: .infinity)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.captureDatabaseCandidates) { database in
+                        ForEach(model.browseListDatabases) { database in
                             databaseButton(database)
                         }
                     }
@@ -136,6 +139,7 @@ struct DatabasePanel: View {
         let isSelected = model.selectedDatabaseId == database.databaseId
         let isPending = database.status == .pending
         return Button {
+            guard !model.databaseSelectionLocked else { return }
             if isPending {
                 model.selectDatabase(database.databaseId)
                 presentCreditSheet(databaseId: database.databaseId, title: database.displayTitle)
@@ -172,6 +176,7 @@ struct DatabasePanel: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(model.databaseSelectionLocked)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.databaseAccessibilityLabel(
             database,

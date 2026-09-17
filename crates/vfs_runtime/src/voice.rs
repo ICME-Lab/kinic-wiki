@@ -2,6 +2,7 @@
 use super::*;
 use vfs_types::{
     VoiceAccess, VoicePolicy, VoiceRate, VoiceReservation, VoiceReserveRequest, VoiceSettleRequest,
+    VoiceStopRequest,
 };
 
 fn cost(rate: u64, seconds: u64) -> Result<u64, String> {
@@ -209,7 +210,7 @@ impl VfsService {
             } else {
                 let rate = latest_rate(tx)?;
                 if rate.version != request.rate_version || request.reserved_seconds != 60 { return Err("voice rate or reservation changed".into()); }
-                VoiceReservation { session_id: request.session_id.clone(), database_id: request.database_id.clone(), principal: request.principal.clone(), rate_version: rate.version, cycles_per_minute: rate.cycles_per_minute, usage_day: now / DAY_MS, created_at_ms: now, expires_at_ms: now + DAY_MS, reserved_seconds: 0, confirmed_seconds: 0, held_cycles: 0, charged_cycles: 0, closed: false }
+                VoiceReservation { session_id: request.session_id.clone(), database_id: request.database_id.clone(), principal: request.principal.clone(), rate_version: rate.version, cycles_per_minute: rate.cycles_per_minute, usage_day: now / DAY_MS, created_at_ms: now, expires_at_ms: now + DAY_MS, reserved_seconds: 0, confirmed_seconds: 0, held_cycles: 0, charged_cycles: 0, closed: false, stopped_seconds: None }
             };
             if request.reserved_seconds <= r.reserved_seconds { return Ok(r); }
             if request.reserved_seconds != r.reserved_seconds + 60 { return Err("invalid voice extension".into()); }
@@ -257,9 +258,16 @@ impl VfsService {
                 }
                 return Err("voice reservation closed".into());
             }
-            if request.confirmed_seconds < r.confirmed_seconds
-                || (request.confirmed_seconds == r.confirmed_seconds && !request.close)
-            {
+            if request.confirmed_seconds < r.confirmed_seconds {
+                if request.close {
+                    movement(tx, &r, r.held_cycles as i64, "voice_release", now)?;
+                    r.held_cycles = 0;
+                    r.closed = true;
+                    save(tx, &r)?;
+                }
+                return Ok(r);
+            }
+            if request.confirmed_seconds == r.confirmed_seconds && !request.close {
                 return Ok(r);
             }
             let total = cost(r.cycles_per_minute, request.confirmed_seconds)?;
@@ -273,6 +281,49 @@ impl VfsService {
             }
             // Zero movement records the charge classification; reserve/release own balance changes.
             movement(tx, &r, 0, "voice_settle", now)?;
+            save(tx, &r)?;
+            Ok(r)
+        })
+    }
+    pub fn stop_voice(
+        &self,
+        caller: &str,
+        request: VoiceStopRequest,
+        now: i64,
+    ) -> Result<VoiceReservation, String> {
+        self.write_index(|tx| {
+            authority(tx, caller)?;
+            let mut r = reservation(tx, &request.session_id)?.ok_or("voice reservation missing")?;
+            if request.final_seconds > r.reserved_seconds {
+                return Err("invalid voice usage".into());
+            }
+            if let Some(stopped) = r.stopped_seconds
+                && request.final_seconds >= stopped
+            {
+                return Ok(r);
+            }
+            let final_seconds = if r.closed || now >= r.expires_at_ms {
+                request.final_seconds.min(r.confirmed_seconds)
+            } else {
+                request.final_seconds
+            };
+            if now < r.expires_at_ms
+                && final_seconds > ((now - r.created_at_ms).max(0) as u64).div_ceil(1000)
+            {
+                return Err("invalid voice usage".into());
+            }
+            let total = cost(r.cycles_per_minute, final_seconds)?;
+            let release = r
+                .held_cycles
+                .checked_add(r.charged_cycles)
+                .and_then(|reserved| reserved.checked_sub(total))
+                .ok_or("invalid voice usage")?;
+            r.confirmed_seconds = final_seconds;
+            r.charged_cycles = total;
+            r.held_cycles = 0;
+            r.closed = true;
+            r.stopped_seconds = Some(request.final_seconds);
+            movement(tx, &r, release as i64, "voice_stop", now)?;
             save(tx, &r)?;
             Ok(r)
         })
@@ -429,6 +480,87 @@ mod tests {
         assert_eq!(result.held_cycles, 0);
         assert_eq!(result, s.settle_voice(WORKER, close, 20000).unwrap());
         assert!(s.reserve_voice(WORKER, request("s", 120), 30000).is_err());
+    }
+    #[test]
+    fn authoritative_stop_refunds_over_settlement_and_fences_late_updates() {
+        let (_dir, s) = setup();
+        s.reserve_voice(WORKER, request("s", 60), 0).unwrap();
+        s.settle_voice(
+            WORKER,
+            VoiceSettleRequest {
+                session_id: "s".into(),
+                confirmed_seconds: 50,
+                close: false,
+            },
+            50000,
+        )
+        .unwrap();
+        let stop = VoiceStopRequest {
+            session_id: "s".into(),
+            final_seconds: 45,
+        };
+        let result = s.stop_voice(WORKER, stop.clone(), 50000).unwrap();
+        assert!(result.closed);
+        assert_eq!(result.confirmed_seconds, 45);
+        assert_eq!(result.charged_cycles, 46);
+        assert_eq!(result.held_cycles, 0);
+        assert_eq!(result.stopped_seconds, Some(45));
+        assert_eq!(result, s.stop_voice(WORKER, stop, 51000).unwrap());
+        assert!(
+            s.settle_voice(
+                WORKER,
+                VoiceSettleRequest {
+                    session_id: "s".into(),
+                    confirmed_seconds: 50,
+                    close: false,
+                },
+                51000,
+            )
+            .is_err()
+        );
+        let earlier = s
+            .stop_voice(
+                WORKER,
+                VoiceStopRequest {
+                    session_id: "s".into(),
+                    final_seconds: 40,
+                },
+                51000,
+            )
+            .unwrap();
+        assert_eq!(earlier.confirmed_seconds, 40);
+        assert_eq!(earlier.charged_cycles, 41);
+        assert_eq!(earlier.stopped_seconds, Some(40));
+    }
+    #[test]
+    fn lower_close_releases_reservation_without_reducing_confirmed_usage() {
+        let (_dir, s) = setup();
+        s.reserve_voice(WORKER, request("s", 60), 0).unwrap();
+        s.settle_voice(
+            WORKER,
+            VoiceSettleRequest {
+                session_id: "s".into(),
+                confirmed_seconds: 50,
+                close: false,
+            },
+            50000,
+        )
+        .unwrap();
+        let result = s
+            .settle_voice(
+                WORKER,
+                VoiceSettleRequest {
+                    session_id: "s".into(),
+                    confirmed_seconds: 45,
+                    close: true,
+                },
+                50000,
+            )
+            .unwrap();
+        assert!(result.closed);
+        assert_eq!(result.confirmed_seconds, 50);
+        assert_eq!(result.charged_cycles, 51);
+        assert_eq!(result.held_cycles, 0);
     }
     #[test]
     fn reservation_requires_owner_policy_and_dedicated_authority() {

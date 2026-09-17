@@ -15,7 +15,7 @@ final class AssistantHistoryContextTests: XCTestCase {
 @MainActor
 final class AssistantVoiceFinalizationTests: XCTestCase {
     private func snapshot(_ voice: String, id: String = "session") throws -> AssistantSnapshot {
-        let data = try JSONSerialization.data(withJSONObject: ["id": id, "databaseId": "db", "scope": "/Knowledge", "status": "ready", "generation": 1, "reconnectGraceMs": 120000, "messages": [], "utterances": [], "voice": voice])
+        let data = try JSONSerialization.data(withJSONObject: ["revision": 1, "id": id, "databaseId": "db", "scope": "/Knowledge", "status": "ready", "generation": 1, "reconnectGraceMs": 120000, "messages": [], "utterances": [], "voice": voice])
         return try JSONDecoder().decode(AssistantSnapshot.self, from: data)
     }
     func testWaitsForOffBeforeReturningFinalState() async throws {

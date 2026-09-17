@@ -40,8 +40,14 @@ Questions retain their IDs across uncertain submission; saved Agents turn/action
 checked before continuing. A persisted command with an unknown non-question outcome
 is never blindly re-executed. HTTP remains available for voice stop and conversation
 end. An ownership-bound stop intent and its server receipt time survive independently
-of the socket and are applied by the next invocation. Voice interruption preserves
-pending text work.
+of the socket and are applied by the next invocation. The canister's authority-only
+stop finalization closes the reservation and refunds any settlement beyond that
+earliest stop time in one transaction. Voice interruption preserves pending text work.
+
+Snapshots carry a monotonically increasing D1 revision and contain control state
+only. Messages, citations and utterances are fetched in revision-bound pages of at
+most ten items and 512,000 encoded bytes. A revision change during pagination makes
+the client restart the read, so content from different commits is never combined.
 
 ## Crash recovery and cleanup
 

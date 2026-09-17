@@ -15,7 +15,7 @@ struct AskAIModelTests {
         await model.load()
         let id = UUID()
         let data = Data("""
-        {"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"internal","answer":{"answer":"Answer","citations":[],"insufficient":true,"contradictions":["First contradiction","Second contradiction"],"unverified":["Unverified claim"]}}]}
+        {"revision":1,"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"internal","answer":{"answer":"Answer","citations":[],"insufficient":true,"contradictions":["First contradiction","Second contradiction"],"unverified":["Unverified claim"]}}]}
         """.utf8)
         let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
         try await model.saveVoiceSnapshot(snapshot, conversationID: id, title: "Wiki", scope: .guest)
@@ -39,7 +39,7 @@ struct AskAIModelTests {
         await model.load()
         let id = UUID()
         let value = Data("""
-        {"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"Internal instruction","answer":{"answer":"Answer","citations":[{"id":"S1","databaseId":"db_test","path":"/Knowledge/Note","excerpt":"Evidence","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
+        {"revision":1,"id":"voice","databaseId":"db_test","scope":"/Knowledge","status":"ready","generation":0,"reconnectGraceMs":120000,"voice":"off","utterances":[],"messages":[{"voice":true,"requestId":"request","question":"Internal instruction","answer":{"answer":"Answer","citations":[{"id":"S1","databaseId":"db_test","path":"/Knowledge/Note","excerpt":"Evidence","etag":"v1"}],"insufficient":false,"contradictions":[],"unverified":[]}}]}
         """.utf8)
         let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: value)
         await #expect(throws: AskAIStoreStubError.self) {
@@ -59,7 +59,7 @@ struct AskAIModelTests {
         await model.load()
         let id = UUID()
         func snapshot(_ text: String) throws -> AssistantSnapshot {
-            let value: [String: Any] = ["id": "voice-session", "databaseId": "db_test", "scope": "/Knowledge", "status": "ready", "generation": 0, "reconnectGraceMs": 120000, "voice": "off", "messages": [], "utterances": [["id": "stable", "role": "user", "text": text]]]
+            let value: [String: Any] = ["revision": 1, "id": "voice-session", "databaseId": "db_test", "scope": "/Knowledge", "status": "ready", "generation": 0, "reconnectGraceMs": 120000, "voice": "off", "messages": [], "utterances": [["id": "stable", "role": "user", "text": text]]]
             return try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
         }
         try await model.saveVoiceSnapshot(snapshot("Hello"), conversationID: id, title: "Wiki", scope: .guest)

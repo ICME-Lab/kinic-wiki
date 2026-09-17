@@ -11,15 +11,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantPanel } from "./assistant-panel";
 import {
   assistantRequest,
+  assistantSnapshot,
   AssistantVoice,
   AssistantControl,
   type AssistantSnapshot,
+  type AssistantState,
 } from "@/lib/assistant";
 
 const id = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
 const citationId = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
 function snapshot(): AssistantSnapshot {
   return {
+    revision: 1,
     id,
     databaseId: "db",
     scope: "/Knowledge",
@@ -29,8 +32,13 @@ function snapshot(): AssistantSnapshot {
     reconnectGraceMs: 120000,
     voice: "off",
     progress: null,
+    utterances: [],
     messages: [],
   };
+}
+function state(value: AssistantSnapshot): AssistantState {
+  const { messages: _messages, utterances: _utterances, ...metadata } = value;
+  return metadata;
 }
 class TestSocket {
   static OPEN = 1;
@@ -69,15 +77,29 @@ beforeEach(() => {
       if (path.endsWith("/auth")) return Response.json({ principal: "owner" });
       if (path.endsWith("/active"))
         return active
-          ? Response.json(active)
+          ? Response.json(state(active))
           : Response.json({ error: "conversation_ended" }, { status: 410 });
       if (path.endsWith("/conversations")) {
         active = snapshot();
-        return Response.json(active);
+        return Response.json(state(active));
       }
+      if (path.endsWith("/conversation"))
+        return active
+          ? Response.json(state(active))
+          : Response.json({ error: "conversation_ended" }, { status: 410 });
+      if (path.endsWith("/history"))
+        return active
+          ? Response.json({
+              revision: active.revision,
+              messages: active.messages,
+              utterances: active.utterances,
+              nextCursor: null,
+            })
+          : Response.json({ error: "conversation_ended" }, { status: 410 });
       if (path.endsWith("/citation"))
         return Response.json({ changed: true, missing: false });
-      if (path.endsWith("/questions")) return Response.json(active);
+      if (path.endsWith("/questions"))
+        return Response.json({ revision: active?.revision ?? 0 });
       return Response.json({ ended: true });
     }),
   );
@@ -286,6 +308,52 @@ it("does not expose an upstream HTML or text error as a JSON parser error", asyn
   );
 });
 
+it("restarts paged history when its revision changes", async () => {
+  const metadata = state(snapshot());
+  let currentRevision = 1;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const parsed = new URL(url, "https://example.test");
+      if (parsed.pathname.endsWith("/conversation"))
+        return Response.json({ ...metadata, revision: currentRevision });
+      if (!parsed.pathname.endsWith("/history"))
+        return Response.json({ error: "request_failed" }, { status: 500 });
+      const revision = Number(parsed.searchParams.get("revision"));
+      const cursor = parsed.searchParams.get("cursor");
+      if (revision === 1 && cursor === "0")
+        return Response.json({
+          revision: 1,
+          messages: [
+            { requestId: "old", question: "old", answer: null, error: null },
+          ],
+          utterances: [],
+          nextCursor: "1",
+        });
+      if (revision === 1) {
+        currentRevision = 2;
+        return Response.json({ error: "stale_state" }, { status: 409 });
+      }
+      return Response.json({
+        revision: 2,
+        messages: [
+          { requestId: "new", question: "new", answer: null, error: null },
+        ],
+        utterances: [{ id: "speech", role: "user", text: "hello" }],
+        nextCursor: null,
+      });
+    }),
+  );
+
+  const result = await assistantSnapshot(id, metadata);
+
+  expect(result.revision).toBe(2);
+  expect(result.messages.map((message) => message.requestId)).toEqual(["new"]);
+  expect(result.utterances.map((utterance) => utterance.id)).toEqual([
+    "speech",
+  ]);
+});
+
 async function mountedConversation() {
   active = snapshot();
   active.messages = [
@@ -316,7 +384,7 @@ it("checks HTTP state before reconnecting and accepts a fresh WebSocket snapshot
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) =>
       url.includes("/conversation?")
-        ? Response.json(active)
+        ? Response.json(state(active!))
         : original(url, init),
     ),
   );
@@ -330,7 +398,7 @@ it("checks HTTP state before reconnecting and accepts a fresh WebSocket snapshot
     expect.stringContaining("/conversation?"),
     expect.anything(),
   );
-  act(() => sockets[1].message({ ...active, type: "snapshot" }));
+  act(() => sockets[1].message({ ...state(active!), type: "snapshot" }));
   await act(async () => {
     await vi.advanceTimersByTimeAsync(120000);
   });
@@ -410,7 +478,7 @@ it("ignores an old reconnect response after changing DB", async () => {
     />,
   );
   await act(async () => {
-    resolve(Response.json(active));
+    resolve(Response.json(state(active!)));
   });
   expect(sockets).toHaveLength(1);
   expect(screen.queryByText("前の質問")).toBeNull();
@@ -423,11 +491,76 @@ it("releases browser audio immediately when the server marks voice stopping", as
   await waitFor(() =>
     expect(AssistantVoice.prototype.start).toHaveBeenCalled(),
   );
+  active = { ...active!, revision: active!.revision + 1, voice: "stopping" };
   act(() =>
-    sockets[0].message({ ...active, type: "snapshot", voice: "stopping" }),
+    sockets[0].message({ ...state(active!), type: "snapshot" }),
   );
-  expect(dispose).toHaveBeenCalled();
+  await waitFor(() => expect(dispose).toHaveBeenCalled());
   expect(screen.getByText("前の質問")).toBeTruthy();
+});
+
+it("keeps the displayed history when a newer revision cannot be fetched", async () => {
+  await mountedConversation();
+  const historyRequests = () =>
+    requests.filter((request) => request.path.endsWith("/history")).length;
+  const before = historyRequests();
+  act(() =>
+    sockets[0].message({ ...state(active!), revision: 1, type: "snapshot" }),
+  );
+  await act(async () => Promise.resolve());
+  expect(historyRequests()).toBe(before);
+
+  const original = fetch;
+  active = { ...active!, revision: 2 };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) =>
+      url.includes("/history?")
+        ? Response.json({ error: "request_failed" }, { status: 503 })
+        : original(url, init),
+    ),
+  );
+  act(() => sockets[0].message({ ...state(active!), type: "snapshot" }));
+
+  await screen.findByRole("alert");
+  expect(screen.getByText("前の質問")).toBeTruthy();
+});
+
+it("uses a revision-only command response to fetch the next snapshot", async () => {
+  await mountedConversation();
+  const sent = vi.spyOn(sockets[0], "send");
+  fireEvent.change(screen.getByRole("textbox", { name: "Question about the Wiki" }), {
+    target: { value: "次の質問" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send question" }));
+  await waitFor(() => expect(sent).toHaveBeenCalled());
+  const command = JSON.parse(String(sent.mock.calls.at(-1)?.[0]));
+  active = {
+    ...active!,
+    revision: 2,
+    messages: [
+      ...active!.messages,
+      {
+        requestId: command.requestId,
+        question: "次の質問",
+        answer: null,
+        error: null,
+      },
+    ],
+  };
+  act(() =>
+    sockets[0].message({
+      type: "command.result",
+      requestId: command.requestId,
+      status: 200,
+      body: { revision: 2 },
+    }),
+  );
+
+  await screen.findByText("次の質問");
+  expect(requests.some((request) => request.path.endsWith("/history"))).toBe(
+    true,
+  );
 });
 
 it("routes command responses over the control socket and rejects disconnected requests", async () => {

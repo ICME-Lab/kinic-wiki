@@ -23,12 +23,16 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   reserve: vi.fn(),
   charge: vi.fn(),
+  stop: vi.fn(),
+  stopAt: vi.fn(),
+  clearStop: vi.fn(),
   discardIntent: vi.fn(),
 }));
 vi.mock("../src/billing", () => ({
   voiceReservation: async () => null,
   reserveVoice: mocks.reserve,
   settleVoiceCharge: mocks.charge,
+  stopVoiceCharge: mocks.stop,
   voicePolicy: async () => ({ enabled: true, daily_budget_cycles: 1000n }),
   voiceRate: async () => ({ version: 1n, cycles_per_minute: 60n }),
 }));
@@ -210,6 +214,12 @@ vi.mock("../src/store", () => ({
     async canSend() {
       return true;
     }
+    async stopAt(...args: unknown[]) {
+      return mocks.stopAt(...args);
+    }
+    async clearStop(...args: unknown[]) {
+      return mocks.clearStop(...args);
+    }
   },
 }));
 async function harness() {
@@ -276,6 +286,8 @@ async function harness() {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.authorize.mockResolvedValue(undefined);
+  mocks.stopAt.mockResolvedValue(null);
+  mocks.clearStop.mockResolvedValue(undefined);
   mocks.reserve.mockImplementation(
     async (_env, _id, _db, _principal, _rate, seconds) => ({
       reserved_seconds: BigInt(seconds),
@@ -285,6 +297,11 @@ beforeEach(() => {
   mocks.charge.mockImplementation(async (_env, _id, seconds, closed) => ({
     confirmed_seconds: BigInt(seconds),
     closed,
+  }));
+  mocks.stop.mockImplementation(async (_env, _id, seconds) => ({
+    confirmed_seconds: BigInt(seconds),
+    stopped_seconds: [BigInt(seconds)],
+    closed: true,
   }));
   mocks.create.mockResolvedValue({ id: "session-1" });
   mocks.items.mockResolvedValue([]);
@@ -735,6 +752,7 @@ async function withCharge() {
   h.c.live!.usage.chargeId = "charge-1";
   const charge = {
     id: "charge-1",
+    conversationId: h.c.id,
     databaseId: "db",
     principal: "owner",
     rate: "1",
@@ -776,11 +794,10 @@ it("stops at funded deadline when extensions fail without cancelling text", asyn
   expect(h.c.live).toBeNull();
   expect(h.c.pending).not.toBeNull();
   expect(mocks.cancel).not.toHaveBeenCalled();
-  expect(mocks.charge).toHaveBeenLastCalledWith(
+  expect(mocks.stop).toHaveBeenLastCalledWith(
     expect.anything(),
     "charge-1",
     60,
-    true,
   );
 });
 it("fixes charge duration at logout even when cleanup takes longer", async () => {
@@ -790,11 +807,10 @@ it("fixes charge duration at logout even when cleanup takes longer", async () =>
   await h.user.endOwned("auth");
   vi.setSystemTime(h.charge.started + 60000);
   await h.fireAlarm();
-  expect(mocks.charge).toHaveBeenLastCalledWith(
+  expect(mocks.stop).toHaveBeenLastCalledWith(
     expect.anything(),
     "charge-1",
     7,
-    true,
   );
   expect(h.user["state"].charges).toEqual([]);
 });
@@ -803,20 +819,19 @@ it("retains content-free charge metadata on canister outage and retries idempote
   const h = await withCharge();
   vi.setSystemTime(h.charge.started + 7000);
   await h.user.endOwned("auth");
-  mocks.charge.mockRejectedValueOnce(new Error("offline"));
+  mocks.stop.mockRejectedValueOnce(new Error("offline"));
   await h.fireAlarm();
   expect(h.user["state"].charges).toHaveLength(1);
   expect(h.user["state"].conversation).toBeNull();
   await h.fireAlarm();
-  expect(mocks.charge).toHaveBeenCalledTimes(1);
+  expect(mocks.stop).toHaveBeenCalledTimes(1);
   vi.setSystemTime(h.user["state"].charges[0].nextAttempt!);
   await h.fireAlarm();
   expect(h.user["state"].charges).toEqual([]);
-  expect(mocks.charge).toHaveBeenLastCalledWith(
+  expect(mocks.stop).toHaveBeenLastCalledWith(
     expect.anything(),
     "charge-1",
     7,
-    true,
   );
 });
 
@@ -830,12 +845,61 @@ it("accepts only the owning cleanup binding and fixes a delayed stop request's b
   expect(h.charge.stopped).toBeNull();
   await h.user.stopVoiceOwned("auth", h.c.id, h.charge.started + 7000);
   await h.fireAlarm();
-  expect(mocks.charge).toHaveBeenLastCalledWith(
+  expect(mocks.stop).toHaveBeenLastCalledWith(
     expect.anything(),
     "charge-1",
     7,
-    true,
   );
+});
+it("re-reads a persisted stop before finalizing a charge", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  mocks.stopAt.mockResolvedValue(h.charge.started + 45000);
+  vi.setSystemTime(h.charge.started + 50000);
+  await h.fireAlarm();
+  expect(mocks.stop).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "charge-1",
+    45,
+  );
+  expect(mocks.clearStop).toHaveBeenCalledWith(
+    h.c.id,
+    "charge-1",
+    true,
+    h.charge.started + 45000,
+  );
+});
+
+it("pages history by revision without putting content in snapshots", async () => {
+  const h = await harness();
+  const c = h.user["state"].conversation!;
+  c.messages = Array.from({ length: 30 }, (_, index) => ({
+    voice: false,
+    requestId: crypto.randomUUID(),
+    question: `${index}:` + "日🙂".repeat(2000),
+    answer: null,
+    error: null,
+  }));
+  const snapshot = h.user["snapshot"](c);
+  expect(snapshot).not.toHaveProperty("messages");
+  expect(snapshot).not.toHaveProperty("utterances");
+  let cursor = 0;
+  let count = 0;
+  do {
+    const page = h.user["historyPage"](
+      c,
+      h.user["revision"],
+      cursor,
+    );
+    expect(page.messages.length + page.utterances.length).toBeLessThanOrEqual(10);
+    expect(new TextEncoder().encode(JSON.stringify(page)).length).toBeLessThanOrEqual(512000);
+    count += page.messages.length + page.utterances.length;
+    cursor = page.nextCursor === null ? -1 : Number(page.nextCursor);
+  } while (cursor >= 0);
+  expect(count).toBe(30);
+  expect(() =>
+    h.user["historyPage"](c, h.user["revision"] - 1, 0),
+  ).toThrow("stale_state");
 });
 
 it("starts billing only after a matching connection acknowledgment and keeps its first timestamp", async () => {
@@ -858,7 +922,7 @@ it("starts billing only after a matching connection acknowledgment and keeps its
   expect(h.user["snapshot"](h.c).voiceDeadline).toBe(started + 60000);
   await h.user.stopVoiceOwned("auth", h.c.id, Date.now());
   await h.fireAlarm();
-  expect(mocks.charge).toHaveBeenLastCalledWith(expect.anything(), id, 3, true);
+  expect(mocks.stop).toHaveBeenLastCalledWith(expect.anything(), id, 3);
 });
 it("releases the reservation without billing if transport setup is never acknowledged", async () => {
   vi.useFakeTimers();
@@ -867,11 +931,10 @@ it("releases the reservation without billing if transport setup is never acknowl
   vi.setSystemTime(h.c.live!.usage.started + 30000);
   await h.fireAlarm();
   expect(h.c.live).toBeNull();
-  expect(mocks.charge).toHaveBeenLastCalledWith(
+  expect(mocks.stop).toHaveBeenLastCalledWith(
     expect.anything(),
     "charge-1",
     0,
-    true,
   );
   expect(h.user["state"].voiceSeconds).toBe(0);
 });
@@ -959,7 +1022,9 @@ describe("sideband across D1 reloads", () => {
     await h.emit({ ...transcript, event_id: "transcript-2", delta: " continued", start_ms: 100, end_ms: 200 });
     expect(current.utterances[0].text).toBe("Question continued");
     expect(current.utterances[0].id).toBe(originalID);
-    expect(h.user["snapshot"](current).utterances[0].id).toBe(originalID);
+    expect(
+      h.user["historyPage"](current, h.user["revision"], 0).utterances[0].id,
+    ).toBe(originalID);
     const delegate = vi
       .spyOn(
         h.user as unknown as { delegate: (typeof h.user)["delegate"] },

@@ -6,7 +6,6 @@ import SwiftUI
 
 struct ManageView: View {
     @Bindable var model: AppModel
-    @State private var hasUserSelectedManageDatabase = false
 
     var body: some View {
         Group {
@@ -16,7 +15,7 @@ struct ManageView: View {
 
                     if let database = selectedManageDatabase {
                         DatabaseManagementFormContent(model: model, database: database)
-                    } else if !model.isLoadingDatabases && !model.managementDatabases.isEmpty {
+                    } else if !model.isLoadingDatabases && !model.browseListDatabases.isEmpty {
                         Section("Management") {
                             Text("Select a database to manage.")
                                 .foregroundStyle(.secondary)
@@ -43,10 +42,11 @@ struct ManageView: View {
     @ViewBuilder
     private var databasePickerSection: some View {
         Section("Database") {
-            if model.isLoadingDatabases && model.managementDatabases.isEmpty {
+            if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
+            if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
                 ProgressView()
                     .tint(KinicDesign.hotPink)
-            } else if model.managementDatabases.isEmpty {
+            } else if model.browseListDatabases.isEmpty {
                 Text("No manageable databases.")
                     .foregroundStyle(.secondary)
             } else {
@@ -66,7 +66,7 @@ struct ManageView: View {
 
     private var databaseMenu: some View {
         Menu {
-            ForEach(model.managementDatabases) { database in
+            ForEach(model.browseListDatabases) { database in
                 Button {
                     selectManageDatabase(database.databaseId)
                 } label: {
@@ -85,17 +85,14 @@ struct ManageView: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .disabled(model.databaseSelectionLocked)
         .tint(KinicDesign.hotPink)
         .accessibilityLabel("Database")
         .accessibilityValue(selectedManageDatabase.map(pickerTitle(for:)) ?? "Select a database")
     }
 
     private var selectedManageDatabase: DatabaseSummary? {
-        let preferredDatabaseId = hasUserSelectedManageDatabase
-            ? model.selectedBrowseDatabaseId
-            : model.selectedDatabaseId
-        return model.managementDatabases.first { $0.databaseId == preferredDatabaseId }
-            ?? model.managementDatabases.first { $0.databaseId == model.selectedBrowseDatabaseId }
+        model.selectedBrowseDatabase
     }
 
     private func pickerTitle(for database: DatabaseSummary) -> String {
@@ -118,7 +115,6 @@ struct ManageView: View {
 
     private func selectManageDatabase(_ databaseId: String) {
         _ = model.requestBrowseDatabaseSelection(databaseId)
-        hasUserSelectedManageDatabase = true
     }
 }
 

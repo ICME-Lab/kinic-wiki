@@ -130,49 +130,45 @@ export class AssistantStore {
         );
       }
     }
-    if (state.conversation) {
-      const stops = await this.db
-        .prepare(
-          "SELECT voice_id,stopped_at FROM assistant_stops WHERE conversation_id=?",
-        )
-        .bind(state.conversation.id)
-        .all<{ voice_id: string; stopped_at: number }>();
-      for (const stop of stops.results) {
-        if (stop.voice_id === "*") state.endRequested = stop.stopped_at;
-        if (
-          state.conversation.live &&
-          (stop.voice_id === "*" ||
-            state.conversation.live.usage.chargeId === stop.voice_id)
-        ) {
-          state.conversation.live.stopping = true;
-          const charge = state.charges.find((b) => b.id === stop.voice_id);
-          if (charge)
-            charge.stopped = Math.min(
-              charge.stopped ?? Infinity,
-              stop.stopped_at,
-            );
-        }
-      }
-    }
     const cleanup = await this.db
       .prepare("SELECT data FROM assistant_cleanup WHERE principal=?")
       .bind(principal)
       .first<{ data: string }>();
     if (cleanup) Object.assign(state, JSON.parse(cleanup.data));
-    if (state.conversation) {
+    const conversationIds = new Set(
+      state.charges.map((charge) => charge.conversationId),
+    );
+    if (state.conversation) conversationIds.add(state.conversation.id);
+    for (const conversationId of conversationIds) {
       const stops = await this.db
         .prepare(
           "SELECT voice_id,stopped_at FROM assistant_stops WHERE conversation_id=?",
         )
-        .bind(state.conversation.id)
+        .bind(conversationId)
         .all<{ voice_id: string; stopped_at: number }>();
-      for (const stop of stops.results)
+      for (const stop of stops.results) {
+        if (
+          state.conversation?.id === conversationId &&
+          stop.voice_id === "*"
+        )
+          state.endRequested = stop.stopped_at;
+        if (
+          state.conversation?.id === conversationId &&
+          state.conversation.live &&
+          (stop.voice_id === "*" ||
+            state.conversation.live.usage.chargeId === stop.voice_id)
+        )
+          state.conversation.live.stopping = true;
         for (const charge of state.charges)
-          if (stop.voice_id === "*" || charge.id === stop.voice_id)
+          if (
+            charge.conversationId === conversationId &&
+            (stop.voice_id === "*" || charge.id === stop.voice_id)
+          )
             charge.stopped = Math.min(
               charge.stopped ?? Infinity,
               stop.stopped_at,
             );
+      }
     }
     return { revision: row?.revision ?? 0, state };
   }
@@ -262,13 +258,6 @@ export class AssistantStore {
       statements.push(
         this.db
           .prepare(
-            `DELETE FROM assistant_stops WHERE conversation_id NOT IN (SELECT conversation_id FROM assistant_users WHERE conversation_id IS NOT NULL) AND ${condition}`,
-          )
-          .bind(principal, commit),
-      );
-      statements.push(
-        this.db
-          .prepare(
             `DELETE FROM assistant_commands WHERE conversation_id NOT IN (SELECT conversation_id FROM assistant_users WHERE conversation_id IS NOT NULL) AND ${condition}`,
           )
           .bind(principal, commit),
@@ -319,6 +308,29 @@ export class AssistantStore {
         .bind(principal, authId, id, voiceId),
     ]);
     return result[0].meta.changes === 1;
+  }
+  async stopAt(conversationId: string, voiceId: string) {
+    return (
+      await this.db
+        .prepare(
+          "SELECT MIN(stopped_at) AS stopped_at FROM assistant_stops WHERE conversation_id=?1 AND voice_id IN ('*',?2)",
+        )
+        .bind(conversationId, voiceId)
+        .first<{ stopped_at: number | null }>()
+    )?.stopped_at ?? null;
+  }
+  async clearStop(
+    conversationId: string,
+    voiceId: string,
+    clearWildcard: boolean,
+    appliedAt: number,
+  ) {
+    await this.db
+      .prepare(
+        "DELETE FROM assistant_stops WHERE conversation_id=?1 AND (voice_id=?2 OR (?3=1 AND voice_id='*')) AND stopped_at>=?4",
+      )
+      .bind(conversationId, voiceId, clearWildcard ? 1 : 0, appliedAt)
+      .run();
   }
   async touch(principal: string, id: string) {
     await this.db

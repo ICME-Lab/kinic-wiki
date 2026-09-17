@@ -35,6 +35,7 @@ struct AssistantUtterance: Codable, Identifiable, Sendable {
     let text: String
 }
 struct AssistantSnapshot: Codable, Sendable {
+    let revision: Int
     let id: String
     let databaseId: String
     let scope: String
@@ -49,6 +50,60 @@ struct AssistantSnapshot: Codable, Sendable {
     let voiceId: String?
     let progress: Progress?
     struct Progress: Codable, Sendable { let calls: Int; let stage: String }
+    init(revision: Int, id: String, databaseId: String, scope: String, status: String,
+         error: String?, generation: Int, reconnectGraceMs: Int,
+         messages: [AssistantMessage], utterances: [AssistantUtterance], voice: String,
+         voiceDeadline: Double?, voiceId: String?, progress: Progress?) {
+        self.revision = revision
+        self.id = id
+        self.databaseId = databaseId
+        self.scope = scope
+        self.status = status
+        self.error = error
+        self.generation = generation
+        self.reconnectGraceMs = reconnectGraceMs
+        self.messages = messages
+        self.utterances = utterances
+        self.voice = voice
+        self.voiceDeadline = voiceDeadline
+        self.voiceId = voiceId
+        self.progress = progress
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        revision = try values.decode(Int.self, forKey: .revision)
+        id = try values.decode(String.self, forKey: .id)
+        databaseId = try values.decode(String.self, forKey: .databaseId)
+        scope = try values.decode(String.self, forKey: .scope)
+        status = try values.decode(String.self, forKey: .status)
+        error = try values.decodeIfPresent(String.self, forKey: .error)
+        generation = try values.decode(Int.self, forKey: .generation)
+        reconnectGraceMs = try values.decode(Int.self, forKey: .reconnectGraceMs)
+        messages = try values.decodeIfPresent([AssistantMessage].self, forKey: .messages) ?? []
+        utterances = try values.decodeIfPresent([AssistantUtterance].self, forKey: .utterances) ?? []
+        voice = try values.decode(String.self, forKey: .voice)
+        voiceDeadline = try values.decodeIfPresent(Double.self, forKey: .voiceDeadline)
+        voiceId = try values.decodeIfPresent(String.self, forKey: .voiceId)
+        progress = try values.decodeIfPresent(Progress.self, forKey: .progress)
+    }
+    func withHistory(messages: [AssistantMessage], utterances: [AssistantUtterance]) -> Self {
+        Self(revision: revision, id: id, databaseId: databaseId, scope: scope,
+             status: status, error: error, generation: generation,
+             reconnectGraceMs: reconnectGraceMs, messages: messages,
+             utterances: utterances, voice: voice, voiceDeadline: voiceDeadline,
+             voiceId: voiceId, progress: progress)
+    }
+}
+struct AssistantHistoryPage: Codable, Sendable {
+    let revision: Int
+    let messages: [AssistantMessage]
+    let utterances: [AssistantUtterance]
+    let nextCursor: String?
+}
+enum AssistantSnapshotOrdering {
+    static func shouldApply(currentRevision: Int?, incomingRevision: Int) -> Bool {
+        currentRevision.map { incomingRevision > $0 } ?? true
+    }
 }
 struct AssistantQuote: Codable, Sendable {
     let rateVersion: String
