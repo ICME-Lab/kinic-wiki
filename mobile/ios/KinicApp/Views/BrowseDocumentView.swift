@@ -199,7 +199,7 @@ struct BrowseDocumentView: View {
     @ViewBuilder
     private func workItemCreateSection(node: VFSNode) -> some View {
         Section("Work item") {
-            Button("項目を作成", systemImage: "square.and.pencil") {
+            Button("New item", systemImage: "square.and.pencil") {
                 createWorkItem(from: node)
             }
             .disabled(!model.canCreateWorkItemFromBrowseDocument(normalizedPath))

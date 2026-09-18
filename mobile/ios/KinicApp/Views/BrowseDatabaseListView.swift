@@ -22,9 +22,9 @@ struct BrowseDatabaseListView: View {
                 }
                 .overlay {
                     if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
-                        ProgressView("データベースを読み込み中")
+                        ProgressView("Loading databases…")
                     } else if model.browseListDatabases.isEmpty, let error = model.databaseListError {
-                        ContentUnavailableView("データベースを読み込めません", systemImage: "wifi.exclamationmark", description: Text(error))
+                        ContentUnavailableView("Could not load databases", systemImage: "wifi.exclamationmark", description: Text(error))
                     } else if model.browseListDatabases.isEmpty {
                         ContentUnavailableView("No readable databases", systemImage: "externaldrive")
                     }

@@ -88,13 +88,13 @@ private struct WorkItemsWidgetEntryView: View {
     var body: some View {
         Group {
             if entry.snapshot == nil || entry.snapshot?.principal.isEmpty == true {
-                message("サインインしてください", systemImage: "person.crop.circle.badge.questionmark")
+                message("Sign in", systemImage: "person.crop.circle.badge.questionmark")
             } else if entry.databaseId == nil {
-                message("データベースを選んでください", systemImage: "externaldrive.badge.questionmark")
+                message("Choose a database", systemImage: "externaldrive.badge.questionmark")
             } else if let database, database.isAvailable {
                 content(database)
             } else {
-                message("このデータベースは利用できません", systemImage: "lock")
+                message("This database is unavailable", systemImage: "lock")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -114,18 +114,18 @@ private struct WorkItemsWidgetEntryView: View {
                         .font(.body)
                         .foregroundStyle(accent)
                 }
-                .accessibilityLabel("新しい項目")
+                .accessibilityLabel("New item")
             }
 
             if items.isEmpty {
-                Text("未完了の項目はありません")
+                Text("No open items")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(items, id: \.id) { item in
                     Link(destination: WidgetLinks.item(databaseId: database.id, itemId: item.id)) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title.isEmpty ? "無題の項目" : item.title)
+                            Text(item.title.isEmpty ? "Untitled item" : item.title)
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(family == .systemSmall ? 2 : 1)
                             HStack(spacing: 8) {

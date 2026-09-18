@@ -54,7 +54,7 @@ struct AskAIMessageView: View {
                     Button {
                         createWorkItem(message)
                     } label: {
-                        Label("項目を作成", systemImage: "square.and.pencil")
+                        Label("New item", systemImage: "square.and.pencil")
                             .font(.subheadline.weight(.semibold))
                     }
                     .buttonStyle(.bordered)

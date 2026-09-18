@@ -201,13 +201,13 @@ struct WorkItemDetailView: View {
     /// The body stays readable even when the page it came from is gone or no longer shared with us.
     private func openSourceDocument(path: String) {
         guard let databaseId = model.databaseId else {
-            sourceOpenError = "このページを開けません（データベースが選択されていません）。"
+            sourceOpenError = "Could not open this page (no database is selected)."
             return
         }
         if appModel.openWikiDocument(databaseId: databaseId, path: path) {
             sourceOpenError = nil
         } else {
-            sourceOpenError = "このページを開けません（権限がないか削除されています）。"
+            sourceOpenError = "Could not open this page (it was deleted or you no longer have access)."
         }
     }
 

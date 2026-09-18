@@ -48,12 +48,12 @@ struct DatabasePanel: View {
                 }
                 if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
                 if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
-                    ProgressView("データベースを読み込み中")
+                    ProgressView("Loading databases…")
                 } else if model.browseListDatabases.isEmpty {
                     ContentUnavailableView(
-                        model.isSignedIn ? "利用できるデータベースがありません" : "Sign in to load databases",
+                        model.isSignedIn ? "No databases available" : "Sign in to load databases",
                         systemImage: "externaldrive",
-                        description: Text(model.isSignedIn ? "データベースを作成するか、再読み込みしてください。" : "Internet Identity unlocks your writable databases.")
+                        description: Text(model.isSignedIn ? "Create a database or reload the list." : "Internet Identity unlocks your writable databases.")
                     )
                     .frame(maxWidth: .infinity)
                 } else {

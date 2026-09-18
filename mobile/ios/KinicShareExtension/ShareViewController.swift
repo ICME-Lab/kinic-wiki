@@ -21,7 +21,7 @@ final class ShareViewController: UIViewController {
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
-    private let modeControl = UISegmentedControl(items: ["Wikiへ取り込み", "項目を作成"])
+    private let modeControl = UISegmentedControl(items: ["Ingest", "Create item"])
     private let noteField = UITextField()
     private let databaseTableView = UITableView(frame: .zero, style: .plain)
     private let refreshButton = UIButton(type: .system)
