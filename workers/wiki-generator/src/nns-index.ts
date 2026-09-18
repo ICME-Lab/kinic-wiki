@@ -4,6 +4,8 @@
 import { getNnsAuditStatus, processNnsQueueMessage, runNnsAuditPoll } from "./nns-audit.js";
 import type { NnsRuntimeEnv } from "./nns-env.js";
 import { recordTerminalNnsDeliveryFailure } from "./nns-jobs.js";
+import { loadNnsWorkerConfig } from "./nns-env.js";
+import { createVfsClient } from "./vfs.js";
 import type { NnsProposalReviewQueueMessage } from "./types.js";
 import type { QueueDisposition } from "./queue-types.js";
 
@@ -97,7 +99,16 @@ export function parseNnsQueueMessage(value: unknown): NnsProposalReviewQueueMess
   if (!isObject(value) || value.kind !== "nns_proposal_review") return null;
   if (typeof value.databaseId !== "string" || !value.databaseId.trim() || value.databaseId.length > 128) return null;
   if (typeof value.proposalId !== "number" || !Number.isSafeInteger(value.proposalId) || value.proposalId < 1) return null;
-  return { kind: "nns_proposal_review", databaseId: value.databaseId, proposalId: value.proposalId };
+  const reason = value.reason === undefined ? "discovery" : value.reason;
+  if (reason !== "discovery" && reason !== "retry" && reason !== "policy_changed") return null;
+  const previousDecisionId = typeof value.previousDecisionId === "string" && value.previousDecisionId.trim()
+    ? value.previousDecisionId : undefined;
+  if (reason === "policy_changed" && !previousDecisionId) return null;
+  const parsed: NnsProposalReviewQueueMessage = {
+    kind: "nns_proposal_review", databaseId: value.databaseId, proposalId: value.proposalId, reason
+  };
+  if (previousDecisionId) parsed.previousDecisionId = previousDecisionId;
+  return parsed;
 }
 
 async function applyDisposition(
@@ -177,7 +188,9 @@ async function dispositionForUnhandled(
     return retryForUnhandled(error, message.attempts);
   }
   try {
-    const result = await recordTerminalNnsDeliveryFailure(env.DB, parsed, message.id, errorMessage(error));
+    const config = loadNnsWorkerConfig(env);
+    const vfs = await createVfsClient(config, env.KINIC_NNS_WORKER_IDENTITY_PEM);
+    const result = await recordTerminalNnsDeliveryFailure(vfs, parsed, message.id, errorMessage(error));
     if (result === "failed" || result === "already_failed" || result === "missing") {
       return deadLetter("nns_queue_handler_unhandled", errorMessage(error));
     }

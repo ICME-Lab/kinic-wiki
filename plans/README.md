@@ -10,6 +10,8 @@ when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
 | [001](./001-parallelize-wiki-generation.md) | Parallelize production wiki generation on the standard Queue Worker | P1 | L | — | BLOCKED (external review requires explicit code-export approval) |
+| [002](./002-ios-shared-work-items.md) | iOS: DB-scoped shared WorkItems (VFS documents + App Group SQLite) | P1 | XL | — | TODO |
+| [003](./003-jev-nns-autovoting.md) | Jev-based NNS decisions and scoped automatic voting | P1 | XL | — | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED
 (with one-line rationale — finding fixed independently or approach abandoned)
@@ -17,6 +19,8 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 ## Dependency notes
 
 - Plan 001 is self-contained. Its D1 lease/checkpoint must be deployed before Queue fan-out.
+- Plan 002 is self-contained and iOS-only. It adds no canister API; if that constraint breaks, stop
+  and re-plan before Phase 1.
 
 ## Findings considered and rejected
 

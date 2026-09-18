@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kinic-nns-voter",
+  "account_id": "9029b5f9de5b2e820eaf4ed562bcb0e7",
+  "main": "src/nns-voter.ts",
+  "compatibility_date": "2026-05-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "KINIC_NNS_AUTOVOTE_ENABLED": "false",
+    "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
+    "KINIC_WIKI_IC_HOST": "https://icp0.io"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "NNS_VOTE_DLQ",
+        "queue": "kinic-nns-vote-failures"
+      },
+      {
+        "binding": "NNS_PROPOSAL_REVIEW_QUEUE",
+        "queue": "kinic-nns-proposal-review"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "kinic-nns-votes",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "kinic-nns-vote-failures"
+      }
+    ]
+  }
+}

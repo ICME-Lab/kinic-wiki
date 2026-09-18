@@ -1,475 +1,347 @@
 // Where: workers/wiki-generator/tests/nns-audit.test.ts
-// What: NNS discovery, durable enqueue, checkpoint resume, and publication integration tests.
-// Why: No-backfill and no-double-billing behavior depend on state transitions across D1, Queue, AI, and VFS.
+// What: Wiki-backed discovery, evidence capture, checkpoint, and vote-intent tests.
+// Why: The Wiki is the durable source of truth for the entire NNS automation workflow.
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  claimNnsJob,
-  completeNnsJob,
-  markNnsJobQueued,
   initializeNnsCursor,
-  listEnqueueableNnsProposalIds,
+  loadNnsAuditStatus,
   loadNnsCursor,
   loadNnsJob,
+  markNnsJobQueued,
   persistDiscoveredProposals
 } from "../src/nns-jobs.js";
 import { processNnsQueueMessageForTest, runNnsAuditPoll } from "../src/nns-audit.js";
+import { DEFAULT_NNS_AUTOVOTE_POLICY, NNS_AUTOVOTE_POLICY_PATH, sha256Hex } from "../src/nns-policy.js";
+import type { NnsGovernanceClient } from "../src/nns-governance.js";
+import type { NnsProposalReviewQueueMessage, NnsVoteIntent } from "../src/types.js";
 import { TestQueue, workerConfig } from "./source-capture-fixtures.js";
-import { nnsTestEnv, NnsTestVfs, SqliteD1 } from "./nns-fixtures.js";
-import type { NnsProposalReviewQueueMessage } from "../src/types.js";
+import { nnsTestEnv, NnsTestVfs } from "./nns-fixtures.js";
 
-test("first poll stores the latest proposal id without backfilling", async () => {
-  const db = new SqliteD1();
+test("first poll stores the discovery cursor in the Wiki without backfilling", async () => {
   const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const calls: string[] = [];
-  try {
-    const result = await runNnsAuditPoll(auditEnv(db, queue), {}, {
-      fetchJson: async (url) => {
-        calls.push(url);
-        return { latest_proposal_id: 500 };
-      },
-      now: () => new Date("2026-08-20T00:00:00.000Z")
-    });
-
-    assert.deepEqual(result, {
-      enabled: true,
-      initialized: true,
-      initialProposalId: 500,
-      discovered: 0,
-      enqueued: 0,
-      resetFailed: 0
-    });
-    assert.deepEqual(calls, ["https://ic-api.internetcomputer.org/api/v3/latest-proposal-id"]);
-    assert.equal(queue.messages.length, 0);
-  } finally {
-    db.close();
-  }
-});
-
-test("discovery paginates by offset and filters proposal ids internally", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const urls: string[] = [];
-  try {
-    await runNnsAuditPoll(auditEnv(db, queue), {}, { fetchJson: async () => ({ latest_proposal_id: 100 }) });
-    const result = await runNnsAuditPoll(auditEnv(db, queue), {}, {
-      fetchJson: async (url) => {
-        urls.push(url);
-        if (url.endsWith("offset=0")) {
-          return { data: Array.from({ length: 100 }, (_, index) => ({ proposal_id: 202 - index, action: index % 2 ? "Motion" : "Other" })) };
-        }
-        return { data: [{ proposal_id: 102 }, { proposal_id: 101 }, { proposal_id: 100 }] };
-      }
-    });
-
-    assert.equal(result.discovered, 102);
-    assert.equal(result.enqueued, 102);
-    assert.deepEqual(urls, [
-      "https://ic-api.internetcomputer.org/api/v3/proposals?limit=100&offset=0",
-      "https://ic-api.internetcomputer.org/api/v3/proposals?limit=100&offset=100"
-    ]);
-    assert.equal(queue.messages[0]?.kind, "nns_proposal_review");
-    assert.equal(queue.messages.at(-1)?.kind, "nns_proposal_review");
-  } finally {
-    db.close();
-  }
-});
-
-test("a Queue send failure leaves the discovered job durable for the next poll", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
-  const listResponse = async (url: string): Promise<unknown> =>
-    url.endsWith("latest-proposal-id") ? { latest_proposal_id: 100 } : { data: [{ proposal_id: 101 }, { proposal_id: 100 }] };
-  try {
-    await runNnsAuditPoll(env, {}, { fetchJson: listResponse });
-    queue.failSend = true;
-    await assert.rejects(runNnsAuditPoll(env, {}, { fetchJson: listResponse }), /queue unavailable/);
-    assert.equal((await loadNnsJob(db, "nns-db", 101))?.status, "discovered");
-
-    queue.failSend = false;
-    const result = await runNnsAuditPoll(env, {}, { fetchJson: listResponse });
-    assert.equal(result.enqueued, 1);
-    assert.equal((await loadNnsJob(db, "nns-db", 101))?.status, "queued");
-  } finally {
-    db.close();
-  }
-});
-
-test("an unordered API page is rejected before advancing the discovery watermark", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
-  try {
-    await runNnsAuditPoll(env, {}, { fetchJson: async () => ({ latest_proposal_id: 100 }) });
-    await assert.rejects(
-      runNnsAuditPoll(env, {}, { fetchJson: async () => ({ data: [{ proposal_id: 101 }, { proposal_id: 102 }] }) }),
-      /not ordered newest first/
-    );
-    assert.equal((await loadNnsCursor(db, "nns-db"))?.latest_proposal_id, 100);
-    assert.equal(queue.messages.length, 0);
-  } finally {
-    db.close();
-  }
-});
-
-test("a VFS retry resumes the D1 checkpoint without a second AI request", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 101 };
-  let reviewRequests = 0;
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 100);
-    await persistDiscoveredProposals(db, cursor, [101], 101);
-    await markNnsJobQueued(db, "nns-db", 101);
-    vfs.failWritePathOnce = "/Sources/nns/proposals/101/proposal.md";
-    vfs.etagConflictPathOnce = "/Knowledge/nns/index.md";
-    const context = {
-      config: workerConfig(),
-      vfs,
-      fetchJson: async () => ({ ...proposalDetail(101, "OPEN"), url: "https://example.com/proposal-101" }),
-      fetchReference: async () => {
-        throw new Error("reference unavailable");
-      },
-      requestReview: async () => {
-        reviewRequests += 1;
-        return reviewResponse("ADOPT");
-      },
-      now: () => new Date("2026-08-20T00:00:00.000Z")
-    };
-
-    const first = await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "attempt-1", attempts: 1 });
-    assert.equal(first.kind, "retry");
-    assert.equal((await loadNnsJob(db, "nns-db", 101))?.status, "generated");
-
-    const second = await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "attempt-2", attempts: 2 });
-    assert.deepEqual(second, { kind: "ack" });
-    assert.equal(reviewRequests, 1);
-    assert.equal((await loadNnsJob(db, "nns-db", 101))?.status, "completed");
-    assert.ok(vfs.nodes.has("/Sources/nns/proposals/101/proposal.md"));
-    assert.ok(vfs.nodes.has("/Knowledge/nns/proposals/101/review.md"));
-    assert.ok(vfs.nodes.has("/Knowledge/nns/review-policy.md"));
-    assert.ok(vfs.nodes.has("/Knowledge/nns/index.md"));
-    assert.match(vfs.nodes.get("/Knowledge/nns/proposals/101/review.md")?.content ?? "", /NEEDS_CLARIFICATION/);
-    assert.doesNotMatch(vfs.nodes.get("/Sources/nns/proposals/101/proposal.md")?.content ?? "", /latest_tally|known_neurons_ballots/);
-  } finally {
-    db.close();
-  }
+  const result = await runNnsAuditPoll(nnsTestEnv(queue), {}, {
+    vfs,
+    config: workerConfig(),
+    fetchJson: async () => ({ latest_proposal_id: 500 }),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  });
+  assert.equal(result.initialized, true);
+  assert.equal(result.initialProposalId, 500);
+  assert.equal(queue.messages.length, 0);
+  assert.equal((await loadNnsCursor(vfs, "nns-db"))?.latest_proposal_id, 500);
+  assert.ok(vfs.nodes.has("/Knowledge/nns/system/discovery-state.md"));
 });
 
-test("a provider retry reuses the first proposal and reference capture", async () => {
-  const db = new SqliteD1();
+test("daily discovery creates Wiki workflows before enqueueing proposals", async () => {
   const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 104 };
-  let detailRequests = 0;
-  let referenceRequests = 0;
-  let reviewRequests = 0;
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 103);
-    await persistDiscoveredProposals(db, cursor, [104], 104);
-    await markNnsJobQueued(db, "nns-db", 104);
-    const context = {
-      config: workerConfig(),
-      vfs,
-      fetchJson: async () => {
-        detailRequests += 1;
-        return { ...proposalDetail(104, detailRequests === 1 ? "OPEN" : "EXECUTED"), url: "https://example.com/proposal-104" };
-      },
-      fetchReference: async (url: string, maxBytes: number) => {
-        referenceRequests += 1;
-        return {
-          url,
-          finalUrl: url,
-          title: "Proposal reference",
-          contentType: "text/plain",
-          text: "Stable captured reference evidence.",
-          fetchedTruncated: false,
-          fetchedBytes: 35,
-          maxFetchedBytes: maxBytes
-        };
-      },
-      requestReview: async () => {
-        reviewRequests += 1;
-        if (reviewRequests === 1) throw new Error("temporary provider failure");
-        return reviewResponse("ADOPT");
-      },
-      now: () => new Date("2026-08-20T00:00:00.000Z")
-    };
-
-    const first = await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "provider-1", attempts: 1 });
-    assert.equal(first.kind, "retry");
-    assert.equal((await loadNnsJob(db, "nns-db", 104))?.status, "queued");
-    assert.ok((await loadNnsJob(db, "nns-db", 104))?.captured_input);
-
-    const second = await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "provider-2", attempts: 2 });
-    assert.deepEqual(second, { kind: "ack" });
-    assert.equal(detailRequests, 1);
-    assert.equal(referenceRequests, 1);
-    assert.equal(reviewRequests, 2);
-    assert.match(vfs.nodes.get("/Sources/nns/proposals/104/proposal.md")?.content ?? "", /status_at_capture: "OPEN"/);
-    assert.match(vfs.nodes.get("/Knowledge/nns/proposals/104/review.md")?.content ?? "", /\*\*ADOPT\*\*/);
-    assert.equal((await loadNnsJob(db, "nns-db", 104))?.captured_input, null);
-  } finally {
-    db.close();
-  }
+  const env = nnsTestEnv(queue);
+  await runNnsAuditPoll(env, {}, {
+    vfs, config: workerConfig(), fetchJson: async () => ({ latest_proposal_id: 100 })
+  });
+  const result = await runNnsAuditPoll(env, {}, {
+    vfs,
+    config: workerConfig(),
+    fetchJson: async () => ({ data: [{ proposal_id: 102 }, { proposal_id: 101 }, { proposal_id: 100 }] })
+  });
+  assert.equal(result.discovered, 2);
+  assert.equal(result.enqueued, 2);
+  assert.ok(vfs.nodes.has("/Knowledge/nns/system/workflows/101.md"));
+  assert.ok(vfs.nodes.has("/Knowledge/nns/system/workflows/102.md"));
+  assert.equal((await loadNnsJob(vfs, "nns-db", 101))?.status, "queued");
 });
 
-test("a captured reference is truncated to the D1 checkpoint byte limit", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
+test("status scans only compact system state and reports invalid nodes", async () => {
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 106 };
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 105);
-    await persistDiscoveredProposals(db, cursor, [106], 106);
-    await markNnsJobQueued(db, "nns-db", 106);
-    const result = await processNnsQueueMessageForTest(
-      env,
-      message,
-      {
-        config: workerConfig(),
-        vfs,
-        fetchJson: async () => ({ ...proposalDetail(106, "OPEN"), url: "https://example.com/proposal-106" }),
-        fetchReference: async (url, maxBytes) => ({
-          url,
-          finalUrl: url,
-          title: "Large reference",
-          contentType: "text/plain",
-          text: "\u0000".repeat(300_000),
-          fetchedTruncated: false,
-          fetchedBytes: 300_000,
-          maxFetchedBytes: maxBytes
-        }),
-        requestReview: async () => {
-          throw new Error("temporary provider failure");
-        }
-      },
-      { leaseOwner: "large-reference", attempts: 1 }
-    );
-
-    assert.equal(result.kind, "retry");
-    const serialized = (await loadNnsJob(db, "nns-db", 106))?.captured_input ?? "";
-    assert.ok(new TextEncoder().encode(serialized).byteLength <= 1024 * 1024);
-    const captured = JSON.parse(serialized) as { reference?: { text?: string; fetchedTruncated?: boolean } };
-    assert.ok((captured.reference?.text?.length ?? 0) > 0);
-    assert.equal(captured.reference?.fetchedTruncated, true);
-  } finally {
-    db.close();
-  }
+  vfs.nodes.set("/Knowledge/nns/system/workflows/broken.md", {
+    path: "/Knowledge/nns/system/workflows/broken.md", kind: "file", content: "broken", etag: "bad", metadataJson: "{}"
+  });
+  vfs.nodes.set("/Knowledge/nns/proposals/1/review.md", {
+    path: "/Knowledge/nns/proposals/1/review.md", kind: "file", content: "large public artifact", etag: "public", metadataJson: "{}"
+  });
+  const status = await loadNnsAuditStatus(vfs, "nns-db");
+  assert.equal(status.invalidWorkflowCount, 1);
+  assert.deepEqual(vfs.exportPrefixes, ["/Knowledge/nns/system/workflows", "/Knowledge/nns/system/votes"]);
 });
 
-test("enqueue CAS preserves an active generated lease", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
+test("Forum and linked evidence are fixed in the Wiki before Jev is called", async () => {
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 105 };
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 104);
-    await persistDiscoveredProposals(db, cursor, [105], 105);
-    await markNnsJobQueued(db, "nns-db", 105);
-    vfs.failWritePathOnce = "/Sources/nns/proposals/105/proposal.md";
-    const first = await processNnsQueueMessageForTest(
-      env,
-      message,
-      {
-        config: workerConfig(),
-        vfs,
-        fetchJson: async () => proposalDetail(105, "OPEN"),
-        requestReview: async () => reviewResponse("NEEDS_CLARIFICATION")
-      },
-      { leaseOwner: "generator-1", attempts: 1 }
-    );
-    assert.equal(first.kind, "retry");
-    assert.deepEqual(await listEnqueueableNnsProposalIds(db, "nns-db"), [105]);
-
-    const claim = await claimNnsJob(db, message, "active-generator");
-    assert.equal(claim.kind, "resume");
-    assert.equal(await markNnsJobQueued(db, "nns-db", 105), false);
-    const active = await loadNnsJob(db, "nns-db", 105);
-    assert.equal(active?.status, "generated");
-    assert.equal(active?.lease_owner, "active-generator");
-    await completeNnsJob(db, message, "active-generator");
-    assert.equal((await loadNnsJob(db, "nns-db", 105))?.status, "completed");
-  } finally {
-    db.close();
-  }
+  const env = nnsTestEnv();
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 101, reason: "discovery" as const };
+  await seedJob(vfs, 101);
+  const fetched: string[] = [];
+  let observedEvidenceBeforeJev = false;
+  const result = await processNnsQueueMessageForTest(env, message, {
+    config: workerConfig(),
+    ...decisionContext(),
+    vfs,
+    fetchJson: async () => ({
+      ...proposalDetail(101, "OPEN"),
+      summary: "Discussion: https://forum.dfinity.org/t/example/123 and spec https://example.com/spec"
+    }),
+    fetchReference: async (url, maxBytes) => {
+      fetched.push(url);
+      return {
+        url, finalUrl: url, title: url.includes("forum") ? "Forum discussion" : "Specification",
+        contentType: "text/plain", text: `Captured body for ${url}`, fetchedTruncated: false,
+        fetchedBytes: 40, maxFetchedBytes: maxBytes
+      };
+    },
+    requestJev: async () => {
+      observedEvidenceBeforeJev = vfs.nodes.has("/Sources/nns/proposals/101/forum.md")
+        && vfs.nodes.has("/Knowledge/nns/proposals/101/evidence.md");
+      return jevAdopt();
+    },
+    requestReview: async () => reviewResponse("ADOPT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  });
+  assert.deepEqual(result, { kind: "ack" });
+  assert.equal(observedEvidenceBeforeJev, true);
+  assert.match(fetched[0] ?? "", /forum\.dfinity\.org/);
+  assert.ok(fetched.some((url) => url === "https://example.com/spec"));
+  assert.match(vfs.nodes.get("/Knowledge/nns/proposals/101/evidence.md")?.content ?? "", /forum\.dfinity\.org/);
 });
 
-test("a proposal first seen as non-open is recorded without calling AI", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
+test("Jev and evidence hashes use the exact UTF-8 bounded body stored in the Wiki", async () => {
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 102 };
-  let reviewRequests = 0;
-  try {
-    vfs.nodes.set("/Knowledge/nns/review-policy.md", {
-      path: "/Knowledge/nns/review-policy.md",
-      kind: "file",
-      content: "# Administrator policy\n\nKeep this edit.",
-      etag: "admin-etag",
-      metadataJson: "{}"
-    });
-    const cursor = await initializeNnsCursor(db, "nns-db", 101);
-    await persistDiscoveredProposals(db, cursor, [102], 102);
-    await markNnsJobQueued(db, "nns-db", 102);
-    const result = await processNnsQueueMessageForTest(
-      env,
-      message,
-      {
-        config: workerConfig(),
-        vfs,
-        fetchJson: async () => proposalDetail(102, "EXECUTED"),
-        requestReview: async () => {
-          reviewRequests += 1;
-          return reviewResponse("ADOPT");
-        }
-      },
-      { leaseOwner: "closed", attempts: 1 }
-    );
+  const env = nnsTestEnv();
+  const proposalId = 112;
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId, reason: "discovery" as const };
+  await seedJob(vfs, proposalId);
+  const detail = {
+    ...proposalDetail(proposalId, "OPEN"),
+    action: "ManageNetworkEconomics",
+    summary: "Evidence https://example.com/economics"
+  };
+  const context = decisionContext();
+  context.governance.getPendingProposal = async () => ({
+    proposalId: String(proposalId), status: 1, topic: 4, deadlineTimestampSeconds: "2000000000",
+    title: `Proposal ${proposalId}`, summary: detail.summary, url: "", action: "ManageNetworkEconomics",
+    actionDescription: "ManageNetworkEconomics", actionValue: { motion_text: "Adopt an operational policy." },
+    ballots: {}, capturedAt: "2026-08-20T00:00:00.000Z"
+  });
+  const observed: { jevState?: Record<string, unknown> } = {};
+  const rawEvidence = "日本語".repeat(500);
 
-    assert.deepEqual(result, { kind: "ack" });
-    assert.equal(reviewRequests, 0);
-    assert.equal(vfs.nodes.get("/Knowledge/nns/review-policy.md")?.content, "# Administrator policy\n\nKeep this edit.");
-    assert.match(vfs.nodes.get("/Knowledge/nns/proposals/102/review.md")?.content ?? "", /NOT_APPLICABLE/);
-  } finally {
-    db.close();
-  }
+  const result = await processNnsQueueMessageForTest(env, message, {
+    config: { ...workerConfig(), maxSourceChars: 1_024, maxRawChars: 5_000 },
+    ...context,
+    vfs,
+    fetchJson: async () => detail,
+    fetchReference: async (url, maxBytes) => ({
+      url, finalUrl: url, title: "Economics evidence", contentType: "text/plain",
+      text: rawEvidence, fetchedTruncated: false,
+      fetchedBytes: new TextEncoder().encode(rawEvidence).byteLength, maxFetchedBytes: maxBytes
+    }),
+    requestJev: async (state) => { observed.jevState = state; return jevAdopt(); },
+    requestReview: async () => reviewResponse("ADOPT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  });
+
+  assert.deepEqual(result, { kind: "ack" });
+  const sourceContent = vfs.nodes.get(`/Sources/nns/proposals/${proposalId}/reference.md`)?.content ?? "";
+  const storedBody = sourceContent.match(/Category:[^\n]*\n\n([\s\S]*)$/)?.[1];
+  assert.ok(storedBody);
+  assert.ok(new TextEncoder().encode(storedBody).byteLength <= 1_024);
+  const referenceEvidence = observed.jevState?.reference_evidence as { sources?: { text?: string }[] } | undefined;
+  assert.equal(referenceEvidence?.sources?.[0]?.text, storedBody);
+
+  const evidenceContent = vfs.nodes.get(`/Knowledge/nns/proposals/${proposalId}/evidence.md`)?.content ?? "";
+  const manifestText = evidenceContent.match(/```json\n([\s\S]*?)\n```/)?.[1];
+  assert.ok(manifestText);
+  const manifest = JSON.parse(manifestText) as { attempts: { status: string; contentHash: string }[] };
+  assert.equal(manifest.attempts[0]?.status, "truncated");
+  assert.equal(manifest.attempts[0]?.contentHash, await sha256Hex(storedBody));
+  assert.match(vfs.nodes.get(`/Knowledge/nns/proposals/${proposalId}/decision.md`)?.content ?? "", /\*\*HOLD\*\*/);
 });
 
-test("a completed job with a failed index update is re-enqueued by a later poll", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
+test("a publication retry resumes the Wiki checkpoint without another Jev request", async () => {
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 107 };
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 106);
-    await persistDiscoveredProposals(db, cursor, [107], 107);
-    await markNnsJobQueued(db, "nns-db", 107);
-    vfs.failWritePath = "/Knowledge/nns/index.md";
-
-    const first = await processNnsQueueMessageForTest(
-      env,
-      message,
-      {
-        config: workerConfig(),
-        vfs,
-        fetchJson: async () => proposalDetail(107, "OPEN"),
-        requestReview: async () => reviewResponse("NEEDS_CLARIFICATION")
-      },
-      { leaseOwner: "index-failure", attempts: 5 }
-    );
-
-    assert.equal(first.kind, "dead_letter");
-    const completed = await loadNnsJob(db, "nns-db", 107);
-    assert.equal(completed?.status, "completed");
-    assert.equal(completed?.index_pending, 1);
-
-    vfs.failWritePath = null;
-    const poll = await runNnsAuditPoll(
-      env,
-      {},
-      {
-        fetchJson: async () => ({ data: [{ proposal_id: 107 }, { proposal_id: 106 }] }),
-        now: () => new Date(Date.now() + 16 * 60 * 1000)
-      }
-    );
-    assert.equal(poll.enqueued, 1);
-    assert.deepEqual(queue.messages, [message]);
-    assert.equal((await loadNnsJob(db, "nns-db", 107))?.status, "completed");
-
-    const second = await processNnsQueueMessageForTest(env, message, { config: workerConfig(), vfs }, { leaseOwner: "index-retry", attempts: 1 });
-    assert.deepEqual(second, { kind: "ack" });
-    assert.equal((await loadNnsJob(db, "nns-db", 107))?.index_pending, 0);
-    assert.ok(vfs.nodes.has("/Knowledge/nns/index.md"));
-  } finally {
-    db.close();
-  }
+  const env = nnsTestEnv();
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 102, reason: "discovery" as const };
+  await seedJob(vfs, 102);
+  let jevCalls = 0;
+  vfs.failWritePathOnce = "/Knowledge/nns/proposals/102/decision.md";
+  const context = {
+    config: workerConfig(),
+    ...decisionContext(),
+    vfs,
+    fetchJson: async () => proposalDetail(102, "OPEN"),
+    requestJev: async () => { jevCalls += 1; return jevAdopt(); },
+    requestReview: async () => reviewResponse("ADOPT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  };
+  assert.equal((await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "one", attempts: 1 })).kind, "retry");
+  assert.equal((await loadNnsJob(vfs, "nns-db", 102))?.status, "generated");
+  assert.deepEqual(await processNnsQueueMessageForTest(env, message, context, { leaseOwner: "two", attempts: 2 }), { kind: "ack" });
+  assert.equal(jevCalls, 1);
+  assert.equal((await loadNnsJob(vfs, "nns-db", 102))?.status, "completed");
 });
 
-test("create-only publication refuses different existing proposal content", async () => {
-  const db = new SqliteD1();
-  const queue = new TestQueue<NnsProposalReviewQueueMessage>();
-  const env = auditEnv(db, queue);
+test("live qualified Wiki policy queues the code-owned vote decision", async () => {
   const vfs = new NnsTestVfs();
-  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 103 };
-  try {
-    const cursor = await initializeNnsCursor(db, "nns-db", 102);
-    await persistDiscoveredProposals(db, cursor, [103], 103);
-    await markNnsJobQueued(db, "nns-db", 103);
-    vfs.nodes.set("/Sources/nns/proposals/103/proposal.md", {
-      path: "/Sources/nns/proposals/103/proposal.md",
-      kind: "source",
-      content: "different content",
-      etag: "existing-etag",
-      metadataJson: "{}"
-    });
-
-    const result = await processNnsQueueMessageForTest(
-      env,
-      message,
-      {
-        config: workerConfig(),
-        vfs,
-        fetchJson: async () => proposalDetail(103, "OPEN"),
-        requestReview: async () => reviewResponse("NEEDS_CLARIFICATION")
-      },
-      { leaseOwner: "conflict", attempts: 1 }
-    );
-
-    assert.equal(result.kind, "dead_letter");
-    assert.equal(result.kind === "dead_letter" ? result.code : "", "nns_create_only_conflict");
-    assert.equal((await loadNnsJob(db, "nns-db", 103))?.status, "failed");
-    assert.equal(vfs.nodes.get("/Sources/nns/proposals/103/proposal.md")?.content, "different content");
-  } finally {
-    db.close();
-  }
+  const env = nnsTestEnv();
+  const voteQueue = env.NNS_VOTE_QUEUE as TestQueue<NnsVoteIntent>;
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 108, reason: "discovery" as const };
+  await seedJob(vfs, 108);
+  const livePolicy = DEFAULT_NNS_AUTOVOTE_POLICY
+    .replace("enabled: false", "enabled: true")
+    .replace("mode: shadow", "mode: live")
+    .replace("auto_vote: false", "auto_vote: true");
+  vfs.nodes.set(NNS_AUTOVOTE_POLICY_PATH, {
+    path: NNS_AUTOVOTE_POLICY_PATH, kind: "file", content: livePolicy, etag: "policy-live", metadataJson: "{}"
+  });
+  const result = await processNnsQueueMessageForTest(env, message, {
+    config: { ...workerConfig(), neuronId: "9" },
+    ...decisionContext(),
+    vfs,
+    fetchJson: async () => proposalDetail(108, "OPEN"),
+    requestReview: async () => reviewResponse("REJECT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  });
+  assert.deepEqual(result, { kind: "ack" });
+  assert.equal(voteQueue.messages[0]?.vote, "YES");
+  assert.match(vfs.nodes.get("/Knowledge/nns/proposals/108/review.md")?.content ?? "", /\*\*ADOPT\*\*/);
 });
 
-function auditEnv(db: D1Database, queue: TestQueue<NnsProposalReviewQueueMessage>) {
-  return nnsTestEnv(db, queue);
+test("a missing required reference is recorded and forces HOLD", async () => {
+  const vfs = new NnsTestVfs();
+  const env = nnsTestEnv();
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 109, reason: "discovery" as const };
+  await seedJob(vfs, 109);
+  const detail = {
+    ...proposalDetail(109, "OPEN"), action: "ManageNetworkEconomics",
+    summary: "Evidence https://example.com/ok and https://example.com/missing"
+  };
+  const context = decisionContext();
+  context.governance.getPendingProposal = async () => ({
+    proposalId: "109", status: 1, topic: 4, deadlineTimestampSeconds: "2000000000",
+    title: "Proposal 109", summary: detail.summary, url: "", action: "ManageNetworkEconomics",
+    actionDescription: "ManageNetworkEconomics", actionValue: { motion_text: "Adopt an operational policy." },
+    ballots: {}, capturedAt: "2026-08-20T00:00:00.000Z"
+  });
+  const result = await processNnsQueueMessageForTest(env, message, {
+    config: { ...workerConfig(), neuronId: "9" }, ...context, vfs,
+    fetchJson: async () => detail,
+    fetchReference: async (url, maxBytes) => {
+      if (url.endsWith("/missing")) throw new Error("fetch unavailable");
+      return { url, finalUrl: url, title: "Available", contentType: "text/plain", text: "evidence",
+        fetchedTruncated: false, fetchedBytes: 8, maxFetchedBytes: maxBytes };
+    },
+    requestReview: async () => reviewResponse("ADOPT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  });
+  assert.deepEqual(result, { kind: "ack" });
+  assert.match(vfs.nodes.get("/Knowledge/nns/proposals/109/evidence.md")?.content ?? "", /reference_fetch_failed/);
+  assert.match(vfs.nodes.get("/Knowledge/nns/proposals/109/decision.md")?.content ?? "", /\*\*HOLD\*\*/);
+  assert.equal((env.NNS_VOTE_QUEUE as TestQueue<NnsVoteIntent>).messages.length, 0);
+});
+
+test("a retry reuses an already published Governance snapshot", async () => {
+  const vfs = new NnsTestVfs();
+  const env = nnsTestEnv();
+  const message = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 110, reason: "discovery" as const };
+  await seedJob(vfs, 110);
+  let governanceCalls = 0;
+  const context = decisionContext();
+  const originalGet = context.governance.getPendingProposal;
+  context.governance.getPendingProposal = async (id) => { governanceCalls += 1; return originalGet(id); };
+  vfs.failWritePathOnce = NNS_AUTOVOTE_POLICY_PATH;
+  const queueContext = {
+    config: workerConfig(), ...context, vfs, fetchJson: async () => proposalDetail(110, "OPEN"),
+    requestReview: async () => reviewResponse("ADOPT"), now: () => new Date("2026-08-20T00:00:00.000Z")
+  };
+  assert.equal((await processNnsQueueMessageForTest(env, message, queueContext, { leaseOwner: "first", attempts: 1 })).kind, "retry");
+  assert.deepEqual(await processNnsQueueMessageForTest(env, message, queueContext, { leaseOwner: "second", attempts: 2 }), { kind: "ack" });
+  assert.equal(governanceCalls, 1);
+});
+
+test("a policy change reevaluates a completed proposal and preserves decision history", async () => {
+  const vfs = new NnsTestVfs();
+  const env = nnsTestEnv();
+  await seedJob(vfs, 111);
+  const governance = decisionContext().governance as NnsGovernanceClient;
+  const pending = await governance.getPendingProposal(111n);
+  governance.getProposal = async () => pending;
+  let jevCalls = 0;
+  const context = {
+    config: workerConfig(), governance, vfs,
+    fetchJson: async () => proposalDetail(111, "OPEN"),
+    requestJev: async () => { jevCalls += 1; return jevAdopt(); },
+    requestReview: async () => reviewResponse("ADOPT"),
+    now: () => new Date("2026-08-20T00:00:00.000Z")
+  };
+  const firstMessage = { kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 111, reason: "discovery" as const };
+  assert.deepEqual(await processNnsQueueMessageForTest(env, firstMessage, context), { kind: "ack" });
+  const firstDecisionId = (await loadNnsJob(vfs, "nns-db", 111))?.decision_id;
+  assert.ok(firstDecisionId);
+  const policy = vfs.nodes.get(NNS_AUTOVOTE_POLICY_PATH)!;
+  vfs.nodes.set(NNS_AUTOVOTE_POLICY_PATH, {
+    ...policy, content: policy.content.replace("initial-shadow", "second-shadow"), etag: "second-policy"
+  });
+  const secondMessage = {
+    kind: "nns_proposal_review" as const, databaseId: "nns-db", proposalId: 111,
+    reason: "policy_changed" as const, previousDecisionId: firstDecisionId
+  };
+  assert.deepEqual(await processNnsQueueMessageForTest(env, secondMessage, context, { leaseOwner: "reevaluate", attempts: 1 }), { kind: "ack" });
+  const secondDecisionId = (await loadNnsJob(vfs, "nns-db", 111))?.decision_id;
+  assert.notEqual(secondDecisionId, firstDecisionId);
+  assert.ok(vfs.nodes.has(`/Knowledge/nns/proposals/111/decisions/${firstDecisionId}.md`));
+  assert.ok(vfs.nodes.has(`/Knowledge/nns/proposals/111/decisions/${secondDecisionId}.md`));
+  assert.equal(jevCalls, 2);
+});
+
+async function seedJob(vfs: NnsTestVfs, proposalId: number): Promise<void> {
+  const cursor = await initializeNnsCursor(vfs, "nns-db", proposalId - 1);
+  await persistDiscoveredProposals(vfs, cursor, [proposalId], proposalId);
+  await markNnsJobQueued(vfs, "nns-db", proposalId);
 }
 
 function proposalDetail(proposalId: number, status: string): Record<string, unknown> {
   return {
-    proposal_id: proposalId,
-    title: `Proposal ${proposalId}`,
-    summary: "Review this proposal.",
-    topic: "Governance",
-    proposer: "aaaaa-aa",
-    action: "Motion",
-    status,
-    latest_tally: { yes: 1, no: 0 },
-    known_neurons_ballots: [{ neuron_id: 1 }],
+    proposal_id: proposalId, title: `Proposal ${proposalId}`, summary: "Review this proposal.",
+    topic: "Governance", action: "Motion", status,
     payload: { motion_text: "Adopt an operational policy." }
   };
 }
 
 function reviewResponse(recommendation: "ADOPT" | "REJECT" | "NEEDS_CLARIFICATION"): Record<string, unknown> {
+  return { choices: [{ message: { content: JSON.stringify({
+    executive_summary: "Summary", proposed_action: "Adopt policy",
+    evidence_reviewed: ["Wiki evidence bundle"], benefits: ["Clarity"], risks: ["None identified"],
+    missing_information: [], type_specific_checks: ["Motion checked"], recommendation, rationale: "Evidence supports the result."
+  }) } }] };
+}
+
+function jevAdopt() {
   return {
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({
-            executive_summary: "The proposal is understandable but lacks implementation details.",
-            proposed_action: "Adopt a non-binding policy.",
-            evidence_reviewed: ["Official proposal snapshot"],
-            benefits: ["Clarifies intent"],
-            risks: ["No implementation owner"],
-            missing_information: ["Owner and timeline"],
-            type_specific_checks: ["The motion is non-binding"],
-            recommendation,
-            rationale: "Material implementation details are not captured."
-          })
-        }
-      }
-    ]
+    model: "jev-latest", durationMs: 1,
+    answer: {
+      recommendation: { choice: "ADOPT" as const, probabilities: { ADOPT: 0.97, REJECT: 0.01, HOLD: 0.02 }, confidence: 0.95 },
+      descriptionMatchesPayload: 0.99, requiredEvidencePresent: 0.99, materialClaimsSupported: 0.99,
+      violatesPolicy: 0.01, materialUnboundedRisk: 0.01
+    }
+  };
+}
+
+function decisionContext() {
+  return {
+    governance: {
+      async getPendingProposal(proposalId: bigint) {
+        return {
+          proposalId: proposalId.toString(), status: 1, topic: 4, deadlineTimestampSeconds: "2000000000",
+          title: `Proposal ${proposalId.toString()}`, summary: "Review this proposal.", url: "",
+          action: "Motion", actionDescription: "Motion", actionValue: { motion_text: "Adopt an operational policy." },
+          ballots: {}, capturedAt: "2026-08-20T00:00:00.000Z"
+        };
+      },
+      async getProposal() { return null; },
+      async getNeuron() { return { neuronId: "1", authorized: false, existingVote: null }; },
+      async simulateVote() {},
+      async registerVote() {}
+    },
+    requestJev: async () => jevAdopt()
   };
 }

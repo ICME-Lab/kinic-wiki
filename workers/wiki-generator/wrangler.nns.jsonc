@@ -21,15 +21,8 @@
     "KINIC_NNS_MAX_OUTPUT_TOKENS": "6000"
   },
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["0 0 * * *"]
   },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "kinic-nns-proposal-review",
-      "migrations_dir": "nns-migrations"
-    }
-  ],
   "queues": {
     "producers": [
       {
@@ -39,6 +32,10 @@
       {
         "binding": "NNS_PROPOSAL_REVIEW_DLQ",
         "queue": "kinic-nns-proposal-review-failures"
+      },
+      {
+        "binding": "NNS_VOTE_QUEUE",
+        "queue": "kinic-nns-votes"
       }
     ],
     "consumers": [

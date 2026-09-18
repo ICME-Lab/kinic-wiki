@@ -111,6 +111,8 @@ export type NnsProposalReviewQueueMessage = {
   kind: "nns_proposal_review";
   databaseId: string;
   proposalId: number;
+  reason: "discovery" | "retry" | "policy_changed";
+  previousDecisionId?: string;
 };
 
 export type NnsProposalReviewFailureMessage = {
@@ -123,6 +125,31 @@ export type NnsProposalReviewFailureMessage = {
   failedAt: string;
 };
 
+export type NnsVoteIntent = {
+  kind: "nns_vote_intent";
+  databaseId: string;
+  proposalId: string;
+  neuronId: string;
+  action: string;
+  vote: "YES" | "NO";
+  decisionHash: string;
+  policyHash: string;
+  evidenceHash: string;
+  decidedAt: string;
+};
+
+export type NnsVoteStatus =
+  | "planned"
+  | "simulating"
+  | "submitting"
+  | "accepted"
+  | "confirmed"
+  | "unknown"
+  | "held"
+  | "conflict"
+  | "expired"
+  | "failed";
+
 export type NnsWorkerConfig = {
   canisterId: string;
   icHost: string;
@@ -131,6 +158,7 @@ export type NnsWorkerConfig = {
   maxFetchedBytes: number;
   maxSourceChars: number;
   maxOutputTokens: number;
+  neuronId?: string | null;
 };
 
 export type QueueMessage = SourceQueueMessage | SourceCaptureQueueMessage | LinkPreviewQueueMessage;
