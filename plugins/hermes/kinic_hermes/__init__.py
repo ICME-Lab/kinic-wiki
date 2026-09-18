@@ -36,7 +36,8 @@ class KinicPlugin:
             if skill_id:
                 self.buffer.skill_candidates.add(skill_id)
 
-    def transform_llm_output(self, output: str, **_: Any) -> str:
+    def transform_llm_output(self, response_text: str = "", **kwargs: Any) -> str:
+        output = response_text or str(kwargs.get("output", ""))
         self.buffer.final_response = output
         return output
 

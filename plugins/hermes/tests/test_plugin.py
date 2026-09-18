@@ -359,6 +359,13 @@ class HermesKinicPluginTests(unittest.TestCase):
                 self.assertNotIn("kinic-evolve-skill-job", content)
                 self.assertNotIn("queued evolution job", content)
 
+    def test_transform_llm_output_accepts_hermes_response_text_keyword(self) -> None:
+        import kinic_hermes as plugin_module
+
+        plugin = plugin_module.KinicPlugin()
+        self.assertEqual(plugin.transform_llm_output(response_text="done"), "done")
+        self.assertEqual(plugin.buffer.final_response, "done")
+
     def test_register_tool_uses_hermes_keyword_api(self) -> None:
         import kinic_hermes as plugin_module
 
