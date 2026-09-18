@@ -17,6 +17,7 @@ struct VoiceSettingsView: View {
     @State private var pendingPrincipal: String?
     @State private var confirmDiscard = false
     @State private var closeRequested = false
+    @FocusState private var budgetFocused: Bool
     private var databaseID: String { appModel.selectedDatabaseId }
     private var owner: Bool { appModel.askAIDatabaseCandidates.first { $0.databaseId == databaseID }?.role == .owner }
     private var dirty: Bool {
@@ -27,13 +28,13 @@ struct VoiceSettingsView: View {
 
     var body: some View {
         Form {
-            Section("検索対象") {
-                Picker("範囲", selection: $scope) { Text("Knowledge").tag("/Knowledge"); Text("Memory").tag("/Memory") }
+            Section("Search Scope") {
+                Picker("Scope", selection: $scope) { Text("Knowledge").tag("/Knowledge"); Text("Memory").tag("/Memory") }
                     .disabled(appModel.databaseSelectionLocked)
                     .onChange(of: scope) { UserDefaults.standard.set(scope, forKey: "voice.scope.\(appModel.principalText)") }
             }
-            Section("利用と予算") {
-                Picker("データベース", selection: Binding(get: { databaseID }, set: { id in
+            Section("Access and Budget") {
+                Picker("Database", selection: Binding(get: { databaseID }, set: { id in
                     guard id != databaseID else { return }
                     pendingDatabase = id
                     requestChange()
@@ -42,57 +43,52 @@ struct VoiceSettingsView: View {
                 }.disabled(busy || appModel.databaseSelectionLocked)
                 if appModel.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
                 if owner {
-                    Picker("利用者", selection: Binding(get: { principal }, set: { id in
+                    Picker("User", selection: Binding(get: { principal }, set: { id in
                         pendingPrincipal = id
                         requestChange()
                     })) {
-                        Text("自分").tag(appModel.principalText)
+                        Text("Me").tag(appModel.principalText)
                         ForEach(members.filter { $0.principal != appModel.principalText }) { Text($0.principal).tag($0.principal) }
                     }.disabled(busy)
                 }
                 if busy { ProgressView() }
                 if let access {
-                    Toggle("音声を利用する", isOn: $enabled).disabled(!owner || busy)
+                    Toggle("Enable Voice", isOn: $enabled).disabled(!owner || busy)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("1日の上限")
-                        TextField("上限額", text: $budget).keyboardType(.decimalPad)
-                            .accessibilityLabel("1日の上限額")
-                        Picker("単位", selection: Binding(get: { unit }, set: { next in
-                            guard let value = unit.cycles(from: budget) else {
-                                message = "有効な上限額を入力してから単位を変更してください。"; return
-                            }
-                            budget = next.text(for: value); unit = next
-                        })) { ForEach(CycleBudgetUnit.allCases) { Text($0.title).tag($0) } }
+                        Text("Daily Limit")
+                        HStack {
+                            TextField("Limit", text: $budget)
+                                .keyboardType(.decimalPad)
+                                .focused($budgetFocused)
+                                .accessibilityLabel("Daily limit, in \(unit.title)")
+                                .accessibilityIdentifier("voice.dailyLimit")
+                            Text(unit.title)
+                                .foregroundStyle(.secondary)
+                        }
                         if unit.cycles(from: budget) == nil {
-                            Text("0以上の整数cyclesになる額を入力してください。上限は\(Int64.max) cyclesです。")
+                            Text("Enter an amount that resolves to a whole number of cycles from 0 through \(Int64.max).")
                                 .font(.caption).foregroundStyle(.red)
                         }
                     }.disabled(!owner || busy)
-                    cycleRow("料金／分", value: access.rate.cyclesPerMinute)
-                    cycleRow("本日の残り", value: access.remainingCycles)
-                    cycleRow("DB残高", value: access.balanceCycles)
-                    DisclosureGroup("正確なcycles額") {
-                        Text("1日の上限: \(access.policy.budget) cycles")
-                        Text("料金／分: \(access.rate.cyclesPerMinute) cycles")
-                        Text("本日の残り: \(access.remainingCycles) cycles")
-                        Text("DB残高: \(access.balanceCycles) cycles")
-                    }.font(.caption).textSelection(.enabled)
-                    Text("毎日9:00（日本時間／UTC 0:00）にリセット。無音・ミュート中も接続時間に含まれます。料金変更時も上限額は自動で増えません。").font(.caption)
-                    if owner { Button("保存") { save() }.disabled(busy || unit.cycles(from: budget) == nil) }
-                    else { Text("利用許可と予算はデータベースの所有者が変更できます。") }
+                    cycleRow("Rate per minute", value: access.rate.cyclesPerMinute)
+                    cycleRow("Remaining today", value: access.remainingCycles)
+                    cycleRow("Database balance", value: access.balanceCycles)
+                    Text("Resets daily at 9:00 AM JST (12:00 AM UTC). Silence and muted time still count as connected time. The limit does not increase automatically when the rate changes.").font(.caption)
+                    if owner { Button("Save") { save() }.disabled(busy || unit.cycles(from: budget) == nil) }
+                    else { Text("Only the database owner can change voice access and budgets.") }
                 }
                 if let message { Text(message) }
             }
         }
-        .navigationTitle("音声設定")
+        .navigationTitle("Voice Settings")
         .navigationBarBackButtonHidden(true)
         .toolbar { ToolbarItem(placement: .topBarLeading) {
-            Button("戻る", systemImage: "chevron.left") { closeRequested = true; requestChange() }.disabled(busy)
+            Button("Back", systemImage: "chevron.left") { closeRequested = true; requestChange() }.disabled(busy)
         } }
         .interactiveDismissDisabled(dirty || busy)
-        .confirmationDialog("未保存の変更を破棄しますか？", isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button("変更を破棄", role: .destructive) { applyChange() }
-            Button("キャンセル", role: .cancel) { resetPending() }
+        .confirmationDialog("Discard unsaved changes?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+            Button("Discard Changes", role: .destructive) { applyChange() }
+            Button("Cancel", role: .cancel) { resetPending() }
         }
         .task {
             scope = UserDefaults.standard.string(forKey: "voice.scope.\(appModel.principalText)") ?? "/Knowledge"
@@ -104,6 +100,10 @@ struct VoiceSettingsView: View {
             scope = UserDefaults.standard.string(forKey: "voice.scope.\(appModel.principalText)") ?? "/Knowledge"
         }
         .onChange(of: dirty || busy) { _, value in appModel.voiceSettingsHasChanges = value }
+        .onChange(of: budgetFocused) { _, focused in
+            guard !focused else { return }
+            normalizeBudgetPresentation()
+        }
         .onDisappear { appModel.voiceSettingsHasChanges = false }
         .task(id: loadKey) { await load() }
     }
@@ -134,7 +134,10 @@ struct VoiceSettingsView: View {
     private func load() async {
 #if DEBUG
         if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "voice-settings" {
-            access = .settingsPreview; enabled = true; unit = .billion; budget = "300"; return
+            let info = VoiceAccessInfo.settingsPreview
+            access = info; enabled = true
+            applyBudgetPresentation(value: info.policy.budget, fallback: info.rate.cyclesPerMinute)
+            return
         }
 #endif
         let key = loadKey
@@ -148,7 +151,7 @@ struct VoiceSettingsView: View {
             try Task.checkCancellation()
             guard key == loadKey else { return }
             access = info; enabled = info.policy.enabled
-            unit = .preferred(for: info.policy.budget); budget = unit.text(for: info.policy.budget)
+            applyBudgetPresentation(value: info.policy.budget, fallback: info.rate.cyclesPerMinute)
             members = loadedMembers
         } catch is CancellationError {} catch { if key == loadKey { message = error.localizedDescription } }
     }
@@ -160,8 +163,21 @@ struct VoiceSettingsView: View {
             do {
                 try await appModel.saveVoicePolicy(databaseId: db, principal: user, enabled: allowed, budget: value)
                 guard key == loadKey else { return }
-                await load(); message = "保存しました。"
+                await load(); message = "Saved."
             } catch { if key == loadKey { message = error.localizedDescription; busy = false } }
         }
+    }
+    private func applyBudgetPresentation(value: UInt64, fallback: UInt64) {
+        let presentation = CycleBudgetUnit.presentation(for: value, fallback: fallback)
+        unit = presentation.unit
+        budget = presentation.text
+    }
+    private func normalizeBudgetPresentation() {
+        guard let normalized = unit.normalizedPresentation(
+            for: budget,
+            fallback: access?.rate.cyclesPerMinute ?? 0
+        ) else { return }
+        unit = normalized.unit
+        budget = normalized.text
     }
 }

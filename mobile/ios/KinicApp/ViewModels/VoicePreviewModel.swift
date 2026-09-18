@@ -76,7 +76,7 @@ final class VoicePreviewModel {
         http = AssistantHTTPClient(configuration: configuration)
         audio.onFailure = { [weak self] in
             self?.stopVoice()
-            self?.error = "音声の割り込みにより停止しました。再試行すると音声を再開できます。"
+            self?.error = "Voice stopped after an audio interruption. Retry to resume."
         }
     }
 #if DEBUG
@@ -89,8 +89,8 @@ final class VoicePreviewModel {
         if state == "responding" { fixture = fixture.replacingOccurrences(of: "\"status\":\"ready\"", with: "\"status\":\"working\"") }
         if state == "caveats" {
             fixture = fixture.replacingOccurrences(of: "\"insufficient\":false", with: "\"insufficient\":true")
-                .replacingOccurrences(of: "\"contradictions\":[]", with: "\"contradictions\":[\"資料によって日付が異なります。\"]")
-                .replacingOccurrences(of: "\"unverified\":[]", with: "\"unverified\":[\"最新情報を確認できません。\"]")
+                .replacingOccurrences(of: "\"contradictions\":[]", with: "\"contradictions\":[\"The dates differ between sources.\"]")
+                .replacingOccurrences(of: "\"unverified\":[]", with: "\"unverified\":[\"The latest information could not be verified.\"]")
         }
         snapshot = try? JSONDecoder().decode(AssistantSnapshot.self, from: Data(fixture.utf8))
         busy = state == "connecting"
@@ -138,7 +138,7 @@ final class VoicePreviewModel {
             // Recover the local copy before any terminal server response clears it.
             guard let saveHistory else { throw URLError(.cannotWriteToFile) }
             do { try await saveHistory(saved.snapshot, saved.conversationID, saved.databaseTitle) }
-            catch { historyError = true; self.error = "保存できなかった音声履歴があります。保存を再試行してください。"; return }
+            catch { historyError = true; self.error = "Some voice history could not be saved. Retry saving it."; return }
             try Task.checkCancellation()
             historyError = false
             if try cache(for: principal).isEnding(conversationID: saved.conversationID) {
@@ -147,7 +147,7 @@ final class VoicePreviewModel {
                 boundDatabaseId = saved.snapshot.databaseId
                 snapshot = saved.snapshot
                 historyError = true
-                self.error = "前回の終了処理が完了していません。終了処理を再試行してください。"
+                self.error = "The previous conversation did not finish ending. Retry ending it."
                 return
             }
             if saved.snapshot.databaseId != databaseId { try cache(for: principal).clear(); return }
@@ -252,7 +252,7 @@ final class VoicePreviewModel {
     }
     func report(_ error: Error) {
         failureCode = (error as? AssistantHTTPError)?.code
-        self.error = error is URLError ? "通信できませんでした。ネットワークを確認して再試行してください。" : error.localizedDescription
+        self.error = error is URLError ? "Could not communicate with the server. Check your network and retry." : error.localizedDescription
     }
     func clearError() { error = nil; failureCode = nil }
     func waitForControl() async throws {
@@ -286,7 +286,7 @@ final class VoicePreviewModel {
             if let stoppingID {
                 do { _ = try await http.data("voice/stop", conversation: current.id, method: "POST", body: ["voiceId": stoppingID]) }
                 catch let failure as AssistantHTTPError where failure.terminal {
-                    finalizationWarning = "サーバーの会話を確認できなかったため、最後に受信した内容を保存しました。最終部分が欠けている可能性があります。"
+                    finalizationWarning = "The server conversation could not be verified, so the last received content was saved. The final portion may be missing."
                 }
             }
             guard epoch == generation else { throw CancellationError() }
@@ -305,7 +305,7 @@ final class VoicePreviewModel {
                 }
                 try apply(finalState, database: current.databaseId)
             } catch let failure as AssistantHTTPError where failure.terminal {
-                finalizationWarning = "サーバーの会話を確認できなかったため、最後に受信した内容を保存しました。最終部分が欠けている可能性があります。"
+                finalizationWarning = "The server conversation could not be verified, so the last received content was saved. The final portion may be missing."
             }
             await historyTask?.value
             guard epoch == generation else { throw CancellationError() }
@@ -323,7 +323,7 @@ final class VoicePreviewModel {
         } catch {
             guard epoch == generation else { return false }
             historyError = true
-            self.error = "音声は停止しました。会話の保存・終了を完了できませんでした。再試行してください。"
+            self.error = "Voice stopped, but saving and ending the conversation could not be completed. Retry."
             return false
         }
     }
@@ -401,7 +401,7 @@ final class VoicePreviewModel {
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled, let self, voiceEpoch == generation, voiceActive else { return }
             stopVoice()
-            error = "利用時間の上限に達したため音声を停止しました。文字の回答は引き続き受信します。"
+            error = "Voice stopped because the time limit was reached. Text responses will continue to arrive."
         }
     }
     func stopVoice() {
@@ -417,7 +417,7 @@ final class VoicePreviewModel {
         Task { [weak self] in
             guard let self else { return }
             do { _ = try await http.send(request) }
-            catch { if epoch == generation { self.error = "マイクは停止しました。サーバーの終了処理を待っています。" } }
+            catch { if epoch == generation { self.error = "The microphone stopped. Waiting for the server to finish ending voice." } }
         }
     }
     func toggleMute() { audio.toggleMute(); muted = audio.muted }
@@ -495,7 +495,7 @@ final class VoicePreviewModel {
                         } catch {
                             if epoch == pending.epoch {
                                 historyError = true
-                                self.error = "会話を保存できませんでした。終了時に再試行します。"
+                                self.error = "The conversation could not be saved. It will be retried when you end it."
                             }
                         }
                     }
@@ -518,7 +518,7 @@ final class VoicePreviewModel {
             guard let self else { return }
             while !Task.isCancelled, epoch == generation, let current = snapshot {
                 if let disconnectedAt, Date().timeIntervalSince(disconnectedAt) * 1000 >= Double(current.reconnectGraceMs) {
-                    end(); error = "再接続の有効時間が過ぎました。会話を開始し直してください。"; return
+                    end(); error = "The reconnection window expired. Start the conversation again."; return
                 }
                 do {
                     let status = try await http.snapshot(conversation: current.id)
@@ -563,7 +563,7 @@ final class VoicePreviewModel {
                         // A heartbeat reply only proves liveness; it is not a snapshot.
                         if AssistantLiveness.isHeartbeatReply(value) { continue }
                         if value["type"] as? String == "ended" {
-                            if !finishing { end(); error = "この会話の接続は終了しました。" }
+                            if !finishing { end(); error = "This conversation connection has ended." }
                             return
                         }
                         guard let revision = value["revision"] as? Int else { throw URLError(.cannotParseResponse) }

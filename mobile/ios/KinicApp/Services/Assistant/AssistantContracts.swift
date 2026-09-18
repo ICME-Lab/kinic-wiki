@@ -15,9 +15,9 @@ struct AssistantAnswer: Codable, Sendable {
     let unverified: [String]
     var displayText: String {
         var parts = [answer]
-        if insufficient { parts.append("根拠が不足しています。") }
-        if !contradictions.isEmpty { parts.append("矛盾する情報\n" + contradictions.map { "・" + $0 }.joined(separator: "\n")) }
-        if !unverified.isEmpty { parts.append("未検証の情報\n" + unverified.map { "・" + $0 }.joined(separator: "\n")) }
+        if insufficient { parts.append("There is not enough supporting evidence.") }
+        if !contradictions.isEmpty { parts.append("Conflicting information\n" + contradictions.map { "• " + $0 }.joined(separator: "\n")) }
+        if !unverified.isEmpty { parts.append("Unverified information\n" + unverified.map { "• " + $0 }.joined(separator: "\n")) }
         return parts.joined(separator: "\n\n")
     }
 }
@@ -117,25 +117,25 @@ struct AssistantHTTPError: LocalizedError {
     var terminal: Bool { [401, 403, 404, 410].contains(status) || code == "assistant_disabled" }
     var errorDescription: String? {
         switch code {
-        case "assistant_disabled": "音声対話は現在利用できません。"
-        case "assistant_not_configured": "音声サービスの設定が完了していません。"
-        case "voice_permission_required": "音声が無効です。所有者は音声設定で有効にしてください。メンバーは所有者の許可が必要です。"
-        case "database_access_denied": "このデータベースの閲覧権限がありません。"
-        case "kinic_session_expired": "ログインの有効期限が切れました。再ログインしてください。"
-        case "choose_questions_only", "invalid_delegation", "invalid_delegation_key", "invalid_delegation_target", "invalid_delegation_expiry": "閲覧権限を確認できませんでした。再ログインしてお試しください。"
-        case "identity_changed": "Wikiにログインしたものと同じアカウントを使用してください。"
-        case "voice_connection_failed": "音声に接続できませんでした。通信状態を確認して再試行してください。"
-        case "voice_close_pending": "音声を停止しています。文字の回答は引き続き受信します。"
-        case "microphone_denied": "マイクを使用できません。iPhoneの設定でマイクを許可してください。"
-        case "voice_billing_not_configured": "音声料金がまだ設定されていません。"
-        case "voice_price_consent_required": "料金が変更されました。再試行して新しい料金をご確認ください。"
-        case "authentication_required": "音声の認証が切れました。接続し直してください。"
-        case "voice_budget_exhausted": "本日の音声予算に達しました。音声設定で上限を変更できます。"
-        case "voice_balance_insufficient": "データベースのcycles残高が不足しています。"
-        case "voice_billing_denied": "音声の利用条件を確認できませんでした。設定を確認してください。"
-        case "voice_context_limit": "会話が長くなったため音声を停止しました。履歴を保存して新しい会話を始めてください。"
-        case "rate_limit": "接続回数の上限に達しました。少し待って再試行してください。"
-        default: "音声の処理に失敗しました。再試行してください。"
+        case "assistant_disabled": "Voice conversations are currently unavailable."
+        case "assistant_not_configured": "The voice service has not been configured."
+        case "voice_permission_required": "Voice is disabled. Owners can enable it in Voice Settings; members need the owner's permission."
+        case "database_access_denied": "You do not have permission to view this database."
+        case "kinic_session_expired": "Your sign-in session expired. Sign in again."
+        case "choose_questions_only", "invalid_delegation", "invalid_delegation_key", "invalid_delegation_target", "invalid_delegation_expiry": "Your access could not be verified. Sign in again and retry."
+        case "identity_changed": "Use the same account that you used to sign in to the Wiki."
+        case "voice_connection_failed": "Could not connect to voice. Check your connection and retry."
+        case "voice_close_pending": "Voice is stopping. Text responses will continue to arrive."
+        case "microphone_denied": "The microphone is unavailable. Allow microphone access in iPhone Settings."
+        case "voice_billing_not_configured": "Voice pricing has not been configured."
+        case "voice_price_consent_required": "The rate has changed. Retry to review the new rate."
+        case "authentication_required": "Voice authentication expired. Reconnect and retry."
+        case "voice_budget_exhausted": "Today's voice budget has been reached. You can change the limit in Voice Settings."
+        case "voice_balance_insufficient": "The database does not have enough cycles."
+        case "voice_billing_denied": "Voice eligibility could not be verified. Check Voice Settings."
+        case "voice_context_limit": "Voice stopped because the conversation became too long. Save the history and start a new conversation."
+        case "rate_limit": "The connection limit has been reached. Wait a moment and retry."
+        default: "Voice processing failed. Retry."
         }
     }
 }

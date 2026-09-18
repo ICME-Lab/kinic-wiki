@@ -125,8 +125,36 @@ jobs:
         run: brew install xcodegen
       - name: Generate iOS project
         run: mobile/ios/scripts/ensure-xcodegen-project.sh
+      - id: ios-simulator
+        name: Prepare iOS Simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          runtime_id="$(
+            xcrun simctl list runtimes --json |
+              jq -r '.runtimes[] | select(.name == "iOS 26.5" and .isAvailable == true) | .identifier' |
+              head -n 1
+          )"
+          device_type_id="$(
+            xcrun simctl list devicetypes --json |
+              jq -r '.devicetypes[] | select(.name == "iPhone 17") | .identifier' |
+              head -n 1
+          )"
+
+          if [[ -z "$runtime_id" || -z "$device_type_id" ]]; then
+            echo "iOS 26.5 runtime or iPhone 17 device type is unavailable" >&2
+            xcrun simctl list runtimes
+            xcrun simctl list devicetypes
+            exit 1
+          fi
+
+          simulator_id="$(xcrun simctl create "Kinic CI" "$device_type_id" "$runtime_id")"
+          xcrun simctl boot "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
       - name: Run iOS tests
-        run: xcodebuild test -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' CODE_SIGNING_ALLOWED=NO
+        run: xcodebuild test -project mobile/ios/Kinic.xcodeproj -scheme Kinic -destination 'platform=iOS Simulator,id=${{ steps.ios-simulator.outputs.id }}' CODE_SIGNING_ALLOWED=NO
       - name: Validate TestFlight upload inputs
         shell: bash
         run: |
