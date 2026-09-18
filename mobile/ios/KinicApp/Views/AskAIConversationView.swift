@@ -6,6 +6,8 @@ import SwiftUI
 
 struct AskAIConversationView: View {
     @Bindable var model: AskAIModel
+    /// Passed down from the workspace so a finished answer can become a work item.
+    let createWorkItem: (AskAIMessage) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -17,8 +19,12 @@ struct AskAIConversationView: View {
                             .padding(KinicDesign.screenPadding)
                     } else {
                         ForEach(model.messages) { message in
-                            AskAIMessageView(message: message, openSource: model.openSource)
-                                .id(message.id)
+                            AskAIMessageView(
+                                message: message,
+                                openSource: model.openSource,
+                                createWorkItem: createWorkItem
+                            )
+                            .id(message.id)
                         }
                     }
                 }

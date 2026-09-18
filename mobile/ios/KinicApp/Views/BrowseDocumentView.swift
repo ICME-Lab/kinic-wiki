@@ -183,12 +183,64 @@ struct BrowseDocumentView: View {
             }
 
             if let node = currentNode, isMarkdownPage(node) {
+                if !AppModel.isWorkItemDocumentPath(normalizedPath) {
+                    workItemCreateSection(node: node)
+                }
+                workItemSection
                 shareSection(node: node)
                 publicationSection
                 deleteSection
             }
         }
         .disabled(currentNode == nil)
+    }
+
+    /// A wiki page becomes a work item body; the page itself is only read, never changed here.
+    @ViewBuilder
+    private func workItemCreateSection(node: VFSNode) -> some View {
+        Section("Work item") {
+            Button("項目を作成", systemImage: "square.and.pencil") {
+                createWorkItem(from: node)
+            }
+            .disabled(!model.canCreateWorkItemFromBrowseDocument(normalizedPath))
+        }
+    }
+
+    private func createWorkItem(from node: VFSNode) {
+        let pageName = normalizedPath.split(separator: "/").last.map(String.init) ?? normalizedPath
+        let title = pageName.hasSuffix(".md") ? String(pageName.dropLast(3)) : pageName
+        model.requestWorkItemDraft(
+            databaseId: model.selectedBrowseDatabaseId,
+            title: title,
+            body: node.content,
+            source: WorkItemSource(
+                kind: .wiki,
+                url: model.configuration
+                    .databaseNodeURL(databaseId: model.selectedBrowseDatabaseId, path: node.path)
+                    .absoluteString,
+                path: node.path,
+                label: title
+            )
+        )
+    }
+
+    /// Work item documents own their layout, so Browse only offers a way back to the item detail.
+    @ViewBuilder
+    private var workItemSection: some View {
+        if AppModel.isWorkItemDocumentPath(normalizedPath),
+           let itemId = WorkItemPaths.itemId(fromPath: normalizedPath) {
+            Section("Work item") {
+                Button("Open Item Detail", systemImage: "square.and.pencil") {
+                    model.openWorkItemDetail(
+                        databaseId: model.selectedBrowseDatabaseId,
+                        itemId: itemId
+                    )
+                }
+                Text("This file is managed by the item detail. Editing, publishing, and deleting are disabled here so the body and its metadata stay consistent.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder

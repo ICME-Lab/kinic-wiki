@@ -22,7 +22,14 @@ struct AskAIWorkspaceView: View {
                     Button("再試行", action: appModel.startRefreshDatabases)
                 }
             } else {
-                AskAIConversationView(model: model)
+                AskAIConversationView(model: model, createWorkItem: { message in
+                    appModel.requestWorkItemDraft(
+                        databaseId: appModel.selectedAskAIDatabaseId,
+                        title: nil,
+                        body: message.text,
+                        source: appModel.workItemSource(forAskAIMessage: message)
+                    )
+                })
             }
         }
         .safeAreaInset(edge: .bottom) {

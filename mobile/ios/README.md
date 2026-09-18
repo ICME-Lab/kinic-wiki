@@ -14,6 +14,8 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Receives Safari/browser Share Sheet URLs through `KinicShareExtension`.
 - Submits shared URLs directly from `KinicShareExtension` when a shared Keychain session and selected database are available.
 - Stores shared URLs in the App Group inbox for later app-side auto-submit when immediate Share Extension submission is unavailable.
+- Lets the Share Extension create a shared work item from a URL plus an optional note. The item is written to the App Group work item queue and shared by the app, which stays the only writer of the VFS contract.
+- Shows a Home Screen widget (`KinicWorkItemsWidget`) that lists the newest open work items of one database per widget instance. The widget reads only the App Group snapshot the app writes; it never reaches the network, the canister, SQLite, or the Keychain.
 - Lists writable VFS databases and filters to `Owner` / `Writer` roles.
 - Browses active readable VFS databases, including `Reader` role databases, with native folder navigation, Markdown/raw viewing, and search.
 - Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. iOS App Store IAP can activate a pending DB or top up an owner-managed active DB. KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
@@ -37,13 +39,14 @@ The Bundle IDs are fixed to the App Store records:
 
 - `KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki`
 - `KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension`
+- `KINIC_WIDGET_BUNDLE_ID = xyz.kinic.ios.KinicWiki.WorkItemsWidget`
 
 The production AASA document is served by `wikibrowser/app/.well-known/apple-app-site-association/route.ts`.
 It uses the fixed App ID `AKN976G7AK.xyz.kinic.ios.KinicWiki` and must return `content-type: application/json`.
 
 Enable these capabilities:
 
-- App Groups for both targets:
+- App Groups for all three targets (app, Share Extension, widget):
   - `group.xyz.kinic.ios.KinicWiki`
 - Keychain Sharing for both targets:
   - `AKN976G7AK.xyz.kinic.ios.KinicWiki`
@@ -51,6 +54,8 @@ Enable these capabilities:
   - `applinks:$(KINIC_CALLBACK_DOMAIN)`
   - `webcredentials:$(KINIC_CALLBACK_DOMAIN)`
   - Debug device builds also include `?mode=developer` variants so iOS can refresh the AASA from the origin while Apple CDN caches are stale.
+
+The work items widget is added as its own extension target, so register `KINIC_WIDGET_BUNDLE_ID` in the Apple Developer portal and enable App Groups for it before device or TestFlight builds. It does not need Keychain Sharing or Associated Domains.
 
 Share Extension capture is best-effort: it writes directly through VFS and triggers the source-capture worker when possible. If request creation fails, it queues the URL for app-side submission. If worker trigger fails after the request is saved, it shows an error and keeps a pending trigger for app-side retry. Internet Identity login depends on `https://wiki.kinic.xyz/.well-known/ii-auth-callbacks`, `https://wiki.kinic.xyz/.well-known/apple-app-site-association`, and the terminating `/ios-auth-callback` route.
 
