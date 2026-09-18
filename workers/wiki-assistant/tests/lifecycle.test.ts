@@ -229,6 +229,7 @@ async function harness() {
   const env = {
     ASSISTANT_ENABLED: "true",
     OPENAI_API_KEY: "fake",
+    TYPESAFE_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
     ASSISTANT_DERIVATION_ORIGIN: "origin",
     memory,
@@ -265,7 +266,7 @@ async function harness() {
   const created = await call("/conversations", {
     databaseId: "db",
     scope: "/Knowledge",
-    consent: "2026-09-16",
+    consent: "2026-09-18",
   });
   id = ((await created.json()) as { id: string }).id;
   return {
@@ -340,7 +341,7 @@ describe("conversation lifecycle", () => {
         await h.call("/conversations", {
           databaseId: "other",
           scope: "/Knowledge",
-          consent: "2026-09-16",
+          consent: "2026-09-18",
         })
       ).status,
     ).toBe(409);

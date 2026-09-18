@@ -40,7 +40,7 @@ export type AssistantHistoryPage = {
   nextCursor: string | null;
 };
 export type AssistantCommandResult = { revision: number };
-export const CONSENT_VERSION = "2026-09-16";
+export const CONSENT_VERSION = "2026-09-18";
 const errors: Record<string, string> = {
   assistant_disabled: "Ask AI is not available yet.",
   assistant_not_configured: "Ask AI has not been configured yet.",

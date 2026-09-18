@@ -253,7 +253,8 @@ function config(): WorkerConfig {
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
     maxSourceChars: 300_000,
-    maxContextHits: 8,
+    maxContextCandidates: 20,
+    maxContextSelections: 5,
     maxOutputTokens: 6_000
   };
 }

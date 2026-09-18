@@ -2,6 +2,7 @@
 // What: Manual and queued generation workflows.
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
 import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
+import { JevError, rerankWithJev } from "@kinic/jev-reranker";
 import { loadConfig } from "./config.js";
 import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
 import {
@@ -226,7 +227,7 @@ async function processSourceQueueMessage(
       await releaseForRetry(env.DB, message, execution.leaseOwner, errorMessage(error));
       const providerError = error instanceof DeepSeekRequestError ? error : null;
       return retryDisposition(
-        providerError?.code ?? "source_generation_transient",
+        errorCode(error),
         errorMessage(error),
         execution.attempts,
         deepSeekRetryDelaySeconds(providerError, execution.attempts)
@@ -474,11 +475,11 @@ async function generateFromSource(
   config: WorkerConfig,
   databaseId: string,
   source: WikiNode,
-  beforeDeepSeek?: () => Promise<void>,
+  authorizeExternalCost?: () => Promise<void>,
   outputLanguage?: OutputLanguage
 ): Promise<GeneratedPage> {
-  const contextHits = await loadContext(vfs, databaseId, source, config);
-  await beforeDeepSeek?.();
+  const contextHits = await loadContext(env, vfs, databaseId, source, config, authorizeExternalCost);
+  await authorizeExternalCost?.();
   const llmStartedAt = Date.now();
   const draft: WikiDraft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY, outputLanguage);
   const llmDurationMs = Date.now() - llmStartedAt;
@@ -492,11 +493,29 @@ async function generateFromSource(
   };
 }
 
-async function loadContext(vfs: VfsClient, databaseId: string, source: WikiNode, config: WorkerConfig): Promise<SearchNodeHit[]> {
+async function loadContext(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  databaseId: string,
+  source: WikiNode,
+  config: WorkerConfig,
+  authorizeExternalCost?: () => Promise<void>,
+): Promise<SearchNodeHit[]> {
   const query = contextQuery(source.content, source.path);
   if (!query) return [];
-  const hits = await vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
-  return rankContextHits(hits, config.sourcePrefix);
+  const hits = await vfs.searchNodes(databaseId, query, config.maxContextCandidates, config.contextPrefix);
+  if (hits.length > config.maxContextSelections) await authorizeExternalCost?.();
+  const reranked = await rerankWithJev({
+    intent: `${query}\n\n${source.content.slice(0, 4_000)}`,
+    candidates: hits.map((hit) => ({
+      ...hit,
+      preview: hit.previewExcerpt ?? hit.snippet ?? "",
+    })),
+    apiKey: env.TYPESAFE_API_KEY,
+    workflow: "generator",
+    selectionCount: config.maxContextSelections,
+  });
+  return reranked.candidates;
 }
 
 export function rankContextHits(hits: SearchNodeHit[], sourcePrefix = "/Sources"): SearchNodeHit[] {
@@ -698,7 +717,8 @@ function isPermanentGenerationError(error: unknown): boolean {
     error instanceof GeneratedArtifactError ||
     error instanceof DraftValidationError ||
     error instanceof DeepSeekResponseError ||
-    (error instanceof DeepSeekRequestError && !error.retryable)
+    (error instanceof DeepSeekRequestError && !error.retryable) ||
+    (error instanceof JevError && !error.retryable)
   );
 }
 
@@ -727,7 +747,9 @@ export function deepSeekRetryDelaySeconds(
 }
 
 function errorCode(error: unknown): string {
-  return error instanceof DeepSeekRequestError ? error.code : "source_generation_transient";
+  return error instanceof DeepSeekRequestError || error instanceof JevError
+    ? error.code
+    : "source_generation_transient";
 }
 
 function exponentialBackoff(attempts: number): number {

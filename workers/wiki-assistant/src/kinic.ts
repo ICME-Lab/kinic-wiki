@@ -1,4 +1,5 @@
 import { readNodeRaw, type ReadActor } from "@kinic/ii-server/read";
+import { JevError, rerankWithJev } from "@kinic/jev-reranker";
 export {
   createReadActor,
   type ReadActor,
@@ -30,6 +31,7 @@ export type ToolState = {
   evidence: Citation[];
   sources: string[];
   readPaths: string[];
+  jevDurationMs: number;
 };
 export const emptyToolState = (): ToolState => ({
   calls: 0,
@@ -37,6 +39,7 @@ export const emptyToolState = (): ToolState => ({
   evidence: [],
   sources: [],
   readPaths: [],
+  jevDurationMs: 0,
 });
 
 export class KinicReader {
@@ -47,6 +50,7 @@ export class KinicReader {
     readonly state: ToolState,
     readonly maxCharacters = 24000,
     readonly maxCalls = 12,
+    readonly typesafeApiKey = "",
   ) {}
   async authorize(): Promise<void> {
     unwrap(await this.actor.read_node(this.databaseId, this.scope));
@@ -90,29 +94,43 @@ export class KinicReader {
       if (input.scope !== this.scope)
         throw new AssistantError("scope_not_allowed", 403);
       const result = unwrap(
-        await this.actor.query_context({
+        await this.actor.search_nodes({
           database_id: this.databaseId,
-          task: input.question,
-          entities: [],
-          namespace: [this.scope],
-          budget_tokens: 2000,
-          include_evidence: false,
-          depth: 1,
+          query_text: input.question,
+          prefix: [this.scope],
+          top_k: 20,
+          preview_mode: [{ Light: null }],
         }),
       );
+      const candidates = result
+        .filter(
+          (hit) =>
+            hit.path.startsWith(this.scope + "/") || hit.path === this.scope,
+        )
+        .slice(0, 20)
+        .map((hit) => ({
+          path: hit.path,
+          preview: hit.preview[0]?.excerpt[0] ?? hit.snippet[0] ?? "",
+        }));
+      let selected;
+      try {
+        const reranked = await rerankWithJev({
+          intent: input.question,
+          candidates,
+          apiKey: this.typesafeApiKey,
+          workflow: "ask_ai",
+        });
+        this.state.jevDurationMs += reranked.durationMs;
+        selected = reranked.candidates;
+      } catch (error) {
+        if (error instanceof JevError) {
+          this.state.jevDurationMs += error.durationMs;
+          throw new AssistantError("jev_unavailable", 503);
+        }
+        throw error;
+      }
       return this.bounded({
-        nodes: result.nodes
-          .filter(
-            ({ node }) =>
-              node.path.startsWith(this.scope + "/") ||
-              node.path === this.scope,
-          )
-          .slice(0, 8)
-          .map(({ node }) => ({
-            path: node.path,
-            preview: node.content.slice(0, 600),
-          })),
-        truncated: result.truncated,
+        nodes: selected,
       });
     }
     if (name === "wiki_read") {

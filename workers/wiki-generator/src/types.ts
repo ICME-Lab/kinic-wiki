@@ -134,7 +134,8 @@ export type WorkerConfig = {
   maxRawChars: number;
   maxFetchedBytes: number;
   maxSourceChars: number;
-  maxContextHits: number;
+  maxContextCandidates: number;
+  maxContextSelections: number;
   maxOutputTokens: number;
 };
 

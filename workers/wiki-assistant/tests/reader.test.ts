@@ -53,6 +53,15 @@ export function fixtureActor(): ReadActor {
         truncated: false,
       },
     })),
+    search_nodes: vi.fn(async () => ({
+      Ok: [
+        {
+          path: "/Knowledge/decision.md",
+          snippet: ["本番の色は青"] as [string],
+          preview: [{ excerpt: ["レビュー済み: 本番の色は青。"] as [string] }] as [{ excerpt: [string] }],
+        },
+      ],
+    })),
     source_evidence: vi.fn(async () => ({
       Ok: {
         node_path: "/Knowledge/decision.md",
@@ -164,23 +173,16 @@ describe("read tools and citations", () => {
       ).execute("wiki_sources", { path: "/Knowledge/decision.md" }),
     ).rejects.toThrow("read_node_first");
   });
-  it("does not leak cross-root graph results", async () => {
+  it("does not leak cross-root search results", async () => {
     const actor = fixtureActor();
-    actor.query_context = vi.fn(async () => ({
-      Ok: {
-        nodes: [
-          {
-            node: {
-              path: "/Skills/evil.md",
-              content: "secret",
-              etag: "x",
-              metadata_json: "{}",
-              updated_at: 0n,
-            },
-          },
-        ],
-        truncated: true,
-      },
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: [
+        {
+          path: "/Skills/evil.md",
+          snippet: ["secret"] as [string],
+          preview: [{ excerpt: ["secret"] as [string] }] as [{ excerpt: [string] }],
+        },
+      ],
     }));
     const result = await new KinicReader(
       actor,
@@ -189,7 +191,76 @@ describe("read tools and citations", () => {
       emptyToolState(),
     ).execute("wiki_query", { question: "x", scope: "/Knowledge" });
     expect(result).not.toContain("secret");
-    expect(JSON.parse(result).truncated).toBe(true);
+    expect(JSON.parse(result).nodes).toEqual([]);
+  });
+  it("returns Jev-selected paths and previews in semantic order", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: Array.from({ length: 6 }, (_, index) => ({
+        path: `/Knowledge/${index}.md`,
+        snippet: [`snippet-${index}`] as [string],
+        preview: [] as [],
+      })),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      model: "jev-latest",
+      answers: Object.fromEntries(
+        [0.1, 0.9, 0.8, 0.7, 0.6, 0.5].map((noul, index) => [
+          `candidate_${index}`,
+          { type: "noul", noul },
+        ]),
+      ),
+      usage: { input_tokens: 10, output_tokens: 6 },
+    })));
+    try {
+      const state = emptyToolState();
+      const output = JSON.parse(await new KinicReader(
+        actor,
+        "db-a",
+        "/Knowledge",
+        state,
+        24000,
+        12,
+        "typesafe-key",
+      ).execute("wiki_query", { question: "色は？", scope: "/Knowledge" })) as {
+        nodes: { path: string; preview: string }[];
+      };
+      expect(output.nodes.map(({ path }) => path)).toEqual([
+        "/Knowledge/1.md",
+        "/Knowledge/2.md",
+        "/Knowledge/3.md",
+        "/Knowledge/4.md",
+        "/Knowledge/5.md",
+      ]);
+      expect(output.nodes[0]?.preview).toBe("snippet-1");
+      expect(state.jevDurationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("returns jev_unavailable without exposing FTS candidates", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: Array.from({ length: 6 }, (_, index) => ({
+        path: `/Knowledge/private-${index}.md`,
+        snippet: [`private-${index}`] as [string],
+        preview: [] as [],
+      })),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 529 })));
+    try {
+      await expect(new KinicReader(
+        actor,
+        "db-a",
+        "/Knowledge",
+        emptyToolState(),
+        24000,
+        12,
+        "typesafe-key",
+      ).execute("wiki_query", { question: "x", scope: "/Knowledge" })).rejects.toThrow("jev_unavailable");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it("reauthorizes each call and denies revoked access", async () => {
     const actor = fixtureActor();
@@ -264,12 +335,13 @@ describe("read tools and citations", () => {
       ]),
     ).toThrow("invalid_citation");
   });
-  it("uses only four canister query methods and decodes width-subtyped node records", () => {
+  it("uses only five canister query methods and decodes width-subtyped node records", () => {
     const service = readIdlFactory({ IDL });
     expect(service._fields.map(([name]) => name).sort()).toEqual([
       "memory_manifest",
       "query_context",
       "read_node",
+      "search_nodes",
       "source_evidence",
     ]);
     expect(

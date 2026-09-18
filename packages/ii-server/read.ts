@@ -7,6 +7,11 @@ export type WikiReadNode = {
   metadata_json: string;
   updated_at: bigint;
 };
+export type WikiSearchNodeHit = {
+  path: string;
+  snippet: [] | [string];
+  preview: [] | [{ excerpt: [] | [string] }];
+};
 export type ReadActor = {
   read_node(db: string, path: string): Promise<Result<[] | [WikiReadNode]>>;
   memory_manifest(input: {
@@ -27,6 +32,13 @@ export type ReadActor = {
     include_evidence: boolean;
     depth: number;
   }): Promise<Result<{ nodes: { node: WikiReadNode }[]; truncated: boolean }>>;
+  search_nodes(request: {
+    database_id: string;
+    query_text: string;
+    prefix: [string];
+    top_k: number;
+    preview_mode: [{ Light: null }];
+  }): Promise<Result<WikiSearchNodeHit[]>>;
   source_evidence(request: {
     database_id: string;
     node_path: string;
@@ -82,6 +94,20 @@ export const readIdlFactory: Parameters<typeof Actor.createActor>[0] = ({
     nodes: idl.Vec(idl.Record({ node: Node })),
     truncated: idl.Bool,
   });
+  const SearchPreview = idl.Record({ excerpt: idl.Opt(idl.Text) });
+  const SearchHit = idl.Record({
+    path: idl.Text,
+    snippet: idl.Opt(idl.Text),
+    preview: idl.Opt(SearchPreview),
+  });
+  const SearchPreviewMode = idl.Variant({ Light: idl.Null });
+  const SearchRequest = idl.Record({
+    database_id: idl.Text,
+    query_text: idl.Text,
+    prefix: idl.Opt(idl.Text),
+    top_k: idl.Nat32,
+    preview_mode: idl.Opt(SearchPreviewMode),
+  });
   const Query = idl.Record({
     database_id: idl.Text,
     task: idl.Text,
@@ -105,6 +131,11 @@ export const readIdlFactory: Parameters<typeof Actor.createActor>[0] = ({
     query_context: idl.Func(
       [Query],
       [idl.Variant({ Ok: Context, Err: idl.Text })],
+      ["query"],
+    ),
+    search_nodes: idl.Func(
+      [SearchRequest],
+      [idl.Variant({ Ok: idl.Vec(SearchHit), Err: idl.Text })],
       ["query"],
     ),
     source_evidence: idl.Func(

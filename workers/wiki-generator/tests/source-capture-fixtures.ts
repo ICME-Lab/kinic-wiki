@@ -32,7 +32,8 @@ export function workerConfig(): WorkerConfig {
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
     maxSourceChars: 300_000,
-    maxContextHits: 8,
+    maxContextCandidates: 20,
+    maxContextSelections: 5,
     maxOutputTokens: 6_000
   };
 }
@@ -50,6 +51,7 @@ export function testEnv(queue: TestQueue<QueueMessage>, db: D1Database = new Tes
     KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources",
     KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/",
     DEEPSEEK_API_KEY: "deepseek-key",
+    TYPESAFE_API_KEY: "typesafe-key",
     KINIC_WIKI_WORKER_TOKEN: "worker-token",
     KINIC_WIKI_WORKER_IDENTITY_PEM: "identity-pem"
   };

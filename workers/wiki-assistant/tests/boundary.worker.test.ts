@@ -220,7 +220,7 @@ describe("assistant HTTP and D1 authentication boundary", () => {
         origin: "https://evil.example",
         "content-type": "application/json",
       },
-      body: '{"consent":"2026-09-16"}',
+      body: '{"consent":"2026-09-18"}',
     });
     expect(response.status).toBe(403);
   });

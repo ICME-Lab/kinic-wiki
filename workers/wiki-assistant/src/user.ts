@@ -283,6 +283,7 @@ export class AssistantUser {
       tools,
       this.limits().characters,
       this.limits().calls,
+      this.env.TYPESAFE_API_KEY!,
     );
   }
   private snapshot(c: Conversation) {
@@ -391,7 +392,7 @@ export class AssistantUser {
           .object({
             databaseId: z.string().min(1).max(128),
             scope: scopeSchema,
-            consent: z.literal("2026-09-16"),
+            consent: z.literal("2026-09-18"),
             selectedPath: z.string().max(512).optional(),
             history: z.array(z.object({role: z.enum(["user", "assistant"]), text: z.string().max(4000)}).strict()).max(20).refine((items) => new TextEncoder().encode(JSON.stringify(items)).length <= 12000).default([]),
           })
@@ -834,6 +835,7 @@ export class AssistantUser {
           durationMs: Date.now() - p.started,
           calls: p.tools.calls,
           characters: p.tools.characters,
+          jevDurationMs: p.tools.jevDurationMs,
           inputTokens: turn.usage?.input_tokens,
           outputTokens: turn.usage?.output_tokens,
         }),

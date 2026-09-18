@@ -222,7 +222,7 @@ final class VoicePreviewModel {
         error = nil
         defer { if epoch == generation { busy = false } }
         do {
-            let data = try await http.data("auth/start", method: "POST", body: ["consent": "2026-09-16", "databaseId": databaseId, "expectedPrincipal": principal])
+            let data = try await http.data("auth/start", method: "POST", body: ["consent": "2026-09-18", "databaseId": databaseId, "expectedPrincipal": principal])
             guard epoch == generation else { return }
             guard let pending = try JSONSerialization.jsonObject(with: data) as? [String: Any], let token = pending["token"] as? String,
                   let state = pending["state"] as? String else { throw URLError(.cannotParseResponse) }
@@ -233,7 +233,7 @@ final class VoicePreviewModel {
             guard epoch == generation else { return }
             let owner = try JSONSerialization.jsonObject(with: authenticated) as? [String: Any]
             guard owner?["principal"] as? String == principal else { throw AssistantHTTPError(status: 403, code: "identity_changed") }
-            var creation: [String: Any] = ["consent": "2026-09-16", "databaseId": databaseId, "scope": scope, "history": history]
+            var creation: [String: Any] = ["consent": "2026-09-18", "databaseId": databaseId, "scope": scope, "history": history]
             if let selectedPath { creation["selectedPath"] = selectedPath }
             let created = try await http.data("conversations", method: "POST", body: creation)
             guard epoch == generation else { return }

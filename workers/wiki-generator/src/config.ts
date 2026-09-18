@@ -11,11 +11,16 @@ const DEFAULT_CONTEXT_PREFIX = "/";
 const DEFAULT_MAX_RAW_CHARS = 120_000;
 const DEFAULT_MAX_FETCHED_BYTES = 5_000_000;
 const DEFAULT_MAX_SOURCE_CHARS = 300_000;
-const DEFAULT_CONTEXT_HITS = 8;
+const DEFAULT_CONTEXT_CANDIDATES = 20;
+const DEFAULT_CONTEXT_SELECTIONS = 5;
 const DEFAULT_MAX_OUTPUT_TOKENS = 6_000;
 
 export function loadConfig(env: RuntimeEnv): WorkerConfig {
   const canisterId = required(env.KINIC_WIKI_CANISTER_ID, "KINIC_WIKI_CANISTER_ID");
+  const maxContextCandidates = Math.min(
+    DEFAULT_CONTEXT_CANDIDATES,
+    parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_CANDIDATES, DEFAULT_CONTEXT_CANDIDATES),
+  );
   return {
     canisterId,
     icHost: env.KINIC_WIKI_IC_HOST || "https://icp0.io",
@@ -26,7 +31,12 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     maxRawChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_RAW_CHARS, DEFAULT_MAX_RAW_CHARS),
     maxFetchedBytes: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_FETCHED_BYTES, DEFAULT_MAX_FETCHED_BYTES),
     maxSourceChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_SOURCE_CHARS, DEFAULT_MAX_SOURCE_CHARS),
-    maxContextHits: parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_HITS, DEFAULT_CONTEXT_HITS),
+    maxContextCandidates,
+    maxContextSelections: Math.min(
+      maxContextCandidates,
+      DEFAULT_CONTEXT_SELECTIONS,
+      parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_SELECTIONS, DEFAULT_CONTEXT_SELECTIONS),
+    ),
     maxOutputTokens: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   };
 }

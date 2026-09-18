@@ -16,7 +16,7 @@ struct VoicePreviewView: View {
     @State private var conversationID = UUID()
     @State private var databaseID = ""
     @State private var databaseTitle = ""
-    private let consentVersion = "2026-09-16"
+    private let consentVersion = "2026-09-18"
     private var consentKey: String { "voice.consent.\(appModel.principalText).\(consentVersion)" }
     private var rateKey: String { "voice.rate.\(appModel.principalText).\(databaseID)" }
 
@@ -29,7 +29,7 @@ struct VoicePreviewView: View {
                         .font(.title2).accessibilityIdentifier("voice.status")
                     if preparing || model.busy || model.finishing { ProgressView() }
                     if needsConsent, let access {
-                        Text("Your questions, microphone audio, and relevant Wiki content will be sent to OpenAI. The text conversation will remain in Ask AI history on this device.")
+                        Text("Your questions and necessary Wiki paths and previews will be sent to TypeSafe. Questions, microphone audio, and relevant Wiki excerpts will be sent to OpenAI. Both providers process data in the United States.")
                         Text("Charges are paid from this database's balance. The rate is \(DatabaseManagementFormat.cycles(access.rate.cyclesPerMinute)) per minute, with a daily limit of \(DatabaseManagementFormat.cycles(access.policy.budget)). Silence and muted time still count as connected time.")
                         Button("How Your Data Is Used") { showDetails = true }
                         Button("Agree and Start") {
@@ -92,7 +92,7 @@ struct VoicePreviewView: View {
             } message: { Text(model.finalizationWarning ?? "") }
             .sheet(isPresented: $showDetails) {
                 NavigationStack {
-                    ScrollView { Text("Voice audio, questions, conversation context, and relevant Wiki excerpts are sent to OpenAI. Kinic does not save audio recordings. Text conversations and citations are stored on this device and can be deleted from Ask AI history. The conversation is also stored temporarily on the server so it can recover from interruptions. After ending, Kinic deletes its temporary conversation and requests deletion of the OpenAI Agent session. OpenAI Agent sessions are stored in the United States and do not support Zero Data Retention. Provider logs or backups may remain for their applicable retention periods.") .padding() }
+                    ScrollView { Text("Questions and necessary Wiki paths and previews are sent to TypeSafe to rank search results. Voice audio, questions, conversation context, and relevant Wiki excerpts are sent to OpenAI. Both providers process data in the United States. TypeSafe states that it does not train or fine-tune models on Input, but retains personal data as reasonably necessary rather than offering Zero Data Retention. Kinic does not save audio recordings. Text conversations and citations are stored on this device and can be deleted from Ask AI history. The conversation is also stored temporarily on the server so it can recover from interruptions. After ending, Kinic deletes its temporary conversation and requests deletion of the OpenAI Agent session. OpenAI Agent sessions do not support Zero Data Retention. Provider logs or backups may remain for their applicable retention periods.") .padding() }
                         .navigationTitle("How Your Data Is Used")
                 }
             }

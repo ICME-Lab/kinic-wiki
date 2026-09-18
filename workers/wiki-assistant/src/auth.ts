@@ -51,7 +51,11 @@ export type Authorization = {
 export function requireEnabled(env: Env): void {
   if (env.ASSISTANT_ENABLED !== "true")
     throw new AssistantError("assistant_disabled", 503);
-  if (!env.OPENAI_API_KEY || !env.ASSISTANT_KEY_ENCRYPTION_KEY)
+  if (
+    !env.OPENAI_API_KEY ||
+    !env.TYPESAFE_API_KEY ||
+    !env.ASSISTANT_KEY_ENCRYPTION_KEY
+  )
     throw new AssistantError("assistant_not_configured", 503);
 }
 export class AssistantAuth {
