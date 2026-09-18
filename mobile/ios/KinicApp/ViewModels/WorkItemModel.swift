@@ -182,6 +182,7 @@ final class WorkItemModel {
     private func resetRenderedListIfDatabaseChanged(_ databaseId: String) {
         guard renderedDatabaseId != databaseId else { return }
         renderedDatabaseId = databaseId
+        clearSearch()
         entries = []
         totalCount = 0
         isTruncated = false
@@ -449,7 +450,9 @@ final class WorkItemModel {
                 payloadJson: WorkItemPendingMutation.encoded(
                     WorkItemPendingMutation.CommentPayload(body: trimmed, author: draft.author)
                 ),
-                databaseId: databaseId
+                databaseId: databaseId,
+                mutationId: draft.id,
+                createdAt: draft.createdAt
             )
             actionError = Self.message(for: error)
             return false
@@ -480,12 +483,12 @@ final class WorkItemModel {
         searchPhase = .searching
         do {
             let snapshot = try await repository.search(databaseId: databaseId, query: trimmed, session: session)
-            guard generation == searchGeneration else { return }
+            guard generation == searchGeneration, databaseId == self.databaseId else { return }
             searchSnapshot = snapshot
             searchPhase = snapshot.results.isEmpty ? .empty : .results
             actionError = nil
         } catch {
-            guard generation == searchGeneration else { return }
+            guard generation == searchGeneration, databaseId == self.databaseId else { return }
             searchSnapshot = WorkItemSearchSnapshot(results: [], hitCount: 0, isCapped: false)
             searchPhase = .failed(Self.message(for: error))
         }
@@ -684,13 +687,20 @@ final class WorkItemModel {
         }
     }
 
-    private func persistPendingMutation(kind: WorkItemPendingMutation.Kind, itemId: String, payloadJson: String, databaseId: String) {
+    private func persistPendingMutation(
+        kind: WorkItemPendingMutation.Kind,
+        itemId: String,
+        payloadJson: String,
+        databaseId: String,
+        mutationId: String = UUID().uuidString.lowercased(),
+        createdAt: Int64 = WorkItemModel.nowMilliseconds()
+    ) {
         guard let store else { return }
         let mutation = WorkItemPendingMutation(
-            mutationId: UUID().uuidString.lowercased(),
+            mutationId: mutationId,
             kind: kind,
             itemId: itemId,
-            createdAt: Self.nowMilliseconds(),
+            createdAt: createdAt,
             payloadJson: payloadJson
         )
         try? store.insertPendingMutation(mutation, principal: runtime.workItemPrincipal, databaseId: databaseId)

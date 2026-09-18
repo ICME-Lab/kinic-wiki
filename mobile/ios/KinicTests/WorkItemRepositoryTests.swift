@@ -20,8 +20,13 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     private var conflictingPaths: Set<String> = []
     private var readFailures: Set<String> = []
     private var mutationFails = false
+    private var failAfterNextMutationIsApplied = false
+    private var conflictReplacements: [String: [VFSNode]] = [:]
     private var searchHits: [SearchNodeHit] = []
     private var searchFails = false
+    private var pauseNextSearch = false
+    private var searchResumeContinuation: CheckedContinuation<Void, Never>?
+    private var searchPauseWaiters: [CheckedContinuation<Void, Never>] = []
     private var lastSearchPrefix: String?
     private var readPaths: [String] = []
 
@@ -79,6 +84,14 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
         mutationFails = false
     }
 
+    func failAfterApplyingNextMutation() {
+        failAfterNextMutationIsApplied = true
+    }
+
+    func replaceNodesOnNextConflict(at path: String, with replacements: [VFSNode]) {
+        conflictReplacements[path] = replacements
+    }
+
     func recordedReadPaths() -> [String] {
         readPaths
     }
@@ -93,6 +106,22 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
 
     func setSearchHits(_ hits: [SearchNodeHit]) {
         searchHits = hits
+    }
+
+    func pauseNextSearchUntilResumed() {
+        pauseNextSearch = true
+    }
+
+    func waitUntilSearchIsPaused() async {
+        if searchResumeContinuation != nil { return }
+        await withCheckedContinuation { continuation in
+            searchPauseWaiters.append(continuation)
+        }
+    }
+
+    func resumeSearch() {
+        searchResumeContinuation?.resume()
+        searchResumeContinuation = nil
     }
 
     func failSearch() {
@@ -114,6 +143,15 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
             throw WorkItemVFSStubError.readFailed("search")
         }
         lastSearchPrefix = prefix
+        if pauseNextSearch {
+            pauseNextSearch = false
+            await withCheckedContinuation { continuation in
+                searchResumeContinuation = continuation
+                let waiters = searchPauseWaiters
+                searchPauseWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
         return Array(searchHits.prefix(Int(limit)))
     }
 
@@ -166,6 +204,20 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
                 }
             case .write(let item):
                 if let existing = nodes[item.path] {
+                    if let replacements = conflictReplacements.removeValue(forKey: item.path) {
+                        for replacement in replacements {
+                            seed(
+                                path: replacement.path,
+                                kind: replacement.kind,
+                                content: replacement.content,
+                                metadataJson: replacement.metadataJson,
+                                updatedAt: replacement.updatedAt
+                            )
+                        }
+                        throw VFSCandidError.nodeMutationRejected(
+                            VFSNodeMutationFailure(code: .etagConflict, message: "etag mismatch", failedIndex: UInt32(index), conflictPath: item.path)
+                        )
+                    }
                     if conflictingPaths.contains(item.path) || existing.etag != (item.expectedEtag ?? "") {
                         throw VFSCandidError.nodeMutationRejected(
                             VFSNodeMutationFailure(code: .etagConflict, message: "etag mismatch", failedIndex: UInt32(index), conflictPath: item.path)
@@ -206,6 +258,10 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
                     )
                 )
             }
+        }
+        if failAfterNextMutationIsApplied {
+            failAfterNextMutationIsApplied = false
+            throw WorkItemVFSStubError.mutationFailed
         }
         return outcomes
     }
@@ -736,6 +792,75 @@ extension WorkItemRepositoryTests {
     }
 
     @Test
+    func refreshingTheProjectionReloadsEverySourceAfterAConflict() async throws {
+        let stub = WorkItemVFSStub()
+        let itemPath = WorkItemPaths.item("abc")
+        let metaPath = WorkItemPaths.listMetadata("abc")
+        await stub.seed(
+            path: itemPath,
+            content: "Old body",
+            metadataJson: try itemMetadata(captureId: "abc", title: "Old title"),
+            updatedAt: 1
+        )
+        await stub.seed(
+            path: metaPath,
+            metadataJson: try listMetadata(title: "Old title", commentCount: 1, lastActivityAt: 10),
+            updatedAt: 10
+        )
+        await stub.seed(
+            path: WorkItemPaths.comment(itemId: "abc", commentId: "c1"),
+            content: "One",
+            metadataJson: try commentMetadata(createdAt: 10),
+            updatedAt: 10
+        )
+        await stub.replaceNodesOnNextConflict(
+            at: metaPath,
+            with: [
+                VFSNode(
+                    path: itemPath,
+                    kind: .file,
+                    content: "New body",
+                    metadataJson: try itemMetadata(captureId: "abc", title: "New title", state: "closed"),
+                    etag: "replacement-item",
+                    createdAt: 1,
+                    updatedAt: 40
+                ),
+                VFSNode(
+                    path: metaPath,
+                    kind: .file,
+                    content: "",
+                    metadataJson: try listMetadata(title: "New title", state: "closed", commentCount: 2, lastActivityAt: 50),
+                    etag: "replacement-meta",
+                    createdAt: 1,
+                    updatedAt: 50
+                ),
+                VFSNode(
+                    path: WorkItemPaths.comment(itemId: "abc", commentId: "c2"),
+                    kind: .file,
+                    content: "Two",
+                    metadataJson: try commentMetadata(createdAt: 50),
+                    etag: "replacement-comment",
+                    createdAt: 50,
+                    updatedAt: 50
+                ),
+            ]
+        )
+
+        await makeRepository(stub).refreshCommentProjection(itemId: "abc", databaseId: "db", session: session)
+
+        let listNode = try #require(await stub.readNode(databaseId: "db", path: metaPath, session: session))
+        guard case .loaded(let entry) = WorkItemDocument.listEntry(from: listNode) else {
+            Issue.record("expected a readable projection")
+            return
+        }
+        #expect(entry.title == "New title")
+        #expect(entry.state == .closed)
+        #expect(entry.commentCount == 2)
+        #expect(entry.updatedAt == 50)
+        #expect(await stub.recordedOperations().count == 2)
+    }
+
+    @Test
     func closingAnItemWritesBothDocumentsUnderBothEtags() async throws {
         let stub = WorkItemVFSStub()
         await stub.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Title"))
@@ -834,18 +959,39 @@ extension WorkItemRepositoryTests {
 
     @Test
     @MainActor
-    func aFailedCommentIsKeptOnThisDeviceAndReusesItsDocumentName() async throws {
+    func aLostCommentResponseIsRetriedWithoutCreatingADuplicate() async throws {
         let stub = WorkItemVFSStub()
         await stub.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Title"))
+        await stub.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Title", lastActivityAt: 1))
         let store = RecordingWorkItemStore()
         let model = WorkItemModel(runtime: makeRuntime(), repository: makeRepository(stub), store: store)
-        await stub.failMutations()
+        await stub.failAfterApplyingNextMutation()
 
         let posted = await model.postComment(itemId: "abc", body: "Please review")
         #expect(!posted)
         let pending = try #require(model.pendingMutations.first)
         #expect(pending.kind == .comment)
         #expect(pending.commentPayload?.body == "Please review")
+        let firstBatch = try #require(await stub.recordedOperations().first)
+        guard case .write(let commentWrite) = try #require(firstBatch.last) else {
+            Issue.record("expected a comment write")
+            return
+        }
+        let originalCommentId = commentWrite.path
+            .split(separator: "/")
+            .last
+            .map { String($0.dropLast(3)) }
+        #expect(pending.mutationId == originalCommentId)
+
+        await model.retryPendingMutation(pending)
+
+        let children = try await stub.listChildren(
+            databaseId: "db",
+            path: WorkItemPaths.commentsDirectory("abc"),
+            session: session
+        )
+        #expect(children.filter { $0.kind == .file }.count == 1)
+        #expect(model.pendingMutations.isEmpty)
     }
 
     @Test
@@ -925,6 +1071,33 @@ extension WorkItemRepositoryTests {
         #expect(model.searchPhase == .idle)
         #expect(model.searchSnapshot.results.isEmpty)
         #expect(model.searchQuery == "roof")
+    }
+
+    @MainActor
+    @Test
+    func switchingDatabasesInvalidatesAnInFlightSearch() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Roof"))
+        await stub.seed(path: WorkItemPaths.listMetadata("abc"), content: "", metadataJson: try listMetadata(title: "Roof", lastActivityAt: 1))
+        await stub.setSearchHits([
+            SearchNodeHit(path: WorkItemPaths.item("abc"), kind: .file, snippet: nil, previewExcerpt: "roof", matchReasons: ["content_fts"], score: 1)
+        ])
+        let runtime = makeRuntime()
+        let model = WorkItemModel(runtime: runtime, repository: makeRepository(stub), store: nil)
+        await model.refreshRemote(force: true)
+        await stub.pauseNextSearchUntilResumed()
+        let searchTask = Task { await model.search("roof") }
+        await stub.waitUntilSearchIsPaused()
+
+        runtime.selectDatabase("other-db")
+        await model.refreshRemote(force: true)
+        await stub.resumeSearch()
+        await searchTask.value
+
+        #expect(model.databaseId == "other-db")
+        #expect(model.searchQuery.isEmpty)
+        #expect(model.searchPhase == .idle)
+        #expect(model.searchSnapshot.results.isEmpty)
     }
 }
 
@@ -1041,12 +1214,20 @@ extension WorkItemRepositoryTests {
 private final class WorkItemRuntimeStub: WorkItemRuntimeProviding {
     let workItemPrincipal = "2vxsx-fae"
     let workItemIsSignedIn = true
-    let workItemDatabase: DatabaseSummary?
+    private(set) var workItemDatabase: DatabaseSummary?
     let workItemSession: KinicIdentitySession? = .testing()
 
-    init(role: DatabaseRole = .owner) {
-        workItemDatabase = DatabaseSummary(
-            databaseId: "db",
+    init(role: DatabaseRole = .owner, databaseId: String = "db") {
+        workItemDatabase = Self.database(role: role, databaseId: databaseId)
+    }
+
+    func selectDatabase(_ databaseId: String, role: DatabaseRole = .owner) {
+        workItemDatabase = Self.database(role: role, databaseId: databaseId)
+    }
+
+    private static func database(role: DatabaseRole, databaseId: String) -> DatabaseSummary {
+        DatabaseSummary(
+            databaseId: databaseId,
             title: "Database",
             description: "",
             metadata: nil,

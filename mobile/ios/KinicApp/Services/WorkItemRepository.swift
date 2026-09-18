@@ -349,28 +349,39 @@ struct WorkItemRepository: Sendable {
         databaseId: String,
         session: KinicIdentitySession
     ) async {
-        guard let itemNode = (try? await vfs.readNode(databaseId: databaseId, path: WorkItemPaths.item(itemId), session: session)) ?? nil,
-              case .loaded(let item) = WorkItemDocument.item(from: itemNode),
-              let children = try? await commentChildren(itemId: itemId, databaseId: databaseId, session: session) else {
-            return
-        }
-        let lastActivityAt = max(children.first?.updatedAt ?? 0, item.updatedAt)
         for _ in 0..<3 {
-            let listNode = (try? await vfs.readNode(databaseId: databaseId, path: WorkItemPaths.listMetadata(itemId), session: session)) ?? nil
             do {
+                // Read the projection first. Any item edit after this point also changes its etag,
+                // so the write below conflicts instead of restoring stale title or state values.
+                let listNode = try await vfs.readNode(
+                    databaseId: databaseId,
+                    path: WorkItemPaths.listMetadata(itemId),
+                    session: session
+                )
+                guard let itemNode = try await vfs.readNode(
+                    databaseId: databaseId,
+                    path: WorkItemPaths.item(itemId),
+                    session: session
+                ), case .loaded(let item) = WorkItemDocument.item(from: itemNode) else {
+                    return
+                }
+                let children = try await commentChildren(itemId: itemId, databaseId: databaseId, session: session)
                 try await rewriteListMetadata(
                     itemId: itemId,
                     title: item.title,
                     state: item.state,
                     commentCount: children.count,
-                    lastActivityAt: lastActivityAt,
+                    lastActivityAt: max(children.first?.updatedAt ?? 0, item.updatedAt),
                     previousListEtag: listNode?.etag,
                     databaseId: databaseId,
                     session: session
                 )
                 return
+            } catch let VFSCandidError.nodeMutationRejected(failure) where failure.code == .etagConflict {
+                // Another writer touched the projection. Re-read every source and try again.
+                continue
             } catch {
-                // Another writer touched the projection. Re-read its etag and try again.
+                return
             }
         }
     }
