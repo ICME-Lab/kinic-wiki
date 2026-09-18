@@ -20,7 +20,7 @@ struct AskAIView: View {
                     AskAIDatabaseMenu(model: model, appModel: appModel)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("音声対話", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
+                    Button("Voice Conversation", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
                         .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
                     Button("History", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true

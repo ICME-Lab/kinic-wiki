@@ -41,7 +41,7 @@ struct AppSettingsView: View {
                 }
             }
 
-            Section("音声") { NavigationLink("音声設定") { VoiceSettingsView(appModel: model) } }
+            Section("Voice") { NavigationLink("Voice Settings") { VoiceSettingsView(appModel: model) } }
 
             Section("Appearance") {
                 Toggle("Dark Mode", isOn: $model.isDarkAppearanceEnabled)

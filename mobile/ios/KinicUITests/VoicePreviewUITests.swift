@@ -17,49 +17,49 @@ final class VoicePreviewUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Connect preview"].exists)
         XCTAssertFalse(app.buttons["Close"].exists)
         app.buttons["voice.end"].tap()
-        XCTAssertTrue(app.staticTexts["音声は停止しています"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Voice stopped"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["This answer is grounded in the selected Wiki."].exists)
     }
     @MainActor
     func testListeningCanMuteAndUnmute() {
         let app = launch("listening")
-        XCTAssertTrue(app.buttons["ミュート"].waitForExistence(timeout: 10))
-        app.buttons["ミュート"].tap()
-        XCTAssertTrue(app.buttons["ミュート解除"].exists)
-        XCTAssertTrue(app.staticTexts["マイクはミュート中です"].exists)
-        app.buttons["ミュート解除"].tap()
-        XCTAssertTrue(app.staticTexts["話しかけてください"].exists)
+        XCTAssertTrue(app.buttons["Mute"].waitForExistence(timeout: 10))
+        app.buttons["Mute"].tap()
+        XCTAssertTrue(app.buttons["Unmute"].exists)
+        XCTAssertTrue(app.staticTexts["Microphone muted"].exists)
+        app.buttons["Unmute"].tap()
+        XCTAssertTrue(app.staticTexts["Start speaking"].exists)
     }
     @MainActor
     func testConnectingCanEnd() {
         let app = launch("connecting")
-        XCTAssertTrue(app.staticTexts["接続しています…"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Connecting…"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["voice.end"].isEnabled)
         app.buttons["voice.end"].tap()
-        XCTAssertTrue(app.staticTexts["音声は停止しています"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Voice stopped"].waitForExistence(timeout: 5))
     }
     @MainActor
     func testPermissionErrorExplainsRecovery() {
         let app = launch("error")
         XCTAssertTrue(app.staticTexts["voice.error"].waitForExistence(timeout: 10))
         app.swipeUp()
-        XCTAssertTrue(app.buttons["音声設定"].exists)
-        XCTAssertTrue(app.buttons["再試行"].exists)
+        XCTAssertTrue(app.buttons["Voice Settings"].exists)
+        XCTAssertTrue(app.buttons["Retry"].exists)
     }
     @MainActor
     func testCaveatsRemainVisibleWithAnswer() {
         let app = launch("caveats")
-        let answer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "根拠が不足しています。")).firstMatch
+        let answer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "There is not enough supporting evidence.")).firstMatch
         XCTAssertTrue(answer.waitForExistence(timeout: 10))
-        XCTAssertTrue(answer.label.contains("矛盾する情報"))
-        XCTAssertTrue(answer.label.contains("資料によって日付が異なります。"))
-        XCTAssertTrue(answer.label.contains("未検証の情報"))
-        XCTAssertTrue(answer.label.contains("最新情報を確認できません。"))
+        XCTAssertTrue(answer.label.contains("Conflicting information"))
+        XCTAssertTrue(answer.label.contains("The dates differ between sources."))
+        XCTAssertTrue(answer.label.contains("Unverified information"))
+        XCTAssertTrue(answer.label.contains("The latest information could not be verified."))
     }
     @MainActor
     func testRespondingShowsProgress() {
         let app = launch("responding")
-        XCTAssertTrue(app.staticTexts["Wikiを調べて回答しています…"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Searching the Wiki and preparing an answer…"].waitForExistence(timeout: 10))
     }
     @MainActor
     func testVoiceSettingsUsesCompactAmountsWithLargeText() {
@@ -67,8 +67,13 @@ final class VoicePreviewUITests: XCTestCase {
         app.launchEnvironment["KINIC_SCREENSHOT_MODE"] = "voice-settings"
         app.launchEnvironment["KINIC_LARGE_TEXT"] = "1"
         app.launch()
-        XCTAssertTrue(app.staticTexts["音声設定"].waitForExistence(timeout: 10))
-        let rate = app.descendants(matching: .any)["voice.cycles.料金／分"].firstMatch
+        XCTAssertTrue(app.staticTexts["Voice Settings"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["B cycles"].exists)
+        XCTAssertFalse(app.buttons["Unit"].exists)
+        let dailyLimit = app.textFields["voice.dailyLimit"]
+        XCTAssertTrue(dailyLimit.exists)
+        XCTAssertEqual(dailyLimit.label, "Daily limit, in B cycles")
+        let rate = app.descendants(matching: .any)["voice.cycles.Rate per minute"].firstMatch
         for _ in 0..<4 where !rate.isHittable { app.swipeUp() }
         XCTAssertTrue(rate.exists)
         XCTAssertEqual((rate.value as? String)?.filter(\.isNumber), "30000000000")

@@ -21,6 +21,25 @@ struct DatabaseSelectionAndBudgetTests {
         #expect(CycleBudgetUnit.trillion.cycles(from: "9223372.036854775808") == nil)
         #expect(CycleBudgetUnit.cycles.cycles(from: "0.0") == 0)
     }
+    @Test func budgetPresentationAutomaticallySelectsAndNormalizesUnits() throws {
+        let standard = CycleBudgetUnit.presentation(for: 300_000_000_000, fallback: 30_000_000_000)
+        #expect(standard.unit == .billion)
+        #expect(standard.text == "300")
+
+        let zero = CycleBudgetUnit.presentation(for: 0, fallback: 30_000_000_000)
+        #expect(zero.unit == .billion)
+        #expect(zero.text == "0")
+
+        let normalized = try #require(CycleBudgetUnit.billion.normalizedPresentation(for: "2000", fallback: 30_000_000_000))
+        #expect(normalized.cycles == 2_000_000_000_000)
+        #expect(normalized.unit == .trillion)
+        #expect(normalized.text == "2")
+
+        let decimal = try #require(CycleBudgetUnit.billion.normalizedPresentation(for: "0.5", fallback: 30_000_000_000))
+        #expect(decimal.cycles == 500_000_000)
+        #expect(decimal.unit == .million)
+        #expect(decimal.text == "500")
+    }
     @Test func selectionIsSharedButAccountScoped() throws {
         let name = "selection-tests.\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: name))

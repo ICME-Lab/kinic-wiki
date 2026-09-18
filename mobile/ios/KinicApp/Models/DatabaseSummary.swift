@@ -321,6 +321,15 @@ enum CycleBudgetUnit: Int, CaseIterable, Identifiable {
         if value >= 1_000_000 { return .million }
         return .cycles
     }
+    static func presentation(for value: UInt64, fallback: UInt64 = 0) -> (unit: CycleBudgetUnit, text: String) {
+        let unit = preferred(for: value == 0 ? fallback : value)
+        return (unit, unit.text(for: value))
+    }
+    func normalizedPresentation(for input: String, fallback: UInt64 = 0) -> (cycles: UInt64, unit: CycleBudgetUnit, text: String)? {
+        guard let cycles = cycles(from: input) else { return nil }
+        let presentation = Self.presentation(for: cycles, fallback: fallback)
+        return (cycles, presentation.unit, presentation.text)
+    }
     func text(for value: UInt64) -> String {
         guard rawValue > 0 else { return String(value) }
         let digits = String(repeating: "0", count: rawValue) + String(value)

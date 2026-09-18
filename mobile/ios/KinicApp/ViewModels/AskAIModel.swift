@@ -308,7 +308,7 @@ final class AskAIModel {
 
     func deleteConversation(_ conversation: AskAIConversation) {
         do { try deleteVoiceRecovery?(conversation.id) }
-        catch { errorMessage = "音声の復旧用データを削除できませんでした。再試行してください。"; return }
+        catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
         if currentConversation?.id == conversation.id {
             cancelGeneration(persistFailure: false)
             currentConversation = nil
@@ -322,7 +322,7 @@ final class AskAIModel {
 
     func deleteAllConversations() {
         do { try deleteVoiceRecovery?(nil) }
-        catch { errorMessage = "音声の復旧用データを削除できませんでした。再試行してください。"; return }
+        catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
         cancelGeneration(persistFailure: false)
         conversations = []
         currentConversation = nil
@@ -887,7 +887,7 @@ final class AskAIModel {
             }
         }
         guard !conversation.messages.isEmpty else { return }
-        conversation.title = String(conversation.messages.first(where: { $0.role == .user })?.text.prefix(60) ?? "音声対話")
+        conversation.title = String(conversation.messages.first(where: { $0.role == .user })?.text.prefix(60) ?? "Voice Conversation")
         conversation.updatedAt = .now
         conversations.removeAll { $0.id == conversationID }
         conversations.insert(conversation, at: 0)

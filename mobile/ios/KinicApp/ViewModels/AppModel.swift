@@ -311,7 +311,7 @@ final class AppModel {
     var databaseSelectionLocked: Bool {
         voicePresentationActive || voicePreview.busy || voicePreview.voiceActive || voicePreview.finishing || voicePreview.endingRequested || voicePreview.snapshot != nil
     }
-    static let databaseSelectionLockMessage = "音声を終了すると切り替えられます"
+    static let databaseSelectionLockMessage = "End the voice conversation before switching databases."
 
     func restoreSharedDatabaseSelection() {
         guard !databaseSelectionLocked, !voiceSettingsHasChanges, !isLoadingDatabases, requestedBrowseDatabaseSelection == nil else { return }
