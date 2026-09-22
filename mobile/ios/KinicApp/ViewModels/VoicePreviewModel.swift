@@ -222,7 +222,7 @@ final class VoicePreviewModel {
         error = nil
         defer { if epoch == generation { busy = false } }
         do {
-            let data = try await http.data("auth/start", method: "POST", body: ["consent": "2026-09-18", "databaseId": databaseId, "expectedPrincipal": principal])
+            let data = try await http.data("auth/start", method: "POST", body: ["consent": "2026-09-22", "databaseId": databaseId, "expectedPrincipal": principal])
             guard epoch == generation else { return }
             guard let pending = try JSONSerialization.jsonObject(with: data) as? [String: Any], let token = pending["token"] as? String,
                   let state = pending["state"] as? String else { throw URLError(.cannotParseResponse) }
@@ -233,7 +233,7 @@ final class VoicePreviewModel {
             guard epoch == generation else { return }
             let owner = try JSONSerialization.jsonObject(with: authenticated) as? [String: Any]
             guard owner?["principal"] as? String == principal else { throw AssistantHTTPError(status: 403, code: "identity_changed") }
-            var creation: [String: Any] = ["consent": "2026-09-18", "databaseId": databaseId, "scope": scope, "history": history]
+            var creation: [String: Any] = ["consent": "2026-09-22", "databaseId": databaseId, "scope": scope, "history": history]
             if let selectedPath { creation["selectedPath"] = selectedPath }
             let created = try await http.data("conversations", method: "POST", body: creation)
             guard epoch == generation else { return }
@@ -342,6 +342,43 @@ final class VoicePreviewModel {
             if epoch == generation { self.report(error) }
         }
     }
+    func askText(
+        _ question: String,
+        subject: [String: String] = ["kind": "database"]
+    ) async throws -> AssistantMessage {
+        guard let snapshot, !busy else {
+            throw AssistantHTTPError(status: 409, code: "turn_in_progress")
+        }
+        let requestID = UUID().uuidString.lowercased()
+        let generation = epoch
+        busy = true
+        defer { if epoch == generation { busy = false } }
+        _ = try await command(
+            "questions",
+            body: [
+                "requestId": requestID,
+                "question": question,
+                "scope": snapshot.scope,
+                "subject": subject,
+            ],
+            requestId: requestID
+        )
+        let deadline = ProcessInfo.processInfo.systemUptime + 95
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            try Task.checkCancellation()
+            guard epoch == generation else { throw CancellationError() }
+            let next = try await http.snapshot(conversation: snapshot.id)
+            try apply(next, database: snapshot.databaseId)
+            if let message = next.messages.first(where: { $0.requestId == requestID }) {
+                if let code = message.error {
+                    throw AssistantHTTPError(status: 503, code: code)
+                }
+                if message.answer != nil { return message }
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        throw URLError(.timedOut)
+    }
     private func submitPending(snapshot: AssistantSnapshot, generation: Int) async throws {
         guard let pendingQuestion else { return }
         _ = try await command("questions", body: ["requestId": pendingQuestion.id, "question": pendingQuestion.text, "scope": snapshot.scope], requestId: pendingQuestion.id)
@@ -422,14 +459,46 @@ final class VoicePreviewModel {
     }
     func toggleMute() { audio.toggleMute(); muted = audio.muted }
     func cancelQuestion() async {
+        do {
+            try await cancelQuestionAndWait()
+        } catch {
+            self.report(error)
+        }
+    }
+    func cancelQuestionAndWait() async throws {
         guard let snapshot else { return }
         let generation = epoch
-        do {
-            _ = try await command("cancel")
-            if epoch == generation {
-                try apply(try await http.snapshot(conversation: snapshot.id), database: snapshot.databaseId)
+        _ = try await http.data("cancel", conversation: snapshot.id, method: "POST")
+        guard epoch == generation else { throw CancellationError() }
+        try apply(try await http.snapshot(conversation: snapshot.id), database: snapshot.databaseId)
+    }
+    func endAndRevoke() async throws {
+        guard let snapshot else {
+            if http.hasToken, let revoke = try? http.request("logout", method: "POST") {
+                _ = try await http.send(revoke)
             }
-        } catch { if epoch == generation { self.report(error) } }
+            end(revoke: false)
+            return
+        }
+        let generation = epoch
+        let previousBusy = busy
+        busy = true
+        endingRequested = true
+        do {
+            _ = try await http.data("end", conversation: snapshot.id, method: "POST")
+            guard epoch == generation else { throw CancellationError() }
+            if let revoke = try? http.request("logout", method: "POST") {
+                _ = try? await http.send(revoke)
+            }
+            guard epoch == generation else { throw CancellationError() }
+            end(revoke: false)
+        } catch {
+            if epoch == generation {
+                busy = previousBusy
+                endingRequested = false
+            }
+            throw error
+        }
     }
     func citationChanged(_ citation: AssistantCitation) async throws -> Bool {
         guard let snapshot else { throw CancellationError() }

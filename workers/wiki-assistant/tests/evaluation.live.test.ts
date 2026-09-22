@@ -166,6 +166,7 @@ async function runEvaluation(
     search_nodes: async () => ({
       Ok: mode === "fts" ? ftsCandidates.slice(0, 5) : ftsCandidates,
     }),
+    list_nodes: async () => ({ Ok: [] }),
     source_evidence: async () => ({
       Ok: {
         node_path: notePath,

@@ -12,6 +12,13 @@ export type WikiSearchNodeHit = {
   snippet: [] | [string];
   preview: [] | [{ excerpt: [] | [string] }];
 };
+export type WikiNodeEntry = {
+  path: string;
+  kind: { File?: null; Source?: null; Folder?: null; Directory?: null };
+  updated_at: bigint;
+  etag: string;
+  has_children: boolean;
+};
 export type ReadActor = {
   read_node(db: string, path: string): Promise<Result<[] | [WikiReadNode]>>;
   memory_manifest(input: {
@@ -35,10 +42,16 @@ export type ReadActor = {
   search_nodes(request: {
     database_id: string;
     query_text: string;
-    prefix: [string];
+    prefix: [] | [string];
     top_k: number;
     preview_mode: [{ Light: null }];
   }): Promise<Result<WikiSearchNodeHit[]>>;
+  list_nodes(request: {
+    database_id: string;
+    prefix: string;
+    recursive: boolean;
+    limit: number;
+  }): Promise<Result<WikiNodeEntry[]>>;
   source_evidence(request: {
     database_id: string;
     node_path: string;
@@ -101,6 +114,18 @@ export const readIdlFactory: Parameters<typeof Actor.createActor>[0] = ({
     preview: idl.Opt(SearchPreview),
   });
   const SearchPreviewMode = idl.Variant({ Light: idl.Null });
+  const NodeEntry = idl.Record({
+    path: idl.Text,
+    kind: idl.Variant({
+      File: idl.Null,
+      Source: idl.Null,
+      Folder: idl.Null,
+      Directory: idl.Null,
+    }),
+    updated_at: idl.Int64,
+    etag: idl.Text,
+    has_children: idl.Bool,
+  });
   const SearchRequest = idl.Record({
     database_id: idl.Text,
     query_text: idl.Text,
@@ -136,6 +161,18 @@ export const readIdlFactory: Parameters<typeof Actor.createActor>[0] = ({
     search_nodes: idl.Func(
       [SearchRequest],
       [idl.Variant({ Ok: idl.Vec(SearchHit), Err: idl.Text })],
+      ["query"],
+    ),
+    list_nodes: idl.Func(
+      [
+        idl.Record({
+          database_id: idl.Text,
+          prefix: idl.Text,
+          recursive: idl.Bool,
+          limit: idl.Nat32,
+        }),
+      ],
+      [idl.Variant({ Ok: idl.Vec(NodeEntry), Err: idl.Text })],
       ["query"],
     ),
     source_evidence: idl.Func(

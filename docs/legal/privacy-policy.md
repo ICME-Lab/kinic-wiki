@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: September 18, 2026
-Effective Date: October 18, 2026
+Last Updated: September 22, 2026
+Effective Date: October 22, 2026
 
 ## 1. Who we are
 
@@ -43,9 +43,9 @@ When the user starts the consented Ask AI Agent feature and submits a question, 
 - Relevant excerpts and bounded portions of notes and source material selected from that database.
 - Bounded recent conversation context when needed to answer the question.
 
-Kinic sends the question and candidate paths and previews to TypeSafe's United States service to rank the candidates. Only the selected paths and previews are returned to the answering agent; they are routing data and are not treated as citation evidence. Kinic sends the question, conversation context, and necessary Wiki excerpts to OpenAI's United States service to operate the agent and generate the answer. [TypeSafe's Privacy Policy](https://typesafe.ai/privacy) states that it does not train or fine-tune artificial-intelligence or machine-learning models on customer Input. TypeSafe does not offer Zero Data Retention under that public policy: it retains personal data for as long as reasonably necessary to provide its services or support its business or commercial purposes, subject to deletion requests and legal obligations.
+Kinic sends every submitted question, the selected target type or path, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe's United States service to classify whether the request is a database overview, a selected-page summary, a focused search, or ordinary conversation. For focused searches, Kinic additionally sends candidate paths and previews to TypeSafe for ranking. Paths and previews returned to the answering agent are routing data and are not treated as citation evidence. Kinic sends the question, conversation context, and necessary Wiki excerpts to OpenAI's United States service to operate the agent and generate the answer. [TypeSafe's Privacy Policy](https://typesafe.ai/privacy) states that it does not train or fine-tune artificial-intelligence or machine-learning models on customer Input. TypeSafe does not offer Zero Data Retention under that public policy: it retains personal data for as long as reasonably necessary to provide its services or support its business or commercial purposes, subject to deletion requests and legal obligations.
 
-Kinic logs only bounded operational measurements for reranking, such as workflow, candidate and selected counts, elapsed time, input character count, and HTTP status. Questions, Wiki text, paths, previews, and API keys are not included in those logs.
+Kinic logs only bounded operational measurements for routing and reranking, such as workflow, candidate and selected counts, selected route, elapsed time, input character count, and HTTP status. Questions, Wiki text, paths, previews, probabilities, and API keys are not included in those logs.
 
 Ask AI conversation history is stored locally on the iOS device. The Agent feature also keeps encrypted bounded active conversation state in Cloudflare D1 so it can operate and recover an active conversation. Ending the conversation requests deletion of the OpenAI session and removes active Kinic conversation content, subject to the provider and backup limitations below.
 

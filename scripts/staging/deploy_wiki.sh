@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EXPECTED_CANISTER_ID="3ryrw-kyaaa-aaaaf-qgxpq-cai"
+EXPECTED_EXTENSION_ORIGIN="chrome-extension://kdildjebipiaccglghfdhjifgknlpffg"
 DEPLOY_IDENTITY="llm-wiki-mainnet"
 KINIC_LEDGER_CANISTER_ID="73mez-iiaaa-aaaaq-aaasq-cai"
 BILLING_AUTHORITY_ID="r75h6-lqd7b-5jack-at55d-vvti2-lg5qy-ly73a-5ezve-odnkc-kagu3-nae"
@@ -66,6 +67,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "staging wiki deploy validated" >&2
   echo "CANISTER_ID=${EXPECTED_CANISTER_ID}" >&2
   echo "KINIC_VFS_STAGING_II_ORIGIN=${STAGING_ORIGIN}" >&2
+  echo "KINIC_VFS_STAGING_II_EXTENSION_ORIGIN=${EXPECTED_EXTENSION_ORIGIN}" >&2
   echo "IAP_AUTHORITY_ID=${IAP_AUTHORITY_ID}" >&2
   exit 0
 fi

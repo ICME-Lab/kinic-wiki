@@ -40,7 +40,7 @@ export type AssistantHistoryPage = {
   nextCursor: string | null;
 };
 export type AssistantCommandResult = { revision: number };
-export const CONSENT_VERSION = "2026-09-18";
+export const CONSENT_VERSION = "2026-09-22";
 const errors: Record<string, string> = {
   assistant_disabled: "Ask AI is not available yet.",
   assistant_not_configured: "Ask AI has not been configured yet.",
@@ -66,6 +66,8 @@ const errors: Record<string, string> = {
   invalid_citation:
     "The sources could not be verified, so the answer cannot be displayed.",
   unsupported_answer: "No verified sources support this answer.",
+  jev_unavailable:
+    "Semantic routing is temporarily unavailable. Try the question again.",
   checking_request_status:
     "The connection was interrupted. Checking the request status.",
   cancel_requested: "Cancellation requested.",

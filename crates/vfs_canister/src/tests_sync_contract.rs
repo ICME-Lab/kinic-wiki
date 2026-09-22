@@ -11,7 +11,8 @@ use vfs_types::{
 use super::{
     HttpRequest, ICP_CLI_LOGIN_DISCOVERY_PATH, ICP_CLI_LOGIN_PATH, II_ALTERNATIVE_ORIGINS_PATH,
     II_APP_LOGO, II_APP_LOGO_PATH, II_APP_METADATA_BODY, II_APP_METADATA_PATH,
-    II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY, SERVICE,
+    II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY,
+    II_STAGING_EXTENSION_ORIGIN, SERVICE,
     delete_node, export_snapshot, fetch_updates, http_request, mkdir_node, search_node_paths,
     search_nodes, staging_ii_alternative_origins_body, write_node,
 };
@@ -156,15 +157,18 @@ fn http_request_serves_certified_ii_app_logo() {
 }
 
 #[test]
-fn staging_ii_alternative_origins_adds_only_the_staging_worker() {
+fn staging_ii_alternative_origins_adds_only_the_staging_frontends() {
     let body = staging_ii_alternative_origins_body(
         "https://kinic-wiki-browser-staging.example.workers.dev",
     );
     assert!(body.contains("https://wiki.kinic.xyz"));
     assert!(body.contains("https://kinic-wiki-browser-staging.example.workers.dev"));
+    assert!(body.contains(II_STAGING_EXTENSION_ORIGIN));
+    assert_eq!(body.matches(II_STAGING_EXTENSION_ORIGIN).count(), 1);
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains(II_STAGING_EXTENSION_ORIGIN));
     assert_eq!(
         body.matches("://").count(),
-        6,
+        7,
         "Internet Identity rejects ii-alternative-origins with more than 10 entries"
     );
 }

@@ -20,7 +20,6 @@ import {
 import { AssistantError } from "./contracts";
 import type { Env } from "./env";
 
-import { voicePolicy } from "./billing";
 import { nativeDelegation, publicKeyBase64 } from "./native-delegation";
 import { createReadActor } from "@kinic/ii-server/read";
 
@@ -173,12 +172,6 @@ export class AssistantAuth {
     ).read_node(record.native.databaseId, "/Knowledge");
     if ("Err" in result)
       throw new AssistantError("database_access_denied", 403);
-    await voicePolicy(
-      this.env,
-      minted.identity,
-      record.native.databaseId,
-      principal,
-    );
     if ((await this.store.auth<AuthRecord>(this.id))?.phase !== "claiming")
       throw new AssistantError("authentication_required", 401);
     record.phase = "active";

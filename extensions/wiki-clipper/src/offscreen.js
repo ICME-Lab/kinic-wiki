@@ -11,8 +11,7 @@ import {
   searchNodesWithActor
 } from "./vfs-actor.js";
 import { buildRecallFallbackQuery, buildRecallSearchQuery, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, RECALL_CONTEXT_MAX_CHARS, titleFromPath } from "./recall.js";
-
-const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
+import { RUNTIME_SOURCE_TRIGGER_URL, RUNTIME_WIKI_ORIGIN } from "./runtime-config.js";
 
 let authSnapshotFactory = defaultAuthSnapshot;
 let resetAuthClientFactory = defaultResetAuthClient;
@@ -372,12 +371,12 @@ function sourceUrlForPath(databaseId, path) {
     .filter(Boolean)
     .map(encodeURIComponent)
     .join("/");
-  return `https://wiki.kinic.xyz/db/${encodeURIComponent(databaseId)}/${suffix}`;
+  return `${RUNTIME_WIKI_ORIGIN}/db/${encodeURIComponent(databaseId)}/${suffix}`;
 }
 
 async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {
   try {
-    const response = await fetchFactory(SOURCE_RUN_TRIGGER_URL, {
+    const response = await fetchFactory(RUNTIME_SOURCE_TRIGGER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ canisterId, databaseId, sourcePath, sourceEtag, sessionNonce })

@@ -24,6 +24,7 @@ import type { VfsClient } from "../src/vfs.js";
 export function workerConfig(): WorkerConfig {
   return {
     canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
+    allowedDatabaseId: null,
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
     targetRoot: "/Knowledge/conversations",

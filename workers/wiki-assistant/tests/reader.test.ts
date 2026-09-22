@@ -13,6 +13,24 @@ import {
   validateAnswer,
 } from "../src/contracts";
 
+function entry(
+  path: string,
+  updated_at: bigint,
+  kind: "File" | "Source" | "Folder" | "Directory" = "File",
+) {
+  return {
+    path,
+    updated_at,
+    etag: "v1",
+    has_children: kind === "Folder" || kind === "Directory",
+    kind: { [kind]: null } as
+      | { File: null }
+      | { Source: null }
+      | { Folder: null }
+      | { Directory: null },
+  };
+}
+
 export function fixtureActor(): ReadActor {
   const nodes = new Map<string, Node>([
     [
@@ -62,6 +80,7 @@ export function fixtureActor(): ReadActor {
         },
       ],
     })),
+    list_nodes: vi.fn(async () => ({ Ok: [] })),
     source_evidence: vi.fn(async () => ({
       Ok: {
         node_path: "/Knowledge/decision.md",
@@ -125,6 +144,99 @@ describe("read tools and citations", () => {
       state.evidence,
     );
     expect(answer.citations[0].etag).toBe("source-1");
+  });
+  it("builds a bounded database inventory and excludes internal roots", async () => {
+    const actor = fixtureActor();
+    const inventoryNodes = new Map([
+      ["/root.md", "root summary"],
+      ["/Knowledge/overview.md", "knowledge overview"],
+      ["/Memory/day.md", "memory entry"],
+      ["/Sources/raw.md", "must not leak"],
+    ]);
+    actor.list_nodes = vi.fn(async ({ prefix }) => ({
+      Ok:
+        prefix === "/"
+          ? [entry("/root.md", 1n), entry("/Sources", 2n, "Folder")]
+          : prefix === "/Knowledge"
+            ? [entry("/Knowledge/overview.md", 4n)]
+            : [entry("/Memory/day.md", 3n)],
+    }));
+    actor.read_node = vi.fn(async (_db, path) => ({
+      Ok: inventoryNodes.has(path)
+        ? ([
+            {
+              path,
+              content: inventoryNodes.get(path)!,
+              etag: "v1",
+              metadata_json: "{}",
+              updated_at: 1n,
+            },
+          ] as [Node])
+        : path === "/Knowledge"
+          ? ([
+              {
+                path,
+                content: "",
+                etag: "root",
+                metadata_json: "{}",
+                updated_at: 1n,
+              },
+            ] as [Node])
+          : ([] as []),
+    }));
+    const state = emptyToolState();
+    const result = JSON.parse(
+      await new KinicReader(
+        actor,
+        "db-a",
+        "database",
+        state,
+        24000,
+        12,
+        "key",
+        "database_overview",
+      ).execute("wiki_inventory", {}),
+    );
+    expect(result.nodes.map((node: { path: string }) => node.path)).toEqual([
+      "/root.md",
+      "/Knowledge/overview.md",
+      "/Memory/day.md",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("/Sources/raw.md");
+    expect(state.inventoryObserved).toBe(3);
+    expect(state.discoveredPaths).toContain("/root.md");
+  });
+
+  it("limits overview reads to four exact nodes", async () => {
+    const actor = fixtureActor();
+    const state = emptyToolState();
+    state.discoveredPaths.push("/root.md");
+    actor.read_node = vi.fn(async (_db, path) => ({
+      Ok: [
+        {
+          path,
+          content: "overview evidence",
+          etag: "v1",
+          metadata_json: "{}",
+          updated_at: 1n,
+        },
+      ] as [Node],
+    }));
+    const reader = new KinicReader(
+      actor,
+      "db-a",
+      "database",
+      state,
+      24000,
+      12,
+      "key",
+      "database_overview",
+    );
+    for (let index = 0; index < 4; index++)
+      await reader.execute("wiki_read", { path: "/root.md", start: 0 });
+    await expect(
+      reader.execute("wiki_read", { path: "/root.md", start: 0 }),
+    ).rejects.toThrow("overview_read_limit");
   });
   it.each([
     "/Skills/run.md",
@@ -320,6 +432,9 @@ describe("read tools and citations", () => {
       validateAnswer({ ...answer, citations: [], insufficient: true }, [])
         .insufficient,
     ).toBe(true);
+    expect(
+      validateAnswer({ ...answer, citations: [] }, [], false).citations,
+    ).toEqual([]);
     expect(() =>
       validateAnswer(answer, [
         {
@@ -335,9 +450,10 @@ describe("read tools and citations", () => {
       ]),
     ).toThrow("invalid_citation");
   });
-  it("uses only five canister query methods and decodes width-subtyped node records", () => {
+  it("uses only six canister query methods and decodes width-subtyped node records", () => {
     const service = readIdlFactory({ IDL });
     expect(service._fields.map(([name]) => name).sort()).toEqual([
+      "list_nodes",
       "memory_manifest",
       "query_context",
       "read_node",

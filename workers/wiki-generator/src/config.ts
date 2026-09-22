@@ -23,6 +23,7 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
   );
   return {
     canisterId,
+    allowedDatabaseId: optionalIdentifier(env.KINIC_WIKI_ALLOWED_DATABASE_ID, "KINIC_WIKI_ALLOWED_DATABASE_ID"),
     icHost: env.KINIC_WIKI_IC_HOST || "https://icp0.io",
     model: env.KINIC_WIKI_WORKER_MODEL || DEFAULT_MODEL,
     targetRoot: normalizeNonRootPrefix(env.KINIC_WIKI_WORKER_TARGET_ROOT || DEFAULT_TARGET_ROOT, "KINIC_WIKI_WORKER_TARGET_ROOT"),
@@ -39,6 +40,19 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     ),
     maxOutputTokens: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   };
+}
+
+export function isDatabaseAllowed(config: WorkerConfig, databaseId: string): boolean {
+  return config.allowedDatabaseId === null || config.allowedDatabaseId === databaseId;
+}
+
+function optionalIdentifier(value: string | undefined, name: string): string | null {
+  if (value === undefined || value.trim() === "") return null;
+  const trimmed = value.trim();
+  if (trimmed.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    throw new Error(`${name} must match [a-zA-Z0-9_-]+ and be at most 128 characters`);
+  }
+  return trimmed;
 }
 
 function normalizeNonRootPrefix(value: string, name: string): string {

@@ -220,7 +220,7 @@ describe("assistant HTTP and D1 authentication boundary", () => {
         origin: "https://evil.example",
         "content-type": "application/json",
       },
-      body: '{"consent":"2026-09-18"}',
+      body: '{"consent":"2026-09-22"}',
     });
     expect(response.status).toBe(403);
   });
@@ -304,7 +304,7 @@ it("fences stale writes and deletes encrypted content with cleanup intent atomic
     error: null,
     messages: [],
     live: null,
-    format: 2,
+    format: 3,
     transcripts: [],
     history: [],
     utterances: [],
@@ -466,7 +466,7 @@ it("persists a stop before the handling invocation disappears and ignores old vo
     status: "ready",
     error: null,
     messages: [],
-    format: 2,
+    format: 3,
     transcripts: [],
     history: [],
     utterances: [],

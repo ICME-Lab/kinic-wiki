@@ -76,6 +76,8 @@ const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
 const II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
 const II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi","http://localhost:3000","http://127.0.0.1:3010","http://localhost:3010","http://127.0.0.1:3100"]}"#;
+const II_STAGING_EXTENSION_ORIGIN: &str =
+    "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg";
 const II_APP_METADATA_PATH: &str = "/.well-known/ii-app-metadata";
 const II_APP_METADATA_BODY: &str = r#"{"name":"Kinic Wiki","description":"Capture, organize, and search your knowledge with Internet Identity.","logo":"/.well-known/ii-app-logo.png"}"#;
 const II_APP_LOGO_PATH: &str = "/.well-known/ii-app-logo.png";
@@ -2546,7 +2548,7 @@ fn staging_ii_alternative_origins_body(origin: &str) -> String {
     let prefix = II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY
         .strip_suffix("]}")
         .expect("production II origins JSON should end with ]}");
-    format!("{prefix},\"{origin}\"]}}")
+    format!("{prefix},\"{origin}\",\"{II_STAGING_EXTENSION_ORIGIN}\"]}}")
 }
 
 fn certified_static_response_entry(

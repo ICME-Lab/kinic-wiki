@@ -3,7 +3,7 @@
 // Why: HTTP and Queue triggers share generation rules but have different side effects.
 import { isSourceCaptureRequestPath } from "@kinic/source-contracts";
 import { JevError, rerankWithJev } from "@kinic/jev-reranker";
-import { loadConfig } from "./config.js";
+import { isDatabaseAllowed, loadConfig } from "./config.js";
 import { checkpointGenerated, checkpointGeneratedTarget, claimSourceJob, enqueueSourceJob, loadJob, markCompleted, markFailed, releaseForRetry, shouldSkipJob, type GeneratedArtifact } from "./jobs.js";
 import {
   databaseLinkPreviewImageKey,
@@ -56,6 +56,9 @@ type ExternalCostGateInput = {
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
+  if (!isDatabaseAllowed(config, input.databaseId)) {
+    return jsonResponse({ error: "database_not_allowed" }, 403);
+  }
   validateSourceRootPath(input.sourcePath, config.sourcePrefix);
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, input.databaseId, input.sourcePath);
@@ -101,6 +104,10 @@ export async function processQueueMessage(
   context?: QueueProcessContext,
   execution: QueueExecution = { leaseOwner: "direct", attempts: 1 }
 ): Promise<QueueDisposition> {
+  const config = context?.config ?? loadConfig(env);
+  if (!isDatabaseAllowed(config, message.databaseId)) {
+    return { kind: "dead_letter", code: "database_not_allowed", message: "database_not_allowed" };
+  }
   if (message.kind === "link_preview") {
     await processLinkPreviewQueueMessage(env, message, context);
     return { kind: "ack" };

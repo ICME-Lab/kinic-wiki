@@ -56,7 +56,9 @@
         "VITE_KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
         "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
         "VITE_II_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io",
-        "KINIC_WIKI_GENERATOR_URL": ""
+        "KINIC_WIKI_GENERATOR_URL": "https://kinic-wiki-generator-staging.hude.workers.dev",
+        "KINIC_WIKI_ALLOWED_DATABASE_ID": "db_nuzrspghca5q",
+        "KINIC_WIKI_CLIPPER_ORIGIN": "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg"
       },
       "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant-staging" }],
       "r2_buckets": [

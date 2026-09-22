@@ -39,7 +39,7 @@ export default {
         if (!rate.success) throw new AssistantError("rate_limit", 429);
         const input = z
           .object({
-            consent: z.literal("2026-09-18"),
+            consent: z.literal("2026-09-22"),
             databaseId: z.string().min(1).max(128),
             expectedPrincipal: z.string().min(1).max(100),
           })
@@ -59,7 +59,7 @@ export default {
         });
         if (!rate.success) throw new AssistantError("rate_limit", 429);
         const input = z
-          .object({ consent: z.literal("2026-09-18") })
+          .object({ consent: z.literal("2026-09-22") })
           .strict()
           .parse(await readJson(request));
         void input;

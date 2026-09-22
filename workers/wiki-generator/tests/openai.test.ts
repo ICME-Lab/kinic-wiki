@@ -246,6 +246,7 @@ function config(): WorkerConfig {
   return {
     canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     icHost: "https://icp0.io",
+    allowedDatabaseId: null,
     model: "deepseek-v4-flash",
     targetRoot: "/Knowledge/conversations",
     sourcePrefix: "/Sources",

@@ -9,7 +9,7 @@ export type JevCandidate = {
   preview: string;
 };
 
-export type JevWorkflow = "generator" | "ask_ai";
+export type JevWorkflow = "generator" | "ask_ai" | "ask_ai_route";
 
 export type JevMetric = {
   workflow: JevWorkflow;
@@ -26,6 +26,29 @@ export type JevRerankResult<T extends JevCandidate> = {
   inputCharacters: number;
   httpStatus: number | null;
   bypassed: boolean;
+};
+
+export type JevNoulQuestion = {
+  question: string;
+  trueCriteria: string;
+  falseCriteria: string;
+};
+
+export type JevClassificationResult<T extends string> = {
+  probabilities: Record<T, number>;
+  durationMs: number;
+  inputCharacters: number;
+  httpStatus: number | null;
+};
+
+export type JevClassificationOptions<T extends string> = {
+  state: Record<string, unknown>;
+  questions: Record<T, JevNoulQuestion>;
+  apiKey: string;
+  workflow: JevWorkflow;
+  timeoutMs?: number;
+  fetchImpl?: Fetch;
+  logMetric?: LogMetric;
 };
 
 export class JevError extends Error {
@@ -228,8 +251,155 @@ export async function rerankWithJev<T extends JevCandidate>(
   }
 }
 
-function log<T extends JevCandidate>(
-  options: JevRerankOptions<T>,
+export async function classifyWithJev<T extends string>(
+  options: JevClassificationOptions<T>,
+): Promise<JevClassificationResult<T>> {
+  const keys = Object.keys(options.questions) as T[];
+  if (keys.length === 0 || keys.length > JEV_MAX_CANDIDATES)
+    throw new JevError("jev_configuration", false, null, 0, 0);
+  const inputCharacters = JSON.stringify({
+    state: options.state,
+    questions: options.questions,
+  }).length;
+  if (!options.apiKey.trim()) {
+    const error = new JevError(
+      "jev_configuration",
+      false,
+      null,
+      0,
+      inputCharacters,
+    );
+    log(options, {
+      workflow: options.workflow,
+      candidateCount: keys.length,
+      selectedCount: 0,
+      jevDurationMs: 0,
+      inputCharacters,
+      httpStatus: null,
+    });
+    throw error;
+  }
+
+  const started = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? JEV_TIMEOUT_MS,
+  );
+  let httpStatus: number | null = null;
+  try {
+    const questions = Object.fromEntries(
+      keys.map((key) => {
+        const question = options.questions[key];
+        return [
+          key,
+          {
+            type: "noul",
+            instructions: { question: question.question },
+            criteria: {
+              true: question.trueCriteria,
+              false: question.falseCriteria,
+            },
+          },
+        ];
+      }),
+    );
+    const response = await (options.fetchImpl ?? fetch)(JEV_ENDPOINT, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: JEV_MODEL, state: options.state, questions }),
+      signal: controller.signal,
+    });
+    httpStatus = response.status;
+    if (!response.ok) {
+      throw new JevError(
+        `jev_http_${response.status}`,
+        response.status === 429 ||
+          response.status === 529 ||
+          response.status >= 500,
+        response.status,
+        Date.now() - started,
+        inputCharacters,
+      );
+    }
+    const body = await readBoundedJson(response);
+    if (!isRecord(body) || !isRecord(body.answers))
+      throw new JevError(
+        "jev_incomplete_response",
+        true,
+        response.status,
+        0,
+        0,
+      );
+    const probabilities = {} as Record<T, number>;
+    for (const key of keys) {
+      const answer = body.answers[key];
+      if (
+        !isRecord(answer) ||
+        answer.type !== "noul" ||
+        typeof answer.noul !== "number" ||
+        !Number.isFinite(answer.noul) ||
+        answer.noul < 0 ||
+        answer.noul > 1
+      )
+        throw new JevError(
+          "jev_incomplete_response",
+          true,
+          response.status,
+          0,
+          0,
+        );
+      probabilities[key] = answer.noul;
+    }
+    const durationMs = Date.now() - started;
+    log(options, {
+      workflow: options.workflow,
+      candidateCount: keys.length,
+      selectedCount: 1,
+      jevDurationMs: durationMs,
+      inputCharacters,
+      httpStatus,
+    });
+    return { probabilities, durationMs, inputCharacters, httpStatus };
+  } catch (error) {
+    const durationMs = Date.now() - started;
+    const classified =
+      error instanceof JevError
+        ? new JevError(
+            error.code,
+            error.retryable,
+            error.httpStatus,
+            durationMs,
+            inputCharacters,
+          )
+        : new JevError(
+            controller.signal.aborted || isAbortError(error)
+              ? "jev_timeout"
+              : "jev_unavailable",
+            true,
+            httpStatus,
+            durationMs,
+            inputCharacters,
+          );
+    log(options, {
+      workflow: options.workflow,
+      candidateCount: keys.length,
+      selectedCount: 0,
+      jevDurationMs: classified.durationMs,
+      inputCharacters,
+      httpStatus: classified.httpStatus,
+    });
+    throw classified;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function log(
+  options: { logMetric?: LogMetric },
   metric: JevMetric,
 ): void {
   (options.logMetric ?? ((value) => console.log(JSON.stringify(value))))(metric);

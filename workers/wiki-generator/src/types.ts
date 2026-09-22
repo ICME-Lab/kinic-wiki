@@ -126,6 +126,7 @@ export type ManualRunInput = {
 
 export type WorkerConfig = {
   canisterId: string;
+  allowedDatabaseId: string | null;
   icHost: string;
   model: string;
   targetRoot: string;

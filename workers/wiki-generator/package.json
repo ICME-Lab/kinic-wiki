@@ -8,6 +8,7 @@
     "cf-typegen": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts",
     "cf-typecheck": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts --check",
     "deploy": "pnpm run build && wrangler deploy",
+    "deploy:staging": "node ../../scripts/staging/check_worker_deploy_source.mjs && node scripts/check-staging-deploy.mjs && CLOUDFLARE_ENV=staging pnpm run build && CLOUDFLARE_ENV=staging wrangler deploy --env staging --dry-run && CLOUDFLARE_ENV=staging wrangler deploy --env staging",
     "dev": "wrangler dev --test-scheduled",
     "test": "node scripts/check-candid-drift.mjs && tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
     "test:worker": "vitest run --config vitest.worker.config.ts",

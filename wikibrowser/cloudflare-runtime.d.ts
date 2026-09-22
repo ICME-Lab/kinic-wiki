@@ -3,6 +3,8 @@ interface CloudflareEnv {
   DEEPSEEK_API_KEY?: string;
   KINIC_DEPLOYMENT_ENV?: string;
   KINIC_WIKI_CANISTER_ID: string;
+  KINIC_WIKI_ALLOWED_DATABASE_ID?: string;
+  KINIC_WIKI_CLIPPER_ORIGIN?: string;
   KINIC_WIKI_GENERATOR_URL?: string;
   KINIC_WIKI_WORKER_MODEL?: string;
   KINIC_WIKI_WORKER_TOKEN?: string;

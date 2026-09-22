@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifyWithJev,
   JEV_ENDPOINT,
   JevError,
   rerankWithJev,
@@ -221,4 +222,83 @@ test("classifies an abort while reading the response body as a timeout", async (
     (error: unknown) =>
       error instanceof JevError && error.code === "jev_timeout",
   );
+});
+
+test("classifies independent Noul routing questions in one request", async () => {
+  let requestedBody: unknown;
+  const result = await classifyWithJev({
+    state: {
+      user_question: "このDBには何がある？",
+      target: { kind: "database" },
+    },
+    questions: {
+      database_overview: {
+        question: "Does the user want an overview of the whole database?",
+        trueCriteria: "They want a broad inventory or summary.",
+        falseCriteria: "They want a specific fact or a non-Wiki task.",
+      },
+      focused_search: {
+        question: "Does the user want a specific fact from the database?",
+        trueCriteria: "A targeted search is needed.",
+        falseCriteria: "They want a broad overview or no Wiki retrieval.",
+      },
+    },
+    apiKey: "private-key",
+    workflow: "ask_ai_route",
+    logMetric: () => {},
+    fetchImpl: async (_input, init) => {
+      requestedBody = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          answers: {
+            database_overview: { type: "noul", noul: 0.94 },
+            focused_search: { type: "noul", noul: 0.08 },
+          },
+        }),
+      );
+    },
+  });
+  assert.equal(result.probabilities.database_overview, 0.94);
+  assert.equal(result.probabilities.focused_search, 0.08);
+  assert.deepEqual(Object.keys((requestedBody as { questions: object }).questions), [
+    "database_overview",
+    "focused_search",
+  ]);
+});
+
+test("routing rejects incomplete probabilities and never logs private state", async () => {
+  const logs: string[] = [];
+  await assert.rejects(
+    classifyWithJev({
+      state: { user_question: "private question", target_path: "/private.md" },
+      questions: {
+        database_overview: {
+          question: "overview?",
+          trueCriteria: "yes",
+          falseCriteria: "no",
+        },
+        focused_search: {
+          question: "search?",
+          trueCriteria: "yes",
+          falseCriteria: "no",
+        },
+      },
+      apiKey: "private-key",
+      workflow: "ask_ai_route",
+      logMetric: (metric) => logs.push(JSON.stringify(metric)),
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            answers: {
+              database_overview: { type: "noul", noul: 0.5 },
+            },
+          }),
+        ),
+    }),
+    (error: unknown) =>
+      error instanceof JevError && error.code === "jev_incomplete_response",
+  );
+  const log = logs.join("\n");
+  for (const privateValue of ["private question", "/private.md", "private-key"])
+    assert.equal(log.includes(privateValue), false);
 });

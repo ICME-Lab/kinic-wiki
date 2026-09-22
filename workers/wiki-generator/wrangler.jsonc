@@ -58,5 +58,58 @@
         "max_retries": 5
       }
     ]
+  },
+  "env": {
+    "staging": {
+      "name": "kinic-wiki-generator-staging",
+      "workers_dev": true,
+      "routes": [],
+      "vars": {
+        "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
+        "KINIC_WIKI_IC_HOST": "https://icp0.io",
+        "KINIC_WIKI_ALLOWED_DATABASE_ID": "db_nuzrspghca5q",
+        "KINIC_WIKI_WORKER_MODEL": "deepseek-v4-flash",
+        "KINIC_WIKI_WORKER_TARGET_ROOT": "/Knowledge/conversations",
+        "KINIC_WIKI_WORKER_SOURCE_PREFIX": "/Sources",
+        "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/",
+        "KINIC_WIKI_WORKER_CONTEXT_CANDIDATES": "20",
+        "KINIC_WIKI_WORKER_CONTEXT_SELECTIONS": "5"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "kinic-wiki-generator-staging",
+          "database_id": "0fb15a11-05da-4afd-b306-e3b5b0af582a",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "LINK_PREVIEW_IMAGES",
+          "bucket_name": "kinic-wiki-link-preview-images-staging"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "WIKI_GENERATION_QUEUE",
+            "queue": "kinic-wiki-generation-staging"
+          },
+          {
+            "binding": "WIKI_GENERATION_DLQ",
+            "queue": "kinic-wiki-generation-failures-staging"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "kinic-wiki-generation-staging",
+            "max_batch_size": 4,
+            "max_batch_timeout": 1,
+            "max_concurrency": 5,
+            "max_retries": 5
+          }
+        ]
+      }
+    }
   }
 }

@@ -130,7 +130,9 @@ describe("Ask AI panel", () => {
       screen.getByText(/Sign in to the Wiki with Internet Identity/),
     ).toBeTruthy();
     expect(screen.getByRole("checkbox").getAttribute("checked")).toBeNull();
-    expect(screen.getByText(/Wiki paths and previews to TypeSafe/)).toBeTruthy();
+    expect(
+      screen.getByText(/necessary Wiki paths and previews for focused search ranking/),
+    ).toBeTruthy();
     const button = screen.getByRole("button", {
       name: "Connect Ask AI with Internet Identity",
     }) as HTMLButtonElement;
@@ -161,7 +163,7 @@ describe("Ask AI panel", () => {
     await screen.findByRole("textbox", { name: "Question about the Wiki" });
     expect(
       requests.find((r) => r.path.endsWith("/conversations"))?.body,
-    ).toEqual({ databaseId: "db", scope: "/Knowledge", consent: "2026-09-18" });
+    ).toEqual({ databaseId: "db", scope: "/Knowledge", consent: "2026-09-22" });
   });
   it("shows the exact citation excerpt and a changed-version notice", async () => {
     active = snapshot();

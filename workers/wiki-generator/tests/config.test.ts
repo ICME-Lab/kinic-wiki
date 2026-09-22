@@ -46,6 +46,16 @@ test("loadConfig separates context candidate and selection limits", () => {
   assert.equal(capped.maxContextSelections, 5);
 });
 
+test("loadConfig accepts an optional exact database allowlist", () => {
+  const env = testEnv(new TestQueue());
+  assert.equal(loadConfig(env).allowedDatabaseId, null);
+  assert.equal(loadConfig({ ...env, KINIC_WIKI_ALLOWED_DATABASE_ID: " staging_db-1 " }).allowedDatabaseId, "staging_db-1");
+  assert.throws(
+    () => loadConfig({ ...env, KINIC_WIKI_ALLOWED_DATABASE_ID: "not allowed" }),
+    /KINIC_WIKI_ALLOWED_DATABASE_ID/
+  );
+});
+
 test("loadConfig normalizes worker root prefixes", () => {
   const env = testEnv(new TestQueue());
   const config = loadConfig({

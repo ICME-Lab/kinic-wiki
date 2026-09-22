@@ -26,6 +26,13 @@ Load `extensions/wiki-clipper` as an unpacked extension after `dist/service-work
 The manifest includes a fixed Chrome extension key. Local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io` as the derivation origin, and that VFS canister allows the fixed ID, the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`, and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 Open settings from the extension details page `Extension options`.
 
+For the permanent developer staging environment, run `npm run build:staging` and load
+`extensions/wiki-clipper/tmp/staging-unpacked`. That complete directory has the name
+`Kinic Wiki Clipper (Staging)`, fixed extension ID `kdildjebipiaccglghfdhjifgknlpffg`,
+separate Chrome storage, staging canister `3ryrw-kyaaa-aaaaf-qgxpq-cai`, and only the
+staging Browser trigger endpoint. It does not modify the production `dist/`, manifest,
+or Chrome Web Store package inputs.
+
 ## Chrome Web Store release
 
 ```bash

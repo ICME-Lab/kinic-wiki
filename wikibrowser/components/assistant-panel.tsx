@@ -531,9 +531,11 @@ function Conversation({
               className="mt-1"
             />
             <span>
-              I consent to sending my questions, necessary Wiki paths and
-              previews to TypeSafe, and questions, audio, and necessary Wiki
-              excerpts to OpenAI. Both providers process this data in the United
+              I consent to sending my questions, selected target, and up to six
+              recent conversation messages to TypeSafe for intent classification,
+              plus necessary Wiki paths and previews for focused search ranking,
+              and questions, audio, and necessary
+              Wiki excerpts to OpenAI. Both providers process this data in the United
               States. TypeSafe does not train or fine-tune models on Input, but
               retains data as reasonably necessary rather than offering Zero
               Data Retention. Ending a conversation requests deletion of its
