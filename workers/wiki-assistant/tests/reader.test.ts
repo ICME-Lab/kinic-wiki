@@ -305,6 +305,32 @@ describe("read tools and citations", () => {
     expect(result).not.toContain("secret");
     expect(JSON.parse(result).nodes).toEqual([]);
   });
+  it("keeps Knowledge results when excluded paths fill the database search", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async (request) => ({
+      Ok: request.prefix[0] === "/Knowledge"
+        ? [{ path: "/Knowledge/decision.md", snippet: ["answer"] as [string], preview: [] as [] }]
+        : request.prefix[0] === "/Memory"
+          ? []
+          : Array.from({ length: 100 }, (_, index) => ({
+              path: `/Sources/source-${index}.md`,
+              snippet: ["source"] as [string],
+              preview: [] as [],
+            })),
+    }));
+    const output = JSON.parse(await new KinicReader(
+      actor,
+      "db-a",
+      "database",
+      emptyToolState(),
+    ).execute("wiki_query", { question: "decision", scope: "database" })) as {
+      nodes: { path: string }[];
+    };
+    expect(output.nodes.map(({ path }) => path)).toEqual(["/Knowledge/decision.md"]);
+    expect(actor.search_nodes).toHaveBeenCalledWith(expect.objectContaining({
+      prefix: ["/Knowledge"],
+    }));
+  });
   it("returns Jev-selected paths and previews in semantic order", async () => {
     const actor = fixtureActor();
     actor.search_nodes = vi.fn(async () => ({

@@ -124,24 +124,47 @@ export class KinicReader {
         .parse(args);
       if (input.scope !== this.scope)
         throw new AssistantError("scope_not_allowed", 403);
-      const result = unwrap(
-        await this.actor.search_nodes({
+      const search = async (prefix: [] | [string], top_k: number) =>
+        unwrap(await this.actor.search_nodes({
           database_id: this.databaseId,
           query_text: input.question,
-          prefix: this.scope === "database" ? [] : [this.scope],
-          top_k: 20,
+          prefix,
+          top_k,
           preview_mode: [{ Light: null }],
-        }),
-      );
-      const candidates = result
-        .filter(
-          (hit) =>
-            this.scope === "database"
-              ? isDatabaseDocumentPath(hit.path)
-              : hit.path.startsWith(this.scope + "/") ||
-                hit.path === this.scope,
-        )
-        .slice(0, 20)
+        }));
+      // Search the two document trees independently. A database-wide top 20 can
+      // otherwise be filled by /Sources or other folders before filtering.
+      const groups = this.scope === "database"
+        ? await Promise.all([
+            search(["/Knowledge"], 20),
+            search(["/Memory"], 20),
+            search([], 100),
+          ])
+        : [await search([this.scope], 20)];
+      const allowed = groups.map((result, index) => result.filter((hit) =>
+        this.scope === "database"
+          ? index === 0
+            ? hit.path.startsWith("/Knowledge/")
+            : index === 1
+              ? hit.path.startsWith("/Memory/")
+              : /^\/[^/]+$/u.test(hit.path)
+          : hit.path.startsWith(this.scope + "/") || hit.path === this.scope,
+      ));
+      const seen = new Set<string>();
+      const candidates = [];
+      // Take one candidate from each tree per pass so a busy tree cannot use
+      // the whole Jev candidate budget before another tree is considered.
+      for (let rank = 0; candidates.length < 20 && allowed.some((group) => rank < group.length); rank++) {
+        for (const group of allowed) {
+          const hit = group[rank];
+          if (hit && !seen.has(hit.path)) {
+            seen.add(hit.path);
+            candidates.push(hit);
+          }
+          if (candidates.length === 20) break;
+        }
+      }
+      const previews = candidates
         .map((hit) => ({
           path: hit.path,
           preview: hit.preview[0]?.excerpt[0] ?? hit.snippet[0] ?? "",
@@ -150,7 +173,7 @@ export class KinicReader {
       try {
         const reranked = await rerankWithJev({
           intent: input.question,
-          candidates,
+          candidates: previews,
           apiKey: this.typesafeApiKey,
           workflow: "ask_ai",
         });
@@ -334,14 +357,6 @@ export class KinicReader {
     }
     throw new AssistantError("unknown_tool", 403);
   }
-}
-
-function isDatabaseDocumentPath(path: string): boolean {
-  return (
-    path.startsWith("/Knowledge/") ||
-    path.startsWith("/Memory/") ||
-    /^\/[^/]+$/u.test(path)
-  );
 }
 
 function isDocumentEntry(kind: WikiNodeEntry["kind"]): boolean {
