@@ -12,9 +12,9 @@ use super::{
     HttpRequest, ICP_CLI_LOGIN_DISCOVERY_PATH, ICP_CLI_LOGIN_PATH, II_ALTERNATIVE_ORIGINS_PATH,
     II_APP_LOGO, II_APP_LOGO_PATH, II_APP_METADATA_BODY, II_APP_METADATA_PATH,
     II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY,
-    II_STAGING_EXTENSION_ORIGIN, SERVICE,
-    delete_node, export_snapshot, fetch_updates, http_request, mkdir_node, search_node_paths,
-    search_nodes, staging_ii_alternative_origins_body, write_node,
+    II_STAGING_EXTENSION_ORIGIN, SERVICE, delete_node, export_snapshot, fetch_updates,
+    http_request, mkdir_node, search_node_paths, search_nodes, staging_ii_alternative_origins_body,
+    write_node,
 };
 use ic_http_certification::CERTIFICATE_EXPRESSION_HEADER_NAME;
 
