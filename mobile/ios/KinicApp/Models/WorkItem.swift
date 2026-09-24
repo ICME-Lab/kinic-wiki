@@ -204,6 +204,10 @@ struct WorkItemPendingMutation: Identifiable, Equatable, Sendable {
         var author: String
     }
 
+    struct StatePayload: Codable, Equatable, Sendable {
+        var baseEtag: String
+    }
+
     let mutationId: String
     let kind: Kind
     let itemId: String
@@ -219,6 +223,10 @@ struct WorkItemPendingMutation: Identifiable, Equatable, Sendable {
 
     var commentPayload: CommentPayload? {
         try? JSONDecoder().decode(CommentPayload.self, from: Data(payloadJson.utf8))
+    }
+
+    var statePayload: StatePayload? {
+        try? JSONDecoder().decode(StatePayload.self, from: Data(payloadJson.utf8))
     }
 
     static func encoded<T: Encodable>(_ payload: T) -> String {

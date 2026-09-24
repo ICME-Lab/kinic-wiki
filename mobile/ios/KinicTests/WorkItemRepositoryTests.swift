@@ -27,6 +27,9 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     private var pauseNextSearch = false
     private var searchResumeContinuation: CheckedContinuation<Void, Never>?
     private var searchPauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var pauseNextList = false
+    private var listResumeContinuation: CheckedContinuation<Void, Never>?
+    private var listPauseWaiters: [CheckedContinuation<Void, Never>] = []
     private var lastSearchPrefix: String?
     private var readPaths: [String] = []
 
@@ -124,6 +127,20 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
         searchResumeContinuation = nil
     }
 
+    func pauseNextListUntilResumed() { pauseNextList = true }
+
+    func waitUntilListIsPaused() async {
+        if listResumeContinuation != nil { return }
+        await withCheckedContinuation { continuation in
+            listPauseWaiters.append(continuation)
+        }
+    }
+
+    func resumeList() {
+        listResumeContinuation?.resume()
+        listResumeContinuation = nil
+    }
+
     func failSearch() {
         searchFails = true
     }
@@ -156,6 +173,15 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     }
 
     func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] {
+        if path == WorkItemPaths.root, pauseNextList {
+            pauseNextList = false
+            await withCheckedContinuation { continuation in
+                listResumeContinuation = continuation
+                let waiters = listPauseWaiters
+                listPauseWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
         if path == WorkItemPaths.root, !workItemsRootExists {
             throw VFSCandidError.canisterRejected("path not found: \(path)")
         }
@@ -1208,6 +1234,79 @@ extension WorkItemRepositoryTests {
         let reads = await stub.recordedReadPaths()
         #expect(!reads.isEmpty)
     }
+
+    @MainActor
+    @Test
+    func cachedDatabaseSwitchInvalidatesAnInFlightList() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.makeRootExist()
+        await stub.seed(path: WorkItemPaths.directory("from-a"), kind: .folder)
+        await stub.seed(path: WorkItemPaths.item("from-a"), content: "A", metadataJson: try itemMetadata(captureId: "from-a", title: "A"))
+        await stub.seed(path: WorkItemPaths.listMetadata("from-a"), metadataJson: try listMetadata(title: "A", lastActivityAt: 1))
+        let store = RecordingWorkItemStore()
+        try store.replaceListCache(
+            principal: "2vxsx-fae",
+            databaseId: "db-b",
+            entries: [WorkItemListCacheRecord(itemId: "from-b", title: "B", state: .open, commentCount: 0, updatedAt: 2)],
+            fetchedAt: WorkItemModel.nowMilliseconds()
+        )
+        let runtime = WorkItemRuntimeStub(databaseId: "db-a")
+        let model = WorkItemModel(runtime: runtime, repository: makeRepository(stub), store: store)
+        await stub.pauseNextListUntilResumed()
+        let first = Task { await model.refreshRemote(force: true) }
+        await stub.waitUntilListIsPaused()
+
+        runtime.selectDatabase("db-b")
+        await model.refreshRemote()
+        await stub.resumeList()
+        await first.value
+
+        #expect(model.entries.map(\.id) == ["from-b"])
+    }
+
+    @MainActor
+    @Test
+    func stalePendingStateDoesNotOverrideAnotherMembersChange() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.seed(path: WorkItemPaths.item("abc"), content: "Original", metadataJson: try itemMetadata(captureId: "abc", title: "Original"))
+        await stub.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Original", lastActivityAt: 1))
+        let store = RecordingWorkItemStore()
+        let model = WorkItemModel(runtime: makeRuntime(), repository: makeRepository(stub), store: store)
+        let detail = try #require(await model.loadDetail("abc"))
+        await stub.failMutations()
+        #expect(!(await model.changeState(detail, to: .closed)))
+        let pending = try #require(model.pendingMutations.first { $0.kind == .close })
+        #expect(pending.statePayload?.baseEtag == detail.itemEtag)
+
+        await stub.resumeMutations()
+        await stub.seed(path: WorkItemPaths.item("abc"), content: "Theirs", metadataJson: try itemMetadata(captureId: "abc", title: "Theirs"))
+        await model.retryPendingMutation(pending)
+
+        let latest = try #require(await stub.readNode(databaseId: "db", path: WorkItemPaths.item("abc"), session: session))
+        #expect(latest.content == "Theirs")
+        #expect(model.pendingMutations.contains { $0.mutationId == pending.mutationId })
+        #expect(model.actionError?.contains("changed") == true)
+    }
+
+    @MainActor
+    @Test
+    func unchangedPendingStateCanBeSent() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.seed(path: WorkItemPaths.item("abc"), content: "Original", metadataJson: try itemMetadata(captureId: "abc", title: "Original"))
+        await stub.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Original", lastActivityAt: 1))
+        let model = WorkItemModel(runtime: makeRuntime(), repository: makeRepository(stub), store: RecordingWorkItemStore())
+        let detail = try #require(await model.loadDetail("abc"))
+        await stub.failMutations()
+        #expect(!(await model.changeState(detail, to: .closed)))
+        let pending = try #require(model.pendingMutations.first { $0.kind == .close })
+
+        await stub.resumeMutations()
+        await model.retryPendingMutation(pending)
+
+        let latest = try #require(await model.loadDetail("abc"))
+        #expect(latest.item.state == .closed)
+        #expect(model.pendingMutations.isEmpty)
+    }
 }
 
 @MainActor
@@ -1321,6 +1420,23 @@ struct WorkItemModelTests {
 
         #expect(!saved)
         #expect(model.actionError != nil)
+    }
+
+    @Test @MainActor
+    func failedPendingWriteReportsThatTheEditIsNotStored() async throws {
+        let vfs = WorkItemVFSStub()
+        await vfs.seed(path: WorkItemPaths.item("abc"), content: "Original", metadataJson: try WorkItemDocument.encode(
+            WorkItemDocument.ItemMetadata(version: 1, captureId: "abc", title: "Original", state: "open", createdBy: "2vxsx-fae", createdAt: 1, source: nil)
+        ))
+        await vfs.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try WorkItemDocument.encode(
+            WorkItemDocument.ListMetadata(version: 1, title: "Original", state: "open", commentCount: 0, lastActivityAt: 1)
+        ))
+        let model = WorkItemModel(runtime: WorkItemRuntimeStub(), repository: WorkItemRepository(vfs: vfs), store: FailingWorkItemStore())
+        let detail = try #require(await model.loadDetail("abc"))
+        await vfs.failMutations()
+
+        #expect(!(await model.update(detail, title: "Mine", body: "Mine")))
+        #expect(model.actionError?.contains("could not be saved on this device") == true)
     }
 }
 

@@ -69,6 +69,7 @@ final class WorkItemModel {
     private var loadGeneration = 0
     private var searchGeneration = 0
     private var renderedDatabaseId: String?
+    private var renderedPrincipal: String?
 
     init(
         runtime: any WorkItemRuntimeProviding,
@@ -127,9 +128,13 @@ final class WorkItemModel {
     }
 
     func refreshRemote(force: Bool = false) async {
+        loadGeneration += 1
+        let generation = loadGeneration
         guard let databaseId = databaseId, let session = runtime.workItemSession else {
             entries = []
             phase = .idle
+            renderedDatabaseId = nil
+            renderedPrincipal = nil
             return
         }
         resetRenderedListIfDatabaseChanged(databaseId)
@@ -148,11 +153,11 @@ final class WorkItemModel {
         }
 
         phase = entries.isEmpty ? .loading : .ready
-        loadGeneration += 1
-        let generation = loadGeneration
         do {
             let snapshot = try await repository.list(databaseId: databaseId, session: session)
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration,
+                  databaseId == self.databaseId,
+                  runtime.workItemPrincipal == session.principal else { return }
             entries = snapshot.entries
             totalCount = snapshot.totalCount
             isTruncated = snapshot.isTruncated
@@ -168,7 +173,9 @@ final class WorkItemModel {
             actionError = nil
             phase = .ready
         } catch {
-            guard generation == loadGeneration else { return }
+            guard generation == loadGeneration,
+                  databaseId == self.databaseId,
+                  runtime.workItemPrincipal == session.principal else { return }
             // Whatever the cache already shows stays visible; the failure is still reported.
             let message = Self.message(for: error)
             actionError = message
@@ -180,8 +187,10 @@ final class WorkItemModel {
 
     /// Clears the previous database's list so its counters never describe another database.
     private func resetRenderedListIfDatabaseChanged(_ databaseId: String) {
-        guard renderedDatabaseId != databaseId else { return }
+        let principal = runtime.workItemPrincipal
+        guard renderedDatabaseId != databaseId || renderedPrincipal != principal else { return }
         renderedDatabaseId = databaseId
+        renderedPrincipal = principal
         clearSearch()
         entries = []
         totalCount = 0
@@ -401,7 +410,7 @@ final class WorkItemModel {
                 detail: detail,
                 databaseId: databaseId,
                 session: session,
-                pending: .state(state == .closed ? .close : .reopen)
+                pending: .state(state == .closed ? .close : .reopen, baseEtag: detail.itemEtag)
             )
             return false
         }
@@ -444,7 +453,7 @@ final class WorkItemModel {
         do {
             _ = try await repository.postComment(draft, itemId: itemId, databaseId: databaseId, session: session)
         } catch {
-            persistPendingMutation(
+            let saved = persistPendingMutation(
                 kind: .comment,
                 itemId: itemId,
                 payloadJson: WorkItemPendingMutation.encoded(
@@ -454,7 +463,7 @@ final class WorkItemModel {
                 mutationId: draft.id,
                 createdAt: draft.createdAt
             )
-            actionError = Self.message(for: error)
+            if saved { actionError = Self.message(for: error) }
             return false
         }
         actionError = nil
@@ -599,9 +608,17 @@ final class WorkItemModel {
             refreshPendingMutations()
             await refreshRemote(force: true)
         case .close, .reopen:
+            guard let payload = mutation.statePayload else {
+                actionError = "This unsent state change has no revision information. Discard it and review the current item."
+                return
+            }
             let detail = try? await repository.load(id: mutation.itemId, databaseId: databaseId, session: session)
             guard let detail else {
                 actionError = "This work item no longer exists."
+                return
+            }
+            guard detail.itemEtag == payload.baseEtag else {
+                actionError = "This item changed after the state change was saved. Review the current item and discard the old change before trying again."
                 return
             }
             do {
@@ -651,31 +668,34 @@ final class WorkItemModel {
             return
         }
         // A retry already holds this input on the device, so it must not be stored twice.
+        var saved = true
         if !isAlreadyPending {
             switch pending {
             case .edit(let payload):
-                persistPendingMutation(
+                saved = persistPendingMutation(
                     kind: .edit,
                     itemId: item.id,
                     payloadJson: WorkItemPendingMutation.encoded(payload),
                     databaseId: databaseId
                 )
-            case .state(let change):
-                persistPendingMutation(
+            case .state(let change, let baseEtag):
+                saved = persistPendingMutation(
                     kind: change.kind,
                     itemId: item.id,
-                    payloadJson: "{}",
+                    payloadJson: WorkItemPendingMutation.encoded(
+                        WorkItemPendingMutation.StatePayload(baseEtag: baseEtag)
+                    ),
                     databaseId: databaseId
                 )
             }
         }
-        actionError = Self.message(for: error)
+        if saved { actionError = Self.message(for: error) }
     }
 
     /// The unconfirmed inputs the model knows how to re-apply by hand.
     private enum UnconfirmedWrite {
         case edit(WorkItemPendingMutation.EditPayload)
-        case state(UnconfirmedStateChange)
+        case state(UnconfirmedStateChange, baseEtag: String)
     }
 
     private enum UnconfirmedStateChange {
@@ -687,6 +707,7 @@ final class WorkItemModel {
         }
     }
 
+    @discardableResult
     private func persistPendingMutation(
         kind: WorkItemPendingMutation.Kind,
         itemId: String,
@@ -694,8 +715,11 @@ final class WorkItemModel {
         databaseId: String,
         mutationId: String = UUID().uuidString.lowercased(),
         createdAt: Int64 = WorkItemModel.nowMilliseconds()
-    ) {
-        guard let store else { return }
+    ) -> Bool {
+        guard let store else {
+            actionError = "Local storage is unavailable. Keep this screen open and try again."
+            return false
+        }
         let mutation = WorkItemPendingMutation(
             mutationId: mutationId,
             kind: kind,
@@ -703,8 +727,14 @@ final class WorkItemModel {
             createdAt: createdAt,
             payloadJson: payloadJson
         )
-        try? store.insertPendingMutation(mutation, principal: runtime.workItemPrincipal, databaseId: databaseId)
+        do {
+            try store.insertPendingMutation(mutation, principal: runtime.workItemPrincipal, databaseId: databaseId)
+        } catch {
+            actionError = "The change could not be saved on this device. Keep this screen open and try again."
+            return false
+        }
         refreshPendingMutations()
+        return true
     }
 
     /// Drops the unconfirmed inputs that a successful write just superseded.
