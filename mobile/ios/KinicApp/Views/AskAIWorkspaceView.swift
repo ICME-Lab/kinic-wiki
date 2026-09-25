@@ -28,5 +28,24 @@ struct AskAIWorkspaceView: View {
         .safeAreaInset(edge: .bottom) {
             AskAIComposerView(model: model)
         }
+        .sheet(isPresented: $model.isShowingDataConsent) {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("How Your Data Is Used").font(.title2.bold())
+                        Text("Your question, the selected target, and up to six recent conversation messages (up to 4,000 characters) are sent to TypeSafe in the United States to determine whether you want a database overview, a selected-page summary, a focused search, or a conversation transformation. For focused searches, necessary Wiki paths and previews are also sent to TypeSafe for ranking.")
+                        Text("Your question, conversation context, and relevant Wiki excerpts are sent to OpenAI in the United States to generate the answer. TypeSafe states that it does not train or fine-tune models on Input, but retains personal data as reasonably necessary rather than offering Zero Data Retention.")
+                        Button("Agree and Send", action: model.agreeToDataProcessingAndSend)
+                            .buttonStyle(.borderedProminent)
+                        Button("Cancel") { model.isShowingDataConsent = false }
+                            .buttonStyle(.bordered)
+                    }
+                    .padding()
+                }
+                .navigationTitle("Ask AI Consent")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .interactiveDismissDisabled()
+        }
     }
 }

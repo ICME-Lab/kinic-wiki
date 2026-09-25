@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: August 5, 2026
-Effective Date: August 5, 2026
+Last Updated: September 22, 2026
+Effective Date: October 22, 2026
 
 ## 1. Who we are
 
@@ -33,18 +33,25 @@ This content is stored in Internet Computer canister state. Except for the conse
 
 When a user funds a database or uses a paid database feature, the Service processes the relevant principal, operation identifier, token amount, ledger block reference, database identifier, status, and timestamp. Public-ledger transactions may also be visible on the applicable blockchain.
 
-### Ask AI transient processing
+### Ask AI processing
 
-When the user submits an Ask AI question, the iOS app sends the following information to Kinic's AI service:
+When the user starts the consented Ask AI Agent feature and submits a question, Kinic processes:
 
 - The current question.
-- The selected database name.
-- Up to six recent conversation messages, subject to a character limit.
-- Relevant excerpts and bounded portions of notes selected from that database.
+- The selected database and search scope.
+- Up to 20 candidate Wiki paths and short search previews.
+- Relevant excerpts and bounded portions of notes and source material selected from that database.
+- Bounded recent conversation context when needed to answer the question.
 
-For the existing text Ask AI service, Kinic directly operates the AI service and does not forward this information to a third-party AI provider. The information is used only to generate search queries and the requested answer. Request bodies are not retained in logs, caches, databases, analytics systems, or training datasets. They are discarded after the request completes, fails, or is cancelled.
+Kinic sends every submitted question, the selected target type or path, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe's United States service to classify whether the request is a database overview, a selected-page summary, a focused search, or ordinary conversation. For focused searches, Kinic additionally sends candidate paths and previews to TypeSafe for ranking. Paths and previews returned to the answering agent are routing data and are not treated as citation evidence. Kinic sends the question, conversation context, and necessary Wiki excerpts to OpenAI's United States service to operate the agent and generate the answer. [TypeSafe's Privacy Policy](https://typesafe.ai/privacy) states that it does not train or fine-tune artificial-intelligence or machine-learning models on customer Input. TypeSafe does not offer Zero Data Retention under that public policy: it retains personal data for as long as reasonably necessary to provide its services or support its business or commercial purposes, subject to deletion requests and legal obligations.
 
-Ask AI conversation history is stored locally on the iOS device. It is not uploaded as server-side conversation history, although the bounded recent messages described above are transmitted transiently with a later question when needed to understand that question.
+Kinic logs only bounded operational measurements for routing and reranking, such as workflow, candidate and selected counts, selected route, elapsed time, input character count, and HTTP status. Questions, Wiki text, paths, previews, probabilities, and API keys are not included in those logs.
+
+Ask AI conversation history is stored locally on the iOS device. The Agent feature also keeps encrypted bounded active conversation state in Cloudflare D1 so it can operate and recover an active conversation. Ending the conversation requests deletion of the OpenAI session and removes active Kinic conversation content, subject to the provider and backup limitations below.
+
+### Source Capture generation
+
+When Source Capture generates a Wiki page, Kinic sends the beginning of the captured source material (up to 4,000 characters as part of the search intent) and up to 20 candidate Wiki paths and short previews to TypeSafe's United States service. TypeSafe returns relevance probabilities used to select up to five candidates. The source material and selected context are then sent to the configured generation provider, currently DeepSeek, to create the requested page. The TypeSafe training and retention terms described above also apply to Source Capture reranking.
 
 ### Optional voice preview (disabled pending release acceptance)
 
@@ -76,12 +83,14 @@ No system can be guaranteed completely secure. Users should not store secrets su
 - **Authentication and access information:** Membership and role records remain while needed to provide database access and are removed when the applicable access or database is deleted, subject to replicated-state limitations.
 - **Account deletion:** A signed-in user can initiate account deletion from Settings in the iOS app. Databases for which the user is the only owner are deleted. If another owner remains, the database remains and the deleting user's membership is removed. The user's other database memberships, purchased-database access, active marketplace listings, and temporary service sessions are also removed. Internet Identity is a separate service and is not deleted by this action.
 - **Cycles and transactions:** Service-side operational records are retained as needed to maintain balances, prevent duplicate settlement, resolve transactions, and satisfy legal obligations. This includes the record that an initial free database grant was used, so deleting and recreating Kinic access does not issue another grant. Records written to a public ledger cannot be deleted by Kinic.
-- **Ask AI request data:** Questions, recent-message context, and note excerpts exist only while the request is processed and are then discarded. They are not retained server-side.
+- **Ask AI active data:** Kinic removes active encrypted conversation content when the conversation ends or another documented end condition occurs and requests deletion of the OpenAI session. Provider records and Cloudflare backup history may remain for their applicable retention periods.
+- **TypeSafe processing:** TypeSafe states that it retains personal data only as long as reasonably necessary for its services or business purposes, unless law requires longer retention, and accepts deletion requests as described in its policy. This is not Zero Data Retention.
+- **Source Capture provider data:** Source excerpts, candidate paths and previews, and selected generation context are subject to the applicable TypeSafe and generation-provider retention terms.
 - **iOS conversation history:** Ask AI conversations remain on the device until the user deletes them in the app or removes the app and its local data.
 
 ## 5. Sharing and disclosure
 
-We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. Existing text Ask AI data is not sent to a third-party AI provider. The optional voice preview described above uses OpenAI when enabled and explicitly selected.
+We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. The consented Ask AI Agent feature uses TypeSafe for semantic reranking and OpenAI for agent operation. Source Capture uses TypeSafe for semantic reranking and the configured generation provider, currently DeepSeek, for page generation.
 
 Information may be processed or disclosed only to:
 

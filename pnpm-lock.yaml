@@ -66,6 +66,15 @@ importers:
         specifier: 6.0.0
         version: 6.0.0
 
+  packages/jev-reranker:
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   packages/source-contracts: {}
 
   packages/vfs-candid:
@@ -338,6 +347,9 @@ importers:
       '@kinic/ii-server':
         specifier: workspace:*
         version: link:../../packages/ii-server
+      '@kinic/jev-reranker':
+        specifier: workspace:*
+        version: link:../../packages/jev-reranker
       openai:
         specifier: 7.15.0
         version: 7.15.0(undici@7.29.0)(ws@8.21.0)(zod@4.4.3)
@@ -369,6 +381,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0
+      '@kinic/jev-reranker':
+        specifier: workspace:*
+        version: link:../../packages/jev-reranker
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../../packages/source-contracts

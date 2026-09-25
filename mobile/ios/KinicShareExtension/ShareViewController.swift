@@ -14,6 +14,7 @@ final class ShareViewController: UIViewController {
     private let brandLabel = UILabel()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
+    private let privacyLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let databaseTableView = UITableView(frame: .zero, style: .plain)
     private let refreshButton = UIButton(type: .system)
@@ -49,6 +50,7 @@ final class ShareViewController: UIViewController {
 
         brandLabel.text = "KinicWiki"
         brandLabel.font = .preferredFont(forTextStyle: .headline)
+        brandLabel.adjustsFontForContentSizeCategory = true
         brandLabel.textColor = .black
 
         let brandStack = UIStackView(arrangedSubviews: [brandImageView, brandLabel])
@@ -57,12 +59,21 @@ final class ShareViewController: UIViewController {
         brandStack.spacing = 8
 
         titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = .black
         titleLabel.numberOfLines = 0
 
         messageLabel.font = .preferredFont(forTextStyle: .body)
+        messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = KinicDesign.uiBodyGray
         messageLabel.numberOfLines = 0
+
+        privacyLabel.text = "Saving sends a source excerpt and candidate Wiki paths and previews to TypeSafe in the United States for relevance ranking, then sends selected context to DeepSeek for page generation. TypeSafe does not use inputs for training or fine-tuning and may retain them as needed."
+        privacyLabel.font = .preferredFont(forTextStyle: .footnote)
+        privacyLabel.adjustsFontForContentSizeCategory = true
+        privacyLabel.textColor = KinicDesign.uiBodyGray
+        privacyLabel.numberOfLines = 0
+        privacyLabel.accessibilityLabel = "Source processing notice. \(privacyLabel.text ?? "")"
 
         activityIndicator.color = KinicDesign.uiHotPink
         activityIndicator.hidesWhenStopped = true
@@ -83,12 +94,14 @@ final class ShareViewController: UIViewController {
 
         saveButton.configuration = buttonConfiguration(title: "Save", filled: true)
         saveButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        saveButton.titleLabel?.adjustsFontForContentSizeCategory = true
         saveButton.addTarget(self, action: #selector(saveSelectedDatabase), for: .touchUpInside)
         saveButton.isHidden = true
         saveButton.isEnabled = false
 
         doneButton.configuration = buttonConfiguration(title: "Done", filled: false)
         doneButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        doneButton.titleLabel?.adjustsFontForContentSizeCategory = true
         doneButton.addTarget(self, action: #selector(finish), for: .touchUpInside)
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, messageLabel])
@@ -96,7 +109,7 @@ final class ShareViewController: UIViewController {
         textStack.alignment = .fill
         textStack.spacing = 8
 
-        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, databaseTableView, refreshButton, saveButton, doneButton])
+        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, databaseTableView, refreshButton, privacyLabel, saveButton, doneButton])
         actionStack.axis = .vertical
         actionStack.alignment = .fill
         actionStack.spacing = 12
@@ -106,12 +119,22 @@ final class ShareViewController: UIViewController {
         stack.alignment = .fill
         stack.spacing = 24
         stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        let scrollView = UIScrollView()
+        scrollView.alwaysBounceVertical = true
+        scrollView.keyboardDismissMode = .interactive
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        scrollView.addSubview(stack)
 
         NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
             stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             databaseTableView.heightAnchor.constraint(equalToConstant: 240),
             refreshButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             saveButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),

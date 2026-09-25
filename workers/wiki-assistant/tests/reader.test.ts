@@ -13,6 +13,24 @@ import {
   validateAnswer,
 } from "../src/contracts";
 
+function entry(
+  path: string,
+  updated_at: bigint,
+  kind: "File" | "Source" | "Folder" | "Directory" = "File",
+) {
+  return {
+    path,
+    updated_at,
+    etag: "v1",
+    has_children: kind === "Folder" || kind === "Directory",
+    kind: { [kind]: null } as
+      | { File: null }
+      | { Source: null }
+      | { Folder: null }
+      | { Directory: null },
+  };
+}
+
 export function fixtureActor(): ReadActor {
   const nodes = new Map<string, Node>([
     [
@@ -53,6 +71,16 @@ export function fixtureActor(): ReadActor {
         truncated: false,
       },
     })),
+    search_nodes: vi.fn(async () => ({
+      Ok: [
+        {
+          path: "/Knowledge/decision.md",
+          snippet: ["本番の色は青"] as [string],
+          preview: [{ excerpt: ["レビュー済み: 本番の色は青。"] as [string] }] as [{ excerpt: [string] }],
+        },
+      ],
+    })),
+    list_nodes: vi.fn(async () => ({ Ok: [] })),
     source_evidence: vi.fn(async () => ({
       Ok: {
         node_path: "/Knowledge/decision.md",
@@ -117,6 +145,131 @@ describe("read tools and citations", () => {
     );
     expect(answer.citations[0].etag).toBe("source-1");
   });
+  it("includes source references in focused search reads so the source can be read next", async () => {
+    const actor = fixtureActor();
+    const state = emptyToolState();
+    const reader = new KinicReader(
+      actor,
+      "db-a",
+      "/Knowledge",
+      state,
+      24000,
+      12,
+      "key",
+      "focused_search",
+    );
+    await reader.execute("wiki_query", {
+      question: "色は？",
+      scope: "/Knowledge",
+    });
+    const note = JSON.parse(await reader.execute("wiki_read", {
+      path: "/Knowledge/decision.md",
+      start: 0,
+    }));
+    expect(note.sourceRefs).toEqual([
+      { path: "/Sources/design.md", etag: "source-1", updatedAt: "90" },
+    ]);
+    expect(actor.source_evidence).toHaveBeenCalledTimes(1);
+    const source = JSON.parse(await reader.execute("wiki_read", {
+      path: "/Sources/design.md",
+      start: 0,
+    }));
+    expect(source.excerpt).toBe("承認済みの色は青です。");
+    expect(state.sources).toEqual(["/Sources/design.md"]);
+  });
+  it("builds a bounded database inventory and excludes internal roots", async () => {
+    const actor = fixtureActor();
+    const inventoryNodes = new Map([
+      ["/root.md", "root summary"],
+      ["/Knowledge/overview.md", "knowledge overview"],
+      ["/Memory/day.md", "memory entry"],
+      ["/Sources/raw.md", "must not leak"],
+    ]);
+    actor.list_nodes = vi.fn(async ({ prefix }) => ({
+      Ok:
+        prefix === "/"
+          ? [entry("/root.md", 1n), entry("/Sources", 2n, "Folder")]
+          : prefix === "/Knowledge"
+            ? [entry("/Knowledge/overview.md", 4n)]
+            : [entry("/Memory/day.md", 3n)],
+    }));
+    actor.read_node = vi.fn(async (_db, path) => ({
+      Ok: inventoryNodes.has(path)
+        ? ([
+            {
+              path,
+              content: inventoryNodes.get(path)!,
+              etag: "v1",
+              metadata_json: "{}",
+              updated_at: 1n,
+            },
+          ] as [Node])
+        : path === "/Knowledge"
+          ? ([
+              {
+                path,
+                content: "",
+                etag: "root",
+                metadata_json: "{}",
+                updated_at: 1n,
+              },
+            ] as [Node])
+          : ([] as []),
+    }));
+    const state = emptyToolState();
+    const result = JSON.parse(
+      await new KinicReader(
+        actor,
+        "db-a",
+        "database",
+        state,
+        24000,
+        12,
+        "key",
+        "database_overview",
+      ).execute("wiki_inventory", {}),
+    );
+    expect(result.nodes.map((node: { path: string }) => node.path)).toEqual([
+      "/root.md",
+      "/Knowledge/overview.md",
+      "/Memory/day.md",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("/Sources/raw.md");
+    expect(state.inventoryObserved).toBe(3);
+    expect(state.discoveredPaths).toContain("/root.md");
+  });
+
+  it("limits overview reads to four exact nodes", async () => {
+    const actor = fixtureActor();
+    const state = emptyToolState();
+    state.discoveredPaths.push("/root.md");
+    actor.read_node = vi.fn(async (_db, path) => ({
+      Ok: [
+        {
+          path,
+          content: "overview evidence",
+          etag: "v1",
+          metadata_json: "{}",
+          updated_at: 1n,
+        },
+      ] as [Node],
+    }));
+    const reader = new KinicReader(
+      actor,
+      "db-a",
+      "database",
+      state,
+      24000,
+      12,
+      "key",
+      "database_overview",
+    );
+    for (let index = 0; index < 4; index++)
+      await reader.execute("wiki_read", { path: "/root.md", start: 0 });
+    await expect(
+      reader.execute("wiki_read", { path: "/root.md", start: 0 }),
+    ).rejects.toThrow("overview_read_limit");
+  });
   it.each([
     "/Skills/run.md",
     "/Sessions/chat.md",
@@ -164,23 +317,16 @@ describe("read tools and citations", () => {
       ).execute("wiki_sources", { path: "/Knowledge/decision.md" }),
     ).rejects.toThrow("read_node_first");
   });
-  it("does not leak cross-root graph results", async () => {
+  it("does not leak cross-root search results", async () => {
     const actor = fixtureActor();
-    actor.query_context = vi.fn(async () => ({
-      Ok: {
-        nodes: [
-          {
-            node: {
-              path: "/Skills/evil.md",
-              content: "secret",
-              etag: "x",
-              metadata_json: "{}",
-              updated_at: 0n,
-            },
-          },
-        ],
-        truncated: true,
-      },
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: [
+        {
+          path: "/Skills/evil.md",
+          snippet: ["secret"] as [string],
+          preview: [{ excerpt: ["secret"] as [string] }] as [{ excerpt: [string] }],
+        },
+      ],
     }));
     const result = await new KinicReader(
       actor,
@@ -189,7 +335,102 @@ describe("read tools and citations", () => {
       emptyToolState(),
     ).execute("wiki_query", { question: "x", scope: "/Knowledge" });
     expect(result).not.toContain("secret");
-    expect(JSON.parse(result).truncated).toBe(true);
+    expect(JSON.parse(result).nodes).toEqual([]);
+  });
+  it("keeps Knowledge results when excluded paths fill the database search", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async (request) => ({
+      Ok: request.prefix[0] === "/Knowledge"
+        ? [{ path: "/Knowledge/decision.md", snippet: ["answer"] as [string], preview: [] as [] }]
+        : request.prefix[0] === "/Memory"
+          ? []
+          : Array.from({ length: 100 }, (_, index) => ({
+              path: `/Sources/source-${index}.md`,
+              snippet: ["source"] as [string],
+              preview: [] as [],
+            })),
+    }));
+    const output = JSON.parse(await new KinicReader(
+      actor,
+      "db-a",
+      "database",
+      emptyToolState(),
+    ).execute("wiki_query", { question: "decision", scope: "database" })) as {
+      nodes: { path: string }[];
+    };
+    expect(output.nodes.map(({ path }) => path)).toEqual(["/Knowledge/decision.md"]);
+    expect(actor.search_nodes).toHaveBeenCalledWith(expect.objectContaining({
+      prefix: ["/Knowledge"],
+    }));
+  });
+  it("returns Jev-selected paths and previews in semantic order", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: Array.from({ length: 6 }, (_, index) => ({
+        path: `/Knowledge/${index}.md`,
+        snippet: [`snippet-${index}`] as [string],
+        preview: [] as [],
+      })),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      model: "jev-latest",
+      answers: Object.fromEntries(
+        [0.1, 0.9, 0.8, 0.7, 0.6, 0.5].map((noul, index) => [
+          `candidate_${index}`,
+          { type: "noul", noul },
+        ]),
+      ),
+      usage: { input_tokens: 10, output_tokens: 6 },
+    })));
+    try {
+      const state = emptyToolState();
+      const output = JSON.parse(await new KinicReader(
+        actor,
+        "db-a",
+        "/Knowledge",
+        state,
+        24000,
+        12,
+        "typesafe-key",
+      ).execute("wiki_query", { question: "色は？", scope: "/Knowledge" })) as {
+        nodes: { path: string; preview: string }[];
+      };
+      expect(output.nodes.map(({ path }) => path)).toEqual([
+        "/Knowledge/1.md",
+        "/Knowledge/2.md",
+        "/Knowledge/3.md",
+        "/Knowledge/4.md",
+        "/Knowledge/5.md",
+      ]);
+      expect(output.nodes[0]?.preview).toBe("snippet-1");
+      expect(state.jevDurationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("returns jev_unavailable without exposing FTS candidates", async () => {
+    const actor = fixtureActor();
+    actor.search_nodes = vi.fn(async () => ({
+      Ok: Array.from({ length: 6 }, (_, index) => ({
+        path: `/Knowledge/private-${index}.md`,
+        snippet: [`private-${index}`] as [string],
+        preview: [] as [],
+      })),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 529 })));
+    try {
+      await expect(new KinicReader(
+        actor,
+        "db-a",
+        "/Knowledge",
+        emptyToolState(),
+        24000,
+        12,
+        "typesafe-key",
+      ).execute("wiki_query", { question: "x", scope: "/Knowledge" })).rejects.toThrow("jev_unavailable");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
   it("reauthorizes each call and denies revoked access", async () => {
     const actor = fixtureActor();
@@ -249,6 +490,9 @@ describe("read tools and citations", () => {
       validateAnswer({ ...answer, citations: [], insufficient: true }, [])
         .insufficient,
     ).toBe(true);
+    expect(
+      validateAnswer({ ...answer, citations: [] }, [], false).citations,
+    ).toEqual([]);
     expect(() =>
       validateAnswer(answer, [
         {
@@ -264,12 +508,14 @@ describe("read tools and citations", () => {
       ]),
     ).toThrow("invalid_citation");
   });
-  it("uses only four canister query methods and decodes width-subtyped node records", () => {
+  it("uses only six canister query methods and decodes width-subtyped node records", () => {
     const service = readIdlFactory({ IDL });
     expect(service._fields.map(([name]) => name).sort()).toEqual([
+      "list_nodes",
       "memory_manifest",
       "query_context",
       "read_node",
+      "search_nodes",
       "source_evidence",
     ]);
     expect(

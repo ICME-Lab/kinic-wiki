@@ -15,6 +15,7 @@ The extension requires Internet Identity and writer access to a Kinic Wiki datab
 7. Open `https://claude.ai`, click the Kinic Wiki Clipper page control, and start export.
 8. Open `https://gemini.google.com`, open a conversation, click `Save to Kinic`, and start export.
 9. In extension options, enable `Recall beta`, open a ChatGPT conversation, send a test question, and confirm that related previews appear only when the selected database contains matching content.
+10. Before saving, confirm the settings screen discloses that a source excerpt and candidate Wiki paths/previews are processed by TypeSafe in the United States and selected context is then sent to DeepSeek.
 
 ## Notes for reviewers
 
@@ -22,4 +23,5 @@ The extension requires Internet Identity and writer access to a Kinic Wiki datab
 - The extension rejects non-web pages such as `chrome://extensions`.
 - ChatGPT/Claude/Gemini export uses the user's existing browser session and starts only after user action. Gemini capture reads the rendered current conversation DOM and does not call a Gemini history API.
 - Source generation uses a short-lived session nonce returned by the Kinic Wiki canister.
+- Source generation sends a source excerpt and candidate Wiki paths/previews to TypeSafe for relevance ranking, then sends selected context to DeepSeek. This occurs only after an explicit save action; no separate blocking consent gate is used.
 - Recall is read-only, disabled by default, does not save the submitted question, and never auto-sends inserted context.

@@ -13,6 +13,7 @@ const valid = run("https://kinic-wiki-browser-staging.example.workers.dev", "2vx
 assert.equal(valid.status, 0, valid.stderr);
 assert.match(valid.stderr, /CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai/);
 assert.match(valid.stderr, /KINIC_VFS_STAGING_II_ORIGIN=https:\/\/kinic-wiki-browser-staging\.example\.workers\.dev/);
+assert.match(valid.stderr, /KINIC_VFS_STAGING_II_EXTENSION_ORIGIN=chrome-extension:\/\/kdildjebipiaccglghfdhjifgknlpffg/);
 assert.match(valid.stderr, /IAP_AUTHORITY_ID=2vxsx-fae/);
 
 for (const invalidOrigin of [

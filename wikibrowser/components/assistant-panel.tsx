@@ -531,11 +531,16 @@ function Conversation({
               className="mt-1"
             />
             <span>
-              I consent to sending my questions, necessary Wiki excerpts, and
-              audio to OpenAI. Conversation state is stored in the United
-              States, and deletion is requested when the conversation ends. This
-              does not mean all provider records are erased immediately. The app
-              does not retain audio recordings or a conversation history list.
+              I consent to sending my questions, selected target, and up to six
+              recent conversation messages to TypeSafe for intent classification,
+              plus necessary Wiki paths and previews for focused search ranking,
+              and questions, audio, and necessary
+              Wiki excerpts to OpenAI. Both providers process this data in the United
+              States. TypeSafe does not train or fine-tune models on Input, but
+              retains data as reasonably necessary rather than offering Zero
+              Data Retention. Ending a conversation requests deletion of its
+              OpenAI session, but does not mean all provider records are erased
+              immediately. The app does not retain audio recordings.
             </span>
           </label>
           <label className="flex items-center gap-2">

@@ -479,6 +479,95 @@ test("source queue uses source run session before DeepSeek", async () => {
   }
 });
 
+test("source queue authorizes around Jev and passes only its five selections onward", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  const writtenPages: WriteNodeRequest[] = [];
+  const db = new RecordingD1();
+  const hits = Array.from({ length: 6 }, (_, index) => contextHit(`/Knowledge/context-${index}.md`));
+  let deepSeekBody = "";
+  globalThis.fetch = async (input, init): Promise<Response> => {
+    const url = String(input);
+    if (url.includes("api.typesafe.ai")) {
+      events.push("jev");
+      return Response.json({
+        model: "jev-latest",
+        answers: Object.fromEntries(
+          [0.1, 0.9, 0.8, 0.7, 0.6, 0.5].map((noul, index) => [
+            `candidate_${index}`,
+            { type: "noul", noul },
+          ]),
+        ),
+        usage: { input_tokens: 10, output_tokens: 6 },
+      });
+    }
+    events.push("deepseek");
+    deepSeekBody = String(init?.body);
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ events, searchHits: hits, writtenPages }) },
+    );
+
+    assert.equal(disposition.kind, "ack");
+    assert.deepEqual(events.slice(0, 5), ["search", "authorize", "jev", "authorize", "deepseek"]);
+    assert.doesNotMatch(deepSeekBody, /context-0\.md/);
+    for (const index of [1, 2, 3, 4, 5]) assert.match(deepSeekBody, new RegExp(`context-${index}\\.md`));
+    const markdown = writtenPages.find((write) => write.path.endsWith("project-notes.md"))?.content ?? "";
+    assert.doesNotMatch(markdown, /context-0\.md/);
+    assert.match(markdown, /context-1\.md/);
+    const checkpoint = db.runs.find((run) => run.query.includes("generated_context_paths = ?6"));
+    assert.equal(
+      checkpoint?.values[5],
+      JSON.stringify([1, 2, 3, 4, 5].map((index) => `/Knowledge/context-${index}.md`)),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue retries retryable Jev failures without calling DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (input): Promise<Response> => {
+    if (String(input).includes("api.typesafe.ai")) return new Response("busy", { status: 529 });
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: new RecordingD1() },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ searchHits: Array.from({ length: 6 }, (_, index) => contextHit(`/Knowledge/${index}.md`)) }) },
+    );
+    assert.equal(disposition.kind, "retry");
+    if (disposition.kind === "retry") assert.equal(disposition.code, "jev_http_529");
+    assert.equal(deepSeekCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue terminally fails permanent Jev request errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const db = new RecordingD1();
+  globalThis.fetch = async (): Promise<Response> => new Response("invalid", { status: 422 });
+  try {
+    const disposition = await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ searchHits: Array.from({ length: 6 }, (_, index) => contextHit(`/Knowledge/${index}.md`)) }) },
+    );
+    assert.equal(disposition.kind, "ack");
+    assert.ok(db.runs.some((run) => run.query.includes("SET status = 'failed'")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("source queue applies overload backoff to DeepSeek 503 without Retry-After", async () => {
   const originalFetch = globalThis.fetch;
   const originalWarn = console.warn;
@@ -1097,12 +1186,15 @@ function sourceVfs(
     failRequestWrite?: boolean;
     targetNode?: WikiNode;
     failTargetReads?: number;
+    searchHits?: SearchNodeHit[];
+    events?: string[];
   } = {}
 ): VfsClient {
   let remainingTargetReadFailures = options.failTargetReads ?? 0;
   return {
     listPublicDatabases: async (): Promise<[]> => [],
     checkDatabaseWriteCycles: async (): Promise<void> => {
+      options.events?.push("authorize");
       if (options.failWriteCycles) throw new Error("database cycles are suspended");
     },
     checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce): Promise<void> => {
@@ -1140,7 +1232,10 @@ function sourceVfs(
       return { path: request.path, kind: request.kind, etag: "etag-write" };
     },
     mkdirNode: async (): Promise<void> => {},
-    searchNodes: async (): Promise<SearchNodeHit[]> => [],
+    searchNodes: async (): Promise<SearchNodeHit[]> => {
+      options.events?.push("search");
+      return options.searchHits ?? [];
+    },
     exportSnapshot: async (): Promise<ExportSnapshotPage> => ({ snapshotRevision: "rev", nodes: [], nextCursor: null }),
     fetchUpdates: async (): Promise<FetchUpdatesPage> => ({ snapshotRevision: "rev", changedNodes: [], removedPaths: [], nextCursor: null })
   };

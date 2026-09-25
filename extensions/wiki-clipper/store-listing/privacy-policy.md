@@ -13,6 +13,7 @@ Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT, Claude, and Ge
 - The current ChatGPT question transiently when the user enables `Recall beta`; matching previews and a bounded node excerpt are returned only for the active Recall interaction.
 - Internet Identity principal and delegation material needed for authenticated canister writes.
 - Selected Kinic Wiki database id and temporary extension status values.
+- Before a generated Wiki page is created, an excerpt of the captured source and up to 20 candidate Wiki paths and short previews are processed for relevance ranking.
 
 ## Data use
 
@@ -25,6 +26,8 @@ Data is sent to:
 - the Kinic Wiki canister through `https://icp0.io`;
 - `https://wiki.kinic.xyz` for Kinic Wiki web app coordination;
 - Internet Identity at `https://id.ai` for authentication.
+- TypeSafe's United States service for Jev relevance ranking of the source excerpt and candidate paths/previews. TypeSafe states that Input is not used for training or fine-tuning, but the service is not Zero Data Retention and may retain Input for the period needed to provide and protect the service.
+- DeepSeek for generation using the source material and only the context selected after ranking.
 
 The extension does not sell user data, use user data for advertising, or transfer user data for unrelated purposes.
 

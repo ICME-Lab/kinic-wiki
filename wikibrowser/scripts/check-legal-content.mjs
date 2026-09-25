@@ -17,13 +17,16 @@ assert.match(
 
 const headings = policy.match(/^##\s+\d+\.\s+.+$/gm) ?? [];
 assert.equal(headings.length, 11, "privacy policy must retain its 11 numbered sections");
-assert.match(policy, /Last Updated: August 5, 2026/);
-assert.match(policy, /Effective Date: August 5, 2026/);
+assert.match(policy, /Last Updated: September 22, 2026/);
+assert.match(policy, /Effective Date: October 22, 2026/);
 assert.match(policy, /Material changes posted after this Policy's Effective Date take effect 30 days after posting/);
-assert.match(policy, /Ask AI transient processing/);
+assert.match(policy, /Ask AI processing/);
+assert.match(policy, /Source Capture generation/);
+assert.match(policy, /TypeSafe does not offer Zero Data Retention/);
+assert.match(policy, /up to six recent conversation messages totaling up to 4,000 characters/);
 assert.match(policy, /Internet Computer canister state/);
 assert.match(policy, /SEV-SNP/);
-assert.match(policy, /discarded after the request completes, fails, or is cancelled/);
+assert.match(policy, /Questions, Wiki text, paths, previews, probabilities, and API keys are not included in those logs/);
 assert.match(policy, /Settings > Delete Account/);
 assert.match(policy, /Internet Identity is a separate service and is not deleted/);
 assert.match(policy, /initial free database grant was used/);

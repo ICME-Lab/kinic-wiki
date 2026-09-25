@@ -5,7 +5,7 @@ Cloudflare Worker for turning evidence sources into review-ready wiki pages.
 ## LLM
 
 Generation uses DeepSeek Chat Completions with `deepseek-v4-flash`.
-Set `DEEPSEEK_API_KEY` as a Cloudflare secret. `KINIC_WIKI_WORKER_TOKEN` protects `POST /run` and `POST /source-capture`; it is not an LLM API key.
+Set `DEEPSEEK_API_KEY` and `TYPESAFE_API_KEY` as Cloudflare secrets. `KINIC_WIKI_WORKER_TOKEN` protects `POST /run` and `POST /source-capture`; it is not an LLM API key.
 `GET /healthz` is unauthenticated and returns `{ "ok": true }` without accessing D1, R2, Queues, VFS, or DeepSeek. The CI Worker-runtime test uses this route to verify that the production entrypoint starts inside workerd.
 
 The Queue consumer runs ordinary Workers only; Dynamic Workers are not required. A batch contains at most four messages and only `source` generation messages run concurrently. Source capture and link-preview work stay sequential within each invocation to keep large HTML and image buffers out of the shared 128 MB isolate heap.
@@ -49,8 +49,8 @@ Automatic source-capture recovery and scheduled recovery scans are not part of t
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
 Use the exact PEM output from `icp identity export <identity-name>`.
 New databases include the default LLM writer service principal as a `writer` member. That automatic grant is part of the source capture permission model: if an owner revokes the service principal, source capture session authorization and checks fail until writer access is restored.
-Session checks are not permanent capability grants. The canister rejects them after cycles suspension or low balance, and the worker re-checks immediately before external URL fetch and DeepSeek generation.
-Manual `/run` and source queue jobs without a browser session call `check_database_write_cycles` before DeepSeek; the worker identity must be writer or owner.
+Session checks are not permanent capability grants. The canister rejects them after cycles suspension or low balance, and the worker re-checks immediately before external URL fetch, Jev reranking, and DeepSeek generation.
+Manual `/run` and source queue jobs without a browser session call `check_database_write_cycles` before Jev and DeepSeek; the worker identity must be writer or owner.
 
 The `source_capture` rename is a breaking operational boundary. Drain old `url_ingest` queue messages before deploying this worker, and deploy updated WikiBrowser / extension clients together with the worker. Old routes, old queue message kinds, and old extension builds are not accepted by this path.
 
@@ -62,6 +62,7 @@ pnpm exec wrangler queues create kinic-wiki-generation-failures
 pnpm exec wrangler d1 create kinic-wiki-generator
 pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote
 pnpm exec wrangler secret put DEEPSEEK_API_KEY
+pnpm exec wrangler secret put TYPESAFE_API_KEY
 pnpm exec wrangler secret put KINIC_WIKI_WORKER_TOKEN
 pnpm exec wrangler secret put KINIC_WIKI_WORKER_IDENTITY_PEM
 ```
@@ -72,7 +73,7 @@ Migration `0003_source_job_target_snapshot.sql` must be applied before deploying
 
 The source Queue starts with `max_batch_size = 4`, `max_batch_timeout = 1`, `max_concurrency = 5`, and `max_retries = 5`. During incidents, pause the source Queue consumer first. To reduce pressure, lower `max_concurrency` from 5 to 2 and then 1 without changing batch size at the same time.
 
-Monitor Queue backlog age, retry rate, failure Queue depth, DeepSeek 429/5xx rate, LLM and end-to-end p95 latency, and D1/VFS failures. Keep the initial settings unchanged for the first 100 production jobs or 24 hours.
+Before enabling the Queue consumer, publish the revised privacy policy and Source Capture disclosure, confirm the TypeSafe account's API addendum permits production automated processing, and configure `TYPESAFE_API_KEY` in the target environment. The revised policy is effective on **2026-10-18**: deploying code or secrets earlier is allowed, but do not enable the production Queue consumer or send production traffic to TypeSafe before that date. Monitor Queue backlog age, retry rate, failure Queue depth, Jev and DeepSeek 429/5xx rate, Jev p95, LLM and end-to-end p95 latency, and D1/VFS failures. Keep the initial settings unchanged for the first 100 production jobs or 24 hours.
 
 ## Browser Source Capture Integration
 

@@ -26,16 +26,16 @@ export function setSourceCaptureTriggerDepsForTest(deps: { checkSession?: CheckS
   checkSession = deps.checkSession ?? defaultCheckSession;
 }
 
-export function OPTIONS(request: Request): Response {
-  const origin = allowedOrigin(request);
+export function OPTIONS(request: Request, runtimeEnv: SourceCaptureEnv = process.env as SourceCaptureEnv): Response {
+  const origin = allowedOrigin(request, runtimeEnv);
   if (!origin) return jsonError("forbidden", 403);
   return new Response(null, { status: 204, headers: corsHeaders(origin) });
 }
 
-type SourceCaptureEnv = Pick<CloudflareEnv, "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_GENERATOR_URL" | "KINIC_WIKI_WORKER_TOKEN">;
+type SourceCaptureEnv = Pick<CloudflareEnv, "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_ALLOWED_DATABASE_ID" | "KINIC_WIKI_CLIPPER_ORIGIN" | "KINIC_WIKI_GENERATOR_URL" | "KINIC_WIKI_WORKER_TOKEN">;
 
 export async function POST(request: Request, runtimeEnv: SourceCaptureEnv = process.env as SourceCaptureEnv): Promise<Response> {
-  const origin = allowedOrigin(request);
+  const origin = allowedOrigin(request, runtimeEnv);
   if (!origin) return jsonError("forbidden", 403);
   let input: TriggerRequest;
   try {
@@ -71,6 +71,10 @@ export async function POST(request: Request, runtimeEnv: SourceCaptureEnv = proc
   }
   if (input.canisterId !== configuredCanisterId) {
     return jsonError("canisterId does not match configured canister", 400, origin);
+  }
+  const allowedDatabaseId = runtimeEnv.KINIC_WIKI_ALLOWED_DATABASE_ID?.trim();
+  if (allowedDatabaseId && input.databaseId !== allowedDatabaseId) {
+    return jsonError("database_not_allowed", 403, origin);
   }
   try {
     await checkSession(input.canisterId, input);
@@ -118,9 +122,14 @@ function parseTriggerRequest(value: unknown): TriggerRequest | string {
   return { canisterId, databaseId, requestPath, sessionNonce };
 }
 
-function allowedOrigin(request: Request): string | null {
+function allowedOrigin(request: Request, runtimeEnv: SourceCaptureEnv): string | null {
   const origin = request.headers.get("origin");
-  if (!origin || !ALLOWED_ORIGINS.has(origin)) return null;
+  if (!origin) return null;
+  const sameOrigin = new URL(request.url).origin;
+  const configuredClipperOrigin = runtimeEnv.KINIC_WIKI_CLIPPER_ORIGIN?.trim();
+  if (origin === sameOrigin || origin === configuredClipperOrigin) return origin;
+  if (runtimeEnv.KINIC_WIKI_ALLOWED_DATABASE_ID?.trim()) return null;
+  if (!ALLOWED_ORIGINS.has(origin)) return null;
   return origin;
 }
 

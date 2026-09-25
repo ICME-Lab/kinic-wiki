@@ -5,15 +5,15 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import {
   AUTH_SESSION_TTL_NS,
   MAINNET_II_PROVIDER_URL,
-  WIKI_CANISTER_DERIVATION_ORIGIN,
   authClientCreateOptions
 } from "../../../shared/ii-auth/index.js";
+import { RUNTIME_DERIVATION_ORIGIN } from "./runtime-config.js";
 
 export const AUTH_OPTIONS = {
   createOptions: authClientCreateOptions(),
   loginOptions: {
     identityProvider: MAINNET_II_PROVIDER_URL,
-    derivationOrigin: WIKI_CANISTER_DERIVATION_ORIGIN,
+    derivationOrigin: RUNTIME_DERIVATION_ORIGIN,
     maxTimeToLive: AUTH_SESSION_TTL_NS,
     windowOpenerFeatures: "toolbar=0,location=0,menubar=0,width=500,height=500,left=100,top=100"
   }

@@ -21,6 +21,7 @@ import {
   validateAnswer,
   type Answer,
   type Scope,
+  type QuestionSubject,
 } from "./contracts";
 import {
   createReadActor,
@@ -40,6 +41,12 @@ import {
   messageText,
   sessionItems,
 } from "./openai";
+import {
+  boundedRoutingHistory,
+  clarificationFor,
+  routeAskAiIntent,
+  type AskAiRoute,
+} from "./routing";
 import { failure, json, readJson } from "./http";
 import { requireEnabled } from "./auth";
 import type { Env } from "./env";
@@ -54,6 +61,7 @@ type Pending = {
   tools: ToolState;
   results: Record<string, { arguments: string; output: string }>;
   delegationId: string | null;
+  route: "pending" | AskAiRoute;
 };
 type Transcript = {
   role: "user" | "assistant";
@@ -83,7 +91,7 @@ type VoiceUsage = {
   settled: boolean;
 };
 type Conversation = {
-  format: 2;
+  format: 3;
   native?: boolean;
   selectedPath?: string;
   history: { role: "user" | "assistant"; text: string }[];
@@ -106,6 +114,17 @@ type Conversation = {
     question: string;
     answer: Answer | null;
     error: string | null;
+    kind: "grounded_answer" | "conversation" | "clarification" | null;
+    trace: {
+      route: AskAiRoute | "clarification";
+      calls: number;
+      characters: number;
+      inventoryObserved: number;
+      inventoryTruncated: boolean;
+      readCount: number;
+      jevRouteDurationMs: number;
+      jevRerankDurationMs: number;
+    } | null;
   }[];
   live: {
     id: string | null;
@@ -144,6 +163,31 @@ const safeJson = (value: string): unknown => {
     return undefined;
   }
 };
+
+function questionSubject(
+  input: Question,
+  selectedPath?: string,
+): QuestionSubject {
+  if (input.subject) return input.subject;
+  const path = input.selectedPath ?? selectedPath;
+  return path ? { kind: "node", path } : { kind: "database" };
+}
+
+function traceFor(
+  pending: Pending,
+  route: AskAiRoute | "clarification",
+): NonNullable<Conversation["messages"][number]["trace"]> {
+  return {
+    route,
+    calls: pending.tools.calls,
+    characters: pending.tools.characters,
+    inventoryObserved: pending.tools.inventoryObserved,
+    inventoryTruncated: pending.tools.inventoryTruncated,
+    readCount: pending.tools.readPaths.length,
+    jevRouteDurationMs: pending.tools.jevRouteDurationMs,
+    jevRerankDurationMs: pending.tools.jevRerankDurationMs,
+  };
+}
 // A voice session stops settling while the sideband is down, so recovery must
 // not wait for the next maintenance tick (the cron runs once a minute).
 export const SIDEBAND_RETRY_BASE_MS = 1000;
@@ -190,9 +234,10 @@ export class AssistantUser {
     const loaded = await this.store.load(this.principal);
     this.state = loaded.state;
     this.revision = loaded.revision;
-    // Format 2 adds durable utterances. Retire earlier temporary sessions once;
+    // Format 3 adds semantic routing and retrieval traces. Retire earlier
+    // temporary sessions once;
     // never reinterpret an older encrypted conversation as the new format.
-    if (this.state.conversation && this.state.conversation.format !== 2) {
+    if (this.state.conversation && this.state.conversation.format !== 3) {
       await this.endOwned(this.state.conversation.authId, this.state.conversation.id);
     }
     this.nextWake = this.wakeDeadline();
@@ -260,22 +305,24 @@ export class AssistantUser {
     if (!c) throw new AssistantError("conversation_ended", 410);
     return c;
   }
-  private async reader(
-    c: Conversation,
-    tools = emptyToolState(),
-  ): Promise<KinicReader> {
+  private async identity(c: Conversation) {
     const auth = await new AssistantAuth(this.env, c.authId).material();
     if (auth.principal !== c.principal)
       throw new AssistantError("identity_changed", 403);
     const key = auth.material.appKey;
     if (key.length !== 2) throw new AssistantError("invalid_delegation", 401);
-    const identity = restoreKinicIdentity(
+    return restoreKinicIdentity(
       { ...auth.material, appKey: [key[0], key[1]] },
       this.env.ASSISTANT_DERIVATION_ORIGIN,
       Date.now(),
     );
-    if (c.native)
-      await voicePolicy(this.env, identity, c.databaseId, c.principal);
+  }
+  private async reader(
+    c: Conversation,
+    tools = emptyToolState(),
+    route?: AskAiRoute,
+  ): Promise<KinicReader> {
+    const identity = await this.identity(c);
     return new KinicReader(
       createReadActor(this.env.KINIC_WIKI_CANISTER_ID, identity),
       c.databaseId,
@@ -283,6 +330,8 @@ export class AssistantUser {
       tools,
       this.limits().characters,
       this.limits().calls,
+      this.env.TYPESAFE_API_KEY!,
+      route,
     );
   }
   private snapshot(c: Conversation) {
@@ -391,7 +440,7 @@ export class AssistantUser {
           .object({
             databaseId: z.string().min(1).max(128),
             scope: scopeSchema,
-            consent: z.literal("2026-09-16"),
+            consent: z.literal("2026-09-22"),
             selectedPath: z.string().max(512).optional(),
             history: z.array(z.object({role: z.enum(["user", "assistant"]), text: z.string().max(4000)}).strict()).max(20).refine((items) => new TextEncoder().encode(JSON.stringify(items)).length <= 12000).default([]),
           })
@@ -402,7 +451,7 @@ export class AssistantUser {
         if (this.state.cleanup.length)
           throw new AssistantError("cleanup_pending", 409);
         const c: Conversation = {
-          format: 2,
+          format: 3,
           id: crypto.randomUUID(),
           native: request.headers.get("x-assistant-client") === "native",
           selectedPath: input.selectedPath,
@@ -609,6 +658,7 @@ export class AssistantUser {
       tools: emptyToolState(),
       results: {},
       delegationId,
+      route: "pending",
     };
     c.messages.push({
       voice: delegationId !== null,
@@ -616,6 +666,8 @@ export class AssistantUser {
       question: input.question,
       answer: null,
       error: null,
+      kind: null,
+      trace: null,
     });
     await this.save();
     this.broadcast();
@@ -658,7 +710,6 @@ export class AssistantUser {
       const c = this.state.conversation;
       const p = c?.pending;
       if (!c || !p || !(await this.valid(c, p))) return;
-      const api = client(this.env.OPENAI_API_KEY);
       if (Date.now() - p.started > this.limits().turnMs) {
         c.error = "turn_timeout";
         await this.cancel(c);
@@ -666,12 +717,75 @@ export class AssistantUser {
       }
       await (await this.reader(c)).authorize();
       if (!(await this.valid(c, p))) return;
+      const subject = questionSubject(p.input, c.selectedPath);
+      if (p.route === "pending") {
+        const routingHistory = boundedRoutingHistory([
+          ...c.history,
+          ...c.messages
+            .filter(
+              (message) =>
+                message.requestId !== p.input.requestId && message.answer !== null,
+            )
+            .flatMap((message) => [
+              { role: "user" as const, text: message.question },
+              { role: "assistant" as const, text: message.answer!.answer },
+            ]),
+        ]);
+        const routed = await routeAskAiIntent({
+          question: p.input.question,
+          subject,
+          history: routingHistory,
+          apiKey: this.env.TYPESAFE_API_KEY!,
+        });
+        if (!(await this.valid(c, p))) return;
+        p.tools.jevDurationMs += routed.durationMs;
+        p.tools.jevRouteDurationMs += routed.durationMs;
+        if (!routed.route) {
+          const message = c.messages.find(
+            (item) => item.requestId === p.input.requestId,
+          )!;
+          message.kind = "clarification";
+          message.answer = {
+            answer: clarificationFor(p.input.question),
+            citations: [],
+            insufficient: false,
+            contradictions: [],
+            unverified: [],
+          };
+          message.trace = traceFor(p, "clarification");
+          c.pending = null;
+          c.status = "ready";
+          c.error = null;
+          await this.save();
+          this.broadcast();
+          console.log(
+            JSON.stringify({
+              event: "assistant_clarification",
+              route: "clarification",
+              durationMs: Date.now() - p.started,
+              jevRouteDurationMs: p.tools.jevRouteDurationMs,
+            }),
+          );
+          return;
+        }
+        p.route = routed.route;
+        if (
+          p.route === "selected_node_summary" &&
+          subject.kind !== "database" &&
+          !p.tools.discoveredPaths.includes(subject.path)
+        )
+          p.tools.discoveredPaths.push(subject.path);
+        await this.save();
+      }
+      const api = client(this.env.OPENAI_API_KEY);
       const input = inputText(
         p.input.requestId,
         p.input.question,
         c.scope,
         p.input.selectedPath,
         c.history,
+        p.route,
+        subject,
       );
       if (p.stage === "new") {
         p.stage = c.sessionId ? "sending" : "creating";
@@ -775,7 +889,7 @@ export class AssistantUser {
         if (result && result.arguments !== signature)
           throw new AssistantError("tool_call_changed", 502);
         if (!result) {
-          const reader = await this.reader(c, p.tools);
+          const reader = await this.reader(c, p.tools, p.route);
           const output = await reader.execute(action.name, action.arguments);
           if (!(await this.valid(c, p))) return;
           result = { arguments: signature, output };
@@ -816,6 +930,7 @@ export class AssistantUser {
       const answer = validateAnswer(
         JSON.parse(messageText(final)),
         p.tools.evidence,
+        p.route !== "conversation",
       );
       await (await this.reader(c)).authorize();
       if (!(await this.valid(c, p))) return;
@@ -823,6 +938,9 @@ export class AssistantUser {
         (item) => item.requestId === p.input.requestId,
       )!;
       message.answer = answer;
+      message.kind =
+        p.route === "conversation" ? "conversation" : "grounded_answer";
+      message.trace = traceFor(p, p.route);
       c.pending = null;
       c.status = "ready";
       c.error = null;
@@ -831,9 +949,13 @@ export class AssistantUser {
       console.log(
         JSON.stringify({
           event: "assistant_answer",
+          route: p.route,
           durationMs: Date.now() - p.started,
           calls: p.tools.calls,
           characters: p.tools.characters,
+          jevDurationMs: p.tools.jevDurationMs,
+          jevRouteDurationMs: p.tools.jevRouteDurationMs,
+          jevRerankDurationMs: p.tools.jevRerankDurationMs,
           inputTokens: turn.usage?.input_tokens,
           outputTokens: turn.usage?.output_tokens,
         }),
@@ -1430,6 +1552,10 @@ export class AssistantUser {
   ) {
     if (c.live || c.pending || c.status !== "ready")
       throw new AssistantError("voice_or_turn_in_progress", 409);
+    if (c.native) {
+      const identity = await this.identity(c);
+      await voicePolicy(this.env, identity, c.databaseId, c.principal);
+    }
     this.resetDay();
     const limits = this.limits();
     const reserved = Math.min(

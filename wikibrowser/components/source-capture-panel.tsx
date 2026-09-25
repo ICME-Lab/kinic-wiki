@@ -78,6 +78,9 @@ export function SourceCapturePanel({
         >
           {busy ? "Queueing..." : "Queue URL"}
         </button>
+        <p className="text-xs text-muted">
+          Before generation, an excerpt of the captured source and candidate Wiki paths and previews are processed by TypeSafe in the United States to rank relevant context.
+        </p>
       </form>
       <div className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{databaseId}</div>
       {databaseCyclesError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">{databaseCyclesError}</div> : null}

@@ -8,7 +8,11 @@ This document is the operator guide for updating the existing Kinic Wiki staging
 | --- | --- |
 | Browser Worker | `https://kinic-wiki-browser-staging.hude.workers.dev` |
 | Worker name | `kinic-wiki-browser-staging` |
+| Generator Worker | `https://kinic-wiki-generator-staging.hude.workers.dev` |
+| Generator name | `kinic-wiki-generator-staging` |
 | Wiki canister | `3ryrw-kyaaa-aaaaf-qgxpq-cai` |
+| Source Capture database | `jev-source-capture-staging` (`db_nuzrspghca5q`) |
+| Staging Clipper ID | `kdildjebipiaccglghfdhjifgknlpffg` |
 | ICP environment | `staging` |
 | IC host | `https://icp0.io` |
 | Internet Identity derivation origin | `https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io` |
@@ -28,7 +32,7 @@ lqfvd-m7ihy-e5dvc-gngvr-blzbt-pupeq-6t7ua-r7v4p-bvqjw-ea7gl-4qe
 
 The authoritative canister mapping is `.icp/data/mappings/staging.ids.json`. The Worker configuration is `wikibrowser/wrangler.jsonc`, and the canister initialization and deploy guard are in `scripts/staging/deploy_wiki.sh`.
 
-The staging Browser Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`. The staging MCP Worker must be deployed only through `pnpm deploy:staging` from `workers/wiki-mcp/`; use its separate `pnpm deploy:staging:v4-migration` command only for the one-time V3-to-V4 Durable Object migration. These commands fetch `origin/main`, refuse a HEAD that does not contain the fetched commit, reject unresolved conflicts, and verify the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
+The staging Browser Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`, and the staging Generator only through the same command in `workers/wiki-generator/`. Both commands verify the fixed Source Capture database boundary and required secrets before a dry run and deployment. The staging MCP Worker must be deployed only through `pnpm deploy:staging` from `workers/wiki-mcp/`; use its separate `pnpm deploy:staging:v4-migration` command only for the one-time V3-to-V4 Durable Object migration. These commands fetch `origin/main`, refuse a HEAD that does not contain the fetched commit, reject unresolved conflicts, and verify the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
 
 ## Isolation and Safety
 
@@ -37,8 +41,10 @@ Staging uses these dedicated Cloudflare resources:
 - KV namespace binding `QUERY_ANSWER_RATE_LIMIT` with ID `dd821e7a3e4f4f908df20c2cb17abc2d`
 - R2 bucket `kinic-wiki-link-preview-images-staging`
 - Queue `kinic-wiki-generation-staging`
+- DLQ `kinic-wiki-generation-failures-staging`
+- D1 database `kinic-wiki-generator-staging` (`0fb15a11-05da-4afd-b306-e3b5b0af582a`)
 
-Do not replace them with production resource IDs or names. The staging Worker has no custom-domain route, and `KINIC_WIKI_GENERATOR_URL` remains empty so it cannot call the production generator. Do not add production tokens or secrets to the staging environment.
+Do not replace them with production resource IDs or names. Both staging Workers have no custom-domain route. Browser staging forwards Source Capture only to `https://kinic-wiki-generator-staging.hude.workers.dev`; both Workers enforce `KINIC_WIKI_ALLOWED_DATABASE_ID=db_nuzrspghca5q`. They share a staging-only `KINIC_WIKI_WORKER_TOKEN`, distinct from production. Generator staging uses the dedicated service principal `fixxw-aflgo-bm2zb-lyb4h-fqesi-f3nd7-s7ndo-tsvni-g3rsa-y36ys-aqe`, which has writer access only to that Source Capture database. Provider API keys may be shared with production, but must remain Cloudflare Secrets and must never enter Browser, iOS, or Clipper artifacts.
 
 Automatic canister top-up is disabled. Check the live cycles balance before and after every canister deployment instead of recording a balance in this document.
 
@@ -104,13 +110,20 @@ CLOUDFLARE_ENV=staging \
   pnpm build
 ```
 
-Inspect the resolved bindings without deploying:
+Apply the three Generator migrations once when creating the environment:
+
+```bash
+cd workers/wiki-generator
+pnpm wrangler d1 migrations apply DB --env staging --remote
+```
+
+Inspect the resolved Browser bindings without deploying:
 
 ```bash
 CLOUDFLARE_ENV=staging pnpm wrangler deploy --dry-run
 ```
 
-The dry run must show the staging canister, staging KV/R2/Queue resources, an empty generator URL, and no production custom-domain route. Deploy the same staging configuration:
+The dry run must show the staging canister, staging KV/R2/Queue resources, the staging Generator URL and dedicated database boundary, and no production custom-domain route. Deploy the same staging configuration:
 
 ```bash
 pnpm deploy:staging
@@ -123,6 +136,25 @@ KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
 ```
 
 The dirty-worktree acknowledgement does not bypass the fetched `origin/main` ancestry check, unresolved-conflict check, or public-node regression check.
+
+Deploy Generator staging before Browser staging so the Browser never opens an unavailable route:
+
+```bash
+cd workers/wiki-generator
+KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging
+```
+
+The Generator guard requires `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `KINIC_WIKI_WORKER_TOKEN`, and `KINIC_WIKI_WORKER_IDENTITY_PEM` in the staging environment. The Browser guard requires the matching staging-only Worker token. Candidate and selection counts stay fixed at 20 and 5; Queue retries stay fixed at 5.
+
+Build the separate developer Clipper without changing the production `manifest.json` or `dist/`:
+
+```bash
+pnpm --dir extensions/wiki-clipper build:staging
+```
+
+Load `extensions/wiki-clipper/tmp/staging-unpacked` as an unpacked extension. Its fixed ID is `kdildjebipiaccglghfdhjifgknlpffg`, it uses separate Chrome storage, and it contains only the staging canister and Browser trigger endpoint. Install the iOS sandbox build with `mobile/ios/scripts/install-device.sh --sandbox`; because the Bundle ID is unchanged, it replaces the production build on that device.
+
+The staging wiki canister's certified `/.well-known/ii-alternative-origins` must include both `https://kinic-wiki-browser-staging.hude.workers.dev` and `chrome-extension://kdildjebipiaccglghfdhjifgknlpffg`. The production origin list must not contain either staging origin.
 
 Deploy the staging MCP Worker from `workers/wiki-mcp/`. For an environment still bound to `McpAuthStateV3`, run the migration command exactly once:
 
@@ -173,6 +205,10 @@ Use a test database and verify the browser workflow:
 6. Stop publication and confirm the old public URL returns Not Found.
 7. Repeat with rename, move, and delete as needed to confirm old URLs stay invalid.
 8. Confirm another node, child listing, search result, and link graph remain unavailable anonymously.
+9. From the staging Clipper and iOS Share Extension, save at least one source each into `db_nuzrspghca5q` and confirm generation completes.
+10. Confirm `generated_context_paths` contains at most five entries and the correct evidence path.
+11. Confirm the Generator logs contain only workflow, counts, timing, input length, and HTTP status—not questions, source bodies, paths, or secrets.
+12. Confirm production Worker, Queue, D1, R2, and canister activity remain unchanged.
 
 Check the deployed Worker version:
 
@@ -191,3 +227,5 @@ pnpm wrangler rollback --env staging <version-id>
 ```
 
 Do not roll the canister back to an older Wasm after a schema migration. Migrations are forward-only in this repository, and an older module may not understand the upgraded stable state. Fix forward and deploy a new compatible Wasm instead.
+
+For Source Capture rollback, first deploy a Browser staging configuration with `KINIC_WIKI_GENERATOR_URL` unset to close new ingress, then remove or pause the `kinic-wiki-generation-staging` consumer and roll both Workers back to their last known-good versions. Do not reverse the D1 migrations.

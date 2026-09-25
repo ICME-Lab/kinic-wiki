@@ -96,6 +96,63 @@ test("source capture trigger rejects canister mismatches before background work"
   assert.equal(queue.messages.length, 0);
 });
 
+test("source capture trigger rejects a database outside the staging allowlist before enqueue", async () => {
+  const queue = new TestQueue();
+  const response = await fetchWorker(
+    authorizedSourceCaptureRequest({ databaseId: "other_db" }),
+    { ...testEnv(queue), KINIC_WIKI_ALLOWED_DATABASE_ID: "staging_db" }
+  );
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "database_not_allowed" });
+  assert.equal(queue.messages.length, 0);
+});
+
+test("manual source run rejects a database outside the staging allowlist before VFS access", async () => {
+  const response = await fetchWorker(
+    new Request("https://wiki-generator.kinic.xyz/run", {
+      method: "POST",
+      headers: { authorization: "Bearer worker-token", "content-type": "application/json" },
+      body: JSON.stringify({ databaseId: "other_db", sourcePath: "/Sources/a.md", sourceEtag: "etag", dryRun: false })
+    }),
+    { ...testEnv(new TestQueue()), KINIC_WIKI_ALLOWED_DATABASE_ID: "staging_db" }
+  );
+
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "database_not_allowed" });
+});
+
+test("queued generation outside the staging allowlist is dead-lettered without provider work", async () => {
+  const disposition = await processQueueMessage(
+    { ...testEnv(new TestQueue()), KINIC_WIKI_ALLOWED_DATABASE_ID: "staging_db" },
+    sourceMessage(0)
+  );
+
+  assert.deepEqual(disposition, {
+    kind: "dead_letter",
+    code: "database_not_allowed",
+    message: "database_not_allowed"
+  });
+});
+
+test("queued link preview outside the staging allowlist is dead-lettered", async () => {
+  const disposition = await processQueueMessage(
+    { ...testEnv(new TestQueue()), KINIC_WIKI_ALLOWED_DATABASE_ID: "staging_db" },
+    {
+      kind: "link_preview",
+      canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
+      databaseId: "other_db",
+      requestedAt: "2026-09-18T00:00:00.000Z"
+    }
+  );
+
+  assert.deepEqual(disposition, {
+    kind: "dead_letter",
+    code: "database_not_allowed",
+    message: "database_not_allowed"
+  });
+});
+
 test("queue source capture message propagates config failures", async () => {
   await assert.rejects(
     processQueueMessage(testEnv(new TestQueue()), {

@@ -11,13 +11,19 @@ const DEFAULT_CONTEXT_PREFIX = "/";
 const DEFAULT_MAX_RAW_CHARS = 120_000;
 const DEFAULT_MAX_FETCHED_BYTES = 5_000_000;
 const DEFAULT_MAX_SOURCE_CHARS = 300_000;
-const DEFAULT_CONTEXT_HITS = 8;
+const DEFAULT_CONTEXT_CANDIDATES = 20;
+const DEFAULT_CONTEXT_SELECTIONS = 5;
 const DEFAULT_MAX_OUTPUT_TOKENS = 6_000;
 
 export function loadConfig(env: RuntimeEnv): WorkerConfig {
   const canisterId = required(env.KINIC_WIKI_CANISTER_ID, "KINIC_WIKI_CANISTER_ID");
+  const maxContextCandidates = Math.min(
+    DEFAULT_CONTEXT_CANDIDATES,
+    parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_CANDIDATES, DEFAULT_CONTEXT_CANDIDATES),
+  );
   return {
     canisterId,
+    allowedDatabaseId: optionalIdentifier(env.KINIC_WIKI_ALLOWED_DATABASE_ID, "KINIC_WIKI_ALLOWED_DATABASE_ID"),
     icHost: env.KINIC_WIKI_IC_HOST || "https://icp0.io",
     model: env.KINIC_WIKI_WORKER_MODEL || DEFAULT_MODEL,
     targetRoot: normalizeNonRootPrefix(env.KINIC_WIKI_WORKER_TARGET_ROOT || DEFAULT_TARGET_ROOT, "KINIC_WIKI_WORKER_TARGET_ROOT"),
@@ -26,9 +32,27 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     maxRawChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_RAW_CHARS, DEFAULT_MAX_RAW_CHARS),
     maxFetchedBytes: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_FETCHED_BYTES, DEFAULT_MAX_FETCHED_BYTES),
     maxSourceChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_SOURCE_CHARS, DEFAULT_MAX_SOURCE_CHARS),
-    maxContextHits: parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_HITS, DEFAULT_CONTEXT_HITS),
+    maxContextCandidates,
+    maxContextSelections: Math.min(
+      maxContextCandidates,
+      DEFAULT_CONTEXT_SELECTIONS,
+      parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_SELECTIONS, DEFAULT_CONTEXT_SELECTIONS),
+    ),
     maxOutputTokens: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   };
+}
+
+export function isDatabaseAllowed(config: WorkerConfig, databaseId: string): boolean {
+  return config.allowedDatabaseId === null || config.allowedDatabaseId === databaseId;
+}
+
+function optionalIdentifier(value: string | undefined, name: string): string | null {
+  if (value === undefined || value.trim() === "") return null;
+  const trimmed = value.trim();
+  if (trimmed.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(trimmed)) {
+    throw new Error(`${name} must match [a-zA-Z0-9_-]+ and be at most 128 characters`);
+  }
+  return trimmed;
 }
 
 function normalizeNonRootPrefix(value: string, name: string): string {
