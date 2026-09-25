@@ -8,11 +8,17 @@ struct ManualURLPanel: View {
     @Bindable var model: AppModel
     let isURLFocused: FocusState<Bool>.Binding
     var onSubmitted: () -> Void = {}
+    var onInputChanged: (Bool) -> Void = { _ in }
     @State private var urlText = ""
 
     var body: some View {
-        KinicPanel(title: "Ingest", systemImage: "link") {
+        KinicPanel(title: "Save URL", systemImage: "link") {
             VStack(alignment: .leading, spacing: 12) {
+                Label(model.selectedDatabase?.displayTitle ?? "No database selected", systemImage: "externaldrive")
+                    .font(.subheadline)
+                Text("Adds the source to this database and generates Wiki content.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let message = model.statusMessage { StatusPanel(message: message) }
                 HStack(alignment: .bottom, spacing: 10) {
                     TextField(
                         "",
@@ -37,10 +43,11 @@ struct ManualURLPanel: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(KinicIconButtonStyle(.primary))
                         .accessibilityLabel("Send")
-                        .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting)
+                        .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting || model.selectedDatabase?.canWrite != true)
                 }
             }
         }
+        .onChange(of: urlText) { onInputChanged(!urlText.isEmpty) }
     }
 
     private func submitURL() {

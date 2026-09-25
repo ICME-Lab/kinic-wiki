@@ -28,8 +28,14 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     private var searchResumeContinuation: CheckedContinuation<Void, Never>?
     private var searchPauseWaiters: [CheckedContinuation<Void, Never>] = []
     private var pauseNextList = false
+    private var listFailureMessage: String?
+    private var listTransportFails = false
     private var listResumeContinuation: CheckedContinuation<Void, Never>?
     private var listPauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var pauseNextMutation = false
+    private var mutationResumeContinuation: CheckedContinuation<Void, Never>?
+    private var mutationPauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var mutationPrincipals: [String] = []
     private var lastSearchPrefix: String?
     private var readPaths: [String] = []
 
@@ -103,6 +109,20 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
         operationsLog
     }
 
+    func pauseNextMutationUntilResumed() { pauseNextMutation = true }
+
+    func waitUntilMutationIsPaused() async {
+        if mutationResumeContinuation != nil { return }
+        await withCheckedContinuation { mutationPauseWaiters.append($0) }
+    }
+
+    func resumeMutation() {
+        mutationResumeContinuation?.resume()
+        mutationResumeContinuation = nil
+    }
+
+    func recordedMutationPrincipals() -> [String] { mutationPrincipals }
+
     func makeRootExist() {
         seedDirectory(WorkItemPaths.root)
     }
@@ -128,6 +148,8 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     }
 
     func pauseNextListUntilResumed() { pauseNextList = true }
+    func rejectList(with message: String?) { listFailureMessage = message }
+    func failListTransport(_ fails: Bool) { listTransportFails = fails }
 
     func waitUntilListIsPaused() async {
         if listResumeContinuation != nil { return }
@@ -173,6 +195,10 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
     }
 
     func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] {
+        if path == WorkItemPaths.root {
+            if let listFailureMessage { throw VFSCandidError.canisterRejected(listFailureMessage) }
+            if listTransportFails { throw WorkItemVFSStubError.readFailed(path) }
+        }
         if path == WorkItemPaths.root, pauseNextList {
             pauseNextList = false
             await withCheckedContinuation { continuation in
@@ -215,6 +241,16 @@ actor WorkItemVFSStub: WorkItemVFSProviding {
         operations: [VFSNodeMutationOperation],
         session: KinicIdentitySession
     ) async throws -> [VFSNodeMutationOutcome] {
+        mutationPrincipals.append(session.principal)
+        if pauseNextMutation {
+            pauseNextMutation = false
+            await withCheckedContinuation { continuation in
+                mutationResumeContinuation = continuation
+                let waiters = mutationPauseWaiters
+                mutationPauseWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
+        }
         if mutationFails {
             throw WorkItemVFSStubError.mutationFailed
         }
@@ -1311,10 +1347,10 @@ extension WorkItemRepositoryTests {
 
 @MainActor
 private final class WorkItemRuntimeStub: WorkItemRuntimeProviding {
-    let workItemPrincipal = "2vxsx-fae"
+    var workItemPrincipal = "2vxsx-fae"
     let workItemIsSignedIn = true
     private(set) var workItemDatabase: DatabaseSummary?
-    let workItemSession: KinicIdentitySession? = .testing()
+    var workItemSession: KinicIdentitySession? = .testing()
 
     init(role: DatabaseRole = .owner, databaseId: String = "db") {
         workItemDatabase = Self.database(role: role, databaseId: databaseId)
@@ -1322,6 +1358,11 @@ private final class WorkItemRuntimeStub: WorkItemRuntimeProviding {
 
     func selectDatabase(_ databaseId: String, role: DatabaseRole = .owner) {
         workItemDatabase = Self.database(role: role, databaseId: databaseId)
+    }
+
+    func switchAccount(to principal: String) {
+        workItemPrincipal = principal
+        workItemSession = .testing(principal: principal)
     }
 
     private static func database(role: DatabaseRole, databaseId: String) -> DatabaseSummary {
@@ -1337,6 +1378,20 @@ private final class WorkItemRuntimeStub: WorkItemRuntimeProviding {
             cyclesSuspendedAtMs: nil,
             deletedAtMs: nil
         )
+    }
+}
+
+@MainActor
+private final class WidgetSnapshotProbe: WorkItemWidgetSnapshotWriting {
+    var loaded = 0
+    var accessLost = 0
+
+    func workItemListDidLoad(databaseId: String, entries: [WorkItemListEntry], fetchedAt: Int64) {
+        loaded += 1
+    }
+
+    func workItemListDidLoseAccess(databaseId: String) {
+        accessLost += 1
     }
 }
 
@@ -1453,4 +1508,91 @@ private struct FailingWorkItemStore: WorkItemStoring {
     }
     func pendingMutations(principal: String, databaseId: String) throws -> [WorkItemPendingMutation] { [] }
     func deletePendingMutation(id: String) throws {}
+}
+
+
+extension WorkItemModelTests {
+    @Test @MainActor
+    func transientListFailurePreservesWidgetButAccessLossClearsIt() async {
+        let vfs = WorkItemVFSStub()
+        let widget = WidgetSnapshotProbe()
+        let model = WorkItemModel(
+            runtime: WorkItemRuntimeStub(), repository: WorkItemRepository(vfs: vfs),
+            store: nil, widgetSnapshot: widget
+        )
+        await vfs.makeRootExist()
+        await vfs.failListTransport(true)
+        await model.refreshRemote(force: true)
+        #expect(widget.accessLost == 0)
+        #expect(widget.loaded == 0)
+        await vfs.failListTransport(false)
+        await vfs.rejectList(with: "principal has no access to database: db")
+        await model.refreshRemote(force: true)
+        #expect(widget.accessLost == 1)
+    }
+
+    @Test @MainActor
+    func queuedCapturesStopBeforeUsingANewAccountSession() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "queued-work-items-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let queue = try PendingWorkItemCaptureQueue(testQueueDirectory: directory)
+        let store = try WorkItemStore(path: ":memory:")
+        let runtime = WorkItemRuntimeStub()
+        let vfs = WorkItemVFSStub()
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store, pendingCaptures: queue)
+        for id in ["first", "second"] {
+            try queue.enqueue(PendingWorkItemCapture(
+                version: PendingWorkItemCapture.currentVersion, captureId: id,
+                principal: runtime.workItemPrincipal, databaseId: "db", title: id,
+                body: id, source: nil, createdAt: id == "first" ? 1 : 2
+            ))
+        }
+        await vfs.pauseNextMutationUntilResumed()
+        let sending = Task { await model.importQueuedCaptures() }
+        await vfs.waitUntilMutationIsPaused()
+        runtime.switchAccount(to: "aaaaa-aa")
+        await vfs.resumeMutation()
+        await sending.value
+
+        #expect(await vfs.recordedMutationPrincipals().allSatisfy { $0 == "2vxsx-fae" })
+        #expect(try store.captures(principal: "2vxsx-fae").count == 2)
+        #expect(try store.captures(principal: "aaaaa-aa").isEmpty)
+        #expect(queue.load().isEmpty)
+    }
+
+    @Test @MainActor
+    func explicitDestinationChoiceNeverRetargetsAnExistingCapture() throws {
+        let store = try WorkItemStore(path: ":memory:")
+        let runtime = WorkItemRuntimeStub()
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: WorkItemVFSStub()), store: store)
+        let capture = WorkItemCaptureRecord(captureId: "unassigned", principal: runtime.workItemPrincipal, databaseId: nil, origin: .text, rawText: "Keep this note", provisionalTitle: "Note", sourceRefs: [], state: .local, createdAt: 1, updatedAt: 1)
+        try store.upsertCapture(capture)
+        model.refreshLocalCaptures()
+        model.assignDestination(captureId: capture.captureId, databaseId: "chosen")
+        model.assignDestination(captureId: capture.captureId, databaseId: "different")
+        #expect(model.localCaptures.first?.databaseId == "chosen")
+        #expect(try store.captures(principal: runtime.workItemPrincipal).count == 1)
+        #expect(model.localCaptures.first?.state == .local)
+    }
+
+    @Test @MainActor
+    func contextResetClearsSearchAndInvalidatesAnOutstandingList() async throws {
+        let stub = WorkItemVFSStub()
+        let runtime = WorkItemRuntimeStub()
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: stub), store: nil)
+        await stub.makeRootExist()
+        await stub.pauseNextListUntilResumed()
+        let loading = Task { await model.refresh(force: true) }
+        await stub.waitUntilListIsPaused()
+        model.searchQuery = "old database"
+        runtime.selectDatabase("another")
+        model.resetContext()
+        #expect(model.searchQuery.isEmpty)
+        #expect(model.entries.isEmpty)
+        #expect(model.phase == .idle)
+        await stub.resumeList()
+        await loading.value
+        #expect(model.entries.isEmpty)
+        #expect(model.phase == .idle)
+    }
 }

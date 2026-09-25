@@ -71,6 +71,7 @@ struct WorkItemWidgetSnapshot: Codable, Equatable, Sendable {
         copy.databases = databases.prefix(Self.maximumDatabases).map { database in
             var database = database
             database.items = database.items
+                .filter { $0.state == .open }
                 .sorted { left, right in
                     if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
                     return left.id < right.id

@@ -15,6 +15,10 @@ struct WorkItemComposerView: View {
     @State private var text = ""
     @State private var hasAppliedDraft = false
     @State private var isSaving = false
+    @State private var draftOwner = UUID()
+    @State private var confirmsDiscard = false
+    private var hasInput: Bool { !title.isEmpty || !text.isEmpty }
+    private var locksDatabase: Bool { hasInput || isSaving }
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isBodyFocused: Bool
 
@@ -63,7 +67,9 @@ struct WorkItemComposerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if hasInput { confirmsDiscard = true } else { dismiss() }
+                    }.disabled(isSaving)
                         .tint(KinicDesign.hotPink)
                 }
                 ToolbarItem(placement: .confirmationAction) {
@@ -78,6 +84,15 @@ struct WorkItemComposerView: View {
             .onAppear(perform: applyDraftIfNeeded)
         }
         .presentationDetents([.large])
+        .interactiveDismissDisabled(locksDatabase)
+        .onChange(of: locksDatabase, initial: true) { _, active in
+            appModel.setWorkItemDraftActive(active, owner: draftOwner)
+        }
+        .onDisappear { appModel.setWorkItemDraftActive(false, owner: draftOwner) }
+        .alert("Discard this draft?", isPresented: $confirmsDiscard) {
+            Button("Discard draft", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
     }
 
     @ViewBuilder

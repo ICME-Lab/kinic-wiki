@@ -28,278 +28,376 @@ enum WorkItemFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct WorkItemSearchAnchorKey: PreferenceKey {
+    static let defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct WorkItemListView: View {
     @Bindable var appModel: AppModel
     @Bindable var model: WorkItemModel
     let askAIModel: AskAIModel
-
+    let openSearchResult: (String) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var filter: WorkItemFilter = .open
     @State private var isShowingComposer = false
-    /// Prefill handed over by Browse, Ask AI, or a widget link.
     @State private var composerDraft: WorkItemComposeRequest?
     @State private var isShowingIngest = false
     @State private var isShowingHistory = false
-    @State private var isShowingSettings = false
-    @State private var isShowingDatabase = false
+    @State private var isShowingSearch = false
+    @State private var isShowingLocalWork = false
+    @State private var capturesExpanded = false
+    @State private var pendingDatabaseId: String?
+    @State private var discardCapture: WorkItemCaptureRecord?
+    @State private var discardMutation: WorkItemPendingMutation?
 
-    private var visibleEntries: [WorkItemListEntry] {
-        model.entries.filter(filter.matches)
+    private var visibleEntries: [WorkItemListEntry] { model.entries.filter(filter.matches) }
+    private var captureSummary: HomeCaptureSummary {
+        HomeCaptureSummary(records: appModel.sourceCaptureHistory, databaseId: appModel.selectedDatabaseId)
     }
+    private var localWorkCount: Int { model.localCaptures.count + model.pendingMutations.count }
 
     var body: some View {
         Group {
-            if !appModel.isSignedIn {
-                setupSurface
-            } else if appModel.selectedDatabase == nil {
-                setupSurface
-            } else {
-                listSurface
-            }
+            if !appModel.isSignedIn || appModel.selectedDatabase == nil { setupSurface }
+            else { listSurface }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar { toolbarContent }
+        .databaseContext(model: appModel)
+        .toolbar(.hidden, for: .navigationBar)
         .task {
             appModel.refreshInbox()
             appModel.startRefreshDatabases()
-            appModel.startRefreshSourceCaptureHistory()
             appModel.autoSubmitPendingURL()
             presentRequestedCompose()
             await model.importQueuedCaptures()
-            await model.refresh()
+            await refreshHome()
         }
         .onChange(of: appModel.selectedDatabaseId) {
+            capturesExpanded = false
+            isShowingHistory = false
+            isShowingSearch = false
+            isShowingLocalWork = false
+            filter = .open
+            model.clearSearch()
             presentRequestedCompose()
+            Task { await refreshHome() }
+        }
+        .onChange(of: appModel.workItemComposeRequestID) { presentRequestedCompose() }
+        .onChange(of: appModel.principalText) {
+            isShowingHistory = false
+            isShowingSearch = false
+            isShowingLocalWork = false
+            isShowingComposer = false
             Task { await model.refresh() }
-        }
-        .onChange(of: appModel.workItemComposeRequestID) {
-            presentRequestedCompose()
-        }
-        .task(id: model.searchQuery) {
-            let trimmed = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                // Clearing the field must restore the list, not leave the last results on screen.
-                model.clearSearchResults()
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            await model.search(model.searchQuery)
         }
         .sheet(isPresented: $isShowingComposer) {
             WorkItemComposerView(appModel: appModel, model: model, draft: composerDraft)
         }
-        .sheet(isPresented: $isShowingIngest) {
-            IngestSheet(model: appModel)
-        }
-        .sheet(isPresented: $isShowingHistory) {
-            NavigationStack {
-                ScrollView {
-                    SourceCaptureHistoryPanel(model: appModel)
-                        .padding(KinicDesign.screenPadding)
-                }
-                .navigationTitle("Capture history")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark") { isShowingHistory = false }
-                            .labelStyle(.iconOnly)
-                            .tint(KinicDesign.hotPink)
-                    }
-                }
+        .sheet(isPresented: $isShowingIngest) { IngestSheet(model: appModel) }
+        .sheet(isPresented: $isShowingHistory) { SourceCaptureHistoryView(model: appModel) }
+        .sheet(isPresented: $isShowingLocalWork, onDismiss: {
+            if let databaseId = pendingDatabaseId {
+                pendingDatabaseId = nil
+                _ = appModel.requestBrowseDatabaseSelection(databaseId)
             }
-        }
-        .sheet(isPresented: $isShowingSettings) {
-            NavigationStack {
-                AppSettingsView(model: appModel, askAIModel: askAIModel)
-            }
-        }
-        .sheet(isPresented: $isShowingDatabase) {
-            NavigationStack {
-                ScrollView {
-                    VStack(spacing: 16) {
-                        SessionPanel(model: appModel)
-                        DatabasePanel(model: appModel)
-                    }
-                    .padding(KinicDesign.screenPadding)
-                }
-                .navigationTitle("Database")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close", systemImage: "xmark") { isShowingDatabase = false }
-                            .labelStyle(.iconOnly)
-                            .tint(KinicDesign.hotPink)
-                    }
-                }
-            }
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        if #available(iOS 26.0, *) {
-            ToolbarItem(placement: .topBarLeading) {
-                KinicHeaderTitle()
-            }
-            .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .topBarLeading) {
-                KinicHeaderTitle()
-            }
-        }
-        if appModel.selectedDatabase != nil {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("New item", systemImage: "square.and.pencil") {
-                    composerDraft = nil
-                    isShowingComposer = true
-                }
-                .labelStyle(.iconOnly)
-                .tint(KinicDesign.hotPink)
-                .disabled(!model.canWrite)
-                .accessibilityHint(model.canWrite ? "" : "You have read-only access to this database")
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button("Database", systemImage: "externaldrive") { isShowingDatabase = true }
-                Button("Ingest URL", systemImage: "link.badge.plus") { isShowingIngest = true }
-                Button("Capture history", systemImage: "clock.arrow.circlepath") { isShowingHistory = true }
-                Button("Settings", systemImage: "gearshape") { isShowingSettings = true }
-            } label: {
-                Label("More", systemImage: "ellipsis.circle")
-            }
-            .tint(KinicDesign.hotPink)
-        }
+        }) { localWorkView }
     }
 
     private var setupSurface: some View {
         ScrollView {
             VStack(spacing: 16) {
-                SessionPanel(model: appModel)
+                if !appModel.isSignedIn { SessionPanel(model: appModel) }
                 DatabasePanel(model: appModel)
-                if let message = appModel.statusMessage {
-                    StatusPanel(message: message)
-                }
-            }
-            .padding(KinicDesign.screenPadding)
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .background(KinicDesign.appBackground)
+                if let message = appModel.statusMessage { StatusPanel(message: message) }
+            }.padding(KinicDesign.screenPadding)
+        }.background(KinicDesign.appBackground)
     }
 
     private var listSurface: some View {
-        List {
-            if let message = model.actionError {
-                Section {
-                    StatusPanel(message: message)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-            }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                primaryActions
+                    .padding(.top, 16)
+                    .padding(.bottom, 14)
 
-            if model.isSearching {
-                searchSection
-            } else {
-                if !model.localCaptures.isEmpty {
-                    Section {
-                        ForEach(model.localCaptures) { capture in
-                            LocalCaptureRow(capture: capture) {
-                                Task { await model.retryLocalCapture(capture.captureId) }
-                            } onDiscard: {
-                                model.discardLocalCapture(capture.captureId)
-                            }
-                        }
-                    } header: {
-                        Text("On this device")
-                    } footer: {
-                        Text("Saved on this device only. They appear in the database after they are sent.")
+                if !model.canWrite {
+                    Label(appModel.selectedDatabase?.status == .pending ? "This database needs credits before it can be used." : "Read-only access to this database.", systemImage: "lock")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 12)
+                }
+                recentCaptures
+                    .padding(.bottom, 20)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Work items").font(.title2.weight(.bold))
+                    Spacer()
+                    if model.phase == .ready {
+                        Text("\(visibleEntries.count)")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
+                    Button("Search work items", systemImage: "magnifyingglass") {
+                        isShowingSearch = true
+                    }
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("home.search")
                 }
+                .padding(.bottom, 8)
+                .anchorPreference(key: WorkItemSearchAnchorKey.self, value: .bounds) { $0 }
 
-                if !model.pendingMutations.isEmpty {
-                    pendingSection
+                if localWorkCount > 0 {
+                    Button("On this device · \(localWorkCount)") { isShowingLocalWork = true }
+                        .font(.subheadline)
+                        .accessibilityIdentifier("home.localWork")
+                        .frame(minHeight: 44)
                 }
-
-                itemsSection
+                if let message = model.actionError {
+                    StatusPanel(message: message).padding(.bottom, 12)
+                }
+                Picker("Filter", selection: $filter) {
+                    ForEach(WorkItemFilter.allCases) { option in Text(option.displayName).tag(option) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.bottom, 8)
+                itemsContent
+                }
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, KinicDesign.screenPadding)
+                .padding(.bottom, 24)
+        }
+        .background(KinicDesign.appBackground)
+        .overlayPreferenceValue(WorkItemSearchAnchorKey.self) { anchor in
+            GeometryReader { geometry in
+                if isShowingSearch, let anchor {
+                    let frame = geometry[anchor]
+                    WorkItemSearchOverlay(model: model, onClose: { isShowingSearch = false }) { itemId in
+                        isShowingSearch = false
+                        openSearchResult(itemId)
+                    }
+                    .frame(width: frame.width)
+                    .offset(x: frame.minX, y: frame.minY)
+                }
             }
         }
-        .listStyle(.insetGrouped)
-        .searchable(
-            text: $model.searchQuery,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search items"
-        )
-        .refreshable { await model.refresh(force: true) }
+        .scrollDismissesKeyboard(.interactively)
+        .refreshable { await refreshHome(force: true) }
         .navigationDestination(for: String.self) { itemId in
             WorkItemDetailView(model: model, appModel: appModel, itemId: itemId)
         }
-        .overlay {
-            if model.phase == .loading && model.entries.isEmpty && !model.isSearching {
-                ProgressView()
+    }
+
+    private var primaryActions: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) { actionButtons }
+            } else {
+                HStack(spacing: 8) { actionButtons }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var actionButtons: some View {
+        Button(action: newItem) {
+            Label("New item", systemImage: "plus")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .foregroundStyle(.white)
+                .background(KinicDesign.hotPink, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.canWrite)
+        .opacity(model.canWrite ? 1 : 0.45)
+        .accessibilityIdentifier("home.newItem")
+
+        Button { isShowingIngest = true } label: {
+            Label("Save URL", systemImage: "link")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+                .frame(minHeight: 44)
+                .foregroundStyle(KinicDesign.hotPink)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.canWrite)
+        .opacity(model.canWrite ? 1 : 0.45)
+        .accessibilityIdentifier("home.saveURL")
+    }
+
+    private var recentCaptures: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Button { capturesExpanded.toggle() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: capturesExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.semibold))
+                        Text("Recent captures")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home.recentCaptures")
+                .accessibilityValue(capturesExpanded ? "Expanded" : "Collapsed")
+
+                Button("See all") { isShowingHistory = true }
+                    .font(.subheadline.weight(.medium))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("home.captureHistory")
+                    .accessibilityLabel("Capture history")
+            }
+            if let latest = captureSummary.recent.first {
+                Text("\(latest.item.status.displayTitle) · \(latest.item.url)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 20)
+            } else {
+                Text(appModel.isLoadingSourceCaptureHistory ? "Loading history…" : "No captures yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            }
+            if capturesExpanded {
+                Divider().padding(.vertical, 8)
+                ForEach(captureSummary.recent) { record in captureRow(record) }
+                if captureSummary.recent.isEmpty {
+                    Text("Save a URL to build your Wiki.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func captureRow(_ record: SourceCaptureHistoryRecord) -> some View {
+        SourceCaptureHistoryRow(item: record.item, databaseTitle: appModel.selectedDatabase?.displayTitle ?? record.databaseId,
+            openTarget: { isShowingLocalWork = false; appModel.openSourceCaptureTarget($0) },
+            retry: { Task { await appModel.retrySourceCapture(record) } },
+            isRetrying: appModel.isRetryingSourceCapture(path: record.item.requestPath),
+            canRetry: model.canWrite)
+    }
+
+    private var itemsContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if visibleEntries.isEmpty { emptyItems }
+            ForEach(visibleEntries) { entry in
+                NavigationLink(value: entry.id) {
+                    HStack(spacing: 12) {
+                        WorkItemRow(entry: entry)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Divider()
+            }
+            listFooter
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 10)
         }
     }
 
-    private var itemsSection: some View {
-        Section {
-            if visibleEntries.isEmpty {
-                Text(emptyListMessage)
+    @ViewBuilder private var emptyItems: some View {
+        switch model.phase {
+        case .loading:
+            ProgressView("Loading work items…")
+        case .failed:
+            ContentUnavailableView {
+                Label("Could not load work items", systemImage: "wifi.exclamationmark")
+            } actions: {
+                Button("Try again") { Task { await refreshHome(force: true) } }
+            }
+        default:
+            VStack(alignment: .leading, spacing: 10) {
+                Text(filter == .closed ? "No closed items" : filter == .open && !model.entries.isEmpty ? "All caught up" : "Your work starts here")
+                    .font(.headline)
+                Text(filter == .closed ? "Items you close will appear here." : "Keep notes, tasks, and source links together in this database.")
                     .foregroundStyle(.secondary)
-            } else {
-                ForEach(visibleEntries) { entry in
-                    NavigationLink(value: entry.id) {
-                        WorkItemRow(entry: entry)
+                if filter != .closed && model.canWrite {
+                    Button("Create an item", systemImage: "plus", action: newItem).frame(minHeight: 44)
+                }
+            }.padding(.vertical, 8)
+        }
+    }
+
+    private var localWorkView: some View {
+        NavigationStack {
+            List {
+                if let error = model.actionError { Section { StatusPanel(message: error) } }
+                if !model.localCaptures.isEmpty {
+                    Section("Work items on this device") {
+                        ForEach(model.localCaptures) { capture in localCaptureRow(capture) }
                     }
                 }
+                if !model.pendingMutations.isEmpty { pendingSection }
+                if localWorkCount == 0 { Text("Nothing waiting to send.") }
             }
-        } header: {
-            Picker("Filter", selection: $filter) {
-                ForEach(WorkItemFilter.allCases) { option in
-                    Text(option.displayName).tag(option)
+            .navigationTitle("On this device")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingLocalWork = false } } }
+            .confirmationDialog("Discard this local item?", isPresented: Binding(get: { discardCapture != nil }, set: { if !$0 { discardCapture = nil } }), presenting: discardCapture) { capture in
+                Button("Discard", role: .destructive) {
+                    model.discardLocalCapture(capture.captureId)
+                    discardCapture = nil
+                }
+            } message: { _ in Text("This item has not been sent to its database.") }
+            .confirmationDialog("Discard these unsent changes?", isPresented: Binding(get: { discardMutation != nil }, set: { if !$0 { discardMutation = nil } }), titleVisibility: .visible, presenting: discardMutation) { mutation in
+                Button("Discard changes", role: .destructive) {
+                    model.discardPendingMutation(mutation.mutationId)
+                    discardMutation = nil
                 }
             }
-            .pickerStyle(.segmented)
-            .textCase(nil)
-            .padding(.vertical, 4)
-        } footer: {
-            listFooter
         }
     }
 
-    @ViewBuilder
-    private var searchSection: some View {
-        Section {
-            switch model.searchPhase {
-            case .searching:
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Searching…")
-                        .foregroundStyle(.secondary)
+    private func localCaptureRow(_ capture: WorkItemCaptureRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(capture.provisionalTitle.isEmpty ? capture.rawText : capture.provisionalTitle).font(.headline).lineLimit(2)
+            Label("Saved on this device only", systemImage: "iphone").font(.caption).foregroundStyle(.secondary)
+            Text(capture.databaseId.map { id in appModel.browseListDatabases.first { $0.databaseId == id }?.displayTitle ?? id } ?? "No database chosen")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                if capture.databaseId == nil {
+                    Menu("Choose destination") {
+                        ForEach(appModel.browseListDatabases.filter(\.canWrite)) { database in
+                            Button(database.displayTitle) { model.assignDestination(captureId: capture.captureId, databaseId: database.databaseId) }
+                        }
+                    }
+                } else if capture.databaseId != appModel.selectedDatabaseId {
+                    Button("Switch to this database") {
+                        pendingDatabaseId = capture.databaseId
+                        isShowingLocalWork = false
+                    }.disabled(appModel.databaseSelectionLocked || !appModel.browseListDatabases.contains { $0.databaseId == capture.databaseId })
+                } else {
+                    Button("Send") { Task { await model.retryLocalCapture(capture.captureId) } }.disabled(!model.canWrite)
                 }
-            case .empty:
-                Text("No items match “\(model.searchQuery)”.")
-                    .foregroundStyle(.secondary)
-            case .failed(let message):
-                Text(message)
-                    .foregroundStyle(.secondary)
-            case .idle, .results:
-                EmptyView()
-            }
+                Spacer()
+                Button("Discard", role: .destructive) { discardCapture = capture }
+            }.buttonStyle(.borderless).frame(minHeight: 44)
+        }.padding(.vertical, 4)
+    }
 
-            ForEach(model.searchSnapshot.results) { result in
-                NavigationLink(value: result.id) {
-                    WorkItemSearchRow(result: result)
-                }
-            }
-        } header: {
-            Text("Results")
-        } footer: {
-            if model.searchSnapshot.isCapped {
-                Text("Showing the first \(model.searchSnapshot.hitCount) matches. Narrow the search to find older items.")
-            }
-        }
+    private func newItem() { composerDraft = nil; isShowingComposer = true }
+    private func refreshHome(force: Bool = false) async {
+        async let items: Void = model.refresh(force: force)
+        async let captures: Void = appModel.refreshSourceCaptureHistory(refreshAll: force)
+        _ = await (items, captures)
     }
 
     @ViewBuilder
@@ -319,9 +417,11 @@ struct WorkItemListView: View {
                     Button("Send") {
                         Task { await model.retryPendingMutation(mutation) }
                     }
+                    .disabled(!model.canWrite)
+                    .frame(minWidth: 44, minHeight: 44)
                     Button("Discard", role: .destructive) {
-                        model.discardPendingMutation(mutation.mutationId)
-                    }
+                        discardMutation = mutation
+                    }.frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.borderless)
                 .tint(KinicDesign.hotPink)
@@ -330,14 +430,6 @@ struct WorkItemListView: View {
             Text("Unsent changes")
         } footer: {
             Text("Saved on this device only. They are not in the database yet.")
-        }
-    }
-
-    private var emptyListMessage: String {
-        switch model.phase {
-        case .loading: "Loading work items…"
-        case .failed(let message): message
-        default: "Nothing here yet. Create the first item."
         }
     }
 
@@ -398,39 +490,6 @@ private struct WorkItemRow: View {
     }
 }
 
-private struct LocalCaptureRow: View {
-    let capture: WorkItemCaptureRecord
-    let onRetry: () -> Void
-    let onDiscard: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(capture.provisionalTitle.isEmpty ? capture.rawText : capture.provisionalTitle)
-                .font(.headline)
-                .lineLimit(2)
-
-            HStack(spacing: 10) {
-                Label(capture.state.displayName, systemImage: "iphone")
-                if capture.databaseId == nil {
-                    Text("No database chosen")
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                Button(action: onRetry) { Label("Send", systemImage: "arrow.up.circle") }
-                Button(role: .destructive, action: onDiscard) { Label("Discard", systemImage: "trash") }
-            }
-            .font(.callout)
-            .buttonStyle(.borderless)
-            .tint(KinicDesign.hotPink)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .contain)
-    }
-}
-
 /// A search hit. Comment matches are folded into the parent item and reported as a count.
 private struct WorkItemSearchRow: View {
     let result: WorkItemSearchResult
@@ -463,5 +522,84 @@ private struct WorkItemSearchRow: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A compact search box positioned over the Work items heading.
+private struct WorkItemSearchOverlay: View {
+    @Bindable var model: WorkItemModel
+    let onClose: () -> Void
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search work items", text: $model.searchQuery)
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("home.searchField")
+                Button("Close search", systemImage: "xmark") { onClose() }
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 4)
+            .frame(minHeight: 52)
+
+            if !model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Divider()
+                switch model.searchPhase {
+                case .idle, .searching:
+                    ProgressView("Searching…")
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .padding(.horizontal, 16)
+                case .empty:
+                    Text("No work items found")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .padding(.horizontal, 16)
+                case .failed(let message):
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .padding(.horizontal, 16)
+                case .results:
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(model.searchSnapshot.results) { result in
+                                Button { onSelect(result.id) } label: {
+                                    WorkItemSearchRow(result: result)
+                                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 6)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("home.searchResult.\(result.id)")
+                                Divider().padding(.leading, 16)
+                            }
+                            if model.searchSnapshot.isCapped {
+                                Text("Narrow the search to find older items.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(16)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 320)
+                }
+            }
+        }
+        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color(uiColor: .separator).opacity(0.3)))
+        .shadow(color: .black.opacity(0.15), radius: 18, y: 8)
+        .task { model.clearSearch() }
+        .task(id: model.searchQuery) {
+            let query = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { model.clearSearchResults(); return }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await model.search(query)
+        }
+        .onDisappear { model.clearSearch() }
     }
 }

@@ -68,6 +68,7 @@ final class WorkItemModel {
     private let pendingCaptures: PendingWorkItemCaptureQueue?
     private var loadGeneration = 0
     private var searchGeneration = 0
+    private var commentsGeneration = 0
     private var renderedDatabaseId: String?
     private var renderedPrincipal: String?
 
@@ -108,6 +109,27 @@ final class WorkItemModel {
 
     var canRead: Bool {
         runtime.workItemDatabase != nil && runtime.workItemIsSignedIn
+    }
+
+    /// Invalidate old DB/account content synchronously before starting another fetch.
+    func resetContext() {
+        loadGeneration += 1
+        commentsGeneration += 1
+        clearSearch()
+        entries = []
+        comments = []
+        phase = .idle
+        actionError = nil
+        conflict = nil
+        isLoadingComments = false
+        totalCount = 0
+        isTruncated = false
+        unreadableCount = 0
+        lastFetchedAt = nil
+        renderedDatabaseId = nil
+        renderedPrincipal = nil
+        refreshLocalCaptures()
+        refreshPendingMutations()
     }
 
     /// Renders the cached list first, then refreshes unless the last fetch was recent.
@@ -181,7 +203,9 @@ final class WorkItemModel {
             actionError = message
             phase = entries.isEmpty ? .failed(message) : .ready
             // The widget must not keep showing titles for a database the app can no longer read.
-            widgetSnapshot?.workItemListDidFail(databaseId: databaseId)
+            if Self.isDefinitiveAccessLoss(error) {
+                widgetSnapshot?.workItemListDidLoseAccess(databaseId: databaseId)
+            }
         }
     }
 
@@ -283,6 +307,17 @@ final class WorkItemModel {
         await send(record)
     }
 
+    /// Explicitly choose a destination only for a capture that has never had one.
+    func assignDestination(captureId: String, databaseId: String) {
+        guard let store, var record = localCaptures.first(where: { $0.captureId == captureId }),
+              record.databaseId == nil, !databaseId.isEmpty else { return }
+        record.databaseId = databaseId
+        do {
+            try store.upsertCapture(record)
+            refreshLocalCaptures()
+        } catch { actionError = Self.message(for: error) }
+    }
+
     func discardLocalCapture(_ captureId: String) {
         guard let store else { return }
         do {
@@ -301,6 +336,8 @@ final class WorkItemModel {
         let principal = runtime.workItemPrincipal
         var imported: [WorkItemCaptureRecord] = []
         for capture in pendingCaptures.load() where capture.principal == principal {
+            guard runtime.workItemPrincipal == principal,
+                  runtime.workItemSession?.principal == principal else { break }
             let record = capture.captureRecord()
             do {
                 try store.upsertCapture(record)
@@ -314,6 +351,8 @@ final class WorkItemModel {
         guard !imported.isEmpty else { return }
         refreshLocalCaptures()
         for record in imported where canSendFromHome(record) {
+            guard runtime.workItemPrincipal == principal,
+                  runtime.workItemSession?.principal == principal else { break }
             await send(record)
         }
     }
@@ -322,6 +361,8 @@ final class WorkItemModel {
     private func canSendFromHome(_ record: WorkItemCaptureRecord) -> Bool {
         guard let database = runtime.workItemDatabase else { return false }
         return database.databaseId == record.databaseId && database.canWrite
+            && record.principal == runtime.workItemPrincipal
+            && record.principal == runtime.workItemSession?.principal
     }
 
     func loadDetail(_ itemId: String) async -> WorkItemDetail? {
@@ -419,15 +460,20 @@ final class WorkItemModel {
     // MARK: - Comments
 
     func loadComments(_ itemId: String) async {
+        commentsGeneration += 1
+        let generation = commentsGeneration
         guard let databaseId = databaseId, let session = runtime.workItemSession else {
             comments = []
             return
         }
         isLoadingComments = true
-        defer { isLoadingComments = false }
+        defer { if commentsGeneration == generation { isLoadingComments = false } }
         do {
-            comments = try await repository.loadComments(itemId: itemId, databaseId: databaseId, session: session)
+            let loaded = try await repository.loadComments(itemId: itemId, databaseId: databaseId, session: session)
+            guard commentsGeneration == generation, self.databaseId == databaseId, runtime.workItemPrincipal == session.principal else { return }
+            comments = loaded
         } catch {
+            guard commentsGeneration == generation, self.databaseId == databaseId, runtime.workItemPrincipal == session.principal else { return }
             comments = []
             actionError = Self.message(for: error)
         }
@@ -748,12 +794,21 @@ final class WorkItemModel {
 
     @discardableResult
     private func send(_ record: WorkItemCaptureRecord) async -> Bool {
+        guard record.principal == runtime.workItemPrincipal,
+              record.principal == runtime.workItemSession?.principal else {
+            actionError = "This item belongs to another account."
+            return false
+        }
         guard let databaseId = record.databaseId, let session = runtime.workItemSession else {
             actionError = "Choose a database before sending."
             return false
         }
         guard let database = runtime.workItemDatabase, database.databaseId == databaseId, database.canWrite else {
             actionError = "You do not have write access to this database."
+            return false
+        }
+        guard session.principal == record.principal else {
+            actionError = "This item belongs to another account."
             return false
         }
         let draft = WorkItemCreateDraft(
@@ -812,6 +867,13 @@ final class WorkItemModel {
 
     /// How long a fetched list is reused before an automatic refresh re-reads every item.
     static let cacheFreshnessWindowMilliseconds: Int64 = 30_000
+
+    static func isDefinitiveAccessLoss(_ error: Error) -> Bool {
+        guard case VFSCandidError.canisterRejected(let message) = error else { return false }
+        return message.hasPrefix("principal has no access to database:")
+            || message.hasPrefix("database not found:")
+            || message.hasPrefix("database is deleted:")
+    }
 
     private static func message(for error: Error) -> String {
         if case WorkItemRepositoryError.etagConflict = error {

@@ -109,12 +109,14 @@ private struct WorkItemsWidgetEntryView: View {
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Link(destination: WidgetLinks.compose(databaseId: database.id)) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(accent)
+                if database.canWrite && database.isAvailable {
+                    Link(destination: WidgetLinks.compose(databaseId: database.id)) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.body)
+                            .foregroundStyle(accent)
+                    }
+                    .accessibilityLabel("New item")
                 }
-                .accessibilityLabel("New item")
             }
 
             if items.isEmpty {

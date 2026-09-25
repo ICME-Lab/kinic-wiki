@@ -19,7 +19,14 @@ struct BrowseDocumentView: View {
 
     var body: some View {
         documentBody
-        .background(.white)
+        .background(KinicDesign.appBackground)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Label(model.selectedBrowseDatabase?.displayTitle ?? model.selectedBrowseDatabaseId, systemImage: "externaldrive")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, KinicDesign.screenPadding).padding(.vertical, 8)
+                .background(KinicDesign.appBackground)
+        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

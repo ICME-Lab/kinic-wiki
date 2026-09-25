@@ -17,6 +17,18 @@ struct WorkItemDetailView: View {
     @State private var commentDraft = ""
     @State private var isShowingConflict = false
     @State private var sourceOpenError: String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftOwner = UUID()
+    @State private var discardIntent: DiscardIntent?
+    @State private var discardMutation: WorkItemPendingMutation?
+    @FocusState private var focusedField: InputField?
+    private enum InputField { case title, body, comment }
+    private enum DiscardIntent { case leave, edit }
+    private var hasUnsavedInput: Bool {
+        !commentDraft.isEmpty || (isEditing && (draftTitle != detail?.item.title || draftBody != detail?.item.body))
+    }
+    private var locksDatabase: Bool { hasUnsavedInput || model.isSaving || model.isPostingComment }
+
 
     private enum LoadState: Equatable {
         case loading
@@ -66,6 +78,26 @@ struct WorkItemDetailView: View {
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
+        .navigationBarBackButtonHidden(locksDatabase)
+        .onChange(of: locksDatabase, initial: true) { _, active in
+            appModel.setWorkItemDraftActive(active, owner: draftOwner)
+        }
+        .alert("Discard unsaved changes?", isPresented: Binding(get: { discardIntent != nil }, set: { if !$0 { discardIntent = nil } }), presenting: discardIntent) { intent in
+            Button("Discard changes", role: .destructive) {
+                discardIntent = nil
+                cancelEditing()
+                if intent == .leave {
+                    commentDraft = ""
+                    appModel.setWorkItemDraftActive(false, owner: draftOwner)
+                    dismiss()
+                }
+            }
+            Button("Keep editing", role: .cancel) { discardIntent = nil }
+        }
+        .alert("Discard these unsent changes?", isPresented: Binding(get: { discardMutation != nil }, set: { if !$0 { discardMutation = nil } }), presenting: discardMutation) { mutation in
+            Button("Discard changes", role: .destructive) { model.discardPendingMutation(mutation.mutationId) }
+            Button("Keep changes", role: .cancel) {}
+        }
         .task {
             await load()
             await model.loadComments(itemId)
@@ -85,6 +117,17 @@ struct WorkItemDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .keyboard) {
+            Spacer()
+            Button("Done") { focusedField = nil }
+                .accessibilityIdentifier("keyboard.done")
+        }
+        if locksDatabase {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Back", systemImage: "chevron.left") { discardIntent = .leave }
+                    .disabled(model.isSaving || model.isPostingComment)
+            }
+        }
         if let detail, !detail.isUnsupportedVersion, model.canWrite {
             if isEditing {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -93,7 +136,10 @@ struct WorkItemDetailView: View {
                         .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSaving)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Cancel") { cancelEditing() }
+                    Button("Cancel") {
+                        if draftTitle != detail.item.title || draftBody != detail.item.body { discardIntent = .edit }
+                        else { cancelEditing() }
+                    }.disabled(model.isSaving)
                         .tint(KinicDesign.hotPink)
                 }
             } else {
@@ -115,12 +161,15 @@ struct WorkItemDetailView: View {
     @ViewBuilder
     private func header(_ detail: WorkItemDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            Label(appModel.selectedDatabase?.displayTitle ?? appModel.selectedDatabaseId, systemImage: "externaldrive")
+                .font(.subheadline).foregroundStyle(.secondary)
             if detail.isUnsupportedVersion {
                 Text("This item was written by a newer version of the app. The body is shown read-only.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else if isEditing {
                 TextField("Title", text: $draftTitle)
+                    .focused($focusedField, equals: .title)
                     .textFieldStyle(.roundedBorder)
                     .font(.headline)
             } else {
@@ -148,6 +197,7 @@ struct WorkItemDetailView: View {
     private func bodySection(_ detail: WorkItemDetail) -> some View {
         if isEditing {
             TextEditor(text: $draftBody)
+                .focused($focusedField, equals: .body)
                 .frame(minHeight: 240)
                 .padding(12)
                 .scrollContentBackground(.hidden)
@@ -246,6 +296,7 @@ struct WorkItemDetailView: View {
 
                 if model.canWrite && !detail.isUnsupportedVersion {
                     TextField("Add a comment", text: $commentDraft, axis: .vertical)
+                        .focused($focusedField, equals: .comment)
                         .lineLimit(1...6)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("New comment")
@@ -285,7 +336,7 @@ struct WorkItemDetailView: View {
                             }
                         }
                         Button("Discard", role: .destructive) {
-                            model.discardPendingMutation(mutation.mutationId)
+                            discardMutation = mutation
                         }
                     }
                 }
@@ -343,10 +394,12 @@ struct WorkItemDetailView: View {
 
     private func load() async {
         loadState = .loading
+        let databaseId = model.databaseId
         guard let loaded = await model.loadDetail(itemId) else {
             loadState = .failed(model.actionError ?? "This work item could not be loaded.")
             return
         }
+        guard databaseId == model.databaseId else { return }
         detail = loaded
         loadState = .ready
     }

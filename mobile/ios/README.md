@@ -27,6 +27,14 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Builds the same `kinic.source_capture_request` markdown shape used by `wikibrowser/lib/source-capture.ts`.
 - Writes `/Sources/source-capture-requests/...` through a VFS-specific Candid codec, then triggers the source-capture worker through `https://wiki.kinic.xyz/api/source-capture/trigger`.
 
+## Navigation
+
+The four tabs share a database picker and app settings entry. Home prioritizes work items, with direct **New item**, **Save URL**, and **Capture history** actions. The magnifying-glass button beside Work items floats a compact search box over that heading; it uses the existing database-scoped Work Item search and result rows. The recent-capture summary expands to three Wiki URL captures; the full history remains the device-local list of known capture requests. When local work items or unsent changes exist, the **On this device** link beside Work items opens their send and destination controls. Queued, sending, and failed Wiki captures appear in Capture history without changing their destinations.
+
+Database changes go through the existing Browse draft and Ask AI conversation confirmations. Unfinished work item edits and comments lock database selection across tabs until saved or discarded. Manage contains database information, access controls, usage, and database credits; account and appearance settings live in Settings.
+
+Debug UI tests use `KINIC_SCREENSHOT_MODE=navigation` for isolated, offline fixtures. `KINIC_NAV_STATE` accepts `ready`, `empty`, `offline`, `signed-out`, or `no-database`; `KINIC_LARGE_TEXT=1` and `KINIC_DARK_MODE=1` cover accessibility text and dark appearance. These fixtures are not available in Release builds. `HomeNavigationUITests` exercises navigation and saves named screenshots as XCTest attachments.
+
 ## Required App Store / Apple settings
 
 Configured Apple identifiers:

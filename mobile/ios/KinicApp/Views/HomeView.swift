@@ -11,17 +11,25 @@ struct HomeView: View {
     @State private var workItemModel: WorkItemModel
     @State private var selectedTab = AppTab.home
     @State private var homePath = NavigationPath()
+    @State private var homeDatabaseId: String
+    @State private var isShowingSettings = false
 
-    init(model: AppModel) {
+    init(model: AppModel, workItemModel: WorkItemModel? = nil) {
         self.model = model
         _askAIModel = State(initialValue: AskAIModel(appModel: model))
-        _workItemModel = State(initialValue: WorkItemModel(appModel: model))
+        _workItemModel = State(initialValue: workItemModel ?? WorkItemModel(appModel: model))
+        _homeDatabaseId = State(initialValue: model.selectedDatabaseId)
     }
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $homePath) {
-                WorkItemListView(appModel: model, model: workItemModel, askAIModel: askAIModel)
+                WorkItemListView(
+                    appModel: model,
+                    model: workItemModel,
+                    askAIModel: askAIModel,
+                    openSearchResult: { homePath.append($0) }
+                )
             }
             .tabItem {
                 Label("Home", systemImage: "house")
@@ -50,8 +58,15 @@ struct HomeView: View {
             }
             .tag(AppTab.manage)
         }
+        .environment(\.openKinicSettings, { isShowingSettings = true })
+        .sheet(isPresented: $isShowingSettings) {
+            NavigationStack { AppSettingsView(model: model, askAIModel: askAIModel) }
+        }
         .task { model.startRefreshDatabases() }
         .onChange(of: model.principalText) {
+            homePath = NavigationPath()
+            workItemModel.resetContext()
+            homeDatabaseId = model.selectedDatabaseId
             if model.isSignedIn { model.voicePreview.contextChanged(databaseId: model.selectedAskAIDatabaseId, principal: model.principalText) }
             else { model.voicePreview.end() }
         }
@@ -80,19 +95,28 @@ struct HomeView: View {
         }
         .onChange(of: model.tabSelectionRequestID) {
             selectedTab = model.requestedTab
-            pushRequestedWorkItem()
+            reconcileHomeNavigation()
         }
         .onChange(of: model.workItemNavigationRequestID) {
             selectedTab = .home
-            pushRequestedWorkItem()
+            reconcileHomeNavigation()
         }
         .onChange(of: model.workItemComposeRequestID) {
             // The composer itself is presented by WorkItemListView, which owns the sheet.
             selectedTab = .home
         }
         .onChange(of: model.selectedDatabaseId) {
-            pushRequestedWorkItem()
+            reconcileHomeNavigation()
         }
+    }
+
+    private func reconcileHomeNavigation() {
+        if homeDatabaseId != model.selectedDatabaseId {
+            homePath = NavigationPath()
+            workItemModel.resetContext()
+            homeDatabaseId = model.selectedDatabaseId
+        }
+        pushRequestedWorkItem()
     }
 
     /// Pushes a work item opened from another surface once Home targets its database.
@@ -111,6 +135,8 @@ struct IngestSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var model: AppModel
     @FocusState private var isURLFocused: Bool
+    @State private var hasInput = false
+    @State private var confirmsDiscard = false
 
     var body: some View {
         NavigationStack {
@@ -119,9 +145,9 @@ struct IngestSheet: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    ManualURLPanel(model: model, isURLFocused: $isURLFocused) {
+                    ManualURLPanel(model: model, isURLFocused: $isURLFocused, onSubmitted: {
                         dismiss()
-                    }
+                    }, onInputChanged: { hasInput = $0 })
                         .padding(KinicDesign.screenPadding)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -133,12 +159,12 @@ struct IngestSheet: View {
                         }
                 }
             }
-            .navigationTitle("Ingest")
+            .navigationTitle("Save URL")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") {
-                        dismiss()
+                        if hasInput { confirmsDiscard = true } else { dismiss() }
                     }
                     .labelStyle(.iconOnly)
                     .tint(KinicDesign.hotPink)
@@ -146,6 +172,11 @@ struct IngestSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .interactiveDismissDisabled(hasInput || model.isSubmitting)
+        .alert("Discard this URL?", isPresented: $confirmsDiscard) {
+            Button("Discard", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        }
     }
 }
 

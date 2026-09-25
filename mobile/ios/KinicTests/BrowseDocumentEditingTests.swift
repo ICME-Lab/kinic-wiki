@@ -489,6 +489,73 @@ struct BrowseDocumentEditingTests {
 
     @MainActor
     @Test
+    func workItemNavigationWaitsForBrowseDiscardAndCancelsSupersededRequests() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
+        model.updateBrowseDocumentDraft("private draft")
+
+        model.openWorkItemDetail(databaseId: "db_detail", itemId: "item-1")
+        let first = try #require(model.requestedBrowseDatabaseSelection)
+        #expect(model.requestedTab == .browse)
+        #expect(model.requestedWorkItemDetail == nil)
+        #expect(model.selectedDatabaseId == "db_edit")
+
+        model.readableDatabases.append(DatabaseSummary(
+            databaseId: "db_compose", title: "Compose DB", description: "", metadata: nil,
+            role: .owner, status: .active, logicalSizeBytes: 0, cyclesBalance: nil,
+            cyclesSuspendedAtMs: nil, deletedAtMs: nil
+        ))
+        model.requestWorkItemDraft(databaseId: "db_compose", title: "New", body: "Body", source: nil)
+        let compose = try #require(model.requestedBrowseDatabaseSelection)
+        #expect(compose.id != first.id)
+        #expect(model.requestedWorkItemCompose == nil)
+        model.openWorkItemDetail(databaseId: "db_latest", itemId: "item-2")
+        let latest = try #require(model.requestedBrowseDatabaseSelection)
+        model.applyBrowseDatabaseSelection(compose)
+        #expect(model.requestedWorkItemCompose == nil)
+        model.applyBrowseDatabaseSelection(first)
+        #expect(model.requestedWorkItemDetail == nil)
+        model.cancelBrowseDatabaseSelection(latest)
+        #expect(model.selectedDatabaseId == "db_edit")
+        #expect(model.requestedWorkItemDetail == nil)
+
+        model.openWorkItemDetail(databaseId: "db_approved", itemId: "item-3")
+        let approved = try #require(model.requestedBrowseDatabaseSelection)
+        model.applyBrowseDatabaseSelection(approved)
+        #expect(model.selectedDatabaseId == "db_approved")
+        #expect(model.requestedTab == .home)
+        #expect(model.requestedWorkItemDetail == WorkItemDetailRequest(databaseId: "db_approved", itemId: "item-3"))
+    }
+
+    @MainActor
+    @Test
+    func workItemComposerOnlyOpensAfterBrowseDiscardIsConfirmed() throws {
+        let fixture = try BrowseEditingFixture()
+        defer { fixture.cleanup() }
+        let model = fixture.model
+        configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
+        model.readableDatabases.append(DatabaseSummary(
+            databaseId: "db_compose", title: "Compose DB", description: "", metadata: nil,
+            role: .owner, status: .active, logicalSizeBytes: 0, cyclesBalance: nil,
+            cyclesSuspendedAtMs: nil, deletedAtMs: nil
+        ))
+        #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
+        model.updateBrowseDocumentDraft("private draft")
+        model.requestWorkItemDraft(databaseId: "db_compose", title: "New", body: "Body", source: nil)
+        let request = try #require(model.requestedBrowseDatabaseSelection)
+        #expect(model.requestedTab == .browse)
+        #expect(model.requestedWorkItemCompose == nil)
+        model.applyBrowseDatabaseSelection(request)
+        #expect(model.selectedDatabaseId == "db_compose")
+        #expect(model.requestedTab == .home)
+        #expect(model.requestedWorkItemCompose?.body == "Body")
+    }
+
+    @MainActor
+    @Test
     func lostDatabaseAccessKeepsDraftUntilExplicitDiscard() throws {
         let fixture = try BrowseEditingFixture()
         defer { fixture.cleanup() }

@@ -8,7 +8,7 @@ import Foundation
 @MainActor
 protocol WorkItemWidgetSnapshotWriting: AnyObject {
     func workItemListDidLoad(databaseId: String, entries: [WorkItemListEntry], fetchedAt: Int64)
-    func workItemListDidFail(databaseId: String)
+    func workItemListDidLoseAccess(databaseId: String)
 }
 
 enum WorkItemWidgetProjection {
@@ -32,7 +32,7 @@ enum WorkItemWidgetProjection {
         previous: [WorkItemWidgetSnapshot.Database],
         now: Int64
     ) -> [WorkItemWidgetSnapshot.Database] {
-        readable.map { summary in
+        readable.filter { $0.status != .deleted }.map { summary in
             let existing = previous.first { $0.id == summary.databaseId }
             return WorkItemWidgetSnapshot.Database(
                 id: summary.databaseId,

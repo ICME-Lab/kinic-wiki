@@ -6,6 +6,15 @@ import SwiftUI
 
 struct DatabasePanel: View {
     @Bindable var model: AppModel
+    var databases: [DatabaseSummary]? = nil
+    var searchQuery = ""
+    var onSelect: ((DatabaseSummary) -> Void)? = nil
+    private var filteredDatabases: [DatabaseSummary] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (databases ?? model.browseListDatabases).filter {
+            query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query) || $0.databaseId.localizedCaseInsensitiveContains(query)
+        }
+    }
     @State private var isCreateSheetPresented = false
     @State private var creditTarget: DatabaseCreditTarget?
     @State private var newDatabaseName = ""
@@ -17,13 +26,13 @@ struct DatabasePanel: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(KinicIconButtonStyle())
                     .accessibilityLabel(model.isCreatingDatabase ? "Creating database" : "Create database")
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase || model.databaseSelectionLocked)
 
                 Button("Refresh databases", systemImage: "arrow.clockwise", action: model.startRefreshDatabases)
                     .labelStyle(.iconOnly)
                     .buttonStyle(KinicIconButtonStyle())
                     .accessibilityLabel("Refresh databases")
-                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase)
+                    .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isCreatingDatabase || model.databaseSelectionLocked)
 
                 Button("Add database credits", systemImage: "creditcard", action: presentSelectedCreditSheet)
                     .labelStyle(.iconOnly)
@@ -46,7 +55,7 @@ struct DatabasePanel: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-                if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
+                if model.databaseSelectionLocked { Text(model.databaseSelectionLockReason).font(.caption) }
                 if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
                     ProgressView("Loading databases…")
                 } else if model.browseListDatabases.isEmpty {
@@ -57,8 +66,11 @@ struct DatabasePanel: View {
                     )
                     .frame(maxWidth: .infinity)
                 } else {
+                    if filteredDatabases.isEmpty {
+                        ContentUnavailableView.search(text: searchQuery)
+                    }
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.browseListDatabases) { database in
+                        ForEach(filteredDatabases) { database in
                             databaseButton(database)
                         }
                     }
@@ -141,8 +153,9 @@ struct DatabasePanel: View {
         return Button {
             guard !model.databaseSelectionLocked else { return }
             if isPending {
-                model.selectDatabase(database.databaseId)
                 presentCreditSheet(databaseId: database.databaseId, title: database.displayTitle)
+            } else if let onSelect {
+                onSelect(database)
             } else {
                 model.selectDatabase(database.databaseId)
             }
@@ -232,7 +245,7 @@ private struct PendingDatabaseCreditPrompt: View {
     }
 }
 
-private struct DatabaseCreditSheet: View {
+struct DatabaseCreditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var model: AppModel
     let target: DatabaseCreditTarget
@@ -341,6 +354,7 @@ private struct CreateDatabaseSheet: View {
     let creating: Bool
     let onCancel: () -> Void
     let onCreate: () -> Void
+    @State private var confirmsDiscard = false
 
     private var trimmedName: String {
         databaseName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -371,11 +385,18 @@ private struct CreateDatabaseSheet: View {
                     }
                 }
             }
+            .interactiveDismissDisabled(creating || !databaseName.isEmpty)
+            .alert("Discard database name?", isPresented: $confirmsDiscard) {
+                Button("Discard", role: .destructive, action: onCancel)
+                Button("Keep editing", role: .cancel) {}
+            }
             .navigationTitle("Create database")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: onCancel)
+                    Button("Cancel") {
+                        if databaseName.isEmpty { onCancel() } else { confirmsDiscard = true }
+                    }
                         .disabled(creating)
                 }
                 ToolbarItem(placement: .confirmationAction) {

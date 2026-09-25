@@ -95,6 +95,16 @@ struct WorkItemWidgetSnapshotTests {
     }
 
     @Test
+    func recentClosedItemsDoNotDisplaceAnOlderOpenItem() throws {
+        let store = WorkItemWidgetSnapshotStore(directory: makeDirectory())
+        let items = [item("open", updatedAt: 1)] + (2...6).map {
+            item("closed-\($0)", state: .closed, updatedAt: Int64($0))
+        }
+        try store.write(snapshot(items: items))
+        #expect(store.read()?.database(id: "db-1")?.items.map(\.id) == ["open"])
+    }
+
+    @Test
     func openItemsAreFilteredSortedAndLimited() {
         let database = WorkItemWidgetSnapshot.Database(
             id: "db-1",
@@ -144,6 +154,9 @@ struct WorkItemWidgetSnapshotTests {
         #expect(projected.first?.title == "New title")
         #expect(projected.first?.canWrite == false)
         #expect(projected.first?.items.map(\.id) == ["a"])
+        #expect(WorkItemWidgetProjection.databases(
+            readable: [summary("db-1", status: .deleted)], previous: previous, now: 99
+        ).isEmpty)
     }
 
     @Test
@@ -157,5 +170,14 @@ struct WorkItemWidgetSnapshotTests {
 
         #expect(items.map(\.state) == [.open, .closed])
         #expect(items.map(\.commentCount) == [1, 0])
+    }
+
+    @MainActor @Test
+    func onlyExplicitCanisterAccessLossClearsWidgetTitles() {
+        #expect(WorkItemModel.isDefinitiveAccessLoss(VFSCandidError.canisterRejected("principal has no access to database: db-1")))
+        #expect(WorkItemModel.isDefinitiveAccessLoss(VFSCandidError.canisterRejected("database not found: db-1")))
+        #expect(WorkItemModel.isDefinitiveAccessLoss(VFSCandidError.canisterRejected("database is deleted: db-1")))
+        #expect(!WorkItemModel.isDefinitiveAccessLoss(URLError(.notConnectedToInternet)))
+        #expect(!WorkItemModel.isDefinitiveAccessLoss(VFSCandidError.canisterRejected("path not found: /WorkItems")))
     }
 }
