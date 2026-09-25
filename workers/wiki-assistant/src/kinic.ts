@@ -109,6 +109,26 @@ export class KinicReader {
     this.state.characters += text.length;
     return text;
   }
+  private async sourceRefs(path: string) {
+    const result = unwrap(
+      await this.actor.source_evidence({
+        database_id: this.databaseId,
+        node_path: path,
+      }),
+    );
+    return result.refs
+      .filter(
+        (ref) =>
+          ref.source_path.startsWith("/Sources/") &&
+          isReadablePath(ref.source_path),
+      )
+      .slice(0, 10)
+      .map((ref) => ({
+        path: ref.source_path,
+        etag: ref.source_etag[0] ?? null,
+        updatedAt: ref.source_updated_at[0]?.toString() ?? null,
+      }));
+  }
   async execute(name: string, args: unknown): Promise<string> {
     if (++this.state.calls > this.maxCalls)
       throw new AssistantError("tool_limit");
@@ -318,13 +338,23 @@ export class KinicReader {
         etag: node.etag,
         retrievedAt: new Date().toISOString(),
       };
+      const sourceRefs =
+        this.route === "focused_search" && !node.path.startsWith("/Sources/")
+          ? await this.sourceRefs(node.path)
+          : [];
       const output = this.bounded({
         ...citation,
         totalCharacters: node.content.length,
         metadata: node.metadata_json.slice(0, 400),
+        sourceRefs,
       });
       this.state.evidence.push(citation);
       this.state.readPaths.push(input.path);
+      this.state.sources.push(
+        ...sourceRefs
+          .map((ref) => ref.path)
+          .filter((path) => !this.state.sources.includes(path)),
+      );
       return output;
     }
     if (name === "wiki_sources") {
@@ -332,27 +362,9 @@ export class KinicReader {
       this.path(input.path);
       if (!this.state.readPaths.includes(input.path))
         throw new AssistantError("read_node_first");
-      const result = unwrap(
-        await this.actor.source_evidence({
-          database_id: this.databaseId,
-          node_path: input.path,
-        }),
-      );
-      const refs = result.refs
-        .filter(
-          (ref) =>
-            ref.source_path.startsWith("/Sources/") &&
-            isReadablePath(ref.source_path),
-        )
-        .slice(0, 10);
-      const output = this.bounded({
-        refs: refs.map((ref) => ({
-          path: ref.source_path,
-          etag: ref.source_etag[0] ?? null,
-          updatedAt: ref.source_updated_at[0]?.toString() ?? null,
-        })),
-      });
-      this.state.sources.push(...refs.map((ref) => ref.source_path));
+      const refs = await this.sourceRefs(input.path);
+      const output = this.bounded({ refs });
+      this.state.sources.push(...refs.map((ref) => ref.path));
       return output;
     }
     throw new AssistantError("unknown_tool", 403);

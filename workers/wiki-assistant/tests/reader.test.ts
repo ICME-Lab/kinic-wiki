@@ -145,6 +145,38 @@ describe("read tools and citations", () => {
     );
     expect(answer.citations[0].etag).toBe("source-1");
   });
+  it("includes source references in focused search reads so the source can be read next", async () => {
+    const actor = fixtureActor();
+    const state = emptyToolState();
+    const reader = new KinicReader(
+      actor,
+      "db-a",
+      "/Knowledge",
+      state,
+      24000,
+      12,
+      "key",
+      "focused_search",
+    );
+    await reader.execute("wiki_query", {
+      question: "色は？",
+      scope: "/Knowledge",
+    });
+    const note = JSON.parse(await reader.execute("wiki_read", {
+      path: "/Knowledge/decision.md",
+      start: 0,
+    }));
+    expect(note.sourceRefs).toEqual([
+      { path: "/Sources/design.md", etag: "source-1", updatedAt: "90" },
+    ]);
+    expect(actor.source_evidence).toHaveBeenCalledTimes(1);
+    const source = JSON.parse(await reader.execute("wiki_read", {
+      path: "/Sources/design.md",
+      start: 0,
+    }));
+    expect(source.excerpt).toBe("承認済みの色は青です。");
+    expect(state.sources).toEqual(["/Sources/design.md"]);
+  });
   it("builds a bounded database inventory and excludes internal roots", async () => {
     const actor = fixtureActor();
     const inventoryNodes = new Map([

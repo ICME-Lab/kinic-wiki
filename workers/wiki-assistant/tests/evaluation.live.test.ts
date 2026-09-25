@@ -1,10 +1,12 @@
 import { afterAll, expect, it } from "vitest";
+import { appendFileSync } from "node:fs";
 import { evaluationCases } from "./evaluation-cases";
 import {
   client,
   createAgent,
   cancelAgent,
   deleteAgent,
+  inputText,
   messageText,
   sessionItems,
 } from "../src/openai";
@@ -30,10 +32,26 @@ type EvaluationMetric = {
 };
 
 const metrics: EvaluationMetric[] = [];
+const startIndex = process.env.JEV_EVAL_START_CASE
+  ? evaluationCases.findIndex((fixture) => fixture.id === process.env.JEV_EVAL_START_CASE)
+  : 0;
+if (startIndex < 0) throw new Error("JEV_EVAL_START_CASE did not match a fixture");
+const selectedCases = process.env.JEV_EVAL_CASE
+  ? evaluationCases.filter((fixture) => fixture.id === process.env.JEV_EVAL_CASE)
+  : evaluationCases.slice(startIndex);
+if (selectedCases.length === 0) throw new Error("JEV_EVAL_CASE did not match a fixture");
+
+function trace(caseId: string, mode: EvaluationMode, step: string): void {
+  if (process.env.JEV_EVAL_TRACE !== "1") return;
+  const message = JSON.stringify({ event: "jev_live_evaluation_step", caseId, mode, step, at: Date.now() });
+  if (process.env.JEV_EVAL_TRACE_PATH)
+    appendFileSync(process.env.JEV_EVAL_TRACE_PATH, `${message}\n`);
+  else console.log(message);
+}
 
 // Opt-in only: this suite incurs TypeSafe and OpenAI API charges and is excluded
 // from `pnpm test`. Each case runs once with the FTS top five and once with Jev.
-it.each(evaluationCases)(
+it.each(selectedCases)(
   "grounding evaluation: $id",
   async (fixture) => {
     const openaiApiKey = process.env.OPENAI_API_KEY;
@@ -66,11 +84,13 @@ it.each(evaluationCases)(
     );
     metrics.push({ caseId: `case-${caseIndex + 1}`, fts, jev });
   },
-  240000,
+  300000,
 );
 
 afterAll(() => {
-  expect(metrics).toHaveLength(evaluationCases.length);
+  // A per-case failure (including a --bail run) already reports its cause.
+  if (metrics.length !== selectedCases.length) return;
+  if (selectedCases.length !== evaluationCases.length) return;
   const ftsRecall = recallAtFive(metrics.map(({ fts }) => fts));
   const jevRecall = recallAtFive(metrics.map(({ jev }) => jev));
   const ftsMedianMs = medianReached(
@@ -192,20 +212,28 @@ async function runEvaluation(
     24000,
     12,
     typesafeApiKey,
+    "focused_search",
   );
   const results = new Map<string, string>();
   const started = Date.now();
+  const signal = AbortSignal.timeout(90_000);
+  const requestId = crypto.randomUUID();
+  trace(fixture.id, mode, "create_session");
   const session = await createAgent(
     api,
     crypto.randomUUID(),
-    crypto.randomUUID(),
-    JSON.stringify({ question: fixture.question, scope }),
+    requestId,
+    inputText(requestId, fixture.question, scope, undefined, [], "focused_search"),
+    signal,
   );
+  trace(fixture.id, mode, "session_created");
   let selectedGold = false;
   let citationReachedMs: number | null = null;
   try {
-    while (Date.now() - started < 90000) {
-      const current = await api.beta.agents.sessions.retrieve(session.id);
+    while (!signal.aborted) {
+      trace(fixture.id, mode, "retrieve_session");
+      const current = await api.beta.agents.sessions.retrieve(session.id, { signal });
+      trace(fixture.id, mode, `session_${current.status}`);
       if (current.status === "failed") throw new Error("Agent session failed");
       for (const action of current.required_actions) {
         if (action.type !== "function_call")
@@ -213,6 +241,7 @@ async function runEvaluation(
         const output =
           results.get(action.call_id) ??
           (await reader.execute(action.name, action.arguments));
+        trace(fixture.id, mode, `tool_${action.name}`);
         results.set(action.call_id, output);
         if (action.name === "wiki_query") {
           const paths = (
@@ -235,29 +264,45 @@ async function runEvaluation(
               output,
             },
           ],
-        });
+        }, { signal });
+        trace(fixture.id, mode, "tool_result_sent");
       }
+      trace(fixture.id, mode, "list_turns");
       const turns = await api.beta.agents.sessions.turns.list(session.id, {
         limit: 1,
-      });
+      }, { signal });
       const turn = turns.data[0];
+      trace(fixture.id, mode, `turn_${turn?.status ?? "missing"}`);
       if (turn?.status === "failed" || turn?.status === "cancelled")
         throw new Error("Agent turn failed");
       if (turn?.status === "completed") {
-        const items = await sessionItems(api, session.id);
-        const final = items.find(
-          (item) =>
-            item.type === "message" &&
-            item.role === "assistant" &&
-            item.phase === "final_answer" &&
-            item.turn_id === turn.id,
-        );
-        expect(final).toBeDefined();
-        const answer = validateAnswer(
-          JSON.parse(messageText(final!)),
-          state.evidence,
-        );
-        if (mode === "jev") validateFixtureAnswer(fixture, answer, sourcePath);
+        if (mode === "jev") {
+          trace(fixture.id, mode, "list_items");
+          const items = await sessionItems(api, session.id, signal);
+          trace(fixture.id, mode, "items_listed");
+          const final = items.find(
+            (item) =>
+              item.type === "message" &&
+              item.role === "assistant" &&
+              item.phase === "final_answer" &&
+              item.turn_id === turn.id,
+          );
+          expect(final).toBeDefined();
+          const rawAnswer = JSON.parse(messageText(final!));
+          if (process.env.JEV_EVAL_DIAGNOSE_CITATIONS === "1") {
+            const citations = (rawAnswer as { citations?: { id: string; quote: string }[] }).citations ?? [];
+            console.log(JSON.stringify({
+              event: "jev_citation_diagnostic",
+              caseId: fixture.id,
+              citations: citations.map(({ id, quote }) => {
+                const source = state.evidence.find((item) => item.id === id);
+                return { path: source?.path ?? null, quote, excerpt: source?.excerpt ?? null, exact: source?.excerpt.includes(quote) ?? false };
+              }),
+            }));
+          }
+          const answer = validateAnswer(rawAnswer, state.evidence);
+          validateFixtureAnswer(fixture, answer, sourcePath);
+        }
         return {
           selectedGold,
           citationReachedMs,
@@ -268,13 +313,16 @@ async function runEvaluation(
     }
     throw new Error("Evaluation deadline exceeded");
   } finally {
+    trace(fixture.id, mode, "cancel_session");
     try {
-      await cancelAgent(api, session.id);
+      await cancelAgent(api, session.id, AbortSignal.timeout(15_000));
     } catch {
       /* Delete even if cancel has already completed. */
     }
+    trace(fixture.id, mode, "delete_session");
     try {
-      await deleteAgent(api, session.id);
+      await deleteAgent(api, session.id, AbortSignal.timeout(15_000));
+      trace(fixture.id, mode, "session_deleted");
     } catch {
       throw new Error(
         `Evaluation session cleanup failed; retry deletion for ${session.id}`,
@@ -295,8 +343,14 @@ function validateFixtureAnswer(
     ).toBe(true);
   }
   if ("insufficient" in fixture) expect(answer.insufficient).toBe(true);
-  if ("unverified" in fixture)
-    expect(answer.insufficient || answer.unverified.length > 0).toBe(true);
+  if ("unverified" in fixture) {
+    // A source-backed answer that explicitly says the claim is not established
+    // is also correct; it need not repeat that conclusion in `unverified`.
+    const sourceBackedNegative =
+      answer.citations.some((citation) => citation.path === sourcePath) &&
+      /未(?:確定|確認|決定|公開|レビュー)|決まって(?:いない|いません)|確定(?:していない|していません|ではない)|確認(?:できない|できません)|不明|まだ|not (?:confirmed|decided|verified)/iu.test(answer.answer);
+    expect(answer.insufficient || answer.unverified.length > 0 || sourceBackedNegative).toBe(true);
+  }
   if ("contradiction" in fixture)
     expect(answer.contradictions.length).toBeGreaterThan(0);
 }

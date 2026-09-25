@@ -32,6 +32,7 @@ export async function createAgent(
   conversationId: string,
   requestId: string,
   input: string,
+  signal?: AbortSignal,
 ) {
   return api.beta.agents.sessions.create({
     environment: { type: "none" },
@@ -44,7 +45,7 @@ export async function createAgent(
     },
     metadata: { kinic_conversation: conversationId, kinic_request: requestId },
     input,
-  });
+  }, { signal });
 }
 export async function createLive(api: OpenAI, sdp: string, history: { role: "user" | "assistant"; text: string }[] = []) {
   return api.live.create({
@@ -77,26 +78,27 @@ export function messageText(item: AgentSessionItem): string {
 export async function sessionItems(
   api: OpenAI,
   id: string,
+  signal?: AbortSignal,
 ): Promise<AgentSessionItem[]> {
   // Bounded recent history: a conversation has at most the daily request limit.
   const items: AgentSessionItem[] = [];
   for await (const item of api.beta.agents.sessions.items.list(id, {
     order: "desc",
     limit: 100,
-  })) {
+  }, { signal })) {
     items.push(item);
     if (items.length >= 300) break;
   }
   return items;
 }
-export async function cancelAgent(api: OpenAI, id: string): Promise<void> {
+export async function cancelAgent(api: OpenAI, id: string, signal?: AbortSignal): Promise<void> {
   await api.beta.agents.sessions.events.create(id, {
     events: [{ type: "agent.session.input.cancel" }],
-  });
+  }, { signal });
 }
-export async function deleteAgent(api: OpenAI, id: string): Promise<void> {
+export async function deleteAgent(api: OpenAI, id: string, signal?: AbortSignal): Promise<void> {
   try {
-    await api.beta.agents.sessions.delete(id);
+    await api.beta.agents.sessions.delete(id, { signal });
   } catch (error) {
     if (!(error instanceof OpenAI.APIError && error.status === 404))
       throw error;
