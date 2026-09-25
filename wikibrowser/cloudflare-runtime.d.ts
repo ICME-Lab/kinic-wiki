@@ -4,6 +4,7 @@ interface CloudflareEnv {
   TYPESAFE_API_KEY?: string;
   RECALL_JEV_ENABLED?: string;
   RECALL_JEV_THRESHOLD?: string;
+  RECALL_ALLOWED_DATABASE_ID?: string;
   KINIC_DEPLOYMENT_ENV?: string;
   KINIC_WIKI_CANISTER_ID: string;
   KINIC_WIKI_ALLOWED_DATABASE_ID?: string;

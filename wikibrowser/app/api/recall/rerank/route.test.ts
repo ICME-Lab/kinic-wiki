@@ -58,6 +58,13 @@ describe("Recall Jev API", () => {
     expect((await POST(request(input()), runtime as never)).status).toBe(403);
   });
 
+  it("uses the Recall-specific staging database restriction when configured", async () => {
+    deps({ candidate_0: 1 });
+    const runtime = { ...env(), RECALL_ALLOWED_DATABASE_ID: "db-moj" };
+    expect((await POST(request(input()), runtime as never)).status).toBe(403);
+    expect((await POST(request({ ...input(), databaseId: "db-moj" }), runtime as never)).status).toBe(200);
+  });
+
   it("enforces the rate limit and fails closed when the rate store fails", async () => {
     deps({ candidate_0: 1 });
     const runtime = env();

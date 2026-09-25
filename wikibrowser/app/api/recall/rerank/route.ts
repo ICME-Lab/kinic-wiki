@@ -10,7 +10,7 @@ type RerankRequest = {
 type RateLimitStore = CloudflareEnv["QUERY_ANSWER_RATE_LIMIT"];
 type RecallEnv = Pick<CloudflareEnv,
   "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_CLIPPER_ORIGIN" |
-  "KINIC_WIKI_ALLOWED_DATABASE_ID" | "QUERY_ANSWER_RATE_LIMIT" |
+  "KINIC_WIKI_ALLOWED_DATABASE_ID" | "RECALL_ALLOWED_DATABASE_ID" | "QUERY_ANSWER_RATE_LIMIT" |
   "TYPESAFE_API_KEY" | "RECALL_JEV_ENABLED" | "RECALL_JEV_THRESHOLD"
 >;
 type Dependencies = {
@@ -65,7 +65,8 @@ export async function POST(request: Request, env: RecallEnv = process.env as unk
   } catch {
     return errorResponse("invalid_request", 400, origin);
   }
-  if (env.KINIC_WIKI_ALLOWED_DATABASE_ID && input.databaseId !== env.KINIC_WIKI_ALLOWED_DATABASE_ID)
+  const allowedDatabaseId = env.RECALL_ALLOWED_DATABASE_ID ?? env.KINIC_WIKI_ALLOWED_DATABASE_ID;
+  if (allowedDatabaseId && input.databaseId !== allowedDatabaseId)
     return errorResponse("database_not_allowed", 403, origin);
 
   let principal: string;
