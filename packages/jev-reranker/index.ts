@@ -9,7 +9,7 @@ export type JevCandidate = {
   preview: string;
 };
 
-export type JevWorkflow = "generator" | "ask_ai" | "ask_ai_route";
+export type JevWorkflow = "generator" | "ask_ai" | "ask_ai_route" | "recall";
 
 export type JevMetric = {
   workflow: JevWorkflow;

@@ -38,7 +38,9 @@ test("build:staging produces an isolated unpacked extension", async () => {
   assert.match(artifactText, /kinic-wiki-browser-staging\.hude\.workers\.dev/);
   assert.doesNotMatch(artifactText, /6emaw-iyaaa-aaaay-aacka-cai/);
   assert.doesNotMatch(artifactText, /https:\/\/wiki\.kinic\.xyz/);
+  assert.doesNotMatch(artifactText, /TYPESAFE_API_KEY|api\.typesafe\.ai/);
   assert.match(popupHtml, /TypeSafe in the United States/);
+  assert.match(popupHtml, /question and up to 20 short Wiki previews are sent to TypeSafe/);
   assert.match(popupHtml, /DeepSeek/);
 });
 

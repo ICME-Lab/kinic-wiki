@@ -106,6 +106,7 @@ function idlFactory({ IDL: idl }) {
     prefix: idl.Opt(idl.Text),
     query_text: idl.Text
   });
+  const OpsAnswerSessionRequest = idl.Record({ database_id: idl.Text, session_nonce: idl.Text });
   const WriteSourceForGenerationRequest = idl.Record({
     database_id: idl.Text,
     path: idl.Text,
@@ -128,6 +129,7 @@ function idlFactory({ IDL: idl }) {
     session_nonce: idl.Text
   });
   return idl.Service({
+    authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),

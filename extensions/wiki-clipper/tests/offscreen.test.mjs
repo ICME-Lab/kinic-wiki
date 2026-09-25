@@ -94,6 +94,79 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
   }
 });
 
+test("searchRecall sends candidates before the top-three cut and accepts an empty Jev selection", async () => {
+  let posted;
+  setOffscreenDepsForTest({
+    recallJevEnabled: true,
+    authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        return { Ok: Array.from({ length: 5 }, (_, index) => rawRecallHit(
+          `${request.prefix[0]}/${index}.md`, ["content_fts"], -100 + index
+        )) };
+      },
+      async authorize_ops_answer_session() { return { Ok: null }; }
+    }),
+    fetch: async (_url, options) => {
+      posted = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ selectedIndices: [] }) };
+    }
+  });
+  try {
+    assert.deepEqual(await searchRecall("agent memory", "https://chatgpt.com/c/current", config()), []);
+    assert.equal(posted.candidates.length, 10);
+    assert.equal(posted.question, "agent memory");
+    assert.ok(posted.candidates.every(({ preview }) => preview.length <= 300));
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall falls back to lexical cards on Jev or session failure", async () => {
+  for (const failure of ["jev", "session"]) {
+    setOffscreenDepsForTest({
+      recallJevEnabled: true,
+      authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
+      createVfsActor: async () => ({
+        async search_nodes(request) {
+          return { Ok: [rawRecallHit(`${request.prefix[0]}/one.md`, ["content_fts"], -100)] };
+        },
+        async authorize_ops_answer_session() {
+          return failure === "session" ? { Err: "expired" } : { Ok: null };
+        }
+      }),
+      fetch: async () => { throw new Error("Jev unavailable"); }
+    });
+    try {
+      const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", config());
+      assert.deepEqual(result.map(({ path }) => path), ["/Knowledge/one.md", "/Sources/one.md"]);
+    } finally {
+      setOffscreenDepsForTest();
+    }
+  }
+});
+
+test("searchRecall returns lexical cards before four seconds when session authorization stalls", async () => {
+  setOffscreenDepsForTest({
+    recallJevEnabled: true,
+    authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        return { Ok: [rawRecallHit(`${request.prefix[0]}/one.md`, ["content_fts"], -100)] };
+      },
+      async authorize_ops_answer_session() { return new Promise(() => {}); }
+    })
+  });
+  try {
+    const started = performance.now();
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", config());
+    assert.deepEqual(result.map(({ path }) => path), ["/Knowledge/one.md", "/Sources/one.md"]);
+    assert.ok(performance.now() - started < 4_000);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("searchRecall runs one fallback query only when literal results are insufficient", async () => {
   const calls = [];
   setOffscreenDepsForTest({

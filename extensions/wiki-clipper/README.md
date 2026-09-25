@@ -52,7 +52,9 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 4. Multiple-chat exports use the count field, whose default is `1`.
 5. Exported evidence is saved to `/Sources/<provider>/<source_id>.md`.
 
-When `Recall beta` is enabled in extension settings, ChatGPT questions are searched against `/Knowledge` first and `/Sources` second. Up to three matching previews can appear after a question is sent. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation.
+When `Recall beta` is enabled in extension settings, ChatGPT questions are searched against `/Knowledge` first and `/Sources` second. When Jev reranking is enabled after evaluation, the current question and up to 20 candidate paths and short previews are sent through the Kinic Wiki server to TypeSafe for relevance ranking. Up to three related previews can appear after a question is sent; no card is shown when Jev finds no relevant candidate. If reranking is unavailable, Recall shows the existing search results. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation. Jev reranking requires `KINIC_RECALL_JEV_ENABLED=true` in the extension build and `RECALL_JEV_ENABLED=true`, `RECALL_JEV_THRESHOLD`, and `TYPESAFE_API_KEY` in the WikiBrowser Worker; the feature remains disabled until the real-Wiki evaluation gate passes.
+
+The [Recall Jev evaluation guide](docs/recall-jev-evaluation.md) defines the opt-in 60-case run and release gate.
 
 ## Active Tab Capture
 

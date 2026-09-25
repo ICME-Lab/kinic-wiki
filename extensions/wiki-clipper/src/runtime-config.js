@@ -21,3 +21,5 @@ export const RUNTIME_SOURCE_TRIGGER_URL =
     : "https://wiki.kinic.xyz/api/source/run";
 export const RUNTIME_WIKI_ORIGIN =
   typeof __KINIC_WIKI_ORIGIN__ === "string" ? __KINIC_WIKI_ORIGIN__ : "https://wiki.kinic.xyz";
+export const RUNTIME_RECALL_JEV_ENABLED =
+  typeof __KINIC_RECALL_JEV_ENABLED__ === "boolean" ? __KINIC_RECALL_JEV_ENABLED__ : false;

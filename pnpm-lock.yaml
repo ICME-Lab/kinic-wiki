@@ -186,6 +186,9 @@ importers:
       '@icp-sdk/core':
         specifier: ^5.4.0
         version: 5.4.0
+      '@kinic/jev-reranker':
+        specifier: workspace:*
+        version: link:../packages/jev-reranker
       '@kinic/source-contracts':
         specifier: workspace:*
         version: link:../packages/source-contracts

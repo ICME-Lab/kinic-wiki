@@ -38,6 +38,7 @@
     "@icp-sdk/auth": "5.0.0",
     "@icp-sdk/canisters": "^3.6.0",
     "@icp-sdk/core": "^5.4.0",
+    "@kinic/jev-reranker": "workspace:*",
     "@kinic/source-contracts": "workspace:*",
     "@kinic/vfs-candid": "workspace:*",
     "@kinic/vfs-client-core": "workspace:*",

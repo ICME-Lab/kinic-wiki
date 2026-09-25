@@ -48,6 +48,7 @@ import { Route as DbDatabaseIdSplatRouteImport } from './routes/db.$databaseId.$
 import { Route as DashboardProjectDatabaseIdRouteImport } from './routes/dashboard.project.$databaseId'
 import { Route as ApiSourceRunRouteImport } from './routes/api.source.run'
 import { Route as ApiSourceCaptureTriggerRouteImport } from './routes/api.source-capture.trigger'
+import { Route as ApiRecallRerankRouteImport } from './routes/api.recall.rerank'
 import { Route as ApiQueryAnswerRouteImport } from './routes/api.query.answer'
 
 const SupportRoute = SupportRouteImport.update({
@@ -251,6 +252,11 @@ const ApiSourceCaptureTriggerRoute = ApiSourceCaptureTriggerRouteImport.update({
   path: '/api/source-capture/trigger',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiRecallRerankRoute = ApiRecallRerankRouteImport.update({
+  id: '/api/recall/rerank',
+  path: '/api/recall/rerank',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiQueryAnswerRoute = ApiQueryAnswerRouteImport.update({
   id: '/api/query/answer',
   path: '/api/query/answer',
@@ -288,6 +294,7 @@ export interface FileRoutesByFullPath {
   '/docs/': typeof DocsIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/api/query/answer': typeof ApiQueryAnswerRoute
+  '/api/recall/rerank': typeof ApiRecallRerankRoute
   '/api/source-capture/trigger': typeof ApiSourceCaptureTriggerRoute
   '/api/source/run': typeof ApiSourceRunRoute
   '/dashboard/project/$databaseId': typeof DashboardProjectDatabaseIdRoute
@@ -325,6 +332,7 @@ export interface FileRoutesByTo {
   '/docs': typeof DocsIndexRoute
   '/marketplace': typeof MarketplaceIndexRoute
   '/api/query/answer': typeof ApiQueryAnswerRoute
+  '/api/recall/rerank': typeof ApiRecallRerankRoute
   '/api/source-capture/trigger': typeof ApiSourceCaptureTriggerRoute
   '/api/source/run': typeof ApiSourceRunRoute
   '/dashboard/project/$databaseId': typeof DashboardProjectDatabaseIdRoute
@@ -368,6 +376,7 @@ export interface FileRoutesById {
   '/docs/': typeof DocsIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/api/query/answer': typeof ApiQueryAnswerRoute
+  '/api/recall/rerank': typeof ApiRecallRerankRoute
   '/api/source-capture/trigger': typeof ApiSourceCaptureTriggerRoute
   '/api/source/run': typeof ApiSourceRunRoute
   '/dashboard/project/$databaseId': typeof DashboardProjectDatabaseIdRoute
@@ -412,6 +421,7 @@ export interface FileRouteTypes {
     | '/docs/'
     | '/marketplace/'
     | '/api/query/answer'
+    | '/api/recall/rerank'
     | '/api/source-capture/trigger'
     | '/api/source/run'
     | '/dashboard/project/$databaseId'
@@ -449,6 +459,7 @@ export interface FileRouteTypes {
     | '/docs'
     | '/marketplace'
     | '/api/query/answer'
+    | '/api/recall/rerank'
     | '/api/source-capture/trigger'
     | '/api/source/run'
     | '/dashboard/project/$databaseId'
@@ -491,6 +502,7 @@ export interface FileRouteTypes {
     | '/docs/'
     | '/marketplace/'
     | '/api/query/answer'
+    | '/api/recall/rerank'
     | '/api/source-capture/trigger'
     | '/api/source/run'
     | '/dashboard/project/$databaseId'
@@ -525,6 +537,7 @@ export interface RootRouteChildren {
   PPublicIdRoute: typeof PPublicIdRoute
   SkillsDatabaseIdRoute: typeof SkillsDatabaseIdRoute
   ApiQueryAnswerRoute: typeof ApiQueryAnswerRoute
+  ApiRecallRerankRoute: typeof ApiRecallRerankRoute
   ApiSourceCaptureTriggerRoute: typeof ApiSourceCaptureTriggerRoute
   ApiSourceRunRoute: typeof ApiSourceRunRoute
 }
@@ -804,6 +817,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSourceCaptureTriggerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/recall/rerank': {
+      id: '/api/recall/rerank'
+      path: '/api/recall/rerank'
+      fullPath: '/api/recall/rerank'
+      preLoaderRoute: typeof ApiRecallRerankRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/query/answer': {
       id: '/api/query/answer'
       path: '/api/query/answer'
@@ -919,6 +939,7 @@ const rootRouteChildren: RootRouteChildren = {
   PPublicIdRoute: PPublicIdRoute,
   SkillsDatabaseIdRoute: SkillsDatabaseIdRoute,
   ApiQueryAnswerRoute: ApiQueryAnswerRoute,
+  ApiRecallRerankRoute: ApiRecallRerankRoute,
   ApiSourceCaptureTriggerRoute: ApiSourceCaptureTriggerRoute,
   ApiSourceRunRoute: ApiSourceRunRoute,
 }

@@ -51,7 +51,8 @@ await esbuild.build({
     __KINIC_WIKI_IC_HOST__: JSON.stringify("https://icp0.io"),
     __KINIC_WIKI_DERIVATION_ORIGIN__: JSON.stringify(target.derivationOrigin),
     __KINIC_WIKI_SOURCE_TRIGGER_URL__: JSON.stringify(target.triggerUrl),
-    __KINIC_WIKI_ORIGIN__: JSON.stringify(target.wikiOrigin)
+    __KINIC_WIKI_ORIGIN__: JSON.stringify(target.wikiOrigin),
+    __KINIC_RECALL_JEV_ENABLED__: JSON.stringify(env.KINIC_RECALL_JEV_ENABLED === "true")
   },
   legalComments: "none"
 });
@@ -102,7 +103,8 @@ function runtimeConfigPlugin(config) {
           `export const RUNTIME_IC_HOST = ${JSON.stringify("https://icp0.io")};`,
           `export const RUNTIME_DERIVATION_ORIGIN = ${JSON.stringify(config.derivationOrigin)};`,
           `export const RUNTIME_SOURCE_TRIGGER_URL = ${JSON.stringify(config.triggerUrl)};`,
-          `export const RUNTIME_WIKI_ORIGIN = ${JSON.stringify(config.wikiOrigin)};`
+          `export const RUNTIME_WIKI_ORIGIN = ${JSON.stringify(config.wikiOrigin)};`,
+          `export const RUNTIME_RECALL_JEV_ENABLED = ${JSON.stringify(env.KINIC_RECALL_JEV_ENABLED === "true")};`
         ].join("\n")
       }));
     }
