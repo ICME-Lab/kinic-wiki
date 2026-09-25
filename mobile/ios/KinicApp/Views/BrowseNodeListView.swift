@@ -12,6 +12,7 @@ struct BrowseNodeListView: View {
     @Binding var selectedDocumentPath: String?
     @Binding var isSearchPresented: Bool
     let openSearchFolder: (String) -> Void
+    var showsDatabaseContext = false
 
     var body: some View {
         List {
@@ -34,7 +35,11 @@ struct BrowseNodeListView: View {
                 childRows
             }
         }
-        .navigationTitle(model.selectedBrowseDatabase?.displayTitle ?? "Notes")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if showsDatabaseContext && normalizedFolderPath == "/" { DatabaseContextBar(model: model) }
+        }
+        .navigationTitle(normalizedFolderPath == "/" ? "Browse" : URL(fileURLWithPath: normalizedFolderPath).lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $model.searchQuery, isPresented: $isSearchPresented, prompt: "Search nodes")
         .searchScopes($model.browseSearchScope) {
             ForEach(BrowseSearchScope.allCases) { scope in

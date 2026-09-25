@@ -41,7 +41,7 @@ struct VoiceSettingsView: View {
                 })) {
                     ForEach(appModel.askAIDatabaseCandidates) { Text($0.displayTitle).tag($0.databaseId) }
                 }.disabled(busy || appModel.databaseSelectionLocked)
-                if appModel.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
+                if appModel.databaseSelectionLocked { Text(appModel.databaseSelectionLockReason).font(.caption) }
                 if owner {
                     Picker("User", selection: Binding(get: { principal }, set: { id in
                         pendingPrincipal = id

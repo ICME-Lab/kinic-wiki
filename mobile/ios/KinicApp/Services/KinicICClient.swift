@@ -69,6 +69,19 @@ actor KinicICClient {
         try await vfsClient.readBrowseNode(databaseId: databaseId, path: path, session: session)
     }
 
+    func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] {
+        try await vfsClient.listChildren(databaseId: databaseId, path: path, session: session)
+    }
+
+    @discardableResult
+    func mutateNodesBatch(
+        databaseId: String,
+        operations: [VFSNodeMutationOperation],
+        session: KinicIdentitySession
+    ) async throws -> [VFSNodeMutationOutcome] {
+        try await vfsClient.mutateNodesBatch(databaseId: databaseId, operations: operations, session: session)
+    }
+
     func getNodePublication(databaseId: String, path: String, session: KinicIdentitySession) async throws -> NodePublication? {
         try await vfsClient.getNodePublication(databaseId: databaseId, path: path, session: session)
     }

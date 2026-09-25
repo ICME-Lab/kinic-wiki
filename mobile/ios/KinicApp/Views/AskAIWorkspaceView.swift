@@ -14,15 +14,22 @@ struct AskAIWorkspaceView: View {
                 .ignoresSafeArea()
 
             if appModel.selectedDatabaseId.isEmpty && appModel.isLoadingDatabases {
-                ProgressView("データベースを読み込み中")
+                ProgressView("Loading databases…")
             } else if appModel.selectedDatabaseId.isEmpty, let error = appModel.databaseListError {
                 ContentUnavailableView {
-                    Label("データベースを読み込めません", systemImage: "wifi.exclamationmark")
+                    Label("Could not load databases", systemImage: "wifi.exclamationmark")
                 } description: { Text(error) } actions: {
-                    Button("再試行", action: appModel.startRefreshDatabases)
+                    Button("Retry", action: appModel.startRefreshDatabases)
                 }
             } else {
-                AskAIConversationView(model: model)
+                AskAIConversationView(model: model, createWorkItem: { message in
+                    appModel.requestWorkItemDraft(
+                        databaseId: appModel.selectedAskAIDatabaseId,
+                        title: nil,
+                        body: message.text,
+                        source: appModel.workItemSource(forAskAIMessage: message)
+                    )
+                })
             }
         }
         .safeAreaInset(edge: .bottom) {

@@ -11,11 +11,9 @@ struct ManageView: View {
         Group {
             if model.isSignedIn {
                 Form {
-                    databasePickerSection
-
                     if let database = selectedManageDatabase {
                         DatabaseManagementFormContent(model: model, database: database)
-                    } else if !model.isLoadingDatabases && !model.browseListDatabases.isEmpty {
+                    } else {
                         Section("Management") {
                             Text("Select a database to manage.")
                                 .foregroundStyle(.secondary)
@@ -26,6 +24,8 @@ struct ManageView: View {
                 ManageSignedOutView(model: model)
             }
         }
+        .databaseContext(model: model)
+        .refreshable { refreshManagement() }
         .navigationTitle("Manage")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -39,71 +39,8 @@ struct ManageView: View {
         }
     }
 
-    @ViewBuilder
-    private var databasePickerSection: some View {
-        Section("Database") {
-            if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
-            if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
-                ProgressView()
-                    .tint(KinicDesign.hotPink)
-            } else if model.browseListDatabases.isEmpty {
-                Text("No manageable databases.")
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 12) {
-                    databaseMenu
-
-                    Button("Refresh databases", systemImage: "arrow.clockwise", action: refreshManagement)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(KinicDesign.hotPink)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .disabled(!model.isSignedIn || model.isLoadingDatabases || model.isLoadingCyclesConfig)
-                }
-            }
-        }
-    }
-
-    private var databaseMenu: some View {
-        Menu {
-            ForEach(model.browseListDatabases) { database in
-                Button {
-                    selectManageDatabase(database.databaseId)
-                } label: {
-                    Text(pickerTitle(for: database))
-                }
-            }
-        } label: {
-            HStack(spacing: 8) {
-                Text(selectedManageDatabase.map(pickerTitle(for:)) ?? "Select a database")
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.subheadline.weight(.semibold))
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .disabled(model.databaseSelectionLocked)
-        .tint(KinicDesign.hotPink)
-        .accessibilityLabel("Database")
-        .accessibilityValue(selectedManageDatabase.map(pickerTitle(for:)) ?? "Select a database")
-    }
-
     private var selectedManageDatabase: DatabaseSummary? {
         model.selectedBrowseDatabase
-    }
-
-    private func pickerTitle(for database: DatabaseSummary) -> String {
-        let badges = [
-            model.isPublicBrowseDatabase(database.databaseId) ? "Public" : nil,
-            model.isPurchasedBrowseDatabase(database.databaseId) ? "Purchased" : nil
-        ].compactMap { $0 }
-        guard !badges.isEmpty else {
-            return database.displayTitle
-        }
-        return "\(database.displayTitle) (\(badges.joined(separator: ", ")))"
     }
 
     private func refreshManagement() {

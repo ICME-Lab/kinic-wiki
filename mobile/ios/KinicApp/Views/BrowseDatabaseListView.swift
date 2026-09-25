@@ -9,6 +9,7 @@ struct BrowseDatabaseListView: View {
     @Binding var selectedDatabaseId: String?
     @Binding var selectedDocumentPath: String?
     @Binding var folderPath: [BrowseFolderRoute]
+    var showsDatabaseContext = true
 
     var body: some View {
         Group {
@@ -18,13 +19,13 @@ struct BrowseDatabaseListView: View {
                 }
                 .disabled(model.databaseSelectionLocked)
                 .safeAreaInset(edge: .top) {
-                    if model.databaseSelectionLocked { Text(AppModel.databaseSelectionLockMessage).font(.caption) }
+                    if model.databaseSelectionLocked { Text(model.databaseSelectionLockReason).font(.caption) }
                 }
                 .overlay {
                     if model.isLoadingDatabases && model.browseListDatabases.isEmpty {
-                        ProgressView("データベースを読み込み中")
+                        ProgressView("Loading databases…")
                     } else if model.browseListDatabases.isEmpty, let error = model.databaseListError {
-                        ContentUnavailableView("データベースを読み込めません", systemImage: "wifi.exclamationmark", description: Text(error))
+                        ContentUnavailableView("Could not load databases", systemImage: "wifi.exclamationmark", description: Text(error))
                     } else if model.browseListDatabases.isEmpty {
                         ContentUnavailableView("No readable databases", systemImage: "externaldrive")
                     }
@@ -33,7 +34,10 @@ struct BrowseDatabaseListView: View {
                 BrowseSignedOutView(model: model)
             }
         }
-        .navigationTitle("Databases")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if showsDatabaseContext { DatabaseContextBar(model: model) }
+        }
+        .navigationTitle("Browse")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
@@ -72,6 +76,7 @@ struct DatabaseManagementFormContent: View {
     @State private var isGrantAccessPresented = false
     @State private var accessConfirmation: PendingDatabaseAccessConfirmation?
     @State private var deleteDraft: DatabaseDeleteDraft?
+    @State private var creditTarget: DatabaseCreditTarget?
 
     var body: some View {
         Group {
@@ -95,11 +100,24 @@ struct DatabaseManagementFormContent: View {
                 LabeledContent("Suspended since", value: DatabaseManagementFormat.date(milliseconds: database.cyclesSuspendedAtMs))
             }
 
+            if database.role.canManageDatabase {
+                Section("Database credits") {
+                    Button("Add database credits", systemImage: "creditcard") {
+                        model.startLoadDatabaseCreditProductsIfNeeded()
+                        creditTarget = DatabaseCreditTarget(id: database.databaseId, title: database.displayTitle)
+                    }
+                    .disabled(model.isPurchasingDatabaseCredits)
+                }
+            }
+
             cycleHistorySection
 
             if database.role.canManageDatabase {
                 dangerZoneSection
             }
+        }
+        .sheet(item: $creditTarget) { target in
+            DatabaseCreditSheet(model: model, target: target)
         }
         .sheet(item: $editDraft) { draft in
             BrowseDatabaseMetadataEditView(model: model, draft: draft)
@@ -935,9 +953,12 @@ private struct BrowseDatabaseMetadataEditView: View {
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var draft: DatabaseMetadataFieldDraft
+    @State private var confirmsDiscard = false
+    private let originalValue: String
 
     init(model: AppModel, draft: DatabaseMetadataFieldDraft) {
         self.model = model
+        originalValue = draft.value
         _draft = State(initialValue: draft)
     }
 
@@ -967,11 +988,18 @@ private struct BrowseDatabaseMetadataEditView: View {
                     }
                 }
             }
+            .interactiveDismissDisabled(model.isUpdatingDatabaseMetadata || draft.value != originalValue)
+            .alert("Discard unsaved changes?", isPresented: $confirmsDiscard) {
+                Button("Discard changes", role: .destructive, action: cancel)
+                Button("Keep editing", role: .cancel) {}
+            }
             .navigationTitle("Edit \(draft.field.title)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: cancel)
+                    Button("Cancel") {
+                        if draft.value != originalValue { confirmsDiscard = true } else { cancel() }
+                    }
                         .disabled(model.isUpdatingDatabaseMetadata)
                 }
                 ToolbarItem(placement: .confirmationAction) {

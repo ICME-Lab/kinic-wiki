@@ -79,7 +79,8 @@ struct AskAIScreenshotPreview: View {
                         role: .user,
                         text: "What makes agent memory reliable?"
                     ),
-                    openSource: { _ in }
+                    openSource: { _ in },
+                    createWorkItem: { _ in }
                 )
 
                 AskAIMessageView(
@@ -109,7 +110,8 @@ struct AskAIScreenshotPreview: View {
                             )
                         ]
                     ),
-                    openSource: { _ in }
+                    openSource: { _ in },
+                    createWorkItem: { _ in }
                 )
             }
         }

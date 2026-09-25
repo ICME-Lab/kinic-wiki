@@ -9,12 +9,20 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private static let databaseSelectionMessage = "Select where KinicWiki saves this URL."
     private static let sourceAlreadySavedMessage = "This URL is already saved."
+    private static let itemQueuedMessage = "The item is stored on this device. Open KinicWiki to share it with the database."
+
+    private enum CaptureMode: Int {
+        case wikiIngest
+        case workItem
+    }
 
     private let brandImageView = UIImageView(image: UIImage(named: "KinicMark"))
     private let brandLabel = UILabel()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let modeControl = UISegmentedControl(items: ["Ingest", "Create item"])
+    private let noteField = UITextField()
     private let databaseTableView = UITableView(frame: .zero, style: .plain)
     private let refreshButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
@@ -30,6 +38,7 @@ final class ShareViewController: UIViewController {
     private var databaseClient: KinicICClient?
     private var sourceLookupTask: Task<Void, Never>?
     private var sourceLookupGeneration = 0
+    private var captureMode: CaptureMode = .wikiIngest
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -76,6 +85,18 @@ final class ShareViewController: UIViewController {
         databaseTableView.layer.cornerRadius = KinicDesign.radius
         databaseTableView.isHidden = true
 
+        modeControl.selectedSegmentIndex = CaptureMode.wikiIngest.rawValue
+        modeControl.addTarget(self, action: #selector(captureModeChanged), for: .valueChanged)
+        modeControl.isHidden = true
+        modeControl.accessibilityLabel = "Capture type"
+
+        noteField.placeholder = "Add a note (optional)"
+        noteField.borderStyle = .roundedRect
+        noteField.font = .preferredFont(forTextStyle: .body)
+        noteField.returnKeyType = .done
+        noteField.isHidden = true
+        noteField.accessibilityLabel = "Item note"
+
         refreshButton.configuration = iconButtonConfiguration(systemName: "arrow.clockwise")
         refreshButton.accessibilityLabel = "Refresh databases"
         refreshButton.addTarget(self, action: #selector(refreshDatabases), for: .touchUpInside)
@@ -96,7 +117,7 @@ final class ShareViewController: UIViewController {
         textStack.alignment = .fill
         textStack.spacing = 8
 
-        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, databaseTableView, refreshButton, saveButton, doneButton])
+        let actionStack = UIStackView(arrangedSubviews: [activityIndicator, modeControl, noteField, databaseTableView, refreshButton, saveButton, doneButton])
         actionStack.axis = .vertical
         actionStack.alignment = .fill
         actionStack.spacing = 12
@@ -114,6 +135,8 @@ final class ShareViewController: UIViewController {
             stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             databaseTableView.heightAnchor.constraint(equalToConstant: 240),
             refreshButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            modeControl.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            noteField.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             saveButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             doneButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50)
@@ -184,10 +207,17 @@ final class ShareViewController: UIViewController {
         titleLabel.text = "Saving to KinicWiki..."
         messageLabel.text = "Keep this sheet open for a moment."
         activityIndicator.startAnimating()
+        setCaptureControlsHidden(true)
         databaseTableView.isHidden = true
         refreshButton.isHidden = true
         saveButton.isHidden = true
         doneButton.isHidden = true
+    }
+
+    /// The mode picker and the note field only exist while a destination is being chosen.
+    private func setCaptureControlsHidden(_ hidden: Bool) {
+        modeControl.isHidden = hidden
+        noteField.isHidden = hidden || captureMode != .workItem
     }
 
     private func prepareDatabaseSelection(for url: URL, captureMetadata: ShareCaptureMetadata?) {
@@ -275,6 +305,7 @@ final class ShareViewController: UIViewController {
             activityIndicator.stopAnimating()
             databaseTableView.reloadData()
             databaseTableView.isHidden = true
+            setCaptureControlsHidden(true)
             refreshButton.isHidden = false
             refreshButton.isEnabled = true
             saveButton.isHidden = false
@@ -297,6 +328,7 @@ final class ShareViewController: UIViewController {
             )
         }
         databaseTableView.isHidden = false
+        setCaptureControlsHidden(false)
         refreshButton.isHidden = false
         refreshButton.isEnabled = true
         saveButton.isHidden = false
@@ -338,13 +370,14 @@ final class ShareViewController: UIViewController {
     }
 
     private func updateSaveButton() {
+        let title = captureMode == .workItem ? "Create item" : "Save"
         guard selectedDatabaseId != nil else {
             saveButton.isEnabled = false
-            saveButton.configuration?.title = "Save"
+            saveButton.configuration?.title = title
             return
         }
         saveButton.isEnabled = true
-        saveButton.configuration?.title = "Save"
+        saveButton.configuration?.title = title
     }
 
     private func updateSourceAvailabilityMessage() {
@@ -395,6 +428,7 @@ final class ShareViewController: UIViewController {
         cancelSourceLookup()
         activityIndicator.stopAnimating()
         databaseTableView.isHidden = true
+        setCaptureControlsHidden(true)
         refreshButton.isHidden = true
         saveButton.isHidden = true
         doneButton.isHidden = false
@@ -406,11 +440,18 @@ final class ShareViewController: UIViewController {
         cancelSourceLookup()
         activityIndicator.stopAnimating()
         databaseTableView.isHidden = true
+        setCaptureControlsHidden(true)
         refreshButton.isHidden = true
         saveButton.isHidden = true
         titleLabel.text = "Could not complete capture"
         messageLabel.text = error.localizedDescription
         doneButton.isHidden = false
+    }
+
+    @objc private func captureModeChanged() {
+        captureMode = CaptureMode(rawValue: modeControl.selectedSegmentIndex) ?? .wikiIngest
+        noteField.isHidden = captureMode != .workItem
+        updateSaveButton()
     }
 
     @objc private func saveSelectedDatabase() {
@@ -422,14 +463,55 @@ final class ShareViewController: UIViewController {
         }
         cancelSourceLookup()
         let databaseTitle = databases.first { $0.databaseId == selectedDatabaseId }?.shareSelectionTitleText ?? "Untitled database"
+        guard captureMode == .wikiIngest else {
+            queueWorkItem(databaseId: selectedDatabaseId, databaseTitle: databaseTitle)
+            return
+        }
         titleLabel.text = "Saving to KinicWiki..."
         messageLabel.text = "Saving to \(databaseTitle)."
         activityIndicator.startAnimating()
         databaseTableView.isHidden = true
+        setCaptureControlsHidden(true)
         refreshButton.isHidden = true
         saveButton.isHidden = true
         doneButton.isHidden = true
         submitSharedURL(sharedURL, databaseIdOverride: selectedDatabaseId, captureMetadata: sharedMetadata)
+    }
+
+    /// The extension never writes the work item contract itself: it leaves the item in the
+    /// App Group queue so the app stays the only writer of the VFS documents.
+    private func queueWorkItem(databaseId: String, databaseTitle: String) {
+        titleLabel.text = "Saving item..."
+        messageLabel.text = "Saving to \(databaseTitle)."
+        activityIndicator.startAnimating()
+        databaseTableView.isHidden = true
+        setCaptureControlsHidden(true)
+        refreshButton.isHidden = true
+        saveButton.isHidden = true
+        doneButton.isHidden = true
+
+        guard let url = sharedURL, let configuration, let session else {
+            showFailure(ShareExtensionError.itemUnavailable)
+            return
+        }
+        let itemTitle = PendingWorkItemCapture.derivedTitle(url: url, metadataTitle: sharedMetadata?.title)
+        let capture = PendingWorkItemCapture(
+            version: PendingWorkItemCapture.currentVersion,
+            captureId: UUID().uuidString.lowercased(),
+            principal: session.principal,
+            databaseId: databaseId,
+            title: itemTitle,
+            body: PendingWorkItemCapture.sharedBody(url: url.absoluteString, note: noteField.text),
+            source: WorkItemSource(kind: .share, url: url.absoluteString, path: nil, label: itemTitle),
+            createdAt: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+        do {
+            let queue = try PendingWorkItemCaptureQueue(strictAppGroupId: configuration.appGroupId)
+            try queue.enqueue(capture)
+            showResult(.queued(reason: Self.itemQueuedMessage))
+        } catch {
+            showFailure(error)
+        }
     }
 
     @objc private func refreshDatabases() {
@@ -455,6 +537,7 @@ final class ShareViewController: UIViewController {
         }
         messageLabel.text = "Could not refresh databases: \(error.localizedDescription)"
         databaseTableView.isHidden = false
+        setCaptureControlsHidden(false)
         refreshButton.isHidden = false
         refreshButton.isEnabled = true
         saveButton.isHidden = false
@@ -515,6 +598,7 @@ private func shareURL(from item: NSSecureCoding?) -> URL? {
 private enum ShareExtensionError: LocalizedError {
     case missingURL
     case loadFailed(String)
+    case itemUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -522,6 +606,8 @@ private enum ShareExtensionError: LocalizedError {
             return "No share URL was provided by this browser."
         case let .loadFailed(message):
             return message
+        case .itemUnavailable:
+            return "The shared link or the KinicWiki session is no longer available."
         }
     }
 }

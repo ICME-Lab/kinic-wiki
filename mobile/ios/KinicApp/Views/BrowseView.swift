@@ -8,6 +8,7 @@ struct BrowseView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var model: AppModel
     let rootNavigationID: Int
+    @State private var columnVisibility = NavigationSplitViewVisibility.doubleColumn
     @State private var selectedDatabaseId: String?
     @State private var selectedDocumentPath: String?
     @State private var folderPath: [BrowseFolderRoute] = []
@@ -15,12 +16,13 @@ struct BrowseView: View {
     @State private var navigationGate = BrowseNavigationGate()
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             BrowseDatabaseListView(
                 model: model,
                 selectedDatabaseId: selectedDatabaseBinding,
                 selectedDocumentPath: selectedDocumentPathBinding,
-                folderPath: $folderPath
+                folderPath: $folderPath,
+                showsDatabaseContext: horizontalSizeClass == .compact
             )
         } content: {
             if let selectedDatabaseId {
@@ -30,7 +32,8 @@ struct BrowseView: View {
                     selectedDocumentPath: selectedDocumentPathBinding,
                     folderPath: $folderPath,
                     isSearchPresented: $isBrowseSearchPresented,
-                    requestSearchFolder: requestSearchFolder
+                    requestSearchFolder: requestSearchFolder,
+                    showsDatabaseContext: horizontalSizeClass == .compact
                 )
             } else {
                 ContentUnavailableView("Select a database", systemImage: "externaldrive")
@@ -43,6 +46,9 @@ struct BrowseView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if horizontalSizeClass != .compact { DatabaseContextBar(model: model) }
+        }
         .confirmationDialog(
             "Discard unsaved changes?",
             isPresented: pendingNavigationPresented,

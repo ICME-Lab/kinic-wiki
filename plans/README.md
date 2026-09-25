@@ -10,6 +10,7 @@ when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |---|---|---|---|---|---|
 | [001](./001-parallelize-wiki-generation.md) | Parallelize production wiki generation on the standard Queue Worker | P1 | L | — | BLOCKED (external review requires explicit code-export approval) |
+| [002](./002-ios-shared-work-items.md) | iOS: DB-scoped shared WorkItems (VFS documents + App Group SQLite) | P1 | XL | — | IN PROGRESS (Phase 1–3 implemented; Phase 3 unit-verified, device verification pending) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED
 (with one-line rationale — finding fixed independently or approach abandoned)
@@ -17,6 +18,10 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 ## Dependency notes
 
 - Plan 001 is self-contained. Its D1 lease/checkpoint must be deployed before Queue fan-out.
+- Plan 002 is self-contained and iOS-only. It adds no canister API; if that constraint breaks, stop
+  and re-plan before Phase 1.
+- Plan 002 Phase 3 does not depend on PR #103 (`feat/ios-dictation-widget`); the work-item widget
+  extension is added as its own target and the two extensions coexist.
 
 ## Findings considered and rejected
 

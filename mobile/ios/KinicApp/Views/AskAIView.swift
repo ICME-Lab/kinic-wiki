@@ -12,17 +12,16 @@ struct AskAIView: View {
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
+            .databaseContext(model: appModel, askAIModel: model)
+            .navigationTitle("Ask AI")
             .onChange(of: isShowingPreview) { _, showing in appModel.voicePresentationActive = showing }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    AskAIDatabaseMenu(model: model, appModel: appModel)
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Voice Conversation", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
                         .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
-                    Button("History", systemImage: "clock.arrow.circlepath") {
+                    Button("Conversation history", systemImage: "clock.arrow.circlepath") {
                         isShowingHistory = true
                     }
                     .labelStyle(.iconOnly)

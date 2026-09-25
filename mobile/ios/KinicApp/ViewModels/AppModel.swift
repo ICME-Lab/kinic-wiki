@@ -7,6 +7,7 @@ import ICNativeClient
 import Observation
 import os
 import StoreKit
+import WidgetKit
 
 enum AppTab: Hashable {
     case home
@@ -18,6 +19,24 @@ enum AppTab: Hashable {
 enum BrowseNavigationTarget: Equatable {
     case folder(String)
     case document(path: String, parentPath: String)
+}
+
+private enum PendingWorkItemNavigation {
+    case detail(WorkItemDetailRequest)
+    case compose(WorkItemComposeRequest)
+
+    var databaseId: String {
+        switch self {
+        case .detail(let request): request.databaseId
+        case .compose(let request): request.databaseId
+        }
+    }
+}
+
+private struct PendingWorkItemSelection {
+    let selectionId: UUID
+    let principal: String
+    let navigation: PendingWorkItemNavigation
 }
 
 extension AppModel: AskAIKnowledgeProviding {
@@ -184,6 +203,8 @@ enum AppOpenURLDestination: Equatable {
     case authCallback
     case shareHandoff
     case browse(databaseId: String, nodePath: String)
+    case workItem(databaseId: String, itemId: String)
+    case workItemsCompose(databaseId: String)
     case manage
     case home(String?)
 }
@@ -293,6 +314,7 @@ final class AppModel {
     private var documentMutationCoordinator: BrowseDocumentMutationCoordinator
     @ObservationIgnored private var browseSearchTask: Task<Void, Never>?
     private var activeBrowseSearchRequest: BrowseSearchRequest?
+    private var pendingWorkItemSelection: PendingWorkItemSelection?
 
     let voicePreview: VoicePreviewModel
     let configuration: AppConfiguration
@@ -305,8 +327,22 @@ final class AppModel {
     private var databaseRefreshGeneration = 0
     var voiceSettingsHasChanges = false
     var voicePresentationActive = false
+    var isNavigationFixture: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "navigation"
+#else
+        false
+#endif
+    }
+    var workItemDraftOwners: Set<UUID> = []
+    var databaseSelectionLockReason: String {
+        workItemDraftOwners.isEmpty ? Self.databaseSelectionLockMessage : "Save or discard the work item draft before switching databases."
+    }
+    func setWorkItemDraftActive(_ active: Bool, owner: UUID) {
+        if active { workItemDraftOwners.insert(owner) } else { workItemDraftOwners.remove(owner) }
+    }
     var databaseSelectionLocked: Bool {
-        voicePresentationActive || voicePreview.busy || voicePreview.voiceActive || voicePreview.finishing || voicePreview.endingRequested || voicePreview.snapshot != nil
+        !workItemDraftOwners.isEmpty || voicePresentationActive || voicePreview.busy || voicePreview.voiceActive || voicePreview.finishing || voicePreview.endingRequested || voicePreview.snapshot != nil
     }
     static let databaseSelectionLockMessage = "End the voice conversation before switching databases."
 
@@ -358,6 +394,10 @@ final class AppModel {
     var requestedBrowseTarget: BrowseNavigationTarget
     var browseNavigationRequestID: Int
     var requestedBrowseDeepLink: BrowseDeepLinkRequest?
+    var requestedWorkItemDetail: WorkItemDetailRequest?
+    var workItemNavigationRequestID: Int
+    var requestedWorkItemCompose: WorkItemComposeRequest?
+    var workItemComposeRequestID: Int
     var requestedBrowseDatabaseSelection: BrowseDatabaseSelectionRequest?
     var browseDatabaseSelectionResolution: BrowseDatabaseSelectionResolution?
     var currentPath: String
@@ -579,6 +619,10 @@ final class AppModel {
         rootNavigationID = 0
         requestedTab = .home
         tabSelectionRequestID = 0
+        requestedWorkItemDetail = nil
+        workItemNavigationRequestID = 0
+        requestedWorkItemCompose = nil
+        workItemComposeRequestID = 0
         requestedBrowseTarget = .folder("/")
         browseNavigationRequestID = 0
         requestedBrowseDeepLink = nil
@@ -707,6 +751,7 @@ final class AppModel {
     }
 
     func refreshInbox() {
+        if isNavigationFixture { return }
         pendingURLs = shareInbox.loadPendingURLs()
     }
 
@@ -746,6 +791,10 @@ final class AppModel {
             autoSubmitPendingURL()
         case let .browse(databaseId, nodePath):
             openBrowseDeepLink(databaseId: databaseId, nodePath: nodePath)
+        case let .workItem(databaseId, itemId):
+            openWorkItemDetail(databaseId: databaseId, itemId: itemId)
+        case let .workItemsCompose(databaseId):
+            openWorkItemCompose(databaseId: databaseId)
         case .manage:
             requestTab(.manage)
         case let .home(message):
@@ -763,6 +812,17 @@ final class AppModel {
         }
         let segments = decodedPathSegments(from: url)
         let firstSegment = segments.first ?? ""
+        // Work item links share one contract with the widget; incomplete parameters are reported, not ignored.
+        if firstSegment == "ios-work-item" || firstSegment == "ios-work-items" {
+            switch WorkItemUniversalLink.destination(for: url, callbackDomain: callbackDomain) {
+            case let .item(databaseId, itemId):
+                return .workItem(databaseId: databaseId, itemId: itemId)
+            case let .compose(databaseId):
+                return .workItemsCompose(databaseId: databaseId ?? "")
+            case nil:
+                return .home("This work item link is incomplete.")
+            }
+        }
         if firstSegment == "ios-share" {
             return .shareHandoff
         }
@@ -830,12 +890,15 @@ final class AppModel {
         _ databaseId: String,
         purpose: BrowseDatabaseSelectionPurpose = .browse
     ) -> BrowseDatabaseSelectionDisposition {
+        if pendingWorkItemSelection != nil {
+            cancelRequestedBrowseDatabaseSelection()
+        }
         let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else {
             return .unchanged
         }
         guard !databaseSelectionLocked || databaseId == selectedDatabaseId else {
-            statusMessage = Self.databaseSelectionLockMessage
+            statusMessage = databaseSelectionLockReason
             return .unchanged
         }
         if databaseId == selectedBrowseDatabaseId {
@@ -865,6 +928,8 @@ final class AppModel {
 
     func applyBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
         guard requestedBrowseDatabaseSelection == request, !databaseSelectionLocked else { return }
+        let pending = pendingWorkItemSelection
+        pendingWorkItemSelection = nil
         requestedBrowseDatabaseSelection = nil
         documentEditSession = nil
         applySelectedBrowseDatabase(request.databaseId)
@@ -874,10 +939,16 @@ final class AppModel {
             databaseId: request.databaseId,
             outcome: .applied
         )
+        if let pending, pending.selectionId == request.id,
+           pending.principal == principalText,
+           pending.navigation.databaseId == selectedDatabaseId {
+            presentWorkItemNavigation(pending.navigation)
+        }
     }
 
     func cancelBrowseDatabaseSelection(_ request: BrowseDatabaseSelectionRequest) {
         guard requestedBrowseDatabaseSelection == request else { return }
+        pendingWorkItemSelection = nil
         settingsStore.selectDatabase(selectedDatabaseId, configuration: configuration, principal: principalText)
         requestedBrowseDatabaseSelection = nil
         browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
@@ -891,20 +962,24 @@ final class AppModel {
         session != nil
             && selectedBrowseDatabase?.role == .owner
             && isCurrentMarkdownDocument(path)
+            && !Self.isWorkItemDocumentPath(path)
     }
 
     func canDeleteBrowseDocument(_ path: String) -> Bool {
         session != nil
             && selectedBrowseDatabase?.role.canWrite == true
             && isCurrentMarkdownDocument(path)
+            && !Self.isWorkItemDocumentPath(path)
     }
 
+    /// Work items own their layout and metadata, so Browse only ever reads them.
     func canEditBrowseDocument(_ path: String) -> Bool {
         let normalizedPath = Self.normalizedBrowsePath(path)
         return session != nil
             && selectedBrowseDatabase?.canWrite == true
             && isCurrentMarkdownDocument(normalizedPath)
             && !Self.isSourceEvidencePath(normalizedPath)
+            && !Self.isWorkItemDocumentPath(normalizedPath)
     }
 
     func startEditingBrowseDocument(_ path: String) -> Bool {
@@ -1161,8 +1236,57 @@ final class AppModel {
         tabSelectionRequestID += 1
     }
 
+    /// Opens one work item from another surface. Browse stays read-only for these documents.
+    func openWorkItemDetail(databaseId: String, itemId: String) {
+        let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let itemId = itemId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !databaseId.isEmpty, !itemId.isEmpty else { return }
+        guard !databaseSelectionLocked else {
+            statusMessage = databaseSelectionLockReason
+            return
+        }
+        navigateToWorkItem(.detail(WorkItemDetailRequest(databaseId: databaseId, itemId: itemId)))
+    }
+
+    private func navigateToWorkItem(_ navigation: PendingWorkItemNavigation) {
+        if pendingWorkItemSelection != nil {
+            cancelRequestedBrowseDatabaseSelection()
+        }
+        pendingWorkItemSelection = nil
+        if selectedDatabaseId != navigation.databaseId {
+            switch requestBrowseDatabaseSelection(navigation.databaseId) {
+            case .awaitingDiscard(let request):
+                pendingWorkItemSelection = PendingWorkItemSelection(
+                    selectionId: request.id, principal: principalText, navigation: navigation
+                )
+                return
+            case .applied, .unchanged:
+                guard selectedDatabaseId == navigation.databaseId else { return }
+            }
+        }
+        presentWorkItemNavigation(navigation)
+    }
+
+    private func presentWorkItemNavigation(_ navigation: PendingWorkItemNavigation) {
+        switch navigation {
+        case .detail(let request):
+            requestedWorkItemDetail = request
+            workItemNavigationRequestID += 1
+        case .compose(let request):
+            requestedWorkItemCompose = request
+            workItemComposeRequestID += 1
+        }
+        requestTab(.home)
+    }
+
+    /// Clears a work item request once Home has pushed it, so a later tab switch does not repeat it.
+    func consumeWorkItemDetailRequest(_ request: WorkItemDetailRequest) {
+        guard requestedWorkItemDetail == request else { return }
+        requestedWorkItemDetail = nil
+    }
+
     private func openBrowseDeepLink(databaseId: String, nodePath: String) {
-        guard !databaseSelectionLocked else { statusMessage = Self.databaseSelectionLockMessage; return }
+        guard !databaseSelectionLocked else { statusMessage = databaseSelectionLockReason; return }
         cancelRequestedBrowseDatabaseSelection()
         requestedBrowseDeepLink = nil
         deepLinkResolveRequestID += 1
@@ -1354,6 +1478,7 @@ final class AppModel {
     }
 
     private func cancelRequestedBrowseDatabaseSelection() {
+        pendingWorkItemSelection = nil
         guard let request = requestedBrowseDatabaseSelection else { return }
         requestedBrowseDatabaseSelection = nil
         browseDatabaseSelectionResolution = BrowseDatabaseSelectionResolution(
@@ -1380,6 +1505,9 @@ final class AppModel {
     }
 
     func signOut() {
+        pendingWorkItemSelection = nil
+        requestedWorkItemDetail = nil
+        requestedWorkItemCompose = nil
         voicePreview.end()
         do {
             try authService.signOut()
@@ -1391,6 +1519,7 @@ final class AppModel {
         cancelRequestedBrowseDatabaseSelection()
         cancelRequestedBrowseDeepLink()
         session = nil
+        workItemDraftOwners.removeAll()
         databases = []
         readableDatabases = []
         memberBrowseDatabaseIds = []
@@ -1409,6 +1538,8 @@ final class AppModel {
         databaseMetadataError = nil
         databaseListLastRefreshed = nil
         cyclesConfigLastRefreshed = nil
+        // The widget only ever shows the signed-in account's items.
+        clearWorkItemWidgetSnapshot()
         sourceCaptureHistoryRequestID += 1
         sourceCaptureHistory = []
         isLoadingSourceCaptureHistory = false
@@ -1787,6 +1918,9 @@ final class AppModel {
                 _ = try await client.listReadableDatabases(session: candidate)
             }
             if previousPrincipal != authenticatedSession.principal {
+                pendingWorkItemSelection = nil
+                requestedWorkItemDetail = nil
+                requestedWorkItemCompose = nil
                 voicePreview.end()
                 cancelRequestedBrowseDatabaseSelection()
                 cancelRequestedBrowseDeepLink()
@@ -1849,6 +1983,7 @@ final class AppModel {
     }
 
     private func refreshDatabases() async {
+        if isNavigationFixture { return }
         databaseRefreshGeneration += 1
         let generation = databaseRefreshGeneration
         let account = principalText
@@ -1913,6 +2048,7 @@ final class AppModel {
                     else { _ = requestBrowseDatabaseSelection(desired) }
                 }
             }
+            reconcileWorkItemWidgetSnapshotDatabases()
             if !selectedBrowseDatabaseId.isEmpty {
                 await loadBrowsePath(currentPath)
             }
@@ -1966,6 +2102,7 @@ final class AppModel {
     }
 
     private func loadDatabaseManagementDetails(databaseId: String) async {
+        if isNavigationFixture { return }
         guard !databaseId.isEmpty else {
             resetDatabaseManagementState()
             return
@@ -2122,6 +2259,7 @@ final class AppModel {
     }
 
     private func loadCyclesBillingConfig(force: Bool) async {
+        if isNavigationFixture { return }
         guard !isLoadingCyclesConfig else {
             return
         }
@@ -2147,6 +2285,7 @@ final class AppModel {
     }
 
     private func loadDatabaseCreditProductsIfNeeded() async {
+        if isNavigationFixture { return }
         guard databaseCreditProducts.isEmpty, !configuration.iapProductIds.isEmpty else {
             return
         }
@@ -2195,6 +2334,7 @@ final class AppModel {
     }
 
     private func recoverPendingDatabaseCreditPurchases() async {
+        if isNavigationFixture { return }
         guard !isRecoveringDatabaseCredits, !isPurchasingDatabaseCredits else {
             return
         }
@@ -2440,6 +2580,14 @@ final class AppModel {
     static func isSourceEvidencePath(_ path: String) -> Bool {
         let normalizedPath = normalizedBrowsePath(path)
         return normalizedPath.hasPrefix("/Sources/")
+    }
+
+    /// `/WorkItems` is a document contract, not free-form Markdown. Generic editing, publishing,
+    /// and deletion would desync the body from its metadata or expose it publicly.
+    static func isWorkItemDocumentPath(_ path: String) -> Bool {
+        let normalizedPath = normalizedBrowsePath(path)
+        return normalizedPath == WorkItemPaths.root
+            || normalizedPath.hasPrefix("\(WorkItemPaths.root)/")
     }
 
     func reconcileBrowseDocumentWriteRestriction() {
@@ -2733,6 +2881,12 @@ final class AppModel {
     }
 
     func refreshSourceCaptureHistory(refreshAll: Bool = false) async {
+#if DEBUG
+        if isNavigationFixture {
+            sourceCaptureHistory = NavigationFixture.history(databaseId: selectedDatabaseId)
+            return
+        }
+#endif
         sourceCaptureHistoryRequestID += 1
         let requestID = sourceCaptureHistoryRequestID
         let databaseId = selectedDatabaseId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3071,5 +3225,188 @@ final class AppModel {
             .split(separator: "/")
             .map(String.init)
             .map { $0.removingPercentEncoding ?? $0 }
+    }
+}
+
+// MARK: - Work items
+
+extension AppModel: WorkItemRuntimeProviding {
+    var workItemPrincipal: String { principalText }
+    var workItemIsSignedIn: Bool { isSignedIn }
+    /// Reading needs any readable database; every write re-checks `canWrite`.
+    var workItemDatabase: DatabaseSummary? { selectedDatabase }
+    var workItemSession: KinicIdentitySession? { session }
+
+    var workItemRepository: WorkItemRepository {
+        WorkItemRepository(vfs: LiveWorkItemVFS(client: client))
+    }
+
+    var workItemStore: WorkItemStore? {
+        try? WorkItemStore.live(appGroupId: configuration.appGroupId)
+    }
+}
+
+// MARK: - Work item entry points and the widget snapshot
+
+extension AppModel: WorkItemWidgetSnapshotWriting {
+    private func reconcileWorkItemWidgetSnapshotDatabases() {
+        guard isSignedIn, let principal = session?.principal else { return }
+        let store = WorkItemWidgetSnapshotStore(appGroupId: configuration.appGroupId)
+        guard store.isConfigured, var snapshot = store.read(), snapshot.principal == principal else { return }
+        let now = Self.widgetSnapshotTimestamp()
+        snapshot.databases = WorkItemWidgetProjection.databases(
+            readable: readableDatabases, previous: snapshot.databases, now: now
+        )
+        snapshot.selectedDatabaseId = selectedDatabaseId.isEmpty ? nil : selectedDatabaseId
+        snapshot.writtenAt = now
+        try? store.write(snapshot)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    var workItemPendingCaptureQueue: PendingWorkItemCaptureQueue? {
+        try? PendingWorkItemCaptureQueue(appGroupId: configuration.appGroupId)
+    }
+
+    /// Opens the composer for a request from Browse, Ask AI, or a widget link.
+    func requestWorkItemDraft(databaseId: String, title: String?, body: String, source: WorkItemSource?) {
+        let target = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedDatabaseId = target.isEmpty ? selectedDatabaseId : target
+        guard !resolvedDatabaseId.isEmpty else {
+            statusMessage = "Select a database before creating an item."
+            return
+        }
+        guard !databaseSelectionLocked else {
+            statusMessage = databaseSelectionLockReason
+            return
+        }
+        // A cold-start link arrives before the database list is loaded, so only reject a database
+        // once the list is known and does not contain it.
+        if !readableDatabases.isEmpty,
+           !readableDatabases.contains(where: { $0.databaseId == resolvedDatabaseId }) {
+            statusMessage = "This database is not available on this account."
+            return
+        }
+        let truncated = WorkItemComposeRequest.truncatedBody(body)
+        let request = WorkItemComposeRequest(
+            databaseId: resolvedDatabaseId,
+            title: title,
+            body: truncated.body,
+            source: source,
+            isBodyTruncated: truncated.isTruncated
+        )
+        navigateToWorkItem(.compose(request))
+    }
+
+    func openWorkItemCompose(databaseId: String) {
+        requestWorkItemDraft(databaseId: databaseId, title: nil, body: "", source: nil)
+    }
+
+    func consumeWorkItemComposeRequest(_ request: WorkItemComposeRequest) {
+        guard requestedWorkItemCompose == request else { return }
+        requestedWorkItemCompose = nil
+    }
+
+    /// Opens a wiki document from an item's source. Returns false when the database is gone.
+    @discardableResult
+    func openWikiDocument(databaseId: String, path: String) -> Bool {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty,
+              readableDatabases.contains(where: { $0.databaseId == databaseId }) else {
+            return false
+        }
+        openBrowseDeepLink(databaseId: databaseId, nodePath: trimmedPath)
+        return true
+    }
+
+    /// A wiki page can become an item source, but the work item documents themselves cannot.
+    func canCreateWorkItemFromBrowseDocument(_ path: String) -> Bool {
+        let normalized = Self.normalizedBrowsePath(path)
+        guard normalized.hasSuffix(".md"),
+              !Self.isWorkItemDocumentPath(normalized),
+              documentMutation == nil else {
+            return false
+        }
+        return selectedBrowseDatabase?.canWrite == true
+    }
+
+    /// Records where an Ask AI answer came from without attaching the conversation.
+    func workItemSource(forAskAIMessage message: AskAIMessage) -> WorkItemSource {
+        guard let source = message.sources.first else {
+            return WorkItemSource(kind: .askAI, url: nil, path: nil, label: nil)
+        }
+        let url = configuration
+            .databaseNodeURL(databaseId: selectedDatabaseId, path: source.path)
+            .absoluteString
+        return WorkItemSource(kind: .askAI, url: url, path: source.path, label: source.displayName)
+    }
+
+    func workItemListDidLoad(databaseId: String, entries: [WorkItemListEntry], fetchedAt: Int64) {
+        writeWorkItemWidgetSnapshot(databaseId: databaseId, entries: entries, isAvailable: true, now: fetchedAt)
+    }
+
+    func workItemListDidLoseAccess(databaseId: String) {
+        writeWorkItemWidgetSnapshot(
+            databaseId: databaseId,
+            entries: nil,
+            isAvailable: false,
+            now: Self.widgetSnapshotTimestamp()
+        )
+    }
+
+    func clearWorkItemWidgetSnapshot() {
+        WorkItemWidgetSnapshotStore(appGroupId: configuration.appGroupId).clear()
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func writeWorkItemWidgetSnapshot(
+        databaseId: String,
+        entries: [WorkItemListEntry]?,
+        isAvailable: Bool,
+        now: Int64
+    ) {
+        guard isSignedIn, let principal = session?.principal, !principal.isEmpty else {
+            clearWorkItemWidgetSnapshot()
+            return
+        }
+        let store = WorkItemWidgetSnapshotStore(appGroupId: configuration.appGroupId)
+        guard store.isConfigured else { return }
+        var snapshot = store.read().flatMap { $0.principal == principal ? $0 : nil }
+            ?? WorkItemWidgetSnapshot.empty(principal: principal, writtenAt: now)
+        snapshot.databases = WorkItemWidgetProjection.databases(
+            readable: readableDatabases,
+            previous: snapshot.databases,
+            now: now
+        )
+        if let index = snapshot.databases.firstIndex(where: { $0.id == databaseId }) {
+            if let entries {
+                snapshot.databases[index].items = WorkItemWidgetProjection.items(from: entries)
+            }
+            snapshot.databases[index].isAvailable = isAvailable
+            snapshot.databases[index].updatedAt = now
+            if !isAvailable {
+                // A database this account can no longer read must not keep titles on the Lock Screen.
+                snapshot.databases[index].items = []
+            }
+        } else if let entries {
+            snapshot.databases.append(
+                WorkItemWidgetSnapshot.Database(
+                    id: databaseId,
+                    title: selectedDatabase?.displayTitle ?? databaseId,
+                    canWrite: selectedDatabase?.canWrite == true,
+                    isAvailable: isAvailable,
+                    updatedAt: now,
+                    items: WorkItemWidgetProjection.items(from: entries)
+                )
+            )
+        }
+        snapshot.selectedDatabaseId = selectedDatabaseId.isEmpty ? nil : selectedDatabaseId
+        snapshot.writtenAt = now
+        snapshot.principal = principal
+        try? store.write(snapshot)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private static func widgetSnapshotTimestamp() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
     }
 }
