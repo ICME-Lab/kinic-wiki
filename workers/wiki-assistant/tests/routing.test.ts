@@ -24,6 +24,27 @@ const routeResponse = (values: Record<string, number>) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Jev semantic routing", () => {
+  it("ignores selected-node scores when no node is selected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        routeResponse({
+          database_overview: 0.96,
+          focused_search: 0.1,
+          selected_node_summary: 0.84,
+          conversation: 0.09,
+        }),
+      ),
+    );
+    await expect(
+      routeAskAiIntent({
+        question: "このDBの内容を教えて",
+        subject: { kind: "database" },
+        apiKey: "key",
+      }),
+    ).resolves.toMatchObject({ route: "database_overview" });
+  });
+
   it("routes a database-wide Japanese question to overview", async () => {
     vi.stubGlobal(
       "fetch",

@@ -97,7 +97,10 @@ export async function routeAskAiIntent(input: {
         },
       },
     });
-    const ranked = askAiRouteNames
+    const eligibleRoutes = askAiRouteNames.filter(
+      (route) => route !== "selected_node_summary" || input.subject.kind === "node",
+    );
+    const ranked = eligibleRoutes
       .map((route, index) => ({
         route,
         index,

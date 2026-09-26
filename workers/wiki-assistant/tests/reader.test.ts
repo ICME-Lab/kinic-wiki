@@ -239,6 +239,28 @@ describe("read tools and citations", () => {
     expect(state.discoveredPaths).toContain("/root.md");
   });
 
+  it("includes a sibling folder after a full first subtree", async () => {
+    const actor = fixtureActor();
+    actor.list_nodes = vi.fn(async ({ prefix }) => ({
+      Ok: prefix === "/Knowledge"
+        ? [entry("/Knowledge/a", 0n, "Folder"), entry("/Knowledge/b", 0n, "Folder")]
+        : prefix === "/Knowledge/a"
+          ? Array.from({ length: 100 }, (_, index) => entry(`/Knowledge/a/${index}.md`, 1n))
+          : prefix === "/Knowledge/b"
+            ? [entry("/Knowledge/b/overview.md", 1n)]
+            : [],
+    }));
+    actor.read_node = vi.fn(async (_db, path) => ({ Ok: [{
+      path, content: `content ${path}`, etag: "v1", metadata_json: "{}", updated_at: 1n,
+    }] as [Node] }));
+    const state = emptyToolState();
+    const result = JSON.parse(await new KinicReader(
+      actor, "db-a", "database", state, 24000, 12, "key", "database_overview",
+    ).execute("wiki_inventory", {}));
+    expect(result.nodes.some((node: { path: string }) => node.path === "/Knowledge/b/overview.md")).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
   it("limits overview reads to four exact nodes", async () => {
     const actor = fixtureActor();
     const state = emptyToolState();

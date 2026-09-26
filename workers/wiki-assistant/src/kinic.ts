@@ -223,26 +223,35 @@ export class KinicReader {
       if (this.scope !== "database")
         throw new AssistantError("scope_not_allowed", 403);
       const limit = 100;
-      const [root, knowledge, memory] = await Promise.all([
-        this.actor.list_nodes({
-          database_id: this.databaseId,
-          prefix: "/",
-          recursive: false,
-          limit,
-        }),
-        this.actor.list_nodes({
-          database_id: this.databaseId,
-          prefix: "/Knowledge",
-          recursive: true,
-          limit,
-        }),
-        this.actor.list_nodes({
-          database_id: this.databaseId,
-          prefix: "/Memory",
-          recursive: true,
-          limit,
-        }),
-      ]).then((results) => results.map(unwrap));
+      const root = unwrap(await this.actor.list_nodes({
+        database_id: this.databaseId, prefix: "/", recursive: false, limit,
+      }));
+      // A recursive list is capped at 100 entries including folders. Walk one
+      // level at a time so the first large subtree cannot hide its siblings.
+      const pending = ["/Knowledge", "/Memory"];
+      const visited = new Set<string>();
+      const documentsByPath = new Map<string, WikiNodeEntry>();
+      let treeTruncated = root.length === limit;
+      const maxFolders = 32;
+      while (pending.length && visited.size < maxFolders) {
+        const batch = pending.splice(0, Math.min(4, maxFolders - visited.size));
+        const results = await Promise.all(batch.map((prefix) =>
+          this.actor.list_nodes({ database_id: this.databaseId, prefix, recursive: false, limit }),
+        ));
+        for (let index = 0; index < batch.length; index++) {
+          const prefix = batch[index]!;
+          visited.add(prefix);
+          const entries = unwrap(results[index]!);
+          treeTruncated ||= entries.length === limit;
+          for (const entry of entries) {
+            if (entry.path === prefix || !entry.path.startsWith(prefix + "/")) continue;
+            if (isDocumentEntry(entry.kind)) documentsByPath.set(entry.path, entry);
+            else if (("Folder" in entry.kind || "Directory" in entry.kind) &&
+              !visited.has(entry.path) && !pending.includes(entry.path)) pending.push(entry.path);
+          }
+        }
+      }
+      treeTruncated ||= pending.length > 0;
       const rootDocuments = root.filter(
         (entry) =>
           isDocumentEntry(entry.kind) &&
@@ -251,11 +260,11 @@ export class KinicReader {
             entry.path,
           ),
       );
-      const knowledgeDocuments = knowledge.filter(
+      const knowledgeDocuments = [...documentsByPath.values()].filter(
         (entry) =>
           isDocumentEntry(entry.kind) && entry.path.startsWith("/Knowledge/"),
       );
-      const memoryDocuments = memory.filter(
+      const memoryDocuments = [...documentsByPath.values()].filter(
         (entry) =>
           isDocumentEntry(entry.kind) && entry.path.startsWith("/Memory/"),
       );
@@ -283,10 +292,7 @@ export class KinicReader {
           .filter((path) => !this.state.discoveredPaths.includes(path)),
       );
       this.state.inventoryObserved = documents.length;
-      this.state.inventoryTruncated =
-        root.length === limit ||
-        knowledge.length === limit ||
-        memory.length === limit;
+      this.state.inventoryTruncated = treeTruncated;
       return this.bounded({
         observed: {
           root: rootDocuments.length,

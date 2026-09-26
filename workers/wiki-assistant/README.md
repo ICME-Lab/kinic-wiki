@@ -67,7 +67,24 @@ cd workers/wiki-assistant
 node --env-file=../../.env.local ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts
 ```
 
-The ignored repository-root `.env.local` holds the two keys for this command; keeping it outside the Worker directory prevents offline Wrangler tests from loading live secrets. This sends only synthetic fixtures to TypeSafe and OpenAI and incurs usage charges. Each of the 20 cases supplies 20 FTS-ordered candidates with the correct candidate distributed across ranks 1–20, then runs the Agent once with the raw FTS top five and once with the Jev top five. FTS is measured for retrieval only; the Jev run must also pass answer and citation checks. The suite reports aggregate Recall@5, median time to the first correct node read, and Jev p95; it fails unless Jev Recall@5 is at least the FTS baseline, median correct-evidence time is shorter, and Jev p95 is at most one second. It tests the real Agents API with the same tools and answer validator; it does not prove production-corpus search recall or II connectivity. Set `JEV_EVAL_CASE` or `JEV_EVAL_START_CASE` to a fixture ID for focused diagnosis. Each test deletes its provider session on completion; a failed cleanup prints only the session ID requiring follow-up.
+The ignored repository-root `.env.local` holds the two keys for this command; keeping it outside the Worker directory prevents offline Wrangler tests from loading live secrets. This config runs the 20 synthetic retrieval cases, a synthetic database-overview answer, and a question-only Jev routing check. It never reads a private Wiki database. The provider calls incur usage charges. Each retrieval case supplies 20 FTS-ordered candidates with the correct candidate distributed across ranks 1–20, then runs the Agent once with the raw FTS top five and once with the Jev top five. FTS is measured for retrieval only; the Jev run must also pass answer and citation checks. The suite reports aggregate Recall@5, median time to the first correct node read, and Jev p95; it fails unless Jev Recall@5 is at least the FTS baseline, median correct-evidence time is shorter, and Jev p95 is at most one second. It tests the real Agents API with the same tools and answer validator; it does not prove production-corpus search recall or II connectivity. Set `JEV_EVAL_CASE` or `JEV_EVAL_START_CASE` to a fixture ID for focused diagnosis. Each test deletes its provider session on completion; a failed cleanup prints only the session ID requiring follow-up.
+
+Real database checks use separate configs. The read-only check requires an authenticated local `icp` identity and sends no Wiki content to an AI provider:
+
+```sh
+KINIC_LIVE_DATABASE_ID=<database-id> KINIC_LIVE_CANISTER_ID=<canister-id> \
+  pnpm --dir workers/wiki-assistant test:live:readonly
+```
+
+Only after explicit approval to send private Wiki excerpts to OpenAI, use the separate private test. It requires `KINIC_LIVE_PRIVATE_EGRESS=1` in addition to the database and canister IDs; it sends the question to TypeSafe and bounded inventory previews plus at most four read excerpts to OpenAI. Test output contains counts and booleans only, not paths or content.
+
+```sh
+cd workers/wiki-assistant
+KINIC_LIVE_DATABASE_ID=<database-id> KINIC_LIVE_CANISTER_ID=<canister-id> \
+KINIC_LIVE_PRIVATE_EGRESS=1 \
+  node --env-file=../../.env.local ./node_modules/vitest/vitest.mjs run \
+  --config vitest.private-live.config.ts
+```
 
 Before activation, separately verify on staging:
 
