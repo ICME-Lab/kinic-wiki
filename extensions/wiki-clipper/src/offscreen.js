@@ -10,7 +10,7 @@ import {
   requireDatabaseWriteCyclesAvailable,
   searchNodesWithActor
 } from "./vfs-actor.js";
-import { buildRecallFallbackQuery, buildRecallSearchQuery, collectRecallCandidates, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, RECALL_CONTEXT_MAX_CHARS, titleFromPath } from "./recall.js";
+import { buildRecallFallbackQuery, buildRecallSearchQuery, collectRecallCandidates, isAllowedRecallPath, isRecallDocumentHit, normalizeRecallQuery, rankRecallHits, RECALL_CANDIDATE_LIMIT, RECALL_CONTEXT_MAX_CHARS, RECALL_SEARCH_TOP_K, titleFromPath } from "./recall.js";
 import { RUNTIME_SOURCE_TRIGGER_URL, RUNTIME_WIKI_ORIGIN } from "./runtime-config.js";
 
 let authSnapshotFactory = defaultAuthSnapshot;
@@ -340,10 +340,20 @@ async function authorizedRecallSession(actor, principal, databaseId) {
 
 async function searchRecallHits(actor, databaseId, query) {
   const searches = await Promise.allSettled([
-    searchNodesWithActor(actor, databaseId, query, "/Knowledge", 5),
-    searchNodesWithActor(actor, databaseId, query, "/Sources", 5)
+    searchRecallPrefix(actor, databaseId, query, "/Knowledge"),
+    searchRecallPrefix(actor, databaseId, query, "/Sources")
   ]);
   return searches.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+}
+
+async function searchRecallPrefix(actor, databaseId, query, prefix) {
+  const hits = await searchNodesWithActor(actor, databaseId, query, prefix, RECALL_SEARCH_TOP_K);
+  if (hits.length < RECALL_SEARCH_TOP_K || hits.every(isRecallDocumentHit)) return hits;
+  try {
+    return await searchNodesWithActor(actor, databaseId, query, prefix, RECALL_CANDIDATE_LIMIT);
+  } catch {
+    return hits;
+  }
 }
 
 function normalizeRecallResults(results, databaseId) {

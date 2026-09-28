@@ -86,6 +86,7 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
       host: "https://icp0.io"
     });
     assert.deepEqual(calls.map((request) => request.prefix[0]).sort(), ["/Knowledge", "/Sources"]);
+    assert.ok(calls.every((request) => request.top_k === 5));
     assert.equal(calls[0].preview_mode[0].Light, null);
     assert.deepEqual(result.map((entry) => entry.path), ["/Knowledge/mcp.md", "/Sources/chatgpt/mcp.md"]);
     assert.match(result[0].sourceUrl, /db\/team-db\/Knowledge\/mcp\.md$/);
@@ -96,14 +97,16 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
 
 test("searchRecall sends candidates before the top-three cut and accepts an empty Jev selection", async () => {
   let posted;
+  const searchLimits = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
     createVfsActor: async () => ({
       async search_nodes(request) {
+        searchLimits.push(request.top_k);
         const files = Array.from({ length: 5 }, (_, index) => rawRecallHit(
           `${request.prefix[0]}/${index}.md`, ["content_fts"], -100 + index
         ));
-        return { Ok: [rawRecallHit(request.prefix[0], ["path_substring"], -1_000, { Folder: null }), ...files] };
+        return { Ok: [rawRecallHit(request.prefix[0], ["path_substring"], -1_000, { Folder: null }), ...files].slice(0, request.top_k) };
       },
       async authorize_ops_answer_session() { return { Ok: null }; }
     }),
@@ -116,8 +119,66 @@ test("searchRecall sends candidates before the top-three cut and accepts an empt
     assert.deepEqual(await searchRecall("agent memory", "https://chatgpt.com/c/current", config()), []);
     assert.equal(posted.candidates.length, 10);
     assert.ok(posted.candidates.every(({ path }) => path !== "/Knowledge" && path !== "/Sources"));
+    assert.deepEqual(searchLimits, [5, 5, 20, 20]);
     assert.equal(posted.question, "agent memory");
     assert.ok(posted.candidates.every(({ preview }) => preview.length <= 300));
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall refills document candidates hidden behind five folder hits", async () => {
+  const limits = [];
+  let posted;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        limits.push(request.top_k);
+        const folders = Array.from({ length: 5 }, (_, index) => rawRecallHit(
+          `${request.prefix[0]}/folder-${index}`, ["path_substring"], -1_000 + index, { Folder: null }
+        ));
+        const file = rawRecallHit(`${request.prefix[0]}/answer.md`, ["content_fts"], -100);
+        return { Ok: [...folders, file].slice(0, request.top_k) };
+      },
+      async authorize_ops_answer_session() { return { Ok: null }; }
+    }),
+    fetch: async (_url, options) => {
+      posted = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ selectedIndices: [0] }) };
+    }
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", config());
+    assert.deepEqual(limits, [5, 5, 20, 20]);
+    assert.deepEqual(posted.candidates.map(({ path }) => path), ["/Knowledge/answer.md", "/Sources/answer.md"]);
+    assert.deepEqual(result.map(({ path }) => path), ["/Knowledge/answer.md"]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("searchRecall preserves the first document hits when folder backfill fails", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async search_nodes(request) {
+        if (request.top_k === 20) throw new Error("backfill unavailable");
+        const folder = rawRecallHit(request.prefix[0], ["path_substring"], -1_000, { Folder: null });
+        const files = Array.from({ length: 4 }, (_, index) => rawRecallHit(
+          `${request.prefix[0]}/${index}.md`, ["content_fts"], -100 + index
+        ));
+        return { Ok: [folder, ...files] };
+      },
+      async authorize_ops_answer_session() { return { Ok: null }; }
+    }),
+    fetch: async () => { throw new Error("Jev unavailable"); }
+  });
+  try {
+    const result = await searchRecall("agent memory", "https://chatgpt.com/c/current", config());
+    assert.deepEqual(result.map(({ path }) => path), [
+      "/Knowledge/0.md", "/Knowledge/1.md", "/Knowledge/2.md"
+    ]);
   } finally {
     setOffscreenDepsForTest();
   }
