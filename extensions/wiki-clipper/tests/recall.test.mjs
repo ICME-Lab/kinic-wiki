@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   buildRecallFallbackQuery,
   buildRecallSearchQuery,
+  collectRecallCandidates,
   applyRecallStorageChanges,
   formatRecallContext,
   isAllowedRecallPath,
@@ -81,6 +82,14 @@ test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hit
   assert.deepEqual(results.map((result) => result.path), ["/Knowledge/one.md", "/Sources/chatgpt/one.md"]);
   assert.equal(results[0].score, -30_000);
   assert.deepEqual(results[0].matchReasons, ["title_fts", "content_fts"]);
+});
+
+test("collectRecallCandidates keeps at most twenty candidates before the display cut", () => {
+  const hits = Array.from({ length: 25 }, (_, index) => hit(
+    `/Knowledge/${String(index).padStart(2, "0")}.md`, ["content_fts"], index - 100, "preview"
+  ));
+  assert.equal(collectRecallCandidates(hits).length, 20);
+  assert.equal(rankRecallHits(hits).length, 3);
 });
 
 test("rankRecallHits keeps content_substring hits so CJK body matches are not dropped", () => {

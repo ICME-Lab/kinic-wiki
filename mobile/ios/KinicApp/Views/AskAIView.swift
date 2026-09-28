@@ -29,7 +29,7 @@ struct AskAIView: View {
 
                     Button("New conversation", systemImage: "square.and.pencil", action: model.newConversation)
                         .labelStyle(.iconOnly)
-                        .disabled(appModel.selectedAskAIDatabaseId.isEmpty)
+                        .disabled(appModel.selectedAskAIDatabaseId.isEmpty || model.isSynchronizingWorker)
                 }
             }
             .fullScreenCover(isPresented: $isShowingPreview) {

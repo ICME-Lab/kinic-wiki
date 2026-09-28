@@ -5,6 +5,7 @@ import { fnv1aHex } from "@kinic/source-contracts";
 
 export const RECALL_QUERY_MAX_CHARS = 2_000;
 export const RECALL_RESULT_LIMIT = 3;
+export const RECALL_CANDIDATE_LIMIT = 20;
 export const RECALL_SEARCH_TOP_K = 5;
 export const RECALL_QUERY_MAX_TERMS = 4;
 export const RECALL_QUERY_FOCUS_CHARS = 200;
@@ -144,6 +145,10 @@ export function applyRecallStorageChanges(config, changes, areaName) {
 }
 
 export function rankRecallHits(hits, { currentConversationUrl = "" } = {}) {
+  return collectRecallCandidates(hits, { currentConversationUrl }).slice(0, RECALL_RESULT_LIMIT);
+}
+
+export function collectRecallCandidates(hits, { currentConversationUrl = "" } = {}) {
   const currentConversationId = conversationIdFromUrl(currentConversationUrl);
   const candidates = new Map();
   for (const hit of Array.isArray(hits) ? hits : []) {
@@ -169,7 +174,7 @@ export function rankRecallHits(hits, { currentConversationUrl = "" } = {}) {
       const rightKnowledge = right.path.startsWith("/Knowledge/") ? 0 : 1;
       return leftKnowledge - rightKnowledge || left.score - right.score || left.path.localeCompare(right.path);
     })
-    .slice(0, RECALL_RESULT_LIMIT);
+    .slice(0, RECALL_CANDIDATE_LIMIT);
 }
 
 function mergeRecallHit(existing, incoming) {

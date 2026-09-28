@@ -40,7 +40,7 @@
         <input id="recall-enabled" type="checkbox" />
         <span>
           <strong>Recall beta</strong>
-          <small>Show related Kinic memories in ChatGPT after you send a question.</small>
+          <small>Show related Kinic memories in ChatGPT. Your question and up to 20 short Wiki previews are sent to TypeSafe for relevance ranking when available.</small>
         </span>
       </label>
       <form id="create-database-form" class="create-database-form" hidden>
@@ -53,6 +53,15 @@
       <section class="latest-card">
         <strong>Latest active-tab capture</strong>
         <p id="latest-status">No run yet.</p>
+      </section>
+      <section class="privacy-card" aria-label="Source processing notice">
+        <strong>Source processing</strong>
+        <p>
+          When you save a source, an excerpt and candidate Wiki paths and previews are processed by
+          TypeSafe in the United States to rank context. The selected context is then sent to DeepSeek
+          to generate the page. TypeSafe does not use inputs for training or fine-tuning and may retain
+          them as needed.
+        </p>
       </section>
       <p id="status"></p>
     </main>

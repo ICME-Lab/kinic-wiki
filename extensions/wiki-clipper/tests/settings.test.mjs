@@ -302,6 +302,13 @@ test("Internet Identity options use 29 day TTL and derivation origin", () => {
   assert.equal(AUTH_OPTIONS.createOptions.idleOptions.disableDefaultIdleCallback, true);
 });
 
+test("settings disclose Source Capture subprocessors before save", () => {
+  const html = readFileSync(new URL("../popup/popup.html", import.meta.url), "utf8");
+  assert.match(html, /TypeSafe in the United States/);
+  assert.match(html, /DeepSeek/);
+  assert.match(html, /does not use inputs for training or fine-tuning/);
+});
+
 test("CLI login helpers use mainnet Internet Identity and canonical derivation origin", () => {
   assert.equal(
     identityProviderUrlForLocation({

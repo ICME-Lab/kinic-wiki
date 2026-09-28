@@ -59,9 +59,9 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Uses Internet Identity for sign-in.
 - Stores pending shared URLs and selected database ID in the app group container.
 - Stores Ask AI conversation history on the device.
-- Sends Ask AI questions, the selected database name, up to six recent conversation messages, and relevant document excerpts to Kinic's AI service to generate answers.
-- Discards Ask AI request bodies after processing and does not retain them in logs, caches, databases, analytics, or training datasets.
-- Does not send Ask AI data to a third-party AI provider.
+- With explicit versioned consent, sends Ask AI questions, the selected target, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe in the United States for intent classification, and sends candidate paths and previews for focused search ranking.
+- Sends questions, bounded conversation context, and relevant Wiki excerpts to OpenAI in the United States to operate the answering Agent. Active encrypted Worker state is retained only for bounded recovery; completed history remains on the device.
+- Does not include questions, Wiki text, paths, previews, routing probabilities, or API keys in operational logs.
 - Ask AI does not answer when the selected database has no supporting document.
 - Does not declare tracking.
 - Does not collect analytics in the native app.
@@ -73,13 +73,13 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Purchase History: Database funding and purchase records when those features are used.
 - Purpose: App Functionality.
 - Tracking: No.
-- Ask AI request data is transient and is not retained after real-time processing.
+- Ask AI uses third-party processing and bounded encrypted recovery state as disclosed in the in-app consent and privacy policy.
 
 ## Review Notes
 
 On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Continue with Apple", or "Continue with Google". Internet Identity appears first and supports passkey-based access. KinicWiki does not use a separate username/password account; reviewers can create or access an account with the Apple Account already configured on the review device.
 
-Public databases are shown by default. Open Browse and select the pre-populated public database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain" and submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
+After signing in, open Browse and select the pre-populated database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain", review the TypeSafe/OpenAI consent, and submit a question to see the retrieval route and cited sources. Questions, the selected target, and bounded recent conversation context are sent to TypeSafe for intent classification; focused-search candidates are reranked there. Questions, bounded recent context, and relevant excerpts are sent to OpenAI. Active recovery state is encrypted and bounded, and completed conversation history is stored on the device.
 
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
 

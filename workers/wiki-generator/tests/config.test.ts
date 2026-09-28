@@ -27,6 +27,35 @@ test("loadConfig respects explicit context prefix override", () => {
   assert.equal(loadConfig({ ...env, KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Knowledge" }).contextPrefix, "/Knowledge");
 });
 
+test("loadConfig separates context candidate and selection limits", () => {
+  const env = testEnv(new TestQueue());
+  const config = loadConfig({
+    ...env,
+    KINIC_WIKI_WORKER_CONTEXT_CANDIDATES: "20",
+    KINIC_WIKI_WORKER_CONTEXT_SELECTIONS: "5",
+  });
+
+  assert.equal(config.maxContextCandidates, 20);
+  assert.equal(config.maxContextSelections, 5);
+  const capped = loadConfig({
+    ...env,
+    KINIC_WIKI_WORKER_CONTEXT_CANDIDATES: "99",
+    KINIC_WIKI_WORKER_CONTEXT_SELECTIONS: "99",
+  });
+  assert.equal(capped.maxContextCandidates, 20);
+  assert.equal(capped.maxContextSelections, 5);
+});
+
+test("loadConfig accepts an optional exact database allowlist", () => {
+  const env = testEnv(new TestQueue());
+  assert.equal(loadConfig(env).allowedDatabaseId, null);
+  assert.equal(loadConfig({ ...env, KINIC_WIKI_ALLOWED_DATABASE_ID: " staging_db-1 " }).allowedDatabaseId, "staging_db-1");
+  assert.throws(
+    () => loadConfig({ ...env, KINIC_WIKI_ALLOWED_DATABASE_ID: "not allowed" }),
+    /KINIC_WIKI_ALLOWED_DATABASE_ID/
+  );
+});
+
 test("loadConfig normalizes worker root prefixes", () => {
   const env = testEnv(new TestQueue());
   const config = loadConfig({

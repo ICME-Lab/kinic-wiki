@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:staging": "node scripts/build.mjs --staging",
     "release:check": "node scripts/release-check.mjs",
     "release:listing-check": "npm run store-assets:generate && node scripts/release-check.mjs --store-listing",
     "release:package": "npm run build && npm run release:check && node scripts/release-package.mjs",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@kinic/candid-tools": "workspace:*",
+    "@kinic/jev-reranker": "workspace:*",
     "@playwright/test": "^1.59.1",
     "esbuild": "0.28.1"
   }

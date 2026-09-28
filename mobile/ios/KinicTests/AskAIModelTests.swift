@@ -9,6 +9,116 @@ import Testing
 @MainActor
 struct AskAIModelTests {
     @Test
+    func workerOverviewRequiresConsentAndPersistsVerifiedResult() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.workerResult = AskAIWorkerResult(
+            kind: "grounded_answer",
+            answer: "このDBには設計メモがあります。",
+            sources: [
+                AskAISource(
+                    id: "citation",
+                    path: "/Knowledge/overview.md",
+                    excerpt: "設計メモ",
+                    score: 0,
+                    matchReasons: []
+                )
+            ],
+            trace: AssistantRetrievalTrace(
+                route: "database_overview",
+                calls: 3,
+                characters: 4000,
+                inventoryObserved: 24,
+                inventoryTruncated: false,
+                readCount: 2,
+                jevRouteDurationMs: 80,
+                jevRerankDurationMs: 0
+            ),
+            insufficient: false
+        )
+        let client = AskAICompletionStub(responses: [])
+        let store = AskAIStoreStub()
+        let model = AskAIModel(
+            knowledgeProvider: provider,
+            client: client,
+            store: store
+        )
+        await model.load()
+        model.draft = "これどんな内容がある？"
+        model.send()
+        #expect(model.isShowingDataConsent)
+        #expect(model.messages.isEmpty)
+
+        model.agreeToDataProcessingAndSend()
+        try await waitUntilFinished(model)
+
+        #expect(await client.callCount == 0)
+        #expect(model.messages.last?.text == "このDBには設計メモがあります。")
+        #expect(model.messages.last?.sources.first?.path == "/Knowledge/overview.md")
+        #expect(model.messages.last?.trace.contains { $0.title == "Scanned 24 notes" } == true)
+        #expect(await store.savedConversations.first?.messages.last?.text == "このDBには設計メモがあります。")
+    }
+
+    @Test
+    func stoppingWorkerGenerationWaitsForRemoteCancellation() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.hasAskAIWorkerConsent = true
+        provider.workerDelay = .seconds(60)
+        provider.workerResult = AskAIWorkerResult(
+            kind: "conversation",
+            answer: "Late answer",
+            sources: [],
+            trace: nil,
+            insufficient: false
+        )
+        let model = AskAIModel(
+            knowledgeProvider: provider,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub()
+        )
+        await model.load()
+        model.draft = "Keep working"
+        model.send()
+        #expect(model.isGenerating)
+
+        model.cancelGeneration()
+        try await waitUntilFinished(model)
+
+        #expect(provider.cancelWorkerCallCount == 1)
+        #expect(model.messages.last?.text == "Generation stopped.")
+        #expect(!model.isSynchronizingWorker)
+    }
+
+    @Test
+    func failedWorkerEndKeepsCurrentConversationUntilRetrySucceeds() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.endWorkerError = AskAIKnowledgeProviderStubError.injected
+        let model = AskAIModel(
+            knowledgeProvider: provider,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub()
+        )
+        await model.load()
+        let originalID = try #require(model.currentConversation?.id)
+
+        model.newConversation()
+        try await waitForWorkerSynchronization(model)
+
+        #expect(model.currentConversation?.id == originalID)
+        #expect(provider.endWorkerCallCount == 1)
+        #expect(model.errorMessage?.contains("could not be ended") == true)
+
+        provider.endWorkerError = nil
+        model.newConversation()
+        try await waitForWorkerSynchronization(model)
+
+        #expect(model.currentConversation?.id != originalID)
+        #expect(provider.endWorkerCallCount == 2)
+    }
+
+    @Test
     func voiceCaveatsSurviveReloadAndRepeatedSnapshots() async throws {
         let store = AskAIStoreStub()
         let model = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []), client: AskAICompletionStub(responses: []), store: store)
@@ -1497,6 +1607,13 @@ struct AskAIModelTests {
         #expect(!model.isGenerating)
     }
 
+    private func waitForWorkerSynchronization(_ model: AskAIModel) async throws {
+        for _ in 0..<200 where model.isSynchronizingWorker {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!model.isSynchronizingWorker)
+    }
+
     private func waitForCallCount(_ client: AskAICompletionStub, count: Int) async throws {
         for _ in 0..<200 {
             if await client.callCount == count { return }
@@ -1622,6 +1739,12 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var askAIOutputLanguage = WikiOutputLanguage.english
     var canAskAI = true
     var askAIDatabaseCandidates: [DatabaseSummary] = []
+    var usesWorkerAskAI = false
+    var hasAskAIWorkerConsent = false
+    var workerResult: AskAIWorkerResult?
+    var workerDelay: Duration?
+    var cancelWorkerError: Error?
+    var endWorkerError: Error?
     var nextDatabaseSelectionDisposition: BrowseDatabaseSelectionDisposition?
     let sources: [AskAIContextSource]
     let candidateCount: Int
@@ -1631,6 +1754,8 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     private(set) var receivedPlans: [AskAIQueryPlan] = []
     private(set) var openedDatabaseIds: [String] = []
     private(set) var openedPaths: [String] = []
+    private(set) var cancelWorkerCallCount = 0
+    private(set) var endWorkerCallCount = 0
 
     init(sources: [AskAIContextSource], candidateCount: Int? = nil) {
         self.sources = sources
@@ -1672,6 +1797,38 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
         openedDatabaseIds.append(databaseId)
         openedPaths.append(path)
     }
+
+    func grantAskAIWorkerConsent() {
+        hasAskAIWorkerConsent = true
+    }
+
+    func answerAskAIWithWorker(
+        conversationId: UUID,
+        databaseId: String,
+        databaseTitle: String,
+        question: String,
+        history: [AskAIMessage]
+    ) async throws -> AskAIWorkerResult {
+        if let workerDelay {
+            try await Task.sleep(for: workerDelay)
+        }
+        guard let workerResult else { throw AskAIKnowledgeError.workerUnavailable }
+        return workerResult
+    }
+
+    func cancelAskAIWorkerTurn() async throws {
+        cancelWorkerCallCount += 1
+        if let cancelWorkerError { throw cancelWorkerError }
+    }
+
+    func endAskAIWorkerConversation() async throws {
+        endWorkerCallCount += 1
+        if let endWorkerError { throw endWorkerError }
+    }
+}
+
+private enum AskAIKnowledgeProviderStubError: Error {
+    case injected
 }
 
 private actor AskAICompletionStub: AskAICompleting {

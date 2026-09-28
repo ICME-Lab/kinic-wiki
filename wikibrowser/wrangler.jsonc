@@ -12,7 +12,8 @@
     "VITE_WIKI_IC_HOST": "https://icp0.io",
     "VITE_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
-    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
+    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz",
+    "RECALL_JEV_ENABLED": "false"
   },
   "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant" }],
   "r2_buckets": [
@@ -56,7 +57,11 @@
         "VITE_KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
         "KINIC_WIKI_CANISTER_ID": "3ryrw-kyaaa-aaaaf-qgxpq-cai",
         "VITE_II_DERIVATION_ORIGIN": "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io",
-        "KINIC_WIKI_GENERATOR_URL": ""
+        "KINIC_WIKI_GENERATOR_URL": "https://kinic-wiki-generator-staging.hude.workers.dev",
+        "KINIC_WIKI_ALLOWED_DATABASE_ID": "db_nuzrspghca5q",
+        "RECALL_ALLOWED_DATABASE_ID": "db_moj6zr34uvmf",
+        "KINIC_WIKI_CLIPPER_ORIGIN": "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg",
+        "RECALL_JEV_ENABLED": "false"
       },
       "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant-staging" }],
       "r2_buckets": [

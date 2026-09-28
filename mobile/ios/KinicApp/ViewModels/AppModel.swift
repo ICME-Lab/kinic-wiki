@@ -34,11 +34,25 @@ extension AppModel: AskAIKnowledgeProviding {
     }
 
     var canAskAI: Bool {
-        canBrowse
+        session != nil && canBrowse
     }
 
     var askAIDatabaseCandidates: [DatabaseSummary] {
         browseListDatabases.filter { $0.status != .deleted }
+    }
+
+    var usesWorkerAskAI: Bool { true }
+    var hasAskAIWorkerConsent: Bool {
+        UserDefaults.standard.bool(
+            forKey: "askai.consent.\(principalText).2026-09-22"
+        )
+    }
+
+    func grantAskAIWorkerConsent() {
+        UserDefaults.standard.set(
+            true,
+            forKey: "askai.consent.\(principalText).2026-09-22"
+        )
     }
 
     func selectAskAIDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
@@ -158,6 +172,65 @@ extension AppModel: AskAIKnowledgeProviding {
         openBrowseDeepLink(databaseId: databaseId, nodePath: path)
     }
 
+    func answerAskAIWithWorker(
+        conversationId: UUID,
+        databaseId: String,
+        databaseTitle: String,
+        question: String,
+        history: [AskAIMessage]
+    ) async throws -> AskAIWorkerResult {
+        guard let session else {
+            throw KinicAuthSessionStoreError.reauthenticationRequired
+        }
+        if voicePreview.snapshot != nil,
+           (voicePreview.historyConversationID != conversationId
+                || voicePreview.snapshot?.databaseId != databaseId
+                || voicePreview.snapshot?.scope != "database") {
+            try await voicePreview.endAndRevoke()
+        }
+        voicePreview.scope = "database"
+        voicePreview.historyConversationID = conversationId
+        voicePreview.historyDatabaseTitle = databaseTitle
+        if voicePreview.snapshot == nil {
+            await voicePreview.connect(
+                databaseId: databaseId,
+                identity: session,
+                history: AssistantHistoryContext.make(history)
+            )
+        }
+        guard voicePreview.snapshot?.databaseId == databaseId,
+              voicePreview.snapshot?.scope == "database" else {
+            throw AskAIKnowledgeError.workerUnavailable
+        }
+        let message = try await voicePreview.askText(question)
+        guard let answer = message.answer else {
+            throw AskAIKnowledgeError.workerUnavailable
+        }
+        return AskAIWorkerResult(
+            kind: message.kind ?? "grounded_answer",
+            answer: answer.displayText,
+            sources: answer.citations.map {
+                AskAISource(
+                    id: $0.id,
+                    path: $0.path,
+                    excerpt: $0.excerpt,
+                    score: 0,
+                    matchReasons: []
+                )
+            },
+            trace: message.trace,
+            insufficient: answer.insufficient
+        )
+    }
+
+    func cancelAskAIWorkerTurn() async throws {
+        try await voicePreview.cancelQuestionAndWait()
+    }
+
+    func endAskAIWorkerConversation() async throws {
+        try await voicePreview.endAndRevoke()
+    }
+
     private func isAskAIDatabaseAvailable(_ databaseId: String) -> Bool {
         session != nil
             || publicBrowseDatabaseIds.contains(databaseId)
@@ -168,6 +241,7 @@ extension AppModel: AskAIKnowledgeProviding {
 enum AskAIKnowledgeError: Error, LocalizedError, Equatable {
     case missingDatabase
     case unavailableDatabase
+    case workerUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -175,6 +249,8 @@ enum AskAIKnowledgeError: Error, LocalizedError, Equatable {
             "Select a database before asking a question."
         case .unavailableDatabase:
             "This database is not currently available to Ask AI."
+        case .workerUnavailable:
+            "The Ask AI service is not available."
         }
     }
 }

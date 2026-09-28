@@ -233,7 +233,7 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
           query_text: queryText,
           prefix: [prefix],
           top_k: limit,
-          preview_mode: [{ ContentStart: null }]
+          preview_mode: [{ Light: null }]
         })
       )).map(normalizeSearchHit),
     exportSnapshot: async (databaseId, prefix, cursor, snapshotRevision) =>

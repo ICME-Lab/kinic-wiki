@@ -30,6 +30,7 @@ const expectedTypes = selectCandidShapes(sharedTypes, [
   "SearchPreview",
   "SearchNodeHit",
   "SearchNodesRequest",
+  "OpsAnswerSessionRequest",
   "WriteSourceForGenerationRequest",
   "MkdirNodeRequest",
   "MkdirNodeResult",
@@ -39,6 +40,7 @@ const expectedTypes = selectCandidShapes(sharedTypes, [
 ]);
 const expectedMethods = selectCandidShapes(sharedMethods, [
   "get_cycles_billing_config",
+  "authorize_ops_answer_session",
   "create_database",
   "list_databases",
   "mkdir_node",
