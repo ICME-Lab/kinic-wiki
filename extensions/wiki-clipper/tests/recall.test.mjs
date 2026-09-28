@@ -92,6 +92,18 @@ test("collectRecallCandidates keeps at most twenty candidates before the display
   assert.equal(rankRecallHits(hits).length, 3);
 });
 
+test("Recall excludes folders before Jev selection and lexical fallback", () => {
+  const hits = [
+    hit("/Knowledge", ["path_substring"], -100_000, "folder", { kind: { Folder: null } }),
+    hit("/Knowledge/notes", ["title_fts"], -90_000, "folder", { kind: { Folder: null } }),
+    hit("/Knowledge/notes/page.md", ["content_fts"], -10_000, "file"),
+    hit("/Sources/chatgpt/thread.md", ["content_fts"], -5_000, "source", { kind: { Source: null } })
+  ];
+  const expected = ["/Knowledge/notes/page.md", "/Sources/chatgpt/thread.md"];
+  assert.deepEqual(collectRecallCandidates(hits).map(({ path }) => path), expected);
+  assert.deepEqual(rankRecallHits(hits).map(({ path }) => path), expected);
+});
+
 test("rankRecallHits keeps content_substring hits so CJK body matches are not dropped", () => {
   const results = rankRecallHits([
     hit("/Knowledge/日本語ノート.md", ["content_substring"], -100_000_000, "検索改善の作業メモ", { charOffset: 12 })

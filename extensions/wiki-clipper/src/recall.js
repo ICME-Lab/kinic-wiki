@@ -149,6 +149,8 @@ export function collectRecallCandidates(hits, { currentConversationUrl = "" } = 
   const currentConversationId = conversationIdFromUrl(currentConversationUrl);
   const candidates = new Map();
   for (const hit of Array.isArray(hits) ? hits : []) {
+    const kind = variantKey(hit?.kind);
+    if (kind !== "File" && kind !== "Source") continue;
     const path = String(hit?.path || "");
     if (!path || pathLooksLikeCurrentConversation(path, currentConversationId)) continue;
     const rawScore = Number(hit?.score);
@@ -206,7 +208,7 @@ export function normalizeRecallHit(hit) {
   const previewField = variantKey(preview?.field);
   return {
     path,
-    kind: variantKey(hit?.kind) || "File",
+    kind: variantKey(hit?.kind),
     title: titleFromPath(path),
     snippet: String(excerpt || snippet || "").trim(),
     updatedAt: null,
