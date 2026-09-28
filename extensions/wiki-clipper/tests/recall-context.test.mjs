@@ -20,7 +20,6 @@ function baseState(overrides = {}) {
     generation: 1,
     conversationUrl: "https://chatgpt.com/c/one",
     databaseId: "db-1",
-    recallEnabled: true,
     ...overrides
   };
 }
@@ -51,7 +50,6 @@ test("isRecallContextStale detects every click-time state mismatch", () => {
   assert.equal(isRecallContextStale(request, baseState({ generation: 2 })), true);
   assert.equal(isRecallContextStale(request, baseState({ conversationUrl: "https://chatgpt.com/c/two" })), true);
   assert.equal(isRecallContextStale(request, baseState({ databaseId: "db-2" })), true);
-  assert.equal(isRecallContextStale(request, baseState({ recallEnabled: false })), true);
 });
 
 test("applyRecallContext inserts when the click-time state is unchanged", async () => {
@@ -147,17 +145,6 @@ test("applyRecallContext does not insert when the database changes during fetch"
   const state = baseState();
   const { pending, inserted } = run({ state, send: send.promise });
   state.databaseId = "db-2";
-  send.resolve({ ok: true, result: { content: "fetched body" } });
-  const outcome = await pending;
-  assert.equal(outcome.reason, "stale");
-  assert.deepEqual(inserted, []);
-});
-
-test("applyRecallContext does not insert when recall is disabled during fetch", async () => {
-  const send = deferred();
-  const state = baseState();
-  const { pending, inserted } = run({ state, send: send.promise });
-  state.recallEnabled = false;
   send.resolve({ ok: true, result: { content: "fetched body" } });
   const outcome = await pending;
   assert.equal(outcome.reason, "stale");

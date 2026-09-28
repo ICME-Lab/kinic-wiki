@@ -14,16 +14,26 @@ import {
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
-test("Recall remains opt-in while new builds enable Jev for opted-in users", async () => {
+test("Recall uses a selected database and ignores a legacy disabled setting", async () => {
   const syncStorage = memoryStorage();
+  syncStorage.setItem("recallEnabled", "false");
   const restore = installChromeStorage(syncStorage);
+  const calls = [];
+  setOffscreenBridgeForTest(async (message) => {
+    calls.push(message);
+    return { ok: true, result: [{ path: "/Knowledge/mcp.md", title: "MCP", snippet: "notes" }] };
+  });
   try {
     const initial = await handleMessage({ type: "load-config" });
-    assert.equal(initial.config.recallEnabled, false);
-    await handleMessage({ type: "save-config", config: { recallEnabled: true } });
-    const optedIn = await handleMessage({ type: "load-config" });
-    assert.equal(optedIn.config.recallEnabled, true);
+    assert.equal("recallEnabled" in initial.config, false);
+    const request = { type: "recall-search", query: "MCP", conversationUrl: "https://chatgpt.com/c/abc" };
+    assert.deepEqual((await handleMessage(request, sender())).result, []);
+    await handleMessage({ type: "save-config", config: { databaseId: "team-db" } });
+    assert.equal(syncStorage.getItem("recallEnabled"), null);
+    assert.equal((await handleMessage(request, sender())).result[0].path, "/Knowledge/mcp.md");
+    assert.equal(calls.length, 1);
   } finally {
+    setOffscreenBridgeForTest(null);
     restore();
   }
 });

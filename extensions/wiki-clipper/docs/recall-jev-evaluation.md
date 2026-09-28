@@ -1,6 +1,6 @@
 # Recall Jev evaluation
 
-New extension builds include Jev ranking by default when Recall beta is enabled, but a server-side threshold and API key are still required. Complete this evaluation and the staging checks before deploying the enabled configuration. Use one real Wiki database to prepare 60 human-labelled questions without ChatGPT conversation history: 45 with an answer in the Wiki, 15 with none. Assign 20 to `calibration` (15 positive, 5 negative) and 40 to `holdout` (30 positive, 10 negative). Freeze the holdout labels before running TypeSafe.
+New extension builds include Jev ranking when a database is selected, but a server-side threshold and API key are still required. Complete this evaluation and the staging checks before deploying the enabled configuration. Use one real Wiki database to prepare 60 human-labelled questions without ChatGPT conversation history: 45 with an answer in the Wiki, 15 with none. Assign 20 to `calibration` (15 positive, 5 negative) and 40 to `holdout` (30 positive, 10 negative). Freeze the holdout labels before running TypeSafe.
 
 Save the cases outside the repository because paths and previews may contain private material. Each case has this shape:
 

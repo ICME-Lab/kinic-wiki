@@ -6,8 +6,7 @@ export function isRecallContextStale(request, state) {
   return (
     request.generation !== state.generation ||
     request.conversationUrl !== state.conversationUrl ||
-    request.databaseId !== state.databaseId ||
-    state.recallEnabled !== true
+    request.databaseId !== state.databaseId
   );
 }
 

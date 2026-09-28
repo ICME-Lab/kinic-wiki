@@ -17,7 +17,6 @@ const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
 const showSaveControlsInput = document.querySelector("#show-save-controls");
-const recallEnabledInput = document.querySelector("#recall-enabled");
 const createDatabaseForm = document.querySelector("#create-database-form");
 const databaseNameInput = document.querySelector("#database-name");
 const createDatabaseButton = document.querySelector("#create-database");
@@ -53,16 +52,6 @@ databaseSelect.addEventListener("change", async () => {
   try {
     await saveDatabaseSelection(databaseSelect.value);
   } catch (error) {
-    statusText.textContent = error instanceof Error ? error.message : String(error);
-  }
-});
-
-recallEnabledInput.addEventListener("change", async () => {
-  try {
-    await saveRecallSetting(recallEnabledInput.checked);
-    statusText.textContent = recallEnabledInput.checked ? "Recall beta enabled" : "Recall beta disabled";
-  } catch (error) {
-    recallEnabledInput.checked = !recallEnabledInput.checked;
     statusText.textContent = error instanceof Error ? error.message : String(error);
   }
 });
@@ -120,15 +109,10 @@ async function loadUiSettings() {
   const response = await send({ type: "load-config" });
   showSaveControlsInput.checked = response.config?.showSaveControls !== false
     && response.config?.showSaveControls !== "false";
-  recallEnabledInput.checked = response.config?.recallEnabled === true || response.config?.recallEnabled === "true";
 }
 
 async function saveShowSaveControlsSetting(showSaveControls) {
   await send({ type: "save-config", config: { showSaveControls: Boolean(showSaveControls) } });
-}
-
-async function saveRecallSetting(recallEnabled) {
-  await send({ type: "save-config", config: { recallEnabled: Boolean(recallEnabled) } });
 }
 
 async function send(message) {
