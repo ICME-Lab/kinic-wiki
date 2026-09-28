@@ -1,6 +1,6 @@
 # Kinic Wiki Clipper Privacy Policy
 
-Public URL: `https://kinic.io/privacy-policy`
+Public URL: `https://wiki.kinic.xyz/privacy-policy`
 
 Before Chrome Web Store submission, verify that the public URL contains the Wiki Clipper-specific behavior described below. The generic Kinic privacy policy is not enough for this extension listing unless it explicitly covers ChatGPT/Claude/Gemini export, active-tab source capture, Internet Identity auth, and selected database storage.
 

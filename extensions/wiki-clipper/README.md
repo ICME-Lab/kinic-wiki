@@ -42,7 +42,7 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude/Gemini export, active-tab capture, Internet Identity auth, and selected database storage behavior.
+Use `https://wiki.kinic.xyz/privacy-policy` as the Chrome Web Store privacy policy URL after the public page reflects the Wiki Clipper capture, export, authentication, and Recall processing described in this release.
 
 ## Flow
 
