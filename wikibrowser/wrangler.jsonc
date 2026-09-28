@@ -59,6 +59,7 @@
         "KINIC_WIKI_GENERATOR_URL": "https://kinic-wiki-generator-staging.hude.workers.dev",
         "KINIC_WIKI_ALLOWED_DATABASE_ID": "db_nuzrspghca5q",
         "RECALL_ALLOWED_DATABASE_ID": "db_moj6zr34uvmf",
+        "RECALL_JEV_THRESHOLD": "0.39",
         "KINIC_WIKI_CLIPPER_ORIGIN": "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg"
       },
       "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant-staging" }],
