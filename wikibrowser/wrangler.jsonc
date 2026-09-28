@@ -13,7 +13,7 @@
     "VITE_KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz",
-    "RECALL_JEV_ENABLED": "false"
+    "RECALL_JEV_ENABLED": "true"
   },
   "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant" }],
   "r2_buckets": [
@@ -61,7 +61,7 @@
         "KINIC_WIKI_ALLOWED_DATABASE_ID": "db_nuzrspghca5q",
         "RECALL_ALLOWED_DATABASE_ID": "db_moj6zr34uvmf",
         "KINIC_WIKI_CLIPPER_ORIGIN": "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg",
-        "RECALL_JEV_ENABLED": "false"
+        "RECALL_JEV_ENABLED": "true"
       },
       "services": [{ "binding": "WIKI_ASSISTANT", "service": "kinic-wiki-assistant-staging" }],
       "r2_buckets": [

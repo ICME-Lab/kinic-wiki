@@ -53,9 +53,9 @@ Ask AI conversation history is stored locally on the iOS device. The Agent featu
 
 When Source Capture generates a Wiki page, Kinic sends the beginning of the captured source material (up to 4,000 characters as part of the search intent) and up to 20 candidate Wiki paths and short previews to TypeSafe's United States service. TypeSafe returns relevance probabilities used to select up to five candidates. The source material and selected context are then sent to the configured generation provider, currently DeepSeek, to create the requested page. The TypeSafe training and retention terms described above also apply to Source Capture reranking.
 
-### Optional ChatGPT Recall
+### ChatGPT Recall
 
-When the user enables Recall beta in the Wiki Clipper, Kinic searches the selected Wiki database for the current ChatGPT question. When Jev relevance ranking is enabled, the question and up to 20 candidate Wiki paths and short previews are sent through Kinic Wiki to TypeSafe's United States service. Jev may select up to three cards or none. If ranking is unavailable, Recall shows the existing search results. Recall does not save the question or preview text in Kinic operational logs, and it does not automatically send a selected Wiki excerpt to ChatGPT. The user chooses whether to insert context. The TypeSafe training and retention terms above apply.
+Recall beta is on by default in the Wiki Clipper after the user selects a writable Wiki database, and it can be turned off in extension settings. Kinic searches the selected database for the current ChatGPT question while Recall is on. When Jev relevance ranking is available, the question and up to 20 candidate Wiki paths and short previews are sent through Kinic Wiki to TypeSafe's United States service. Jev may select up to three cards or none. If ranking is unavailable, Recall shows the existing search results. Recall does not save the question or preview text in Kinic operational logs, and it does not automatically send a selected Wiki excerpt to ChatGPT. The user chooses whether to insert context. The TypeSafe training and retention terms above apply.
 
 ### Optional voice preview (disabled pending release acceptance)
 

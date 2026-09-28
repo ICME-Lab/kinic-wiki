@@ -30,7 +30,7 @@ test("settings popup omits fixed runtime inputs", () => {
   assert.match(html, /<form id="create-database-form"/);
   assert.match(html, /Database name/);
   assert.match(html, /id="create-database"/);
-  assert.match(html, /id="recall-enabled"/);
+  assert.match(html, /id="recall-enabled" type="checkbox" checked/);
   assert.match(html, /Recall beta/);
   assert.match(html, /id="show-save-controls"/);
   assert.match(html, /Show save controls/);

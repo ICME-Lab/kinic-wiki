@@ -14,6 +14,23 @@ import {
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
+test("Recall defaults on and keeps an existing opt-out", async () => {
+  const syncStorage = memoryStorage();
+  const restore = installChromeStorage(syncStorage);
+  try {
+    const initial = await handleMessage({ type: "load-config" });
+    assert.equal(initial.config.recallEnabled, true);
+    await handleMessage({ type: "save-config", config: { databaseId: "team-db", recallEnabled: false } });
+    const disabled = await handleMessage({ type: "load-config" });
+    assert.equal(disabled.config.recallEnabled, false);
+    await handleMessage({ type: "save-config", config: { databaseId: "another-db" } });
+    const afterDatabaseChange = await handleMessage({ type: "load-config" });
+    assert.equal(afterDatabaseChange.config.recallEnabled, false);
+  } finally {
+    restore();
+  }
+});
+
 test("save-source delegates evidence source writes to offscreen", async () => {
   const syncStorage = memoryStorage();
   const restore = installChromeStorage(syncStorage);
