@@ -73,7 +73,7 @@ Migration `0003_source_job_target_snapshot.sql` must be applied before deploying
 
 The source Queue starts with `max_batch_size = 4`, `max_batch_timeout = 1`, `max_concurrency = 5`, and `max_retries = 5`. During incidents, pause the source Queue consumer first. To reduce pressure, lower `max_concurrency` from 5 to 2 and then 1 without changing batch size at the same time.
 
-Before enabling the Queue consumer, publish the revised privacy policy and Source Capture disclosure, confirm the TypeSafe account's API addendum permits production automated processing, and configure `TYPESAFE_API_KEY` in the target environment. The revised policy is effective on **2026-10-18**: deploying code or secrets earlier is allowed, but do not enable the production Queue consumer or send production traffic to TypeSafe before that date. Monitor Queue backlog age, retry rate, failure Queue depth, Jev and DeepSeek 429/5xx rate, Jev p95, LLM and end-to-end p95 latency, and D1/VFS failures. Keep the initial settings unchanged for the first 100 production jobs or 24 hours.
+Before enabling the Queue consumer, publish the revised privacy policy and Source Capture disclosure, confirm the TypeSafe account's API addendum permits production automated processing, and configure `TYPESAFE_API_KEY` in the target environment. Monitor Queue backlog age, retry rate, failure Queue depth, Jev and DeepSeek 429/5xx rate, Jev p95, LLM and end-to-end p95 latency, and D1/VFS failures. Keep the initial settings unchanged for the first 100 production jobs or 24 hours.
 
 ## Browser Source Capture Integration
 
