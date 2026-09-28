@@ -24,7 +24,7 @@ Adds an extension settings shortcut.
 
 - `https://wiki.kinic.xyz/*`: opens and coordinates Kinic Wiki web app flows.
 - `https://id.ai/*`: authenticates with Internet Identity.
-- `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and, while `Recall beta` is on, reads the submitted question to perform a read-only Kinic search. Recall is on by default after a database is selected and can be turned off in settings. Conversation export still reads conversations only when the user starts export.
+- `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and, only when `Recall beta` is enabled, reads the submitted question to perform a read-only Kinic search. Conversation export still reads conversations only when the user starts export.
 - `https://claude.ai/*`: shows the Claude export UI and reads conversations only when the user starts export.
 - `https://gemini.google.com/*`: shows the Gemini export UI and reads the current rendered conversation only when the user starts export.
 - `https://icp0.io/*`: writes evidence sources and ingest requests to the Kinic Wiki canister.

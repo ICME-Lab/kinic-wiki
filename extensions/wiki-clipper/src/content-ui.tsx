@@ -29,7 +29,7 @@ const config = signal({
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: DEFAULT_DATABASE_ID,
   host: DEFAULT_IC_HOST,
-  recallEnabled: true,
+  recallEnabled: false,
   showSaveControls: true
 });
 const configLoaded = signal(false);
@@ -493,7 +493,7 @@ function configWithDefaults(value) {
     canisterId: String(value?.canisterId || DEFAULT_CANISTER_ID),
     databaseId: String(value?.databaseId || DEFAULT_DATABASE_ID),
     host: DEFAULT_IC_HOST,
-    recallEnabled: value?.recallEnabled !== false && value?.recallEnabled !== "false",
+    recallEnabled: value?.recallEnabled === true || value?.recallEnabled === "true",
     showSaveControls: showSaveControlsFromValue(value?.showSaveControls)
   };
 }

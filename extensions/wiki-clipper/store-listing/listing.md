@@ -14,7 +14,7 @@ Core features:
 - Export recent ChatGPT and Claude conversations, or the current Gemini conversation, as evidence source files.
 - Authenticate with Internet Identity before writing.
 - Select or explicitly create a writable Kinic Wiki database from extension settings.
-- Recall beta is on by default when a writable database is selected. It can show up to three related Kinic memories in ChatGPT and insert one into the input for review. When Jev ranking is available, the current question and up to 20 short Wiki candidate previews are sent to TypeSafe through Kinic Wiki. Recall can be turned off in extension settings.
+- Optionally enable Recall beta to see up to three related Kinic memories in ChatGPT and insert one into the input for review. When relevance ranking is enabled, the current question and up to 20 short Wiki candidate previews are sent to TypeSafe through Kinic Wiki.
 
 Data is written to the configured Kinic Wiki canister and `wiki.kinic.xyz` ingest endpoint. The extension does not sell data, serve ads, or use data for unrelated analytics.
 

@@ -15,7 +15,7 @@ const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST,
-  recallEnabled: true,
+  recallEnabled: false,
   showSaveControls: true
 };
 const PROVIDERS = {
