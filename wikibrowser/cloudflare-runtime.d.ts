@@ -2,7 +2,6 @@ interface CloudflareEnv {
   WIKI_ASSISTANT?: { fetch(request: Request): Promise<Response> };
   DEEPSEEK_API_KEY?: string;
   TYPESAFE_API_KEY?: string;
-  RECALL_JEV_ENABLED?: string;
   RECALL_JEV_THRESHOLD?: string;
   RECALL_ALLOWED_DATABASE_ID?: string;
   KINIC_DEPLOYMENT_ENV?: string;

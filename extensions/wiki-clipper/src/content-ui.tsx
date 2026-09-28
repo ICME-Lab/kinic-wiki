@@ -29,7 +29,6 @@ const config = signal({
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: DEFAULT_DATABASE_ID,
   host: DEFAULT_IC_HOST,
-  recallEnabled: false,
   showSaveControls: true
 });
 const configLoaded = signal(false);
@@ -88,12 +87,11 @@ chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
     next.showSaveControls = showSaveControlsFromValue(changes.showSaveControls?.newValue);
   }
   const databaseChanged = next.databaseId !== previous.databaseId;
-  const recallChanged = next.recallEnabled !== previous.recallEnabled;
   const saveControlsChanged = next.showSaveControls !== previous.showSaveControls;
-  if (!databaseChanged && !recallChanged && !saveControlsChanged) return;
+  if (!databaseChanged && !saveControlsChanged) return;
   config.value = { ...previous, ...next };
   if (saveControlsChanged && !next.showSaveControls) panelOpen.value = false;
-  if (databaseChanged || (recallChanged && !next.recallEnabled)) invalidateRecall();
+  if (databaseChanged) invalidateRecall();
 });
 
 function ensureMounted() {
@@ -359,7 +357,7 @@ async function runRecall(query) {
   recallResults.value = [];
   await configLoadPromise;
   if (generation !== recallRequestGeneration) return;
-  if (!config.value.recallEnabled) return;
+  if (!config.value.databaseId) return;
   const conversationUrl = location.href;
   try {
     const response = await send({
@@ -407,8 +405,7 @@ function recallState() {
   return {
     generation: recallRequestGeneration,
     conversationUrl: location.href,
-    databaseId: config.value.databaseId,
-    recallEnabled: config.value.recallEnabled === true
+    databaseId: config.value.databaseId
   };
 }
 
@@ -493,7 +490,6 @@ function configWithDefaults(value) {
     canisterId: String(value?.canisterId || DEFAULT_CANISTER_ID),
     databaseId: String(value?.databaseId || DEFAULT_DATABASE_ID),
     host: DEFAULT_IC_HOST,
-    recallEnabled: value?.recallEnabled === true || value?.recallEnabled === "true",
     showSaveControls: showSaveControlsFromValue(value?.showSaveControls)
   };
 }
@@ -506,8 +502,7 @@ function normalizedConfig() {
   return {
     canisterId: DEFAULT_CANISTER_ID,
     databaseId: config.value.databaseId.trim(),
-    host: DEFAULT_IC_HOST,
-    recallEnabled: config.value.recallEnabled === true
+    host: DEFAULT_IC_HOST
   };
 }
 

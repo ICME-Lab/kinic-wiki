@@ -138,9 +138,6 @@ export function applyRecallStorageChanges(config, changes, areaName) {
   if (Object.prototype.hasOwnProperty.call(changes, "databaseId")) {
     next.databaseId = String(changes.databaseId?.newValue || "").trim();
   }
-  if (Object.prototype.hasOwnProperty.call(changes, "recallEnabled")) {
-    next.recallEnabled = changes.recallEnabled?.newValue === true || changes.recallEnabled?.newValue === "true";
-  }
   return next;
 }
 

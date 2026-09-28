@@ -10,7 +10,7 @@ const request = (body: unknown, requestOrigin = origin) => new Request("https://
   method: "POST", headers: { origin: requestOrigin }, body: JSON.stringify(body)
 });
 const env = () => ({
-  RECALL_JEV_ENABLED: "true", RECALL_JEV_THRESHOLD: "0.7", TYPESAFE_API_KEY: "test-key",
+  RECALL_JEV_THRESHOLD: "0.7", TYPESAFE_API_KEY: "test-key",
   KINIC_WIKI_CANISTER_ID: "canister-test", KINIC_WIKI_ALLOWED_DATABASE_ID: "db-test",
   KINIC_WIKI_CLIPPER_ORIGIN: origin,
   QUERY_ANSWER_RATE_LIMIT: { get: vi.fn().mockResolvedValue(null), put: vi.fn().mockResolvedValue(undefined) }
@@ -74,13 +74,13 @@ describe("Recall Jev API", () => {
     expect((await POST(request(input()), runtime as never)).status).toBe(503);
   });
 
-  it("leaves the feature unavailable until explicitly enabled and configured", async () => {
+  it("leaves reranking unavailable until the threshold and API key are configured", async () => {
     deps({ candidate_0: 1 });
     const runtime = env();
-    runtime.RECALL_JEV_ENABLED = "false";
-    expect((await POST(request(input()), runtime as never)).status).toBe(503);
-    runtime.RECALL_JEV_ENABLED = "true";
     runtime.RECALL_JEV_THRESHOLD = "";
+    expect((await POST(request(input()), runtime as never)).status).toBe(503);
+    runtime.RECALL_JEV_THRESHOLD = "0.7";
+    runtime.TYPESAFE_API_KEY = "";
     expect((await POST(request(input()), runtime as never)).status).toBe(503);
   });
 });

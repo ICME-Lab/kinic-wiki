@@ -265,14 +265,13 @@ test("isAllowedRecallPath restricts reads to Recall search prefixes", () => {
   assert.equal(isAllowedRecallPath("Knowledge/mcp.md"), false);
 });
 
-test("applyRecallStorageChanges updates only sync Recall settings", () => {
-  const config = { databaseId: "old-db", recallEnabled: false };
+test("applyRecallStorageChanges updates only the selected database", () => {
+  const config = { databaseId: "old-db" };
   assert.deepEqual(applyRecallStorageChanges(config, {
     databaseId: { newValue: "new-db" },
     recallEnabled: { newValue: "true" }
   }, "sync"), {
-    databaseId: "new-db",
-    recallEnabled: true
+    databaseId: "new-db"
   });
   assert.deepEqual(applyRecallStorageChanges(config, {
     recallEnabled: { newValue: true }

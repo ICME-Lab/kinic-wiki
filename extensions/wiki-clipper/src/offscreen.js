@@ -11,14 +11,13 @@ import {
   searchNodesWithActor
 } from "./vfs-actor.js";
 import { buildRecallFallbackQuery, buildRecallSearchQuery, collectRecallCandidates, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, RECALL_CONTEXT_MAX_CHARS, titleFromPath } from "./recall.js";
-import { RUNTIME_RECALL_JEV_ENABLED, RUNTIME_SOURCE_TRIGGER_URL, RUNTIME_WIKI_ORIGIN } from "./runtime-config.js";
+import { RUNTIME_SOURCE_TRIGGER_URL, RUNTIME_WIKI_ORIGIN } from "./runtime-config.js";
 
 let authSnapshotFactory = defaultAuthSnapshot;
 let resetAuthClientFactory = defaultResetAuthClient;
 let vfsActorFactory = defaultCreateVfsActor;
 let fetchFactory = (...args) => fetch(...args);
 let recallSession = null;
-let recallJevEnabled = RUNTIME_RECALL_JEV_ENABLED;
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -280,7 +279,6 @@ export async function searchRecall(query, conversationUrl, config) {
     if (fallbackQuery) hits = [...literalHits, ...await searchRecallHits(actor, config.databaseId, fallbackQuery)];
   }
   const baseline = rankRecallHits(hits, { currentConversationUrl: conversationUrl });
-  if (!recallJevEnabled) return normalizeRecallResults(baseline, config.databaseId);
   const candidates = collectRecallCandidates(hits, { currentConversationUrl: conversationUrl });
   if (candidates.length === 0) return [];
   try {
@@ -405,7 +403,6 @@ export function setOffscreenDepsForTest(deps = {}) {
   resetAuthClientFactory = deps.resetAuthClient || defaultResetAuthClient;
   vfsActorFactory = deps.createVfsActor || defaultCreateVfsActor;
   fetchFactory = deps.fetch || ((...args) => fetch(...args));
-  recallJevEnabled = deps.recallJevEnabled ?? RUNTIME_RECALL_JEV_ENABLED;
   recallSession = null;
 }
 

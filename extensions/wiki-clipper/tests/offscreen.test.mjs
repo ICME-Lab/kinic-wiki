@@ -97,7 +97,6 @@ test("searchRecall searches Knowledge and Sources and ranks normalized hits", as
 test("searchRecall sends candidates before the top-three cut and accepts an empty Jev selection", async () => {
   let posted;
   setOffscreenDepsForTest({
-    recallJevEnabled: true,
     authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
     createVfsActor: async () => ({
       async search_nodes(request) {
@@ -125,7 +124,6 @@ test("searchRecall sends candidates before the top-three cut and accepts an empt
 test("searchRecall falls back to lexical cards on Jev or session failure", async () => {
   for (const failure of ["jev", "session"]) {
     setOffscreenDepsForTest({
-      recallJevEnabled: true,
       authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
       createVfsActor: async () => ({
         async search_nodes(request) {
@@ -148,7 +146,6 @@ test("searchRecall falls back to lexical cards on Jev or session failure", async
 
 test("searchRecall returns lexical cards before four seconds when session authorization stalls", async () => {
   setOffscreenDepsForTest({
-    recallJevEnabled: true,
     authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
     createVfsActor: async () => ({
       async search_nodes(request) {

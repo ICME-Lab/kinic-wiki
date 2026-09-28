@@ -56,8 +56,7 @@ main {
 }
 
 .auth-card,
-.latest-card,
-.privacy-card {
+.latest-card {
   display: grid;
   gap: 10px;
   border: 1px solid var(--kinic-line);
@@ -68,8 +67,7 @@ main {
 }
 
 .auth-card p,
-.latest-card p,
-.privacy-card p {
+.latest-card p {
   overflow-wrap: anywhere;
   margin: 4px 0 0;
   color: var(--kinic-body);

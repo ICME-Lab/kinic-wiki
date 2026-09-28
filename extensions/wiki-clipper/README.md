@@ -42,7 +42,7 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude/Gemini export, active-tab capture, Internet Identity auth, and selected database storage behavior.
+Use `https://wiki.kinic.xyz/privacy-policy` as the Chrome Web Store privacy policy URL after the public page reflects the Wiki Clipper capture, export, authentication, and Recall processing described in this release.
 
 ## Flow
 
@@ -52,7 +52,7 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 4. Multiple-chat exports use the count field, whose default is `1`.
 5. Exported evidence is saved to `/Sources/<provider>/<source_id>.md`.
 
-When `Recall beta` is enabled in extension settings, ChatGPT questions are searched against `/Knowledge` first and `/Sources` second. When Jev reranking is enabled after evaluation, the current question and up to 20 candidate paths and short previews are sent through the Kinic Wiki server to TypeSafe for relevance ranking. Up to three related previews can appear after a question is sent; no card is shown when Jev finds no relevant candidate. If reranking is unavailable, Recall shows the existing search results. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation. Jev reranking requires `KINIC_RECALL_JEV_ENABLED=true` in the extension build and `RECALL_JEV_ENABLED=true`, `RECALL_JEV_THRESHOLD`, and `TYPESAFE_API_KEY` in the WikiBrowser Worker; the feature remains disabled until the real-Wiki evaluation gate passes.
+After a database is selected, Recall searches ChatGPT questions against `/Knowledge` first and `/Sources` second. New extension builds request Jev reranking; when the server has a threshold and API key, the current question and up to 20 candidate paths and short previews are sent through the Kinic Wiki server to TypeSafe for relevance ranking. Up to three related previews can appear after a question is sent; no card is shown when Jev finds no relevant candidate. If reranking is unavailable, Recall shows the existing search results. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation. Jev reranking requires `RECALL_JEV_THRESHOLD` and `TYPESAFE_API_KEY` in the WikiBrowser Worker. The initial production threshold is 0.39 from the exploratory evaluation described below; human label review and browser display latency measurement remain open. Previously installed extension builds without Jev support must be updated.
 
 The [Recall Jev evaluation guide](docs/recall-jev-evaluation.md) defines the opt-in 60-case run and release gate.
 

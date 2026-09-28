@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: September 22, 2026
-Effective Date: October 22, 2026
+Last Updated: September 28, 2026
+Effective Date: September 28, 2026
 
 ## 1. Who we are
 
@@ -53,9 +53,13 @@ Ask AI conversation history is stored locally on the iOS device. The Agent featu
 
 When Source Capture generates a Wiki page, Kinic sends the beginning of the captured source material (up to 4,000 characters as part of the search intent) and up to 20 candidate Wiki paths and short previews to TypeSafe's United States service. TypeSafe returns relevance probabilities used to select up to five candidates. The source material and selected context are then sent to the configured generation provider, currently DeepSeek, to create the requested page. The TypeSafe training and retention terms described above also apply to Source Capture reranking.
 
-### Optional ChatGPT Recall
+### Wiki Clipper capture and conversation export
 
-When the user enables Recall beta in the Wiki Clipper, Kinic searches the selected Wiki database for the current ChatGPT question. When Jev relevance ranking is enabled, the question and up to 20 candidate Wiki paths and short previews are sent through Kinic Wiki to TypeSafe's United States service. Jev may select up to three cards or none. If ranking is unavailable, Recall shows the existing search results. Recall does not save the question or preview text in Kinic operational logs, and it does not automatically send a selected Wiki excerpt to ChatGPT. The user chooses whether to insert context. The TypeSafe training and retention terms above apply.
+When the user starts an active-tab capture, the Wiki Clipper reads that page's URL, title, and extracted page text and sends the source to the selected Kinic Wiki database for capture and generation. When the user starts a ChatGPT, Claude, or Gemini export, the extension reads the selected conversation's title, URL, message roles, and message content and saves them as evidence source files in that database. These captures and exports require Internet Identity authentication and a writable database selected in the extension. The extension does not export conversations automatically. The Source Capture generation processing described above applies when a captured source is used to generate a Wiki page.
+
+### ChatGPT Recall
+
+After the user selects a Wiki database in the Wiki Clipper, Kinic searches it for the current ChatGPT question. There is no separate Recall switch; signing out clears the database selection and stops Recall searches. When Jev relevance ranking is available, the question and up to 20 candidate Wiki paths and short previews are sent through Kinic Wiki to TypeSafe's United States service. Jev may select up to three cards or none. If ranking is unavailable, Recall shows the existing search results. Recall does not save the question or preview text in Kinic operational logs, and it does not automatically send a selected Wiki excerpt to ChatGPT. The user chooses whether to insert context. The TypeSafe training and retention terms above apply.
 
 ### Optional voice preview (disabled pending release acceptance)
 

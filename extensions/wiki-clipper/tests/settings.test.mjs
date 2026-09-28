@@ -30,8 +30,9 @@ test("settings popup omits fixed runtime inputs", () => {
   assert.match(html, /<form id="create-database-form"/);
   assert.match(html, /Database name/);
   assert.match(html, /id="create-database"/);
-  assert.match(html, /id="recall-enabled"/);
-  assert.match(html, /Recall beta/);
+  assert.doesNotMatch(html, /id="recall-enabled"/);
+  assert.doesNotMatch(popupJs, /saveRecallSetting/);
+  assert.doesNotMatch(html, /In ChatGPT, Recall searches your selected Wiki database/);
   assert.match(html, /id="show-save-controls"/);
   assert.match(html, /Show save controls/);
   assert.match(html, /ChatGPT, Claude, and Gemini/);
@@ -302,11 +303,10 @@ test("Internet Identity options use 29 day TTL and derivation origin", () => {
   assert.equal(AUTH_OPTIONS.createOptions.idleOptions.disableDefaultIdleCallback, true);
 });
 
-test("settings disclose Source Capture subprocessors before save", () => {
+test("settings omit the Data processing card", () => {
   const html = readFileSync(new URL("../popup/popup.html", import.meta.url), "utf8");
-  assert.match(html, /TypeSafe in the United States/);
-  assert.match(html, /DeepSeek/);
-  assert.match(html, /does not use inputs for training or fine-tuning/);
+  assert.doesNotMatch(html, /Data processing/);
+  assert.doesNotMatch(html, /TypeSafe/);
 });
 
 test("CLI login helpers use mainnet Internet Identity and canonical derivation origin", () => {
