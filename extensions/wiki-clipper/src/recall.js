@@ -149,8 +149,7 @@ export function collectRecallCandidates(hits, { currentConversationUrl = "" } = 
   const currentConversationId = conversationIdFromUrl(currentConversationUrl);
   const candidates = new Map();
   for (const hit of Array.isArray(hits) ? hits : []) {
-    const kind = variantKey(hit?.kind);
-    if (kind !== "File" && kind !== "Source") continue;
+    if (!isRecallDocumentHit(hit)) continue;
     const path = String(hit?.path || "");
     if (!path || pathLooksLikeCurrentConversation(path, currentConversationId)) continue;
     const rawScore = Number(hit?.score);
@@ -174,6 +173,11 @@ export function collectRecallCandidates(hits, { currentConversationUrl = "" } = 
       return leftKnowledge - rightKnowledge || left.score - right.score || left.path.localeCompare(right.path);
     })
     .slice(0, RECALL_CANDIDATE_LIMIT);
+}
+
+export function isRecallDocumentHit(hit) {
+  const kind = variantKey(hit?.kind);
+  return kind === "File" || kind === "Source";
 }
 
 function mergeRecallHit(existing, incoming) {
