@@ -100,9 +100,10 @@ test("searchRecall sends candidates before the top-three cut and accepts an empt
     authSnapshot: async () => ({ isAuthenticated: true, identity: {}, principal: "principal-1" }),
     createVfsActor: async () => ({
       async search_nodes(request) {
-        return { Ok: Array.from({ length: 5 }, (_, index) => rawRecallHit(
+        const files = Array.from({ length: 5 }, (_, index) => rawRecallHit(
           `${request.prefix[0]}/${index}.md`, ["content_fts"], -100 + index
-        )) };
+        ));
+        return { Ok: [rawRecallHit(request.prefix[0], ["path_substring"], -1_000, { Folder: null }), ...files] };
       },
       async authorize_ops_answer_session() { return { Ok: null }; }
     }),
@@ -114,6 +115,7 @@ test("searchRecall sends candidates before the top-three cut and accepts an empt
   try {
     assert.deepEqual(await searchRecall("agent memory", "https://chatgpt.com/c/current", config()), []);
     assert.equal(posted.candidates.length, 10);
+    assert.ok(posted.candidates.every(({ path }) => path !== "/Knowledge" && path !== "/Sources"));
     assert.equal(posted.question, "agent memory");
     assert.ok(posted.candidates.every(({ preview }) => preview.length <= 300));
   } finally {
@@ -1087,10 +1089,10 @@ function rawDatabaseWithoutMetadata(databaseId, name, role, status) {
   };
 }
 
-function rawRecallHit(path, matchReasons, score) {
+function rawRecallHit(path, matchReasons, score, kind = { File: null }) {
   return {
     path,
-    kind: { File: null },
+    kind,
     match_reasons: matchReasons,
     score,
     preview: [{ field: { Content: null }, char_offset: 0, match_reason: matchReasons[0], excerpt: ["recall excerpt"] }],
