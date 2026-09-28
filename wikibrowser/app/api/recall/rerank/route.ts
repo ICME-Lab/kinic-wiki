@@ -11,7 +11,7 @@ type RateLimitStore = CloudflareEnv["QUERY_ANSWER_RATE_LIMIT"];
 type RecallEnv = Pick<CloudflareEnv,
   "KINIC_WIKI_CANISTER_ID" | "KINIC_WIKI_CLIPPER_ORIGIN" |
   "KINIC_WIKI_ALLOWED_DATABASE_ID" | "RECALL_ALLOWED_DATABASE_ID" | "QUERY_ANSWER_RATE_LIMIT" |
-  "TYPESAFE_API_KEY" | "RECALL_JEV_ENABLED" | "RECALL_JEV_THRESHOLD"
+  "TYPESAFE_API_KEY" | "RECALL_JEV_THRESHOLD"
 >;
 type Dependencies = {
   checkSession: (canisterId: string, input: { databaseId: string; sessionNonce: string }) => Promise<{ principal: string }>;
@@ -47,7 +47,6 @@ export function OPTIONS(request: Request, env: RecallEnv = process.env as unknow
 export async function POST(request: Request, env: RecallEnv = process.env as unknown as RecallEnv): Promise<Response> {
   const origin = allowedOrigin(request, env);
   if (!origin) return errorResponse("forbidden", 403);
-  if (env.RECALL_JEV_ENABLED !== "true") return errorResponse("recall_jev_disabled", 503, origin);
   const threshold = Number(env.RECALL_JEV_THRESHOLD);
   if (!env.RECALL_JEV_THRESHOLD || !Number.isFinite(threshold) || threshold < 0 || threshold > 1)
     return errorResponse("recall_jev_unconfigured", 503, origin);
