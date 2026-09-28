@@ -15,7 +15,7 @@ The extension requires Internet Identity and writer access to a Kinic Wiki datab
 7. Open `https://claude.ai`, click the Kinic Wiki Clipper page control, and start export.
 8. Open `https://gemini.google.com`, open a conversation, click `Save to Kinic`, and start export.
 9. Select a writable database in extension options, open a ChatGPT conversation, send a test question, and confirm that related previews appear only when the selected database contains matching content.
-10. Before saving, confirm the settings screen discloses that a source excerpt and candidate Wiki paths/previews are processed by TypeSafe in the United States and selected context is then sent to DeepSeek.
+10. Review the store listing and public privacy policy for the TypeSafe and DeepSeek processing disclosures.
 
 ## Notes for reviewers
 
