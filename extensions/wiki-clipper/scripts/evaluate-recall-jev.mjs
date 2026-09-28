@@ -42,7 +42,8 @@ for (const item of cases) {
     questions,
     apiKey,
     workflow: "recall",
-    timeoutMs: 1_500
+    timeoutMs: 1_500,
+    logMetric: (metric) => console.error(JSON.stringify(metric))
   });
   results.push({ ...item, probabilities: result.probabilities, jevMs: performance.now() - started });
   console.error(`Evaluated ${results.length}/${cases.length}: ${item.id}`);
