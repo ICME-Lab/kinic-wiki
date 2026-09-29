@@ -18,6 +18,7 @@ final class AskAIModel {
     private let generationTimeout: Duration
     @ObservationIgnored private var generationTask: Task<Void, Never>?
     @ObservationIgnored private var generationTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var workerLifecycleTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceTask: Task<Void, Never>?
     @ObservationIgnored private var historyContextID = UUID()
     @ObservationIgnored private var historyOperationID: UUID?
@@ -36,12 +37,14 @@ final class AskAIModel {
         }
     }
     var isGenerating = false
+    private(set) var isSynchronizingWorker = false
     var loadState: ConversationLoadState = .loading
     var errorMessage: String?
     var pendingDatabaseId: String?
     var pendingDatabaseTitle: String?
     var isConfirmingDatabaseChange = false
     var isConfirmingHistoryReset = false
+    var isShowingDataConsent = false
 
     init(
         knowledgeProvider: AskAIKnowledgeProviding,
@@ -91,6 +94,7 @@ final class AskAIModel {
         loadState == .loaded
             && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !isGenerating
+            && !isSynchronizingWorker
             && knowledgeProvider.canAskAI
             && currentConversation != nil
     }
@@ -194,7 +198,10 @@ final class AskAIModel {
         store: AskAIConversationPersisting
     ) {
         guard historyScope != self.historyScope else { return }
-        cancelGeneration(persistFailure: false)
+        workerLifecycleTask?.cancel()
+        workerLifecycleTask = nil
+        isSynchronizingWorker = false
+        cancelGenerationLocally(persistFailure: false)
         historyContextID = UUID()
         historyOperationID = nil
         self.historyScope = historyScope
@@ -218,7 +225,7 @@ final class AskAIModel {
             return
         }
 
-        cancelGeneration(persistFailure: false)
+        cancelGenerationLocally(persistFailure: false)
         historyContextID = UUID()
         historyOperationID = nil
         loadState = .loading
@@ -248,15 +255,19 @@ final class AskAIModel {
         guard currentConversation?.databaseId != databaseId else {
             return
         }
-        cancelGeneration()
         guard !databaseId.isEmpty else {
-            currentConversation = nil
+            transitionAfterEndingWorkerConversation {
+                self.currentConversation = nil
+            }
             return
         }
-        currentConversation = conversations
+        let nextConversation = conversations
             .filter { $0.databaseId == databaseId }
             .max { $0.updatedAt < $1.updatedAt }
             ?? makeConversation(databaseId: databaseId, title: knowledgeProvider.selectedAskAIDatabaseTitle)
+        transitionAfterEndingWorkerConversation {
+            self.currentConversation = nextConversation
+        }
     }
 
     func requestDatabaseChange(databaseId: String, title: String) {
@@ -283,17 +294,21 @@ final class AskAIModel {
     }
 
     func newConversation() {
-        cancelGeneration()
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
         guard !databaseId.isEmpty else {
-            currentConversation = nil
+            transitionAfterEndingWorkerConversation {
+                self.currentConversation = nil
+            }
             return
         }
-        currentConversation = makeConversation(
+        let conversation = makeConversation(
             databaseId: databaseId,
             title: knowledgeProvider.selectedAskAIDatabaseTitle
         )
-        errorMessage = nil
+        transitionAfterEndingWorkerConversation {
+            self.currentConversation = conversation
+            self.errorMessage = nil
+        }
     }
 
     func selectConversation(_ conversation: AskAIConversation) {
@@ -303,36 +318,46 @@ final class AskAIModel {
         ) else {
             return
         }
-        applySelectedConversation(conversation)
+        transitionAfterEndingWorkerConversation {
+            self.applySelectedConversation(conversation)
+        }
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
         do { try deleteVoiceRecovery?(conversation.id) }
         catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
         if currentConversation?.id == conversation.id {
-            cancelGeneration(persistFailure: false)
-            currentConversation = nil
+            transitionAfterEndingWorkerConversation {
+                self.currentConversation = nil
+                self.conversations.removeAll { $0.id == conversation.id }
+                self.startEmptyConversation()
+                self.persistConversations()
+            }
+            return
         }
         conversations.removeAll { $0.id == conversation.id }
-        if currentConversation == nil {
-            startEmptyConversation()
-        }
         persistConversations()
     }
 
     func deleteAllConversations() {
         do { try deleteVoiceRecovery?(nil) }
         catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
-        cancelGeneration(persistFailure: false)
-        conversations = []
-        currentConversation = nil
-        startEmptyConversation()
-        deleteAllStoredConversationData()
+        transitionAfterEndingWorkerConversation {
+            self.conversations = []
+            self.currentConversation = nil
+            self.startEmptyConversation()
+            self.deleteAllStoredConversationData()
+        }
     }
 
     func send() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
+        if knowledgeProvider.usesWorkerAskAI,
+           !knowledgeProvider.hasAskAIWorkerConsent {
+            isShowingDataConsent = true
+            return
+        }
 
         let history = AskAIHistoryFormatter.semanticHistory(conversation.messages)
         let outputLanguage = knowledgeProvider.askAIOutputLanguage
@@ -389,11 +414,22 @@ final class AskAIModel {
         }
     }
 
-    func cancelGeneration() {
-        cancelGeneration(persistFailure: true)
+    func agreeToDataProcessingAndSend() {
+        knowledgeProvider.grantAskAIWorkerConsent()
+        isShowingDataConsent = false
+        send()
     }
 
-    private func cancelGeneration(persistFailure: Bool) {
+    func cancelGeneration() {
+        guard isGenerating else { return }
+        guard knowledgeProvider.usesWorkerAskAI else {
+            cancelGenerationLocally(persistFailure: true)
+            return
+        }
+        requestWorkerTurnCancellation(timedOutAssistantID: nil)
+    }
+
+    private func cancelGenerationLocally(persistFailure: Bool) {
         generationTask?.cancel()
         generationTask = nil
         generationTimeoutTask?.cancel()
@@ -413,6 +449,79 @@ final class AskAIModel {
             }
             if persistFailure {
                 persistCurrentConversation()
+            }
+        }
+    }
+
+    private func requestWorkerTurnCancellation(timedOutAssistantID: UUID?) {
+        guard !isSynchronizingWorker, let requestID = generationID else { return }
+        isSynchronizingWorker = true
+        let contextID = historyContextID
+        workerLifecycleTask?.cancel()
+        workerLifecycleTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await knowledgeProvider.cancelAskAIWorkerTurn()
+                try Task.checkCancellation()
+                guard historyContextID == contextID, generationID == requestID else { return }
+                isSynchronizingWorker = false
+                workerLifecycleTask = nil
+                if let timedOutAssistantID {
+                    completeTimedOutGeneration(
+                        requestID: requestID,
+                        assistantID: timedOutAssistantID
+                    )
+                } else {
+                    cancelGenerationLocally(persistFailure: true)
+                }
+            } catch is CancellationError {
+                if historyContextID == contextID {
+                    isSynchronizingWorker = false
+                    workerLifecycleTask = nil
+                }
+            } catch {
+                guard historyContextID == contextID, generationID == requestID else { return }
+                isSynchronizingWorker = false
+                workerLifecycleTask = nil
+                errorMessage = "Cancellation could not be confirmed. Try stopping again before sending another question."
+            }
+        }
+    }
+
+    private func transitionAfterEndingWorkerConversation(
+        _ action: @escaping @MainActor () -> Void
+    ) {
+        guard !isSynchronizingWorker else { return }
+        guard knowledgeProvider.usesWorkerAskAI,
+              currentConversation != nil || isGenerating else {
+            cancelGenerationLocally(persistFailure: false)
+            action()
+            return
+        }
+        isSynchronizingWorker = true
+        let contextID = historyContextID
+        workerLifecycleTask?.cancel()
+        workerLifecycleTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await knowledgeProvider.endAskAIWorkerConversation()
+                try Task.checkCancellation()
+                guard historyContextID == contextID else { return }
+                cancelGenerationLocally(persistFailure: false)
+                isSynchronizingWorker = false
+                workerLifecycleTask = nil
+                errorMessage = nil
+                action()
+            } catch is CancellationError {
+                if historyContextID == contextID {
+                    isSynchronizingWorker = false
+                    workerLifecycleTask = nil
+                }
+            } catch {
+                guard historyContextID == contextID else { return }
+                isSynchronizingWorker = false
+                workerLifecycleTask = nil
+                errorMessage = "The current server conversation could not be ended. Retry the change."
             }
         }
     }
@@ -438,6 +547,30 @@ final class AskAIModel {
                 conversationID: conversationID,
                 databaseID: databaseID
             ) else { return }
+            if knowledgeProvider.usesWorkerAskAI {
+                let result = try await knowledgeProvider.answerAskAIWithWorker(
+                    conversationId: conversationID,
+                    databaseId: databaseID,
+                    databaseTitle: databaseTitle,
+                    question: question,
+                    history: history
+                )
+                try Task.checkCancellation()
+                guard continueGeneration(
+                    requestID: requestID,
+                    conversationID: conversationID,
+                    databaseID: databaseID
+                ) else { return }
+                updateMessage(id: assistantID) { message in
+                    message.text = result.answer.trimmingCharacters(in: .whitespacesAndNewlines)
+                    message.sources = result.sources
+                    message.state = result.insufficient ? .insufficient : .complete
+                    message.trace = Self.workerTrace(result)
+                }
+                persistCurrentConversation()
+                finishGeneration(requestID: requestID)
+                return
+            }
             let routePrompt = AskAIRouter.buildPrompt(
                 databaseTitle: databaseTitle,
                 question: question,
@@ -681,7 +814,7 @@ final class AskAIModel {
             finishGeneration(requestID: requestID)
         } catch is CancellationError {
             if generationID == requestID {
-                cancelGeneration()
+                cancelGenerationLocally(persistFailure: true)
             }
         } catch {
             guard continueGeneration(
@@ -715,7 +848,7 @@ final class AskAIModel {
             && knowledgeProvider.selectedAskAIDatabaseId == databaseID
         guard !isCurrent else { return true }
         if generationID == requestID {
-            cancelGeneration()
+            cancelGenerationLocally(persistFailure: true)
         }
         return false
     }
@@ -730,6 +863,43 @@ final class AskAIModel {
                 event.isActive = false
                 return event
             }
+        }
+    }
+
+    private static func workerTrace(_ result: AskAIWorkerResult) -> [AskAITraceEvent] {
+        guard let trace = result.trace else { return [] }
+        switch trace.route {
+        case "database_overview":
+            return [
+                AskAITraceEvent(
+                    stage: .searching,
+                    title: "Classified as a database overview"
+                ),
+                AskAITraceEvent(
+                    stage: .found,
+                    title: "Scanned \(trace.inventoryObserved) notes"
+                        + (trace.inventoryTruncated ? " (bounded overview)" : "")
+                ),
+                AskAITraceEvent(
+                    stage: .reading,
+                    title: "Read \(trace.readCount) representative notes"
+                ),
+            ]
+        case "focused_search":
+            return [
+                AskAITraceEvent(stage: .searching, title: "Searched and semantically ranked notes"),
+                AskAITraceEvent(stage: .reading, title: "Read \(trace.readCount) matching notes"),
+            ]
+        case "selected_node_summary":
+            return [
+                AskAITraceEvent(stage: .reading, title: "Read the selected note")
+            ]
+        case "clarification":
+            return [
+                AskAITraceEvent(stage: .searching, title: "Asked which Wiki scope to use")
+            ]
+        default:
+            return []
         }
     }
 
@@ -790,7 +960,9 @@ final class AskAIModel {
             isConfirmingDatabaseChange = false
             return
         }
-        applySelectedDatabaseChange(databaseId: databaseId, title: title)
+        transitionAfterEndingWorkerConversation {
+            self.applySelectedDatabaseChange(databaseId: databaseId, title: title)
+        }
     }
 
     func resolveBrowseDatabaseSelection(_ resolution: BrowseDatabaseSelectionResolution) {
@@ -806,9 +978,13 @@ final class AskAIModel {
         }
         switch pendingIntent.action {
         case .newConversation(let databaseId, let title):
-            applySelectedDatabaseChange(databaseId: databaseId, title: title)
+            transitionAfterEndingWorkerConversation {
+                self.applySelectedDatabaseChange(databaseId: databaseId, title: title)
+            }
         case .conversation(let conversation):
-            applySelectedConversation(conversation)
+            transitionAfterEndingWorkerConversation {
+                self.applySelectedConversation(conversation)
+            }
         }
     }
 
@@ -831,7 +1007,6 @@ final class AskAIModel {
     }
 
     private func applySelectedDatabaseChange(databaseId: String, title: String) {
-        cancelGeneration()
         currentConversation = makeConversation(databaseId: databaseId, title: title)
         pendingDatabaseId = nil
         pendingDatabaseTitle = nil
@@ -840,7 +1015,6 @@ final class AskAIModel {
     }
 
     private func applySelectedConversation(_ conversation: AskAIConversation) {
-        cancelGeneration()
         currentConversation = conversation
         errorMessage = nil
     }
@@ -976,6 +1150,15 @@ final class AskAIModel {
     }
 
     private func timeoutGeneration(requestID: UUID, assistantID: UUID) {
+        guard generationID == requestID else { return }
+        if knowledgeProvider.usesWorkerAskAI {
+            requestWorkerTurnCancellation(timedOutAssistantID: assistantID)
+            return
+        }
+        completeTimedOutGeneration(requestID: requestID, assistantID: assistantID)
+    }
+
+    private func completeTimedOutGeneration(requestID: UUID, assistantID: UUID) {
         guard generationID == requestID else { return }
         generationTask?.cancel()
         updateMessage(id: assistantID) { message in

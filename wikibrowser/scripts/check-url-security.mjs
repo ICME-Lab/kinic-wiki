@@ -151,6 +151,59 @@ await withEnv(
     );
     assert.equal(mismatchedCanisterId.status, 400);
 
+    const stagingBoundary = {
+      KINIC_WIKI_CANISTER_ID: "aaaaa-aa",
+      KINIC_WIKI_ALLOWED_DATABASE_ID: "staging_db",
+      KINIC_WIKI_CLIPPER_ORIGIN: "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg",
+      KINIC_WIKI_GENERATOR_URL: "https://worker.example",
+      KINIC_WIKI_WORKER_TOKEN: "secret-token"
+    };
+    const stagingBrowserOrigin = "https://kinic-wiki-browser-staging.hude.workers.dev";
+    const disallowedCapture = await triggerRouteModule.POST(
+      triggerRequest(
+        stagingBrowserOrigin,
+        { databaseId: "other_db" },
+        `${stagingBrowserOrigin}/api/source-capture/trigger`
+      ),
+      stagingBoundary
+    );
+    assert.equal(disallowedCapture.status, 403);
+    assert.deepEqual(await disallowedCapture.json(), { error: "database_not_allowed" });
+
+    const disallowedSourceRun = await sourceRunRouteModule.POST(
+      sourceRunRequest(stagingBrowserOrigin, { databaseId: "other_db" }, `${stagingBrowserOrigin}/api/source/run`),
+      stagingBoundary
+    );
+    assert.equal(disallowedSourceRun.status, 403);
+    assert.deepEqual(await disallowedSourceRun.json(), { error: "database_not_allowed" });
+
+    const stagingClipperPreflight = triggerRouteModule.OPTIONS(
+      triggerRequest("chrome-extension://kdildjebipiaccglghfdhjifgknlpffg"),
+      stagingBoundary
+    );
+    assert.equal(stagingClipperPreflight.status, 204);
+    assert.equal(
+      stagingClipperPreflight.headers.get("access-control-allow-origin"),
+      "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg"
+    );
+    const unconfiguredClipperPreflight = triggerRouteModule.OPTIONS(
+      triggerRequest("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      stagingBoundary
+    );
+    assert.equal(unconfiguredClipperPreflight.status, 403);
+    const productionClipperAgainstStaging = triggerRouteModule.OPTIONS(
+      triggerRequest("chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj"),
+      stagingBoundary
+    );
+    assert.equal(productionClipperAgainstStaging.status, 403);
+
+    const sameOriginPreflight = sourceRunRouteModule.OPTIONS(
+      sourceRunRequest(stagingBrowserOrigin, {}, `${stagingBrowserOrigin}/api/source/run`),
+      stagingBoundary
+    );
+    assert.equal(sameOriginPreflight.status, 204);
+    assert.equal(sameOriginPreflight.headers.get("access-control-allow-origin"), stagingBrowserOrigin);
+
     triggerRouteModule.setSourceCaptureTriggerDepsForTest({
       checkSession: async () => {
         throw new Error("denied");
@@ -483,6 +536,8 @@ async function withEnv(values, run) {
   const keys = [
     "VITE_KINIC_WIKI_CANISTER_ID",
     "KINIC_WIKI_CANISTER_ID",
+    "KINIC_WIKI_ALLOWED_DATABASE_ID",
+    "KINIC_WIKI_CLIPPER_ORIGIN",
     "KINIC_WIKI_GENERATOR_URL",
     "KINIC_WIKI_WORKER_TOKEN",
     "VITE_ENABLE_LOCAL_II_E2E",
@@ -504,8 +559,8 @@ async function withEnv(values, run) {
   }
 }
 
-function triggerRequest(origin, overrides = {}) {
-  return new Request("https://local.test/api/source-capture/trigger", {
+function triggerRequest(origin, overrides = {}, requestUrl = "https://local.test/api/source-capture/trigger") {
+  return new Request(requestUrl, {
     method: "POST",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify({
@@ -532,8 +587,8 @@ function mockWorkerRequest(overrides = {}, token = "local-dev-worker-token") {
   });
 }
 
-function sourceRunRequest(origin, overrides = {}) {
-  return new Request("https://local.test/api/source/run", {
+function sourceRunRequest(origin, overrides = {}, requestUrl = "https://local.test/api/source/run") {
+  return new Request(requestUrl, {
     method: "POST",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify({

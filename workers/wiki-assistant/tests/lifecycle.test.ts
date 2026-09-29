@@ -27,13 +27,15 @@ const mocks = vi.hoisted(() => ({
   stopAt: vi.fn(),
   clearStop: vi.fn(),
   discardIntent: vi.fn(),
+  route: vi.fn(),
+  policy: vi.fn(),
 }));
 vi.mock("../src/billing", () => ({
   voiceReservation: async () => null,
   reserveVoice: mocks.reserve,
   settleVoiceCharge: mocks.charge,
   stopVoiceCharge: mocks.stop,
-  voicePolicy: async () => ({ enabled: true, daily_budget_cycles: 1000n }),
+  voicePolicy: mocks.policy,
   voiceRate: async () => ({ version: 1n, cycles_per_minute: 60n }),
 }));
 vi.mock("../src/openai", () => ({
@@ -95,6 +97,11 @@ vi.mock("../src/openai", () => ({
   },
   voiceInstructions: "test",
 }));
+vi.mock("../src/routing", () => ({
+  routeAskAiIntent: mocks.route,
+  boundedRoutingHistory: (items: unknown[]) => items.slice(-6),
+  clarificationFor: () => "Please clarify.",
+}));
 vi.mock("@kinic/ii-server/internet-identity", () => ({
   restoreKinicIdentity: () => ({}),
 }));
@@ -106,6 +113,12 @@ vi.mock("../src/kinic", () => ({
     evidence: [],
     sources: [],
     readPaths: [],
+    discoveredPaths: [],
+    jevDurationMs: 0,
+    jevRouteDurationMs: 0,
+    jevRerankDurationMs: 0,
+    inventoryObserved: 0,
+    inventoryTruncated: false,
   }),
   KinicReader: class {
     authorize = mocks.authorize;
@@ -229,6 +242,7 @@ async function harness() {
   const env = {
     ASSISTANT_ENABLED: "true",
     OPENAI_API_KEY: "fake",
+    TYPESAFE_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
     ASSISTANT_DERIVATION_ORIGIN: "origin",
     memory,
@@ -265,7 +279,7 @@ async function harness() {
   const created = await call("/conversations", {
     databaseId: "db",
     scope: "/Knowledge",
-    consent: "2026-09-16",
+    consent: "2026-09-22",
   });
   id = ((await created.json()) as { id: string }).id;
   return {
@@ -315,6 +329,8 @@ beforeEach(() => {
   mocks.remove.mockResolvedValue(undefined);
   mocks.send.mockResolvedValue(undefined);
   mocks.discardIntent.mockResolvedValue(true);
+  mocks.route.mockResolvedValue({ route: "focused_search", durationMs: 3 });
+  mocks.policy.mockResolvedValue({ enabled: true, daily_budget_cycles: 1000n });
 });
 const question = () => ({
   requestId: crypto.randomUUID(),
@@ -322,6 +338,60 @@ const question = () => ({
   scope: "/Knowledge",
 });
 describe("conversation lifecycle", () => {
+  it("keeps native text independent from voice policy and checks it on voice start", async () => {
+    const h = await harness();
+    const c = h.user["state"].conversation!;
+    c.native = true;
+    expect((await h.call("/questions", question())).status).toBe(202);
+    await h.drain();
+    expect(mocks.policy).not.toHaveBeenCalled();
+
+    const voice = await harness();
+    const voiceConversation = voice.user["state"].conversation!;
+    voiceConversation.native = true;
+    mocks.create.mockRejectedValueOnce(new Error("transport failed"));
+    await expect(
+      voice.user["startVoice"](
+        voiceConversation,
+        "v=0",
+        "1",
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow("voice_connection_failed");
+    expect(mocks.policy).toHaveBeenCalledTimes(1);
+  });
+  it("returns a clarification without creating an Agent when routing is ambiguous", async () => {
+    mocks.route.mockResolvedValueOnce({ route: null, durationMs: 4 });
+    const h = await harness();
+    const q = question();
+    expect((await h.call("/questions", q)).status).toBe(202);
+    await h.drain();
+    expect(mocks.create).not.toHaveBeenCalled();
+    const conversation = h.user["state"].conversation!;
+    expect(conversation.pending).toBeNull();
+    expect(conversation.messages[0]).toMatchObject({
+      kind: "clarification",
+      answer: { answer: "Please clarify.", citations: [] },
+      trace: { route: "clarification", jevRouteDurationMs: 4 },
+    });
+  });
+  it("routes follow-up questions with bounded prior conversation text", async () => {
+    const h = await harness();
+    const conversation = h.user["state"].conversation!;
+    conversation.history = [
+      { role: "user", text: "Translate this sentence" },
+      { role: "assistant", text: "The sentence is ready." },
+    ];
+    const q = { ...question(), question: "それを日本語にして" };
+    expect((await h.call("/questions", q)).status).toBe(202);
+    await h.drain();
+    expect(mocks.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: q.question,
+        history: conversation.history,
+      }),
+    );
+  });
   it("submits repeated request IDs only once and rejects changed content", async () => {
     const h = await harness();
     const q = question();
@@ -340,7 +410,7 @@ describe("conversation lifecycle", () => {
         await h.call("/conversations", {
           databaseId: "other",
           scope: "/Knowledge",
-          consent: "2026-09-16",
+          consent: "2026-09-22",
         })
       ).status,
     ).toBe(409);
@@ -706,6 +776,8 @@ it.each(["end", "db-change", "logout"])(
       question: "private question",
       answer: null,
       error: null,
+      kind: null,
+      trace: null,
     });
     await h.user.endOwned("auth", mode === "logout" ? undefined : h.id);
     expect(h.user["state"].voiceSeconds).toBe(7);
@@ -879,6 +951,8 @@ it("pages history by revision without putting content in snapshots", async () =>
     question: `${index}:` + "日🙂".repeat(2000),
     answer: null,
     error: null,
+    kind: null,
+    trace: null,
   }));
   const snapshot = h.user["snapshot"](c);
   expect(snapshot).not.toHaveProperty("messages");
@@ -1239,7 +1313,7 @@ describe("sideband reconnection", () => {
 it("retires the previous temporary conversation format through cleanup", async () => {
   const h = await withVoice();
   const state = structuredClone(h.user["state"]);
-  state.conversation!.format = 1 as 2;
+  state.conversation!.format = 1 as 3;
   vi.spyOn(h.user["store"], "load").mockResolvedValue({ revision: h.user["revision"], state });
   await h.user.initialize();
   expect(h.user["state"].conversation).toBeNull();

@@ -2,5 +2,6 @@
 export type Env = AssistantEnv & {
   ASSISTANT_BILLING_KEY?: string;
   OPENAI_API_KEY?: string;
+  TYPESAFE_API_KEY?: string;
   ASSISTANT_KEY_ENCRYPTION_KEY?: string;
 };

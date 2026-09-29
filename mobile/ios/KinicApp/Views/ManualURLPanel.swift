@@ -45,6 +45,9 @@ struct ManualURLPanel: View {
                         .accessibilityLabel("Send")
                         .disabled(urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSubmitting || model.selectedDatabase?.canWrite != true)
                 }
+                Text("Before generation, a source excerpt and candidate Wiki paths and previews are processed by TypeSafe in the United States to rank relevant context.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .onChange(of: urlText) { onInputChanged(!urlText.isEmpty) }

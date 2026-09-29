@@ -10,14 +10,14 @@ import {
   requireDatabaseWriteCyclesAvailable,
   searchNodesWithActor
 } from "./vfs-actor.js";
-import { buildRecallFallbackQuery, buildRecallSearchQuery, isAllowedRecallPath, normalizeRecallQuery, rankRecallHits, RECALL_CONTEXT_MAX_CHARS, titleFromPath } from "./recall.js";
-
-const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
+import { buildRecallFallbackQuery, buildRecallSearchQuery, collectRecallCandidates, isAllowedRecallPath, isRecallDocumentHit, normalizeRecallQuery, rankRecallHits, RECALL_CANDIDATE_LIMIT, RECALL_CONTEXT_MAX_CHARS, RECALL_SEARCH_TOP_K, titleFromPath } from "./recall.js";
+import { RUNTIME_SOURCE_TRIGGER_URL, RUNTIME_WIKI_ORIGIN } from "./runtime-config.js";
 
 let authSnapshotFactory = defaultAuthSnapshot;
 let resetAuthClientFactory = defaultResetAuthClient;
 let vfsActorFactory = defaultCreateVfsActor;
 let fetchFactory = (...args) => fetch(...args);
+let recallSession = null;
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -266,28 +266,94 @@ export async function searchRecall(query, conversationUrl, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const rawQuery = normalizeRecallQuery(query);
   if (!rawQuery) return [];
+  const deadline = Date.now() + 3_800;
   const literalQuery = buildRecallSearchQuery(rawQuery) ?? rawQuery;
 
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
   const literalHits = await searchRecallHits(actor, config.databaseId, literalQuery);
   const literalResults = rankRecallHits(literalHits, { currentConversationUrl: conversationUrl });
-  if (literalResults.length >= 3) return normalizeRecallResults(literalResults, config.databaseId);
+  let hits = literalHits;
+  if (literalResults.length < 3) {
+    const fallbackQuery = buildRecallFallbackQuery(rawQuery);
+    if (fallbackQuery) hits = [...literalHits, ...await searchRecallHits(actor, config.databaseId, fallbackQuery)];
+  }
+  const baseline = rankRecallHits(hits, { currentConversationUrl: conversationUrl });
+  const candidates = collectRecallCandidates(hits, { currentConversationUrl: conversationUrl });
+  if (candidates.length === 0) return [];
+  try {
+    const selected = await withRecallDeadline(
+      rerankRecall(rawQuery, candidates, actor, snapshot.principal, config.databaseId, deadline),
+      deadline
+    );
+    return normalizeRecallResults(selected, config.databaseId);
+  } catch {
+    return normalizeRecallResults(baseline, config.databaseId);
+  }
+}
 
-  const fallbackQuery = buildRecallFallbackQuery(rawQuery);
-  if (!fallbackQuery) return normalizeRecallResults(literalResults, config.databaseId);
+function withRecallDeadline(task, deadline) {
+  const remaining = Math.max(0, deadline - Date.now());
+  let timer;
+  return Promise.race([
+    task,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("recall deadline exceeded")), remaining);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
 
-  const fallbackHits = await searchRecallHits(actor, config.databaseId, fallbackQuery);
-  const results = rankRecallHits([...literalHits, ...fallbackHits], { currentConversationUrl: conversationUrl });
-  return normalizeRecallResults(results, config.databaseId);
+async function rerankRecall(question, candidates, actor, principal, databaseId, deadline) {
+  const sessionNonce = await authorizedRecallSession(actor, principal, databaseId);
+  const remaining = deadline - Date.now();
+  if (remaining < 200) throw new Error("recall deadline exceeded");
+  const response = await fetchFactory(`${RUNTIME_WIKI_ORIGIN}/api/recall/rerank`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      databaseId,
+      sessionNonce,
+      question,
+      candidates: candidates.map(({ path, snippet }) => ({ path, preview: snippet.slice(0, 300) }))
+    }),
+    signal: AbortSignal.timeout(Math.min(remaining, 2_000))
+  });
+  if (response.status === 403) recallSession = null;
+  if (!response.ok) throw new Error("recall rerank unavailable");
+  const body = await response.json();
+  if (!Array.isArray(body?.selectedIndices) || body.selectedIndices.length > 3 ||
+      new Set(body.selectedIndices).size !== body.selectedIndices.length ||
+      body.selectedIndices.some((index) => !Number.isInteger(index) || index < 0 || index >= candidates.length))
+    throw new Error("invalid recall rerank result");
+  return body.selectedIndices.map((index) => candidates[index]);
+}
+
+async function authorizedRecallSession(actor, principal, databaseId) {
+  if (recallSession?.principal === principal && recallSession.databaseId === databaseId &&
+      recallSession.expiresAt > Date.now()) return recallSession.nonce;
+  const nonce = crypto.randomUUID();
+  const result = await actor.authorize_ops_answer_session({ database_id: databaseId, session_nonce: nonce });
+  if (!result || "Err" in result) throw new Error("recall session denied");
+  recallSession = { principal, databaseId, nonce, expiresAt: Date.now() + 25 * 60_000 };
+  return nonce;
 }
 
 async function searchRecallHits(actor, databaseId, query) {
   const searches = await Promise.allSettled([
-    searchNodesWithActor(actor, databaseId, query, "/Knowledge", 5),
-    searchNodesWithActor(actor, databaseId, query, "/Sources", 5)
+    searchRecallPrefix(actor, databaseId, query, "/Knowledge"),
+    searchRecallPrefix(actor, databaseId, query, "/Sources")
   ]);
   return searches.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+}
+
+async function searchRecallPrefix(actor, databaseId, query, prefix) {
+  const hits = await searchNodesWithActor(actor, databaseId, query, prefix, RECALL_SEARCH_TOP_K);
+  if (hits.length < RECALL_SEARCH_TOP_K || hits.every(isRecallDocumentHit)) return hits;
+  try {
+    return await searchNodesWithActor(actor, databaseId, query, prefix, RECALL_CANDIDATE_LIMIT);
+  } catch {
+    return hits;
+  }
 }
 
 function normalizeRecallResults(results, databaseId) {
@@ -347,10 +413,12 @@ export function setOffscreenDepsForTest(deps = {}) {
   resetAuthClientFactory = deps.resetAuthClient || defaultResetAuthClient;
   vfsActorFactory = deps.createVfsActor || defaultCreateVfsActor;
   fetchFactory = deps.fetch || ((...args) => fetch(...args));
+  recallSession = null;
 }
 
 export async function resetOffscreenAuthState() {
   await resetAuthClientFactory();
+  recallSession = null;
   return { reset: true };
 }
 
@@ -372,12 +440,12 @@ function sourceUrlForPath(databaseId, path) {
     .filter(Boolean)
     .map(encodeURIComponent)
     .join("/");
-  return `https://wiki.kinic.xyz/db/${encodeURIComponent(databaseId)}/${suffix}`;
+  return `${RUNTIME_WIKI_ORIGIN}/db/${encodeURIComponent(databaseId)}/${suffix}`;
 }
 
 async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {
   try {
-    const response = await fetchFactory(SOURCE_RUN_TRIGGER_URL, {
+    const response = await fetchFactory(RUNTIME_SOURCE_TRIGGER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ canisterId, databaseId, sourcePath, sourceEtag, sessionNonce })

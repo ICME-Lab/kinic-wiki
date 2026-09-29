@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   buildRecallFallbackQuery,
   buildRecallSearchQuery,
+  collectRecallCandidates,
   applyRecallStorageChanges,
   formatRecallContext,
   isAllowedRecallPath,
@@ -81,6 +82,26 @@ test("rankRecallHits prefers Knowledge, dedupes paths, and removes path-only hit
   assert.deepEqual(results.map((result) => result.path), ["/Knowledge/one.md", "/Sources/chatgpt/one.md"]);
   assert.equal(results[0].score, -30_000);
   assert.deepEqual(results[0].matchReasons, ["title_fts", "content_fts"]);
+});
+
+test("collectRecallCandidates keeps at most twenty candidates before the display cut", () => {
+  const hits = Array.from({ length: 25 }, (_, index) => hit(
+    `/Knowledge/${String(index).padStart(2, "0")}.md`, ["content_fts"], index - 100, "preview"
+  ));
+  assert.equal(collectRecallCandidates(hits).length, 20);
+  assert.equal(rankRecallHits(hits).length, 3);
+});
+
+test("Recall excludes folders before Jev selection and lexical fallback", () => {
+  const hits = [
+    hit("/Knowledge", ["path_substring"], -100_000, "folder", { kind: { Folder: null } }),
+    hit("/Knowledge/notes", ["title_fts"], -90_000, "folder", { kind: { Folder: null } }),
+    hit("/Knowledge/notes/page.md", ["content_fts"], -10_000, "file"),
+    hit("/Sources/chatgpt/thread.md", ["content_fts"], -5_000, "source", { kind: { Source: null } })
+  ];
+  const expected = ["/Knowledge/notes/page.md", "/Sources/chatgpt/thread.md"];
+  assert.deepEqual(collectRecallCandidates(hits).map(({ path }) => path), expected);
+  assert.deepEqual(rankRecallHits(hits).map(({ path }) => path), expected);
 });
 
 test("rankRecallHits keeps content_substring hits so CJK body matches are not dropped", () => {
@@ -256,14 +277,13 @@ test("isAllowedRecallPath restricts reads to Recall search prefixes", () => {
   assert.equal(isAllowedRecallPath("Knowledge/mcp.md"), false);
 });
 
-test("applyRecallStorageChanges updates only sync Recall settings", () => {
-  const config = { databaseId: "old-db", recallEnabled: false };
+test("applyRecallStorageChanges updates only the selected database", () => {
+  const config = { databaseId: "old-db" };
   assert.deepEqual(applyRecallStorageChanges(config, {
     databaseId: { newValue: "new-db" },
     recallEnabled: { newValue: "true" }
   }, "sync"), {
-    databaseId: "new-db",
-    recallEnabled: true
+    databaseId: "new-db"
   });
   assert.deepEqual(applyRecallStorageChanges(config, {
     recallEnabled: { newValue: true }

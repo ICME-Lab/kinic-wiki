@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { importStrippedTsForTest } from "../../scripts/strip-ts-for-test.mjs";
 
@@ -37,7 +38,9 @@ assert.equal(staging.vars.KINIC_DEPLOYMENT_ENV, "staging");
 assert.equal(staging.vars.VITE_KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
 assert.equal(staging.vars.KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
 assert.equal(staging.vars.VITE_II_DERIVATION_ORIGIN, "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io");
-assert.equal(staging.vars.KINIC_WIKI_GENERATOR_URL, "");
+assert.equal(staging.vars.KINIC_WIKI_GENERATOR_URL, "https://kinic-wiki-generator-staging.hude.workers.dev");
+assert.equal(staging.vars.KINIC_WIKI_ALLOWED_DATABASE_ID, "db_nuzrspghca5q");
+assert.equal(staging.vars.KINIC_WIKI_CLIPPER_ORIGIN, "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg");
 assert.equal(staging.r2_buckets[0].bucket_name, "kinic-wiki-link-preview-images-staging");
 assert.equal(staging.queues.producers[0].queue, "kinic-wiki-generation-staging");
 assert.notEqual(staging.kv_namespaces[0].id, wranglerConfig.kv_namespaces[0].id);
@@ -48,10 +51,16 @@ assert.match(
 );
 assert.match(packageConfig.scripts["deploy:staging"], /VITE_KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai/);
 assert.match(packageConfig.scripts["deploy:staging"], /check_worker_deploy_source\.mjs/);
+assert.match(packageConfig.scripts["deploy:staging"], /check-staging-deploy\.mjs/);
+assert.match(packageConfig.scripts["deploy:staging"], /wrangler deploy --dry-run/);
 assert.match(
   packageConfig.scripts["deploy:staging"],
   /VITE_II_DERIVATION_ORIGIN=https:\/\/3ryrw-kyaaa-aaaaf-qgxpq-cai\.icp0\.io/
 );
+execFileSync(process.execPath, ["scripts/check-staging-deploy.mjs", "--offline"], {
+  cwd: new URL("..", import.meta.url),
+  stdio: "pipe"
+});
 
 assert.equal(DELEGATION_TTL_NS, 30n * 24n * 3_600_000_000_000n);
 assert.equal(AUTH_CLIENT_CREATE_OPTIONS.idleOptions.idleTimeout, 30 * 24 * 60 * 60 * 1000);

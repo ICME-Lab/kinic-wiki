@@ -58,7 +58,7 @@ Open settings from `chrome://extensions` → Kinic Wiki Clipper → `Extension o
 Use these extension settings:
 
 - `Database`: select a writable active database for the logged-in Internet Identity principal
-- `Recall beta`: opt in to related Kinic previews in ChatGPT after a question is sent
+- Recall shows related Kinic previews in ChatGPT after a question is sent when a database is selected. There is no separate Recall setting.
 
 The extension fixes canister ID to `6emaw-iyaaa-aaaay-aacka-cai` and IC host to `https://icp0.io`. If no writable database exists, enter a name in settings and click `Create`. The extension never creates a database automatically.
 

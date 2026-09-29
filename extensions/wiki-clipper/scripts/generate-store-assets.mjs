@@ -12,7 +12,10 @@ const logoDataUri = `data:image/png;base64,${await readFile(resolve(root, "icons
 await mkdir(resolve(root, "store-listing/assets"), { recursive: true });
 await mkdir(resolve(root, "store-listing/screenshots"), { recursive: true });
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROME_EXECUTABLE_PATH ? { executablePath: process.env.CHROME_EXECUTABLE_PATH } : {})
+});
 try {
   await renderAsset(promoHtml(), "store-listing/assets/promo-small-440x280.png", 440, 280);
   await renderAsset(marqueeHtml(), "store-listing/assets/marquee-1400x560.png", 1400, 560);

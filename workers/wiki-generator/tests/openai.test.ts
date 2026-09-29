@@ -246,6 +246,7 @@ function config(): WorkerConfig {
   return {
     canisterId: "6emaw-iyaaa-aaaay-aacka-cai",
     icHost: "https://icp0.io",
+    allowedDatabaseId: null,
     model: "deepseek-v4-flash",
     targetRoot: "/Knowledge/conversations",
     sourcePrefix: "/Sources",
@@ -253,7 +254,8 @@ function config(): WorkerConfig {
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
     maxSourceChars: 300_000,
-    maxContextHits: 8,
+    maxContextCandidates: 20,
+    maxContextSelections: 5,
     maxOutputTokens: 6_000
   };
 }
