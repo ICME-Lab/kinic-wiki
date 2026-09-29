@@ -1947,3 +1947,37 @@ private enum AskAIStoreStubError: Error {
     case saveFailed
     case deleteFailed
 }
+
+
+extension AskAIModelTests {
+    @Test
+    func researchPreservesContextAndRefusesToReplaceAnUnsentDraft() async throws {
+        let scope = AskAIHistoryScope(principal: "research-user")
+        let model = AskAIModel(knowledgeProvider: AskAIKnowledgeProviderStub(sources: []),
+            client: AskAICompletionStub(responses: []), store: AskAIStoreStub(), historyScope: scope)
+        await model.load()
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        model.draft = "Keep my question"
+        #expect(!model.startWorkItemResearch(context: context, question: "Research"))
+        #expect(model.draft == "Keep my question")
+        model.draft = ""
+        #expect(!model.startWorkItemResearch(context: context, question: String(repeating: "x", count: AskAIModel.maximumQuestionCharacters + 1)))
+        #expect(!model.startWorkItemResearch(context: WorkItemResearchContext(principal: "other", databaseId: "db_test", itemId: "task", itemEtag: "v1"), question: "Research"))
+        #expect(!model.startWorkItemResearch(context: WorkItemResearchContext(principal: "research-user", databaseId: "other-db", itemId: "task", itemEtag: "v1"), question: "Research"))
+        #expect(model.startWorkItemResearch(context: context, question: "Research"))
+        #expect(model.currentConversation?.workItemResearch == context)
+        #expect(model.currentConversation?.messages.first?.text == "Research")
+        #expect(!model.startWorkItemResearch(context: context, question: "Another"))
+        model.cancelGeneration()
+    }
+
+    @Test
+    func researchReferenceSurvivesPersistenceAndOldConversationsStillDecode() throws {
+        var conversation = AskAIConversation(databaseId: "db", databaseTitle: "Wiki")
+        let encoder = JSONEncoder()
+        let oldData = try encoder.encode(conversation)
+        #expect(try JSONDecoder().decode(AskAIConversation.self, from: oldData).workItemResearch == nil)
+        conversation.workItemResearch = WorkItemResearchContext(principal: "user", databaseId: "db", itemId: "task", itemEtag: "v1")
+        #expect(try JSONDecoder().decode(AskAIConversation.self, from: encoder.encode(conversation)) == conversation)
+    }
+}

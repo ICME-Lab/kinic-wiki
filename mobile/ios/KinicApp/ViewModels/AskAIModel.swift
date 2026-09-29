@@ -282,6 +282,20 @@ final class AskAIModel {
         isConfirmingDatabaseChange = false
     }
 
+    /// Starts only after the member reviews the complete request; never interrupts another turn.
+    func startWorkItemResearch(context: WorkItemResearchContext, question: String) -> Bool {
+        guard loadState == .loaded, !isGenerating, draft.isEmpty,
+              historyScope == AskAIHistoryScope(principal: context.principal),
+              knowledgeProvider.selectedAskAIDatabaseId == context.databaseId,
+              knowledgeProvider.canAskAI, !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              question.count <= Self.maximumQuestionCharacters else { return false }
+        newConversation()
+        currentConversation?.workItemResearch = context
+        draft = question
+        send()
+        return isGenerating
+    }
+
     func newConversation() {
         cancelGeneration()
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId

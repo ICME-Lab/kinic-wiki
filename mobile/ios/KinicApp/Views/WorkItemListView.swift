@@ -188,7 +188,7 @@ struct WorkItemListView: View {
         .scrollDismissesKeyboard(.interactively)
         .refreshable { await refreshHome(force: true) }
         .navigationDestination(for: String.self) { itemId in
-            WorkItemDetailView(model: model, appModel: appModel, itemId: itemId)
+            WorkItemDetailView(model: model, appModel: appModel, itemId: itemId, askAIModel: askAIModel)
         }
     }
 

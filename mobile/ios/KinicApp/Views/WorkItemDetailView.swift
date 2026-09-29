@@ -8,6 +8,8 @@ struct WorkItemDetailView: View {
     @Bindable var model: WorkItemModel
     @Bindable var appModel: AppModel
     let itemId: String
+    let askAIModel: AskAIModel
+    @State private var isShowingResearch = false
 
     @State private var detail: WorkItemDetail?
     @State private var loadState: LoadState = .loading
@@ -57,6 +59,14 @@ struct WorkItemDetailView: View {
                     if let detail {
                         header(detail)
                         bodySection(detail)
+                        if !detail.isUnsupportedVersion, model.canWrite {
+                            Button("Research with AI", systemImage: "sparkle.magnifyingglass") {
+                                isShowingResearch = true
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isEditing || hasUnsavedInput || model.isSaving || model.isPostingComment)
+                            .accessibilityIdentifier("workItem.research")
+                        }
                         if let source = detail.item.source {
                             sourcePanel(source)
                         }
@@ -104,6 +114,15 @@ struct WorkItemDetailView: View {
         }
         .onChange(of: model.conflict) { _, conflict in
             isShowingConflict = conflict != nil
+        }
+        .sheet(isPresented: $isShowingResearch, onDismiss: {
+            Task { await model.loadComments(itemId) }
+        }) {
+            if let detail, let databaseId = model.databaseId {
+                WorkItemResearchView(appModel: appModel, workItems: model, assistant: askAIModel,
+                    detail: detail, context: WorkItemResearchContext(principal: appModel.principalText,
+                        databaseId: databaseId, itemId: itemId, itemEtag: detail.itemEtag))
+            }
         }
         .sheet(isPresented: $isShowingConflict) {
             conflictSheet
