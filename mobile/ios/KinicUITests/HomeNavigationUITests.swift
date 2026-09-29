@@ -1,10 +1,11 @@
 import XCTest
 
 final class HomeNavigationUITests: XCTestCase {
-    @MainActor private func launch(state: String = "ready", large: Bool = false, dark: Bool = false) -> XCUIApplication {
+    @MainActor private func launch(state: String = "ready", large: Bool = false, dark: Bool = false, draftStore: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["KINIC_SCREENSHOT_MODE"] = "navigation"
         app.launchEnvironment["KINIC_NAV_STATE"] = state
+        app.launchEnvironment["KINIC_NAV_DRAFT_STORE"] = draftStore
         app.launchEnvironment["KINIC_LARGE_TEXT"] = large ? "1" : "0"
         app.launchEnvironment["KINIC_DARK_MODE"] = dark ? "1" : "0"
         app.launch()
@@ -38,9 +39,27 @@ final class HomeNavigationUITests: XCTestCase {
             XCTAssertEqual(app.buttons["database.choose"].firstMatch.value as? String, "Team Research")
             if tab == "Browse" {
                 XCTAssertTrue(app.buttons["Search"].firstMatch.waitForExistence(timeout: 5))
+                XCTAssertFalse(app.textFields["browse.searchField"].exists)
+                capture(app, "browse-search-collapsed")
+                app.buttons["Search"].firstMatch.tap()
+                XCTAssertTrue(app.textFields["browse.searchField"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+                capture(app, "browse-search-expanded")
+                app.textFields["browse.searchField"].typeText("\n")
+                let keyboardHidden = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+                XCTAssertEqual(XCTWaiter.wait(for: [keyboardHidden], timeout: 5), .completed)
+                XCTAssertTrue(app.textFields["browse.searchField"].exists)
+                app.buttons["Search"].firstMatch.tap()
+                XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+                app.buttons["browse.cancelSearch"].tap()
+                XCTAssertFalse(app.textFields["browse.searchField"].exists)
+            } else {
+                XCTAssertFalse(app.buttons["app.settings"].exists)
             }
             capture(app, "04-\(tab)")
         }
+        app.buttons["Home"].firstMatch.tap()
         app.buttons["app.settings"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
         capture(app, "05-settings")
@@ -127,5 +146,67 @@ final class HomeNavigationUITests: XCTestCase {
         let empty = launch(state: "no-database")
         XCTAssertTrue(empty.staticTexts["No databases available"].waitForExistence(timeout: 5))
         capture(empty, "10-no-database")
+    }
+}
+
+
+extension HomeNavigationUITests {
+    @MainActor func testDraftRestoresAfterRelaunchAndExplicitDiscardRemovesIt() {
+        let app = launch(draftStore: UUID().uuidString)
+        app.buttons["home.newItem"].tap()
+        let title = app.textFields["Work item title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.tap()
+        title.typeText("Remember this task")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["home.newItem"].waitForExistence(timeout: 10))
+        app.buttons["home.newItem"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(title.value as? String, "Remember this task")
+        app.buttons["Cancel"].tap()
+        app.buttons["Discard draft"].tap()
+        app.buttons["home.newItem"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(title.value as? String, "Remember this task")
+        title.tap()
+        title.typeText("Title only")
+        XCTAssertTrue(app.buttons["Save"].isEnabled)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["home.localWork"].waitForExistence(timeout: 5))
+        app.buttons["home.localWork"].tap()
+        XCTAssertTrue(app.staticTexts["Title only"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor func testDetailDraftRestoresAndCommentStaysAboveKeyboard() {
+        let app = launch(draftStore: UUID().uuidString)
+        let row = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
+        app.buttons["Edit"].tap()
+        let title = app.textFields["Title"]
+        title.tap()
+        title.typeText(" unsaved")
+        let editedTitle = title.value as? String
+        XCTAssertNotEqual(editedTitle, "Plan the next research session")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(title.value as? String, editedTitle)
+        app.buttons["Cancel"].tap()
+        app.buttons["Discard changes"].tap()
+        let comment = app.textFields["New comment"]
+        for _ in 0..<4 where !comment.isHittable { app.swipeUp() }
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        comment.tap()
+        comment.typeText("Keyboard visibility check")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(comment.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        capture(app, "work-item-comment-keyboard")
+        app.buttons["keyboard.done"].tap()
+        app.buttons["Back"].tap()
+        app.buttons["Discard changes"].tap()
     }
 }
