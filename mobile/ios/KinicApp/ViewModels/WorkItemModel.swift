@@ -103,6 +103,34 @@ final class WorkItemModel {
         return database.databaseId
     }
 
+    func draftScope(key: String) -> WorkItemDraftScope? {
+        guard let databaseId, runtime.workItemIsSignedIn else { return nil }
+        return WorkItemDraftScope(principal: runtime.workItemPrincipal, databaseId: databaseId, key: key)
+    }
+
+    func loadDraft(in scope: WorkItemDraftScope) throws -> WorkItemDraft? {
+        guard let drafts = store as? any WorkItemDraftStoring else { return nil }
+        let draft = try drafts.draft(in: scope)
+        if scope.key.hasPrefix("compose"), let draft,
+           try store?.captures(principal: scope.principal).contains(where: { $0.captureId == draft.captureId }) == true {
+            try drafts.deleteDraft(in: scope)
+            return nil
+        }
+        return draft
+    }
+
+    func saveDraft(_ draft: WorkItemDraft, in scope: WorkItemDraftScope) throws {
+        guard let drafts = store as? any WorkItemDraftStoring else {
+            throw WorkItemStoreError.sqlite("Draft storage is unavailable. Keep this screen open until you save.")
+        }
+        try drafts.saveDraft(draft, in: scope)
+    }
+
+    func deleteDraft(in scope: WorkItemDraftScope) throws {
+        guard let drafts = store as? any WorkItemDraftStoring else { return }
+        try drafts.deleteDraft(in: scope)
+    }
+
     var canWrite: Bool {
         runtime.workItemDatabase?.canWrite == true
     }
@@ -256,13 +284,12 @@ final class WorkItemModel {
     /// - Parameter title: An explicit title from Browse or Ask AI. Empty falls back to the first line.
     /// - Returns: whether the input is safely stored somewhere.
     @discardableResult
-    func create(title: String? = nil, body: String, source: WorkItemSource?) async -> Bool {
+    func create(title: String? = nil, body: String, source: WorkItemSource?, captureId: String = UUID().uuidString.lowercased()) async -> Bool {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
+        guard canWrite, !trimmed.isEmpty || !(title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let principal = runtime.workItemPrincipal
         let databaseId = databaseId
         let now = Self.nowMilliseconds()
-        let captureId = UUID().uuidString.lowercased()
         let sources = source.map { [$0] } ?? []
         let explicitTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let provisionalTitle = explicitTitle.isEmpty
@@ -294,7 +321,11 @@ final class WorkItemModel {
                 return false
             }
             refreshLocalCaptures()
-            await send(record)
+            // The capture is durable; network work must not hold the composer open.
+            Task {
+                guard runtime.workItemPrincipal == principal, self.databaseId == databaseId else { return }
+                await send(record)
+            }
             return true
         }
         // Without a local store the input only survives if the database accepts it now.
@@ -872,18 +903,23 @@ final class WorkItemModel {
             author: record.principal,
             source: record.sourceRefs.first
         )
+        let belongsToCurrentContext = {
+            self.runtime.workItemPrincipal == record.principal && self.databaseId == databaseId
+        }
         do {
             _ = try await repository.create(draft, databaseId: databaseId, session: session)
         } catch {
-            actionError = Self.message(for: error)
+            if belongsToCurrentContext() { actionError = Self.message(for: error) }
             return false
         }
         if let store {
             try? store.markCaptureSent(id: record.captureId, at: Self.nowMilliseconds())
         }
-        actionError = nil
-        refreshLocalCaptures()
-        await refreshRemote(force: true)
+        if belongsToCurrentContext() {
+            actionError = nil
+            refreshLocalCaptures()
+            await refreshRemote(force: true)
+        }
         return true
     }
 

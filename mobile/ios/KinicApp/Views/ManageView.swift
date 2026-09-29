@@ -24,10 +24,15 @@ struct ManageView: View {
                 ManageSignedOutView(model: model)
             }
         }
-        .databaseContext(model: model)
         .refreshable { refreshManagement() }
-        .navigationTitle("Manage")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                DatabaseContextBar(model: model, compact: true)
+            }
+                .databaseTitleAppearance()
+        }
         .task {
             model.startRefreshDatabases()
         }

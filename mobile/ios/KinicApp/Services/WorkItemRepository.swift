@@ -106,9 +106,9 @@ struct WorkItemRepository: Sendable {
             return left.id < right.id
         }
         return WorkItemListSnapshot(
-            entries: Array(sortedEntries.prefix(Self.maximumItems)),
+            entries: sortedEntries,
             totalCount: ids.count,
-            isTruncated: sortedEntries.count > Self.maximumItems,
+            isTruncated: false,
             unreadableCount: entries.unreadableCount
         )
     }

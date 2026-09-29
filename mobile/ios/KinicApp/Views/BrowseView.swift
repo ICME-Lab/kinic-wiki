@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/BrowseView.swift
-// What: Root split navigation for browsing readable Kinic Wiki databases.
-// Why: The Browse tab should behave like iOS Notes: databases, note lists, then document detail.
+// What: Compact folder navigation and regular-width split navigation for readable databases.
+// Why: iPhone opens the selected database's content directly; iPad keeps its database sidebar.
 
 import SwiftUI
 
@@ -16,6 +16,55 @@ struct BrowseView: View {
     @State private var navigationGate = BrowseNavigationGate()
 
     var body: some View {
+        Group {
+            if horizontalSizeClass == .compact,
+               model.canListBrowseDatabases,
+               let selectedDatabaseId {
+                BrowseNodeNavigationView(
+                    model: model,
+                    databaseId: selectedDatabaseId,
+                    selectedDocumentPath: selectedDocumentPathBinding,
+                    folderPath: $folderPath,
+                    isSearchPresented: $isBrowseSearchPresented,
+                    requestSearchFolder: requestSearchFolder
+                )
+            } else {
+                databaseSplitView
+            }
+        }
+        .confirmationDialog(
+            "Discard unsaved changes?",
+            isPresented: pendingNavigationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Changes", role: .destructive, action: applyPendingNavigation)
+            Button("Continue Editing", role: .cancel, action: cancelPendingNavigation)
+        } message: {
+            Text("Your Markdown changes have not been saved.")
+        }
+        .task {
+            model.startRefreshDatabases()
+            syncSelectionFromModel()
+            applyBrowseNavigationRequest()
+        }
+        .onChange(of: model.selectedBrowseDatabaseId) {
+            syncSelectionFromModel()
+        }
+        .onChange(of: rootNavigationID) {
+            applyBrowseNavigationRequest()
+        }
+        .onChange(of: model.browseNavigationRequestID) {
+            applyBrowseNavigationRequest()
+        }
+        .onChange(of: horizontalSizeClass) { _, newSizeClass in
+            adaptNavigation(to: newSizeClass)
+        }
+        .onChange(of: folderPath) { _, newPath in
+            syncCompactDocumentSelection(with: newPath)
+        }
+    }
+
+    private var databaseSplitView: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             BrowseDatabaseListView(
                 model: model,
@@ -48,36 +97,6 @@ struct BrowseView: View {
         .navigationSplitViewStyle(.balanced)
         .safeAreaInset(edge: .top, spacing: 0) {
             if horizontalSizeClass != .compact { DatabaseContextBar(model: model) }
-        }
-        .confirmationDialog(
-            "Discard unsaved changes?",
-            isPresented: pendingNavigationPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Discard Changes", role: .destructive, action: applyPendingNavigation)
-            Button("Continue Editing", role: .cancel, action: cancelPendingNavigation)
-        } message: {
-            Text("Your Markdown changes have not been saved.")
-        }
-        .task {
-            model.startRefreshDatabases()
-            syncSelectionFromModel()
-            applyBrowseNavigationRequest()
-        }
-        .onChange(of: model.selectedBrowseDatabaseId) {
-            syncSelectionFromModel()
-        }
-        .onChange(of: rootNavigationID) {
-            applyBrowseNavigationRequest()
-        }
-        .onChange(of: model.browseNavigationRequestID) {
-            applyBrowseNavigationRequest()
-        }
-        .onChange(of: horizontalSizeClass) { _, newSizeClass in
-            adaptNavigation(to: newSizeClass)
-        }
-        .onChange(of: folderPath) { _, newPath in
-            syncCompactDocumentSelection(with: newPath)
         }
     }
 

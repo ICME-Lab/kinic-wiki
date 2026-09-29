@@ -15,32 +15,60 @@ extension EnvironmentValues {
 struct DatabaseContextBar: View {
     @Bindable var model: AppModel
     var askAIModel: AskAIModel? = nil
+    var compact = false
     @Environment(\.openKinicSettings) private var openSettings
     @State private var isChoosingDatabase = false
     @State private var pendingSelection: DatabaseSummary?
 
     var body: some View {
+        Group {
+            if compact {
+                databaseButton
+            } else {
+                contextBar
+            }
+        }
+        .sheet(isPresented: $isChoosingDatabase, onDismiss: applySelection) {
+            DatabaseSelectionSheet(model: model, databases: askAIModel == nil ? model.browseListDatabases : model.askAIDatabaseCandidates) { database in
+                pendingSelection = database
+                isChoosingDatabase = false
+            }
+        }
+        .onChange(of: model.principalText) {
+            pendingSelection = nil
+            isChoosingDatabase = false
+        }
+    }
+
+    private var databaseButton: some View {
+        Button {
+            isChoosingDatabase = true
+        } label: {
+            HStack(spacing: 8) {
+                if !compact { Image(systemName: "externaldrive") }
+                Text(model.selectedDatabase?.displayTitle ?? "Select a database")
+                    .font(compact ? .title3.weight(.semibold) : .headline)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if !compact { Spacer(minLength: 0) }
+            }
+            .frame(width: compact ? 220 : nil, alignment: .leading)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("database.choose")
+        .accessibilityLabel("Choose database")
+        .accessibilityValue(model.selectedDatabase?.displayTitle ?? "No database selected")
+    }
+
+    private var contextBar: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 12) {
-                Button {
-                    isChoosingDatabase = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "externaldrive")
-                        Text(model.selectedDatabase?.displayTitle ?? "Select a database")
-                            .font(.headline)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        Image(systemName: "chevron.down").font(.caption.weight(.semibold))
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("database.choose")
-                .accessibilityLabel("Choose database")
-                .accessibilityValue(model.selectedDatabase?.displayTitle ?? "No database selected")
+                databaseButton
 
                 Button("Settings", systemImage: "gearshape", action: openSettings)
                     .labelStyle(.iconOnly)
@@ -56,16 +84,6 @@ struct DatabaseContextBar: View {
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.vertical, 6)
         .background(.bar)
-        .sheet(isPresented: $isChoosingDatabase, onDismiss: applySelection) {
-            DatabaseSelectionSheet(model: model, databases: askAIModel == nil ? model.browseListDatabases : model.askAIDatabaseCandidates) { database in
-                pendingSelection = database
-                isChoosingDatabase = false
-            }
-        }
-        .onChange(of: model.principalText) {
-            pendingSelection = nil
-            isChoosingDatabase = false
-        }
     }
 
     // Present confirmations only after the picker has finished dismissing.
@@ -110,6 +128,18 @@ extension View {
     func databaseContext(model: AppModel, askAIModel: AskAIModel? = nil) -> some View {
         safeAreaInset(edge: .top, spacing: 0) {
             DatabaseContextBar(model: model, askAIModel: askAIModel)
+        }
+    }
+}
+
+// Keep the database name readable without the toolbar's oversized glass capsule.
+extension ToolbarContent {
+    @ToolbarContentBuilder
+    func databaseTitleAppearance() -> some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            self.sharedBackgroundVisibility(.hidden)
+        } else {
+            self
         }
     }
 }

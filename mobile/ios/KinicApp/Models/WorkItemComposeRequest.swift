@@ -4,7 +4,7 @@
 
 import Foundation
 
-struct WorkItemComposeRequest: Equatable, Sendable {
+struct WorkItemComposeRequest: Codable, Equatable, Sendable {
     /// Source documents can be longer than one item body should be.
     static let bodyCharacterLimit = 10_000
 

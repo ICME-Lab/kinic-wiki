@@ -34,11 +34,14 @@ struct BrowseDatabaseListView: View {
                 BrowseSignedOutView(model: model)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if showsDatabaseContext { DatabaseContextBar(model: model) }
-        }
-        .navigationTitle("Browse")
+        .navigationTitle(showsDatabaseContext ? "" : "Browse")
         .toolbar {
+            if showsDatabaseContext {
+                ToolbarItem(placement: .topBarLeading) {
+                    DatabaseContextBar(model: model, compact: true)
+                }
+                .databaseTitleAppearance()
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
                     .disabled(!model.canListBrowseDatabases || model.isLoadingDatabases)
