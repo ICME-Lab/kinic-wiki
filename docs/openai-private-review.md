@@ -2,6 +2,12 @@
 
 This runbook prepares the authenticated Kinic Wiki app for review. It never stores reviewer credentials in the repository.
 
+## Privacy-policy resubmission
+
+Publish `docs/legal/privacy-policy.md` at `https://wiki.kinic.xyz/privacy-policy` and confirm that the submission portal points to it. Verify that the published tool disclosures match the portal's Scan Tools results, including nested metadata and conflict responses.
+
+Before publication, verify production Cloudflare logging destinations. The policy's seven-day limit covers Workers Logs; any independently configured log exports need their own recipient and retention disclosure.
+
 ## Fixed review contract
 
 - Production MCP endpoint: `https://wiki-private-mcp.kinic.xyz/mcp`

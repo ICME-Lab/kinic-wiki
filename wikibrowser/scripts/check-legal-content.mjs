@@ -17,7 +17,7 @@ assert.match(
 
 const headings = policy.match(/^##\s+\d+\.\s+.+$/gm) ?? [];
 assert.equal(headings.length, 11, "privacy policy must retain its 11 numbered sections");
-assert.match(policy, /Last Updated: September 28, 2026/);
+assert.match(policy, /Last Updated: September 29, 2026/);
 assert.match(policy, /Effective Date: September 28, 2026/);
 assert.match(policy, /Material changes posted after this Policy's Effective Date take effect 30 days after posting/);
 assert.match(policy, /Ask AI processing/);
