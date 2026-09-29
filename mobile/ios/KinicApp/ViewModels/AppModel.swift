@@ -63,14 +63,14 @@ extension AppModel: AskAIKnowledgeProviding {
     var usesWorkerAskAI: Bool { true }
     var hasAskAIWorkerConsent: Bool {
         UserDefaults.standard.bool(
-            forKey: "askai.consent.\(principalText).2026-09-22"
+            forKey: "askai.consent.\(principalText).2026-09-29"
         )
     }
 
     func grantAskAIWorkerConsent() {
         UserDefaults.standard.set(
             true,
-            forKey: "askai.consent.\(principalText).2026-09-22"
+            forKey: "askai.consent.\(principalText).2026-09-29"
         )
     }
 

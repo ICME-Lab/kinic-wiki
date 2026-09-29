@@ -10,6 +10,7 @@ import {
 import { AssistantError, DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
 const mocks = vi.hoisted(() => ({
+  deepseek: vi.fn(),
   create: vi.fn(),
   items: vi.fn(),
   retrieve: vi.fn(),
@@ -29,6 +30,10 @@ const mocks = vi.hoisted(() => ({
   discardIntent: vi.fn(),
   route: vi.fn(),
   policy: vi.fn(),
+}));
+vi.mock("../src/deepseek", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/deepseek")>(),
+  runDeepSeekTurn: mocks.deepseek,
 }));
 vi.mock("../src/billing", () => ({
   voiceReservation: async () => null,
@@ -61,12 +66,14 @@ vi.mock("../src/openai", () => ({
     question: string,
     scope: string,
     selectedPath?: string,
+    history: unknown[] = [],
   ) =>
     JSON.stringify({
       requestId,
       question,
       scope,
       selectedPath: selectedPath ?? null,
+      ...(history.length ? { history } : {}),
     }),
   messageText: (item: { text?: string }) => item.text ?? "",
   attachLive: mocks.attach,
@@ -223,6 +230,8 @@ vi.mock("../src/store", () => ({
     async discardUncreatedAgentIntent(...args: unknown[]) {
       return mocks.discardIntent(...args);
     }
+    async command() { return { fresh: true, response: null }; }
+    async commandResult() {}
     async touch() {}
     async canSend() {
       return true;
@@ -235,13 +244,14 @@ vi.mock("../src/store", () => ({
     }
   },
 }));
-async function harness() {
+async function harness(native = false) {
   const storage = new Map<string, unknown>();
   const background: Promise<unknown>[] = [];
   const memory = { storage, wake: null as number | null, revision: 0 };
   const env = {
     ASSISTANT_ENABLED: "true",
     OPENAI_API_KEY: "fake",
+    DEEPSEEK_API_KEY: "fake",
     TYPESAFE_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
     ASSISTANT_DERIVATION_ORIGIN: "origin",
@@ -271,6 +281,7 @@ async function harness() {
             "content-type": "application/json",
             "x-assistant-auth-id": "auth",
             "x-assistant-principal": "owner",
+            ...(native ? { "x-assistant-client": "native" } : {}),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
         },
@@ -279,7 +290,7 @@ async function harness() {
   const created = await call("/conversations", {
     databaseId: "db",
     scope: "/Knowledge",
-    consent: "2026-09-22",
+    consent: native ? "2026-09-29" : "2026-09-22",
   });
   id = ((await created.json()) as { id: string }).id;
   return {
@@ -338,6 +349,146 @@ const question = () => ({
   scope: "/Knowledge",
 });
 describe("conversation lifecycle", () => {
+  it("routes consented native text to DeepSeek and preserves bounded follow-up history", async () => {
+    const h = await harness(true);
+    mocks.route.mockResolvedValue({ route: "conversation", durationMs: 1 });
+    mocks.deepseek.mockResolvedValue({ answer: "Hello", citations: [], insufficient: false, contradictions: [], unverified: [] });
+    await h.call("/questions", question());
+    await h.drain();
+    expect(mocks.deepseek).toHaveBeenCalledOnce();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(h.user["state"].conversation!.messages[0].answer?.answer).toBe("Hello");
+    await h.call("/questions", question());
+    await h.drain();
+    expect(mocks.deepseek.mock.calls[1][0].state.messages[1].content).toContain("Hello");
+  });
+  it("carries a completed text answer into Live and the voice Agent", async () => {
+    const h = await harness(true);
+    mocks.route.mockResolvedValue({ route: "conversation", durationMs: 1 });
+    mocks.deepseek.mockResolvedValue({ answer: "The launch is Friday.", citations: [], insufficient: false, contradictions: [], unverified: [] });
+    await h.call("/questions", question());
+    await h.drain();
+    const c = h.user["state"].conversation!;
+    // Inspect the actual Live creation call without opening a voice connection.
+    mocks.create.mockRejectedValueOnce(new Error("offline Live probe"));
+    await expect(h.user["startVoice"](c, "v=0", "1", crypto.randomUUID())).rejects.toThrow("voice_connection_failed");
+    expect(mocks.create.mock.calls[0][2]).toContainEqual({ role: "assistant", text: "The launch is Friday." });
+    mocks.create.mockClear();
+    mocks.create.mockResolvedValue({ id: "voice-agent" });
+    await h.user["enqueue"](c, { ...question(), question: "Explain that again.", scope: "/Knowledge" }, "voice-follow-up");
+    await h.drain();
+    const input = mocks.create.mock.calls[0][3];
+    expect(JSON.parse(input).history).toContainEqual({ role: "assistant", text: "The launch is Friday." });
+    expect(c.pending!.agentInput).toBe(input);
+    // Recovery must match the exact submitted envelope even if local context changes.
+    c.history.push({ role: "user", text: "Later context must not alter submitted input" });
+    mocks.items.mockResolvedValue([{ type: "message", role: "user", turn_id: "current", text: input }]);
+    await h.user["pump"]();
+    expect(mocks.turn).toHaveBeenCalledWith("current", { session_id: "voice-agent" });
+    expect(mocks.create).toHaveBeenCalledOnce();
+  });
+  it("refreshes text context when reusing an existing voice Agent session", async () => {
+    const h = await harness(true);
+    mocks.route.mockResolvedValue({ route: "conversation", durationMs: 1 });
+    const c = h.user["state"].conversation!;
+    c.sessionId = "existing-voice-agent";
+    mocks.deepseek.mockResolvedValue({ answer: "Updated launch: Monday.", citations: [], insufficient: false, contradictions: [], unverified: [] });
+    await h.call("/questions", question());
+    await h.drain();
+    await h.user["enqueue"](c, { ...question(), scope: "/Knowledge" }, "follow-up");
+    await h.drain();
+    const [sessionId, event] = mocks.send.mock.calls[0];
+    expect(sessionId).toBe("existing-voice-agent");
+    expect(JSON.parse(event.events[0].input[0].content[0].text).history).toContainEqual({ role: "assistant", text: "Updated launch: Monday." });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it("aborts cancelled native requests and never publishes a late answer", async () => {
+    const h = await harness(true);
+    mocks.route.mockResolvedValue({ route: "conversation", durationMs: 1 });
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    mocks.deepseek.mockImplementation(async () => {
+      started();
+      await waiting;
+      return { answer: "Late", citations: [], insufficient: false, contradictions: [], unverified: [] };
+    });
+    await h.call("/questions", question());
+    await entered;
+    const c = h.user["state"].conversation!;
+    c.sessionId = "existing-voice-agent";
+    c.deferred = { id: "next-voice-question", offset: 0 };
+    const sendLive = vi.spyOn(h.user as unknown as { sendLive: (event: unknown) => Promise<void> }, "sendLive");
+    const send = vi.fn();
+    const socket = { send, close: vi.fn() } as unknown as WebSocket;
+    const requestId = crypto.randomUUID();
+    await h.user["controlMessage"](socket, c, JSON.stringify({
+      type: "command", action: "cancel", payload: {}, requestId, generation: c.generation,
+    }));
+    expect(send.mock.calls.map(([body]) => JSON.parse(body))).toContainEqual(expect.objectContaining({
+      type: "command.result", requestId, status: 200,
+    }));
+    expect(mocks.deepseek.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(c.sessionId).toBe("existing-voice-agent");
+    expect(c.deferred).toEqual({ id: "next-voice-question", offset: 0 });
+    expect(c.status).toBe("ready");
+    expect(h.user["state"].cleanup).toEqual([]);
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(sendLive).not.toHaveBeenCalled();
+    release();
+    await h.drain();
+    expect(h.user["state"].conversation!.messages[0].answer).toBeNull();
+  });
+  it("rejects old native conversation consent", async () => {
+    const h = await harness(true);
+    const response = await h.call("/conversations", { databaseId: "db", scope: "/Knowledge", consent: "2026-09-22" });
+    expect(response.status).toBe(400);
+    expect(mocks.deepseek).not.toHaveBeenCalled();
+  });
+  it("rejects unsupported native answers and clears pending text without OpenAI cleanup", async () => {
+    const h = await harness(true);
+    mocks.deepseek.mockResolvedValue({ answer: "Invented", citations: [], insufficient: false, contradictions: [], unverified: [] });
+    await h.call("/questions", question());
+    await h.drain();
+    expect(h.user["state"].conversation!.messages[0]).toMatchObject({ answer: null, error: "unsupported_answer" });
+    expect(h.user["state"].conversation!.pending).toBeNull();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+  it("handles malformed native answers without Agent reconciliation or voice cleanup", async () => {
+    const h = await harness(true);
+    const c = h.user["state"].conversation!;
+    c.sessionId = "existing-voice-agent";
+    mocks.deepseek.mockResolvedValue({ unexpected: true });
+    await h.call("/questions", question());
+    await h.drain();
+    expect(c.messages[0]).toMatchObject({ answer: null, error: "deepseek_invalid_response" });
+    expect(c.status).toBe("ready");
+    expect(c.sessionId).toBe("existing-voice-agent");
+    expect(mocks.discardIntent).not.toHaveBeenCalled();
+    expect(mocks.list).not.toHaveBeenCalled();
+    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(h.user["state"].cleanup).toEqual([]);
+  });
+  it("does not send native text to DeepSeek under old consent", async () => {
+    const h = await harness();
+    h.user["state"].conversation!.native = true;
+    await h.call("/questions", question());
+    await h.drain();
+    expect(h.user["state"].conversation!.messages[0].error).toBe("consent_required");
+    expect(mocks.deepseek).not.toHaveBeenCalled();
+    expect(mocks.route).not.toHaveBeenCalled();
+  });
+  it("keeps native voice delegation on the OpenAI agent", async () => {
+    const h = await harness(true);
+    await h.user["enqueue"](h.user["state"].conversation!, { ...question(), scope: "/Knowledge" }, "voice-delegation");
+    await h.drain();
+    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(mocks.deepseek).not.toHaveBeenCalled();
+  });
   it("keeps native text independent from voice policy and checks it on voice start", async () => {
     const h = await harness();
     const c = h.user["state"].conversation!;

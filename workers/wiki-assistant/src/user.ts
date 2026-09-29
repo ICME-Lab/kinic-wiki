@@ -7,7 +7,6 @@ import {
   voicePolicy,
   voiceReservation,
 } from "./billing";
-import OpenAI from "openai";
 import { AssistantAuth } from "./auth";
 import { AssistantStore } from "./store";
 import { Leases, type Lease, RENEW_MS } from "./leases";
@@ -18,16 +17,13 @@ import {
   DEFAULT_LIMITS,
   questionSchema,
   scopeSchema,
-  validateAnswer,
-  type Answer,
-  type Scope,
   type QuestionSubject,
+  type Answer,
 } from "./contracts";
 import {
   createReadActor,
   emptyToolState,
   KinicReader,
-  type ToolState,
 } from "./kinic";
 import {
   attachLive,
@@ -35,11 +31,7 @@ import {
   client,
   closeLiveSession,
   createLive,
-  createAgent,
   deleteAgent,
-  inputText,
-  messageText,
-  sessionItems,
 } from "./openai";
 import {
   boundedRoutingHistory,
@@ -51,110 +43,14 @@ import { failure, json, readJson } from "./http";
 import { requireEnabled } from "./auth";
 import type { Env } from "./env";
 
-type Question = z.infer<typeof questionSchema>;
-type Pending = {
-  input: Question;
-  generation: number;
-  started: number;
-  stage: "new" | "creating" | "sending" | "running";
-  turnId: string | null;
-  tools: ToolState;
-  results: Record<string, { arguments: string; output: string }>;
-  delegationId: string | null;
-  route: "pending" | AskAiRoute;
-};
-type Transcript = {
-  role: "user" | "assistant";
-  text: string;
-  start: number;
-  end: number;
-};
-type Charge = {
-  attempts?: number;
-  nextAttempt?: number;
-  id: string;
-  conversationId: string;
-  databaseId: string;
-  principal: string;
-  rate: string;
-  reserved: number;
-  started: number | null;
-  stopped: number | null;
-  expires: number;
-  confirmed: number;
-};
-type VoiceUsage = {
-  chargeId?: string;
-  started: number;
-  reserved: number;
-  usageDay: string;
-  settled: boolean;
-};
-type Conversation = {
-  format: 3;
-  native?: boolean;
-  selectedPath?: string;
-  history: { role: "user" | "assistant"; text: string }[];
-  utterances: { id: string; voiceId: string; events: string[]; end: number; role: "user" | "assistant"; text: string }[];
-  id: string;
-  authId: string;
-  principal: string;
-  databaseId: string;
-  scope: Scope;
-  sessionId: string | null;
-  generation: number;
-  pending: Pending | null;
-  activity: number;
-  seen: number;
-  status: "ready" | "working" | "cancelling";
-  error: string | null;
-  messages: {
-    voice: boolean;
-    requestId: string;
-    question: string;
-    answer: Answer | null;
-    error: string | null;
-    kind: "grounded_answer" | "conversation" | "clarification" | null;
-    trace: {
-      route: AskAiRoute | "clarification";
-      calls: number;
-      characters: number;
-      inventoryObserved: number;
-      inventoryTruncated: boolean;
-      readCount: number;
-      jevRouteDurationMs: number;
-      jevRerankDurationMs: number;
-    } | null;
-  }[];
-  live: {
-    id: string | null;
-    usage: VoiceUsage;
-    stopping: boolean;
-  } | null;
-  transcripts: Transcript[];
-  delegations: string[];
-  deferred: { id: string; offset: number } | null;
-};
-type Cleanup = {
-  attempts?: number;
-  nextAttempt?: number;
-  sessionId: string | null;
-  conversationId: string;
-  unknownCreate: boolean;
-  liveId: string | null;
-  requestId?: string;
-  voiceUsage?: VoiceUsage;
-};
-export type UserState = {
-  endRequested?: number;
-  charges: Charge[];
-  principal: string | null;
-  day: string;
-  questions: number;
-  voiceSeconds: number;
-  conversation: Conversation | null;
-  cleanup: Cleanup[];
-};
+import { conversationHistory } from "./conversation-history";
+import { runTextTurn, textTurnFailure } from "./text-turn";
+import { runAgentTurn, agentTurnFailure } from "./agent-turn";
+import type { TurnContext, TurnResult } from "./turn-context";
+
+import type { Question, Pending, Conversation, Charge, VoiceUsage, UserState } from "./state";
+export type { UserState } from "./state";
+
 const day = () => new Date().toISOString().slice(0, 10);
 const safeJson = (value: string): unknown => {
   try {
@@ -199,6 +95,7 @@ export class AssistantUser {
   private state!: UserState;
   private revision = 0;
   private pumping = false;
+  private textAbort: AbortController | null = null;
   private voiceStarting = false;
   private metering = false;
   private sideband: WebSocket | null = null;
@@ -235,9 +132,13 @@ export class AssistantUser {
     this.state = loaded.state;
     this.revision = loaded.revision;
     // Format 3 adds semantic routing and retrieval traces. Retire earlier
-    // temporary sessions once;
-    // never reinterpret an older encrypted conversation as the new format.
-    if (this.state.conversation && this.state.conversation.format !== 3) {
+    // temporary sessions once. Native sessions also need the new provider consent;
+    // never reuse an old consent grant for DeepSeek.
+    if (
+      this.state.conversation &&
+      (this.state.conversation.format !== 3 ||
+        (this.state.conversation.native && this.state.conversation.nativeTextProvider !== "deepseek"))
+    ) {
       await this.endOwned(this.state.conversation.authId, this.state.conversation.id);
     }
     this.nextWake = this.wakeDeadline();
@@ -440,7 +341,7 @@ export class AssistantUser {
           .object({
             databaseId: z.string().min(1).max(128),
             scope: scopeSchema,
-            consent: z.literal("2026-09-22"),
+            consent: z.literal(request.headers.get("x-assistant-client") === "native" ? "2026-09-29" : "2026-09-22"),
             selectedPath: z.string().max(512).optional(),
             history: z.array(z.object({role: z.enum(["user", "assistant"]), text: z.string().max(4000)}).strict()).max(20).refine((items) => new TextEncoder().encode(JSON.stringify(items)).length <= 12000).default([]),
           })
@@ -450,10 +351,13 @@ export class AssistantUser {
           throw new AssistantError("conversation_already_active", 409);
         if (this.state.cleanup.length)
           throw new AssistantError("cleanup_pending", 409);
+        if (request.headers.get("x-assistant-client") === "native" && !this.env.DEEPSEEK_API_KEY)
+          throw new AssistantError("assistant_not_configured", 503);
         const c: Conversation = {
           format: 3,
           id: crypto.randomUUID(),
           native: request.headers.get("x-assistant-client") === "native",
+          nativeTextProvider: request.headers.get("x-assistant-client") === "native" ? "deepseek" : undefined,
           selectedPath: input.selectedPath,
           history: input.history,
           utterances: [],
@@ -645,6 +549,7 @@ export class AssistantUser {
     if (c.messages.length >= 50)
       throw new AssistantError("conversation_limit", 429);
     this.state.questions++;
+    this.textAbort?.abort();
     c.generation++;
     c.activity = Date.now();
     c.error = null;
@@ -715,268 +620,28 @@ export class AssistantUser {
         await this.cancel(c);
         return;
       }
+      if (c.native && !p.delegationId && c.nativeTextProvider !== "deepseek")
+        throw new AssistantError("consent_required", 409);
       await (await this.reader(c)).authorize();
       if (!(await this.valid(c, p))) return;
       const subject = questionSubject(p.input, c.selectedPath);
-      if (p.route === "pending") {
-        const routingHistory = boundedRoutingHistory([
-          ...c.history,
-          ...c.messages
-            .filter(
-              (message) =>
-                message.requestId !== p.input.requestId && message.answer !== null,
-            )
-            .flatMap((message) => [
-              { role: "user" as const, text: message.question },
-              { role: "assistant" as const, text: message.answer!.answer },
-            ]),
-        ]);
-        const routed = await routeAskAiIntent({
-          question: p.input.question,
-          subject,
-          history: routingHistory,
-          apiKey: this.env.TYPESAFE_API_KEY!,
-        });
-        if (!(await this.valid(c, p))) return;
-        p.tools.jevDurationMs += routed.durationMs;
-        p.tools.jevRouteDurationMs += routed.durationMs;
-        if (!routed.route) {
-          const message = c.messages.find(
-            (item) => item.requestId === p.input.requestId,
-          )!;
-          message.kind = "clarification";
-          message.answer = {
-            answer: clarificationFor(p.input.question),
-            citations: [],
-            insufficient: false,
-            contradictions: [],
-            unverified: [],
-          };
-          message.trace = traceFor(p, "clarification");
-          c.pending = null;
-          c.status = "ready";
-          c.error = null;
-          await this.save();
-          this.broadcast();
-          console.log(
-            JSON.stringify({
-              event: "assistant_clarification",
-              route: "clarification",
-              durationMs: Date.now() - p.started,
-              jevRouteDurationMs: p.tools.jevRouteDurationMs,
-            }),
-          );
-          return;
-        }
-        p.route = routed.route;
-        if (
-          p.route === "selected_node_summary" &&
-          subject.kind !== "database" &&
-          !p.tools.discoveredPaths.includes(subject.path)
-        )
-          p.tools.discoveredPaths.push(subject.path);
-        await this.save();
-      }
-      const api = client(this.env.OPENAI_API_KEY);
-      const input = inputText(
-        p.input.requestId,
-        p.input.question,
-        c.scope,
-        p.input.selectedPath,
-        c.history,
-        p.route,
+      const route = await this.routeTurn(c, p, subject);
+      if (!route) return;
+      const context: TurnContext = {
+        conversation: c,
+        pending: p,
+        route,
         subject,
-      );
-      if (p.stage === "new") {
-        p.stage = c.sessionId ? "sending" : "creating";
-        await this.save();
-        if (!c.sessionId) {
-          const intent = "agent:" + c.id + ":" + p.input.requestId;
-          await this.store.intent(intent, this.principal, c.id, "agent", {
-            requestId: p.input.requestId,
-            providerId: null,
-          });
-          const result = await createAgent(api, c.id, p.input.requestId, input);
-          await this.store.created(intent, result.id);
-          if (!(await this.valid(c, p))) {
-            const uncertain = this.state.cleanup.find(
-              (task) =>
-                task.conversationId === c.id &&
-                task.requestId === p.input.requestId &&
-                task.unknownCreate,
-            );
-            if (uncertain) {
-              uncertain.sessionId = result.id;
-              uncertain.unknownCreate = false;
-              uncertain.nextAttempt = 0;
-            } else
-              this.state.cleanup.push({
-                sessionId: result.id,
-                conversationId: c.id,
-                unknownCreate: false,
-                liveId: null,
-              });
-            await this.save();
-            return;
-          }
-          c.sessionId = result.id;
-        } else {
-          await api.beta.agents.sessions.events.create(c.sessionId, {
-            events: [
-              {
-                type: "agent.session.input.message",
-                input: [
-                  {
-                    role: "user",
-                    content: [{ type: "input_text", text: input }],
-                  },
-                ],
-              },
-            ],
-          });
-        }
-        if (!(await this.valid(c, p))) return;
-        p.stage = "running";
-        await this.save();
-      }
-      if (!c.sessionId) {
-        // Creation may have succeeded before a transport failure. Never submit it again.
-        let count = 0;
-        for await (const session of api.beta.agents.sessions.list({
-          limit: 100,
-        })) {
-          if (
-            session.metadata.kinic_conversation === c.id &&
-            session.metadata.kinic_request === p.input.requestId
-          ) {
-            await this.store.created(
-              "agent:" + c.id + ":" + p.input.requestId,
-              session.id,
-            );
-            c.sessionId = session.id;
-            p.stage = "running";
-            await this.save();
-            break;
-          }
-          if (++count >= 300) break;
-        }
-        if (!c.sessionId) return;
-      }
-      const sessionId = c.sessionId;
-      const items = await sessionItems(api, sessionId);
-      if (!(await this.valid(c, p))) return;
-      const userMessage = items.find(
-        (item) =>
-          item.type === "message" &&
-          item.role === "user" &&
-          messageText(item) === input,
-      );
-      if (!userMessage) return; // Ambiguous input submission: reconcile, never resubmit.
-      p.turnId = userMessage.turn_id;
-      const session = await api.beta.agents.sessions.retrieve(sessionId);
-      if (!(await this.valid(c, p))) return;
-      if (session.status === "failed")
-        throw new AssistantError("agent_failed", 502);
-      for (const action of session.required_actions) {
-        if (!(await this.valid(c, p))) return;
-        if (action.type !== "function_call" || action.turn_id !== p.turnId)
-          throw new AssistantError("unexpected_agent_action", 502);
-        const signature = JSON.stringify({
-          name: action.name,
-          arguments: action.arguments,
-        });
-        let result = p.results[action.call_id];
-        if (result && result.arguments !== signature)
-          throw new AssistantError("tool_call_changed", 502);
-        if (!result) {
-          const reader = await this.reader(c, p.tools, p.route);
-          const output = await reader.execute(action.name, action.arguments);
-          if (!(await this.valid(c, p))) return;
-          result = { arguments: signature, output };
-          p.results[action.call_id] = result;
+        valid: () => this.valid(c, p),
+        reader: (tools, route) => this.reader(c, tools, route),
+        checkpoint: async () => {
           await this.save();
           this.broadcast();
-        }
-        await (await this.reader(c)).authorize();
-        if (!(await this.valid(c, p))) return;
-        await api.beta.agents.sessions.events.create(sessionId, {
-          events: [
-            {
-              type: "agent.session.input.tool_result",
-              turn_id: action.turn_id,
-              call_id: action.call_id,
-              success: true,
-              output: result.output,
-            },
-          ],
-        });
-      }
-      const turn = await api.beta.agents.sessions.turns.retrieve(p.turnId, {
-        session_id: sessionId,
-      });
-      if (!(await this.valid(c, p))) return;
-      if (turn.status === "failed" || turn.status === "cancelled")
-        throw new AssistantError("agent_" + turn.status, 502);
-      if (turn.status !== "completed") return;
-      const finalItems = await sessionItems(api, sessionId);
-      const final = finalItems.find(
-        (item) =>
-          item.type === "message" &&
-          item.role === "assistant" &&
-          item.turn_id === p.turnId &&
-          item.phase === "final_answer",
-      );
-      if (!final) throw new AssistantError("answer_missing", 502);
-      const answer = validateAnswer(
-        JSON.parse(messageText(final)),
-        p.tools.evidence,
-        p.route !== "conversation",
-      );
-      await (await this.reader(c)).authorize();
-      if (!(await this.valid(c, p))) return;
-      const message = c.messages.find(
-        (item) => item.requestId === p.input.requestId,
-      )!;
-      message.answer = answer;
-      message.kind =
-        p.route === "conversation" ? "conversation" : "grounded_answer";
-      message.trace = traceFor(p, p.route);
-      c.pending = null;
-      c.status = "ready";
-      c.error = null;
-      await this.save();
-      this.broadcast();
-      console.log(
-        JSON.stringify({
-          event: "assistant_answer",
-          route: p.route,
-          durationMs: Date.now() - p.started,
-          calls: p.tools.calls,
-          characters: p.tools.characters,
-          jevDurationMs: p.tools.jevDurationMs,
-          jevRouteDurationMs: p.tools.jevRouteDurationMs,
-          jevRerankDurationMs: p.tools.jevRerankDurationMs,
-          inputTokens: turn.usage?.input_tokens,
-          outputTokens: turn.usage?.output_tokens,
-        }),
-      );
-      if (p.delegationId && c.live && !c.live.stopping) {
-        try {
-          await this.ensureSideband(c);
-          if (this.state.conversation === c && c.generation === p.generation)
-            await this.sendLive({
-              type: "session.commentary.append",
-              event_id: crypto.randomUUID(),
-              delegation_id: p.delegationId,
-              // Bound UTF-8 bytes conservatively below the 500-token limit.
-              content: voiceSummary(answer),
-            });
-        } catch {
-          if (this.state.conversation === c) {
-            await this.failVoice(c);
-          }
-        }
-      }
+        },
+      };
+      const result = await this.runTurn(context);
+      if (!result) return; // Agents may still be running or reconciling submission.
+      await this.publishTurn(context, result);
     } catch (error) {
       const c = startedConversation;
       if (!c || !startedPending || !(await this.valid(c, startedPending)))
@@ -986,63 +651,204 @@ export class AssistantUser {
         if (error.status === 401 || error.status === 403)
           await this.endOwned(c.authId);
         else await this.cancel(c);
-      } else if (
-        c &&
-        (error instanceof z.ZodError ||
-          error instanceof SyntaxError ||
-          (error instanceof OpenAI.APIError &&
-            [400, 401, 403, 404].includes(error.status ?? 0)))
-      ) {
-        let unknownCreate: boolean | undefined;
-        if (error instanceof OpenAI.APIError && c.pending?.stage === "creating") {
-          const intent = "agent:" + c.id + ":" + c.pending.input.requestId;
-          let discarded = false;
-          try {
-            if (this.questionLease)
-              discarded = await this.store.discardUncreatedAgentIntent(
-                intent,
-                this.questionLease,
-              );
-          } catch {
-            console.error(
-              JSON.stringify({ event: "assistant_job_finalization_pending" }),
-            );
-          }
-          if (!discarded) {
-            c.error = "checking_request_status";
-            await this.save();
-            this.broadcast();
-            return;
-          }
-          unknownCreate = false;
+      } else {
+        const failure = this.isTextTurn(c, startedPending)
+          ? textTurnFailure(error)
+          : await agentTurnFailure(error, {
+              conversation: c,
+              pending: startedPending,
+              store: this.store,
+              lease: this.questionLease,
+            });
+        if (!(await this.valid(c, startedPending))) return;
+        c.error = failure.code;
+        if (failure.action === "cancel") await this.cancel(c, failure.unknownCreate);
+        else {
+          await this.save();
+          this.broadcast();
         }
-        c.error = "agent_response_unavailable";
-        await this.cancel(c, unknownCreate);
-      } else if (c?.pending) {
-        // Network errors are reconciled by the next owner, without duplicate input submission.
-        c.error = "checking_request_status";
-        await this.save();
-        this.broadcast();
       }
     } finally {
       clearInterval(renewal);
       await this.leases.release(lease);
       this.questionLease = null;
+      this.textAbort = null;
       this.pumping = false;
     }
+  }
+  private async routeTurn(
+    c: Conversation,
+    p: Pending,
+    subject: QuestionSubject,
+  ): Promise<AskAiRoute | undefined> {
+    if (p.route !== "pending") return p.route;
+    const routingHistory = boundedRoutingHistory([
+      ...c.history,
+      ...c.messages
+        .filter(
+          (message) =>
+            message.requestId !== p.input.requestId && message.answer !== null,
+        )
+        .flatMap((message) => [
+          { role: "user" as const, text: message.question },
+          { role: "assistant" as const, text: message.answer!.answer },
+        ]),
+    ]);
+    const routed = await routeAskAiIntent({
+      question: p.input.question,
+      subject,
+      history: routingHistory,
+      apiKey: this.env.TYPESAFE_API_KEY!,
+    });
+    if (!(await this.valid(c, p))) return;
+    p.tools.jevDurationMs += routed.durationMs;
+    p.tools.jevRouteDurationMs += routed.durationMs;
+    if (!routed.route) {
+      const message = c.messages.find(
+        (item) => item.requestId === p.input.requestId,
+      )!;
+      message.kind = "clarification";
+      message.answer = {
+        answer: clarificationFor(p.input.question),
+        citations: [],
+        insufficient: false,
+        contradictions: [],
+        unverified: [],
+      };
+      message.trace = traceFor(p, "clarification");
+      c.pending = null;
+      c.status = "ready";
+      c.error = null;
+      await this.save();
+      this.broadcast();
+      console.log(
+        JSON.stringify({
+          event: "assistant_clarification",
+          route: "clarification",
+          durationMs: Date.now() - p.started,
+          jevRouteDurationMs: p.tools.jevRouteDurationMs,
+        }),
+      );
+      return;
+    }
+    p.route = routed.route;
+    if (
+      p.route === "selected_node_summary" &&
+      subject.kind !== "database" &&
+      !p.tools.discoveredPaths.includes(subject.path)
+    )
+      p.tools.discoveredPaths.push(subject.path);
+    await this.save();
+    return p.route;
+  }
+  private async publishTurn(context: TurnContext, result: TurnResult): Promise<void> {
+    const { conversation: c, pending: p } = context;
+    const { answer, inputTokens, outputTokens } = result;
+    await (await this.reader(c)).authorize();
+    if (!(await this.valid(c, p))) return;
+    const message = c.messages.find(
+      (item) => item.requestId === p.input.requestId,
+    )!;
+    message.answer = answer;
+    message.kind =
+      p.route === "conversation" ? "conversation" : "grounded_answer";
+    message.trace = traceFor(p, context.route);
+    c.pending = null;
+    c.status = "ready";
+    c.error = null;
+    await this.save();
+    this.broadcast();
+    console.log(
+      JSON.stringify({
+        event: "assistant_answer",
+        route: p.route,
+        durationMs: Date.now() - p.started,
+        calls: p.tools.calls,
+        characters: p.tools.characters,
+        jevDurationMs: p.tools.jevDurationMs,
+        jevRouteDurationMs: p.tools.jevRouteDurationMs,
+        jevRerankDurationMs: p.tools.jevRerankDurationMs,
+        inputTokens,
+        outputTokens,
+      }),
+    );
+    await this.deliverVoiceAnswer(c, p, answer);
+  }
+  private async deliverVoiceAnswer(
+    c: Conversation,
+    p: Pending,
+    answer: Answer,
+  ): Promise<void> {
+    if (!p.delegationId || !c.live || c.live.stopping) return;
+    try {
+      await this.ensureSideband(c);
+      if (this.state.conversation === c && c.generation === p.generation)
+        await this.sendLive({
+          type: "session.commentary.append",
+          event_id: crypto.randomUUID(),
+          delegation_id: p.delegationId,
+          // Bound UTF-8 bytes conservatively below the 500-token limit.
+          content: voiceSummary(answer),
+        });
+    } catch {
+      if (this.state.conversation === c) {
+        await this.failVoice(c);
+      }
+    }
+  }
+  private isTextTurn(c: Conversation, p: Pending): boolean {
+    return c.native === true && p.delegationId === null;
+  }
+  private async runTurn(context: TurnContext): Promise<TurnResult | undefined> {
+    const { conversation: c, pending: p } = context;
+    if (this.isTextTurn(c, p)) {
+      this.textAbort = new AbortController();
+      return runTextTurn(context, {
+        apiKey: this.env.DEEPSEEK_API_KEY,
+        deadline: p.started + this.limits().turnMs,
+        signal: this.textAbort.signal,
+      });
+    }
+    return runAgentTurn(context, {
+      apiKey: this.env.OPENAI_API_KEY,
+      principal: this.principal,
+      store: this.store,
+      orphanCreatedSession: async (sessionId) => {
+        const uncertain = this.state.cleanup.find((task) =>
+          task.conversationId === c.id &&
+          task.requestId === p.input.requestId && task.unknownCreate,
+        );
+        if (uncertain) {
+          uncertain.sessionId = sessionId;
+          uncertain.unknownCreate = false;
+          uncertain.nextAttempt = 0;
+        } else {
+          this.state.cleanup.push({ sessionId, conversationId: c.id, unknownCreate: false, liveId: null });
+        }
+        await this.save();
+      },
+    });
   }
   private async cancel(
     c: Conversation,
     unknownCreateOverride?: boolean,
   ): Promise<void> {
+    this.textAbort?.abort();
     c.generation++;
-    c.deferred = null;
     if (c.pending) {
       const message = c.messages.find(
         (m) => m.requestId === c.pending?.input.requestId,
       );
       if (message) message.error = c.error ?? "cancel_requested";
     }
+    if (c.pending && this.isTextTurn(c, c.pending)) {
+      c.pending = null;
+      c.status = "ready";
+      await this.save();
+      this.broadcast();
+      return;
+    }
+    c.deferred = null;
     this.state.cleanup.push({
       sessionId: c.sessionId,
       conversationId: c.id,
@@ -1078,6 +884,7 @@ export class AssistantUser {
       (conversationId !== undefined && conversationId !== c.id)
     )
       return;
+    this.textAbort?.abort();
     c.generation++;
     this.stopCharge(c, stoppedAt);
     this.state.cleanup.push({
@@ -1095,11 +902,11 @@ export class AssistantUser {
     await this.cleanup();
   }
   private async cleanup(): Promise<void> {
-    const api = client(this.env.OPENAI_API_KEY);
     for (const task of this.state.cleanup.slice()) {
       if ((task.nextAttempt ?? 0) > Date.now()) continue;
       try {
         if (task.unknownCreate) {
+          const api = client(this.env.OPENAI_API_KEY);
           let count = 0;
           let found = false;
           for await (const session of api.beta.agents.sessions.list({
@@ -1124,6 +931,7 @@ export class AssistantUser {
           task.unknownCreate = false;
         }
         if (task.sessionId) {
+          const api = client(this.env.OPENAI_API_KEY);
           try {
             await cancelAgent(api, task.sessionId);
           } catch {
@@ -1625,7 +1433,7 @@ export class AssistantUser {
         voiceId: usage.chargeId ?? null,
         requestId: usage.chargeId ?? null,
       });
-      const result = await createLive(client(this.env.OPENAI_API_KEY), sdp, c.history);
+      const result = await createLive(client(this.env.OPENAI_API_KEY), sdp, conversationHistory(c));
       await this.store.created(intent, result.session.id);
       if (this.state.conversation !== c || c.live !== live) {
         this.state.cleanup.push({
