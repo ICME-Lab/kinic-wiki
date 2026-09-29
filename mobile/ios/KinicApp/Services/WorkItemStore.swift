@@ -79,6 +79,40 @@ final class WorkItemStore: @unchecked Sendable {
         sqlite3_close_v2(handle)
     }
 
+    func draft(in scope: WorkItemDraftScope) throws -> WorkItemDraft? {
+        try withLock {
+            let statement = try prepare("SELECT payload FROM drafts WHERE principal = ?1 AND database_id = ?2 AND draft_key = ?3")
+            defer { sqlite3_finalize(statement) }
+            bind(statement, 1, scope.principal)
+            bind(statement, 2, scope.databaseId)
+            bind(statement, 3, scope.key)
+            guard try step(statement) == SQLITE_ROW, let json = columnText(statement, 0) else { return nil }
+            return try JSONDecoder().decode(WorkItemDraft.self, from: Data(json.utf8))
+        }
+    }
+
+    func saveDraft(_ draft: WorkItemDraft, in scope: WorkItemDraftScope) throws {
+        let json = String(decoding: try JSONEncoder().encode(draft), as: UTF8.self)
+        try withLock {
+            try runStatement("INSERT INTO drafts (principal, database_id, draft_key, payload) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(principal, database_id, draft_key) DO UPDATE SET payload = excluded.payload") { statement in
+                bind(statement, 1, scope.principal)
+                bind(statement, 2, scope.databaseId)
+                bind(statement, 3, scope.key)
+                bind(statement, 4, json)
+            }
+        }
+    }
+
+    func deleteDraft(in scope: WorkItemDraftScope) throws {
+        try withLock {
+            try runStatement("DELETE FROM drafts WHERE principal = ?1 AND database_id = ?2 AND draft_key = ?3") { statement in
+                bind(statement, 1, scope.principal)
+                bind(statement, 2, scope.databaseId)
+                bind(statement, 3, scope.key)
+            }
+        }
+    }
+
     // MARK: - Captures
 
     func upsertCapture(_ record: WorkItemCaptureRecord) throws {
@@ -403,7 +437,8 @@ final class WorkItemStore: @unchecked Sendable {
                 )
                 """
             ]
-        )
+        ),
+        (2, ["CREATE TABLE drafts (principal TEXT NOT NULL, database_id TEXT NOT NULL, draft_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(principal, database_id, draft_key))"])
     ]
 
     private func migrate() throws {
@@ -551,7 +586,7 @@ final class WorkItemStore: @unchecked Sendable {
     }
 }
 
-extension WorkItemStore: WorkItemStoring {}
+extension WorkItemStore: WorkItemStoring, WorkItemDraftStoring {}
 
 enum WorkItemStoreError: Error, LocalizedError, Equatable {
     case sqlite(String)

@@ -3,6 +3,7 @@
 // Why: An unavailable network must not lose what the member already wrote.
 
 import SwiftUI
+import CryptoKit
 
 struct WorkItemComposerView: View {
     @Bindable var appModel: AppModel
@@ -11,6 +12,10 @@ struct WorkItemComposerView: View {
     let draft: WorkItemComposeRequest?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var draftScope: WorkItemDraftScope?
+    @State private var captureId = UUID().uuidString.lowercased()
+    @State private var finished = false
+    @State private var draftError: String?
     @State private var title = ""
     @State private var text = ""
     @State private var hasAppliedDraft = false
@@ -21,6 +26,10 @@ struct WorkItemComposerView: View {
     private var locksDatabase: Bool { hasInput || isSaving }
     @FocusState private var isTitleFocused: Bool
     @FocusState private var isBodyFocused: Bool
+
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !trimmedText.isEmpty
+    }
 
     private var trimmedText: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +64,7 @@ struct WorkItemComposerView: View {
                                 .foregroundStyle(.secondary)
                         }
 
+                        if let draftError { StatusPanel(message: draftError) }
                         if let message = model.actionError {
                             StatusPanel(message: message)
                         }
@@ -78,10 +88,12 @@ struct WorkItemComposerView: View {
                     }
                     .labelStyle(.titleAndIcon)
                     .tint(KinicDesign.hotPink)
-                    .disabled(trimmedText.isEmpty || isSaving || !model.canWrite)
+                    .disabled(!canSave || isSaving || !model.canWrite)
                 }
             }
             .onAppear(perform: applyDraftIfNeeded)
+            .onChange(of: title) { persistDraft() }
+            .onChange(of: text) { persistDraft() }
         }
         .presentationDetents([.large])
         .interactiveDismissDisabled(locksDatabase)
@@ -90,7 +102,13 @@ struct WorkItemComposerView: View {
         }
         .onDisappear { appModel.setWorkItemDraftActive(false, owner: draftOwner) }
         .alert("Discard this draft?", isPresented: $confirmsDiscard) {
-            Button("Discard draft", role: .destructive) { dismiss() }
+            Button("Discard draft", role: .destructive) {
+                do {
+                    if let draftScope { try model.deleteDraft(in: draftScope) }
+                    finished = true
+                    dismiss()
+                } catch { draftError = error.localizedDescription }
+            }
             Button("Keep editing", role: .cancel) {}
         }
     }
@@ -121,11 +139,25 @@ struct WorkItemComposerView: View {
 
     /// The draft is applied once so a returning view does not discard what the member typed.
     private func applyDraftIfNeeded() {
-        if let draft, !hasAppliedDraft {
-            hasAppliedDraft = true
-            title = draft.title ?? ""
-            text = draft.body
+        guard !hasAppliedDraft else { return }
+        hasAppliedDraft = true
+        var key = "compose"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        if let draft, let data = try? encoder.encode(draft) {
+            key += "." + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         }
+        draftScope = model.draftScope(key: key)
+        title = draft?.title ?? ""
+        text = draft?.body ?? ""
+        do {
+            if let draftScope, let saved = try model.loadDraft(in: draftScope) {
+                title = saved.title
+                text = saved.body
+                captureId = saved.captureId
+            }
+        } catch { draftError = error.localizedDescription }
+        persistDraft()
         if trimmedText.isEmpty && title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             isTitleFocused = true
         } else {
@@ -133,13 +165,28 @@ struct WorkItemComposerView: View {
         }
     }
 
+    private func persistDraft() {
+        guard hasAppliedDraft, !finished, let draftScope else { return }
+        do {
+            if hasInput {
+                try model.saveDraft(WorkItemDraft(captureId: captureId, title: title, body: text), in: draftScope)
+            } else {
+                try model.deleteDraft(in: draftScope)
+            }
+            draftError = nil
+        } catch { draftError = error.localizedDescription }
+    }
+
     private func save() {
-        guard !trimmedText.isEmpty else { return }
+        guard canSave else { return }
         isSaving = true
         Task {
-            let didSave = await model.create(title: title, body: text, source: draft?.source)
+            let didSave = await model.create(title: title, body: text, source: draft?.source, captureId: captureId)
             isSaving = false
             if didSave {
+                finished = true
+                // A committed capture ID also suppresses restoration after a crash here.
+                if let draftScope { try? model.deleteDraft(in: draftScope) }
                 dismiss()
             }
         }

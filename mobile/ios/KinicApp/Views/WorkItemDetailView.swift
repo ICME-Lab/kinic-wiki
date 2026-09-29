@@ -9,6 +9,9 @@ struct WorkItemDetailView: View {
     @Bindable var appModel: AppModel
     let itemId: String
 
+    @State private var draftScope: WorkItemDraftScope?
+    @State private var restoredDraft = false
+    @State private var draftError: String?
     @State private var detail: WorkItemDetail?
     @State private var loadState: LoadState = .loading
     @State private var isEditing = false
@@ -67,6 +70,7 @@ struct WorkItemDetailView: View {
                     }
                 }
 
+                if let draftError { StatusPanel(message: draftError) }
                 if let message = model.actionError {
                     StatusPanel(message: message)
                 }
@@ -84,6 +88,12 @@ struct WorkItemDetailView: View {
         }
         .alert("Discard unsaved changes?", isPresented: Binding(get: { discardIntent != nil }, set: { if !$0 { discardIntent = nil } }), presenting: discardIntent) { intent in
             Button("Discard changes", role: .destructive) {
+                do {
+                    if let draftScope { try model.deleteDraft(in: draftScope) }
+                } catch {
+                    draftError = error.localizedDescription
+                    return
+                }
                 discardIntent = nil
                 cancelEditing()
                 if intent == .leave {
@@ -102,6 +112,10 @@ struct WorkItemDetailView: View {
             await load()
             await model.loadComments(itemId)
         }
+        .onChange(of: draftTitle) { persistDraft() }
+        .onChange(of: draftBody) { persistDraft() }
+        .onChange(of: commentDraft) { persistDraft() }
+        .onChange(of: isEditing) { persistDraft() }
         .onChange(of: model.conflict) { _, conflict in
             isShowingConflict = conflict != nil
         }
@@ -400,8 +414,37 @@ struct WorkItemDetailView: View {
             return
         }
         guard databaseId == model.databaseId else { return }
-        detail = loaded
+        if !isEditing { detail = loaded }
+        if !restoredDraft {
+            draftScope = model.draftScope(key: "item." + itemId)
+            do {
+                if let draftScope, let saved = try model.loadDraft(in: draftScope) {
+                    commentDraft = saved.comment
+                    if saved.isEditing, let base = saved.base {
+                        // Never rebase unsaved text silently onto a newer remote item.
+                        detail = base
+                        draftTitle = saved.title
+                        draftBody = saved.body
+                        isEditing = true
+                    }
+                }
+            } catch { draftError = error.localizedDescription }
+            restoredDraft = true
+        }
         loadState = .ready
+    }
+
+    private func persistDraft() {
+        guard restoredDraft, let draftScope else { return }
+        do {
+            if hasUnsavedInput {
+                try model.saveDraft(WorkItemDraft(title: draftTitle, body: draftBody, comment: commentDraft,
+                    isEditing: isEditing, base: detail), in: draftScope)
+            } else {
+                try model.deleteDraft(in: draftScope)
+            }
+            draftError = nil
+        } catch { draftError = error.localizedDescription }
     }
 
     private func beginEditing(_ detail: WorkItemDetail) {
@@ -461,6 +504,7 @@ struct WorkItemDetailView: View {
         }
         model.clearConflict()
         isShowingConflict = false
+        persistDraft()
     }
 
     private static func authorLabel(_ principal: String) -> String {

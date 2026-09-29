@@ -32,7 +32,7 @@ struct WorkItemSource: Codable, Equatable, Sendable {
 }
 
 /// One work item as stored at `/WorkItems/<id>/item.md`.
-struct WorkItem: Identifiable, Equatable, Sendable {
+struct WorkItem: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let captureId: String
     var title: String
@@ -69,7 +69,7 @@ struct WorkItemListSnapshot: Equatable, Sendable {
 }
 
 /// A work item plus the etags needed to write it back without overwriting another member.
-struct WorkItemDetail: Equatable, Sendable {
+struct WorkItemDetail: Codable, Equatable, Sendable {
     var item: WorkItem
     var itemEtag: String
     /// `nil` when the derived list document is missing and could not be rebuilt.

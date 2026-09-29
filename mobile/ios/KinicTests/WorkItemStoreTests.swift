@@ -244,3 +244,22 @@ struct WorkItemStoreTests {
         #expect(try store.lastFetchedAt(principal: "alice", databaseId: "db-1") == 6)
     }
 }
+
+
+extension WorkItemStoreTests {
+    @Test func draftsSurviveReopenAndStayScoped() throws {
+        let (store, path) = try makeStore()
+        let scope = WorkItemDraftScope(principal: "alice", databaseId: "db-1", key: "compose")
+        let base = WorkItemDetail(item: WorkItem(id: "item-1", captureId: "capture-1", title: "元のタイトル",
+            state: .open, body: "元の本文", createdBy: "alice", createdAt: 1, updatedAt: 2,
+            etag: "original-etag"), itemEtag: "original-etag", listEtag: "original-list-etag", commentCount: 0)
+        let draft = WorkItemDraft(title: "買い物", body: "牛乳\nパン", comment: "コメント下書き", isEditing: true, base: base)
+        try store.saveDraft(draft, in: scope)
+        let reopened = try WorkItemStore(path: path)
+        #expect(try reopened.draft(in: scope) == draft)
+        #expect(try reopened.draft(in: WorkItemDraftScope(principal: "bob", databaseId: "db-1", key: "compose")) == nil)
+        #expect(try reopened.draft(in: WorkItemDraftScope(principal: "alice", databaseId: "db-2", key: "compose")) == nil)
+        try reopened.deleteDraft(in: scope)
+        #expect(try WorkItemStore(path: path).draft(in: scope) == nil)
+    }
+}

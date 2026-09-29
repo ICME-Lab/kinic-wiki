@@ -731,23 +731,22 @@ struct WorkItemRepositoryTests {
     }
 
     @Test
-    func listIsCappedAtOneHundredItems() async throws {
+    func closedItemsCannotPushAnOlderOpenItemOutOfTheList() async throws {
         let stub = WorkItemVFSStub()
         await stub.makeRootExist()
         for index in 0..<101 {
             let id = String(format: "item-%03d", index)
             // Directory timestamps do not define list activity; only meta.md does.
             await stub.seedDirectory(WorkItemPaths.directory(id), updatedAt: 1)
-            await stub.seed(path: WorkItemPaths.listMetadata(id), metadataJson: try listMetadata(title: id, lastActivityAt: Int64(index)))
+            await stub.seed(path: WorkItemPaths.listMetadata(id), metadataJson: try listMetadata(title: id, state: index == 0 ? "open" : "closed", lastActivityAt: Int64(index)))
         }
 
         let snapshot = try await makeRepository(stub).list(databaseId: "db", session: session)
-        #expect(snapshot.isTruncated)
+        #expect(!snapshot.isTruncated)
         #expect(snapshot.totalCount == 101)
-        #expect(snapshot.entries.count == 100)
-        // The oldest directory is the one dropped, never a randomly chosen UUID.
+        #expect(snapshot.entries.count == 101)
         #expect(snapshot.entries.first?.id == "item-100")
-        #expect(!snapshot.entries.contains { $0.id == "item-000" })
+        #expect(snapshot.entries.filter { $0.state == .open }.map(\.id) == ["item-000"])
     }
 }
 
@@ -1595,4 +1594,54 @@ extension WorkItemModelTests {
         #expect(model.entries.isEmpty)
         #expect(model.phase == .idle)
     }
+}
+
+
+extension WorkItemModelTests {
+    @Test @MainActor
+    func titleOnlyCaptureIsDurableBeforeNetworkCompletes() async throws {
+        let vfs = SuspendedWorkItemVFS()
+        let store = try WorkItemStore(path: ":memory:")
+        let runtime = WorkItemRuntimeStub()
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store)
+        #expect(await model.create(title: "Buy milk", body: "", source: nil, captureId: "stable-id"))
+        let records = try store.captures(principal: runtime.workItemPrincipal)
+        #expect(records.first?.provisionalTitle == "Buy milk")
+        #expect(records.first?.rawText == "")
+        #expect(records.first?.state == .local)
+        // Let the scheduled send reach the suspension point, then switch accounts.
+        await vfs.waitForWrite()
+        runtime.switchAccount(to: "another-account")
+        model.resetContext()
+        await vfs.failWrite()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(model.actionError == nil)
+        #expect(model.localCaptures.isEmpty)
+    }
+
+    @Test @MainActor
+    func acceptedCaptureDoesNotRestoreAsAnotherDraft() async throws {
+        let vfs = WorkItemVFSStub()
+        await vfs.failMutations()
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: WorkItemRuntimeStub(), repository: WorkItemRepository(vfs: vfs), store: store)
+        let scope = try #require(model.draftScope(key: "compose"))
+        let draft = WorkItemDraft(title: "Buy milk")
+        try model.saveDraft(draft, in: scope)
+        #expect(await model.create(title: draft.title, body: "", source: nil, captureId: draft.captureId))
+        #expect(try model.loadDraft(in: scope) == nil)
+        #expect(try store.captures(principal: scope.principal).count == 1)
+    }
+}
+
+private actor SuspendedWorkItemVFS: WorkItemVFSProviding {
+    private var write: CheckedContinuation<[VFSNodeMutationOutcome], any Error>?
+    func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] { [] }
+    func readNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> VFSNode? { nil }
+    func searchNodes(databaseId: String, query: String, prefix: String?, limit: UInt32, session: KinicIdentitySession) async throws -> [SearchNodeHit] { [] }
+    func mutateNodesBatch(databaseId: String, operations: [VFSNodeMutationOperation], session: KinicIdentitySession) async throws -> [VFSNodeMutationOutcome] {
+        try await withCheckedThrowingContinuation { write = $0 }
+    }
+    func waitForWrite() async { while write == nil { await Task.yield() } }
+    func failWrite() { write?.resume(throwing: URLError(.notConnectedToInternet)); write = nil }
 }

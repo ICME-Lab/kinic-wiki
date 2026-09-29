@@ -54,7 +54,9 @@ struct WorkItemListView: View {
     @State private var discardCapture: WorkItemCaptureRecord?
     @State private var discardMutation: WorkItemPendingMutation?
 
-    private var visibleEntries: [WorkItemListEntry] { model.entries.filter(filter.matches) }
+    @State private var visibleLimit = 100
+    private var filteredEntries: [WorkItemListEntry] { model.entries.filter(filter.matches) }
+    private var visibleEntries: [WorkItemListEntry] { Array(filteredEntries.prefix(visibleLimit)) }
     private var captureSummary: HomeCaptureSummary {
         HomeCaptureSummary(records: appModel.sourceCaptureHistory, databaseId: appModel.selectedDatabaseId)
     }
@@ -75,7 +77,9 @@ struct WorkItemListView: View {
             await model.importQueuedCaptures()
             await refreshHome()
         }
+        .onChange(of: filter) { visibleLimit = 100 }
         .onChange(of: appModel.selectedDatabaseId) {
+            visibleLimit = 100
             capturesExpanded = false
             isShowingHistory = false
             isShowingSearch = false
@@ -136,7 +140,7 @@ struct WorkItemListView: View {
                     Text("Work items").font(.title2.weight(.bold))
                     Spacer()
                     if model.phase == .ready {
-                        Text("\(visibleEntries.count)")
+                        Text("\(filteredEntries.count)")
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -305,6 +309,10 @@ struct WorkItemListView: View {
                 }
                 .buttonStyle(.plain)
                 Divider()
+            }
+            if visibleEntries.count < filteredEntries.count {
+                Button("Show more items") { visibleLimit += 100 }
+                    .frame(minHeight: 44)
             }
             listFooter
                 .font(.caption)

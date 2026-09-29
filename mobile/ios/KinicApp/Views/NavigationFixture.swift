@@ -26,7 +26,9 @@ enum NavigationFixture {
     }
 
     static func makeWorkItemModel(_ app: AppModel) -> WorkItemModel {
-        WorkItemModel(runtime: app, repository: WorkItemRepository(vfs: NavigationFixtureVFS()), store: nil)
+        let name = ProcessInfo.processInfo.environment["KINIC_NAV_DRAFT_STORE"]
+        let path = name.map { FileManager.default.temporaryDirectory.appending(path: "navigation-draft-\($0).sqlite").path } ?? ":memory:"
+        return WorkItemModel(runtime: app, repository: WorkItemRepository(vfs: NavigationFixtureVFS()), store: try! WorkItemStore(path: path))
     }
 
     static func database(_ id: String, _ title: String, _ role: DatabaseRole, _ status: DatabaseStatus = .active) -> DatabaseSummary {
