@@ -37,6 +37,7 @@ struct AppConfiguration: Equatable, Sendable {
         )
     }
 
+    @MainActor
     func makeAuthenticationCallbackURL() throws -> URL {
         try ICInternetIdentityAuthenticator.callbackURL(
             callbackDomain: callbackDomain,
