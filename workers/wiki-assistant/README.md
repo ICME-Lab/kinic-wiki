@@ -95,7 +95,7 @@ Before activation, separately verify on staging:
 4. Provider session deletion, duration/token accounting, quota boundaries and the kill switch with active text and voice work.
 5. Publication of the revised privacy policy and versioned TypeSafe/DeepSeek/OpenAI consent UI, plus operational notification setup.
 6. Confirmation that the TypeSafe account's API addendum permits production automated processing before changing `ASSISTANT_ENABLED` for production.
-7. The September 29, 2026 iOS typed Ask AI disclosure is published before any new text request, and each user accepts the updated Ask AI consent before using DeepSeek. This opt-in change takes effect on publication; keep `ASSISTANT_ENABLED=false` until the other activation checks pass.
+7. The September 30, 2026 iOS typed Ask AI disclosure is published before any new text request, and each user accepts the updated Ask AI consent before using DeepSeek. This opt-in change takes effect on publication; keep `ASSISTANT_ENABLED=false` until the other activation checks pass.
 
 API keys, real II staging authentication, the live 20-question evaluation, actual Chrome/Safari audio and deployments are intentionally not performed by offline tests. Keep the feature disabled until those checks pass. No fallback to another API/model is implemented.
 

@@ -1,7 +1,7 @@
 # Privacy Policy
 
-Last Updated: September 29, 2026
-Effective Date: September 29, 2026
+Last Updated: September 30, 2026
+Effective Date: September 30, 2026
 
 ## 1. Who we are
 
@@ -167,7 +167,7 @@ The Service is not directed to children under 13, and we do not knowingly proces
 
 ## 10. Changes to this Policy
 
-We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. The iOS typed Ask AI processing described in this September 29, 2026 update takes effect when this update is posted, but only for users who accept the updated Ask AI consent before submitting a new question. Posting this update alone does not send existing conversations or Wiki content to DeepSeek. Other material changes to existing processing take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
+We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. The iOS typed Ask AI processing described in this September 30, 2026 update takes effect when this update is posted, but only for users who accept the updated Ask AI consent before submitting a new question. Posting this update alone does not send existing conversations or Wiki content to DeepSeek. Other material changes to existing processing take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
 
 ## 11. Contact us
 
