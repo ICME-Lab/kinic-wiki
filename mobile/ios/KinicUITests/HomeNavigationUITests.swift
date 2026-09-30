@@ -88,6 +88,13 @@ final class HomeNavigationUITests: XCTestCase {
         XCTAssertTrue(request.waitForExistence(timeout: 10))
         XCTAssertTrue((request.value as? String ?? "").contains("Plan the next research session"))
         capture(app, "13-research-request")
+        let reviewedRequest = request.value as? String
+        app.buttons["research.start"].tap()
+        XCTAssertTrue(app.navigationBars["Ask AI Consent"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "DeepSeek")).firstMatch.exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(request.waitForExistence(timeout: 5))
+        XCTAssertEqual(request.value as? String, reviewedRequest)
         request.tap()
         request.typeText(" Add a comparison.")
         app.buttons["research.close"].tap()

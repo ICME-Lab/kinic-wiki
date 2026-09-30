@@ -1745,6 +1745,7 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var workerDelay: Duration?
     var cancelWorkerError: Error?
     var endWorkerError: Error?
+    var onEndWorker: (() async -> Void)?
     var nextDatabaseSelectionDisposition: BrowseDatabaseSelectionDisposition?
     let sources: [AskAIContextSource]
     let candidateCount: Int
@@ -1823,6 +1824,7 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
 
     func endAskAIWorkerConversation() async throws {
         endWorkerCallCount += 1
+        await onEndWorker?()
         if let endWorkerError { throw endWorkerError }
     }
 }
@@ -2115,16 +2117,16 @@ extension AskAIModelTests {
         await model.load()
         let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
         model.draft = "Keep my question"
-        #expect(!model.startWorkItemResearch(context: context, question: "Research"))
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Research")))
         #expect(model.draft == "Keep my question")
         model.draft = ""
-        #expect(!model.startWorkItemResearch(context: context, question: String(repeating: "x", count: AskAIModel.maximumQuestionCharacters + 1)))
-        #expect(!model.startWorkItemResearch(context: WorkItemResearchContext(principal: "other", databaseId: "db_test", itemId: "task", itemEtag: "v1"), question: "Research"))
-        #expect(!model.startWorkItemResearch(context: WorkItemResearchContext(principal: "research-user", databaseId: "other-db", itemId: "task", itemEtag: "v1"), question: "Research"))
-        #expect(model.startWorkItemResearch(context: context, question: "Research"))
+        #expect(!(await model.startWorkItemResearch(context: context, question: String(repeating: "x", count: AskAIModel.maximumQuestionCharacters + 1))))
+        #expect(!(await model.startWorkItemResearch(context: WorkItemResearchContext(principal: "other", databaseId: "db_test", itemId: "task", itemEtag: "v1"), question: "Research")))
+        #expect(!(await model.startWorkItemResearch(context: WorkItemResearchContext(principal: "research-user", databaseId: "other-db", itemId: "task", itemEtag: "v1"), question: "Research")))
+        #expect(await model.startWorkItemResearch(context: context, question: "Research"))
         #expect(model.currentConversation?.workItemResearch == context)
         #expect(model.currentConversation?.messages.first?.text == "Research")
-        #expect(!model.startWorkItemResearch(context: context, question: "Another"))
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Another")))
         model.cancelGeneration()
     }
 
@@ -2136,5 +2138,108 @@ extension AskAIModelTests {
         #expect(try JSONDecoder().decode(AskAIConversation.self, from: oldData).workItemResearch == nil)
         conversation.workItemResearch = WorkItemResearchContext(principal: "user", databaseId: "db", itemId: "task", itemEtag: "v1")
         #expect(try JSONDecoder().decode(AskAIConversation.self, from: encoder.encode(conversation)) == conversation)
+    }
+}
+
+
+extension AskAIModelTests {
+    @Test
+    func researchRequiresConsentBeforeChangingConversationOrDraft() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        let model = AskAIModel(knowledgeProvider: provider, client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(), historyScope: AskAIHistoryScope(principal: "research-user"))
+        await model.load()
+        let oldID = model.currentConversation?.id
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        #expect(model.requiresDataProcessingConsent)
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Research")))
+        #expect(model.currentConversation?.id == oldID)
+        #expect(model.draft.isEmpty)
+        #expect(provider.endWorkerCallCount == 0)
+        model.grantDataProcessingConsent()
+        #expect(!model.requiresDataProcessingConsent)
+    }
+
+    @Test
+    func researchWaitsForWorkerEndBeforeCreatingItsLinkedConversation() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.hasAskAIWorkerConsent = true
+        provider.workerResult = AskAIWorkerResult(kind: "conversation", answer: "Research result", sources: [], trace: nil, insufficient: false)
+        let model = AskAIModel(knowledgeProvider: provider, client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(), historyScope: AskAIHistoryScope(principal: "research-user"))
+        await model.load()
+        let oldID = model.currentConversation?.id
+        provider.onEndWorker = {
+            #expect(model.currentConversation?.id == oldID)
+            #expect(model.currentConversation?.workItemResearch == nil)
+            #expect(model.draft.isEmpty)
+            #expect(!model.isGenerating)
+        }
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        #expect(await model.startWorkItemResearch(context: context, question: "Research"))
+        #expect(provider.endWorkerCallCount == 1)
+        #expect(model.currentConversation?.id != oldID)
+        #expect(model.currentConversation?.workItemResearch == context)
+        try await waitUntilFinished(model)
+        #expect(model.messages.last?.text == "Research result")
+    }
+
+    @Test
+    func researchRetainsTheOldConversationWhenWorkerEndFails() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.hasAskAIWorkerConsent = true
+        provider.endWorkerError = AskAIKnowledgeProviderStubError.injected
+        let model = AskAIModel(knowledgeProvider: provider, client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(), historyScope: AskAIHistoryScope(principal: "research-user"))
+        await model.load()
+        let oldID = model.currentConversation?.id
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Research")))
+        #expect(model.currentConversation?.id == oldID)
+        #expect(model.currentConversation?.workItemResearch == nil)
+        #expect(model.draft.isEmpty)
+        #expect(!model.isGenerating)
+        #expect(!model.isSynchronizingWorker)
+    }
+
+    @Test
+    func researchDoesNotStartWhenTheScreenWithdrawsItsRequestDuringWorkerEnd() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.hasAskAIWorkerConsent = true
+        let model = AskAIModel(knowledgeProvider: provider, client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(), historyScope: AskAIHistoryScope(principal: "research-user"))
+        await model.load()
+        let oldID = model.currentConversation?.id
+        var allowStart = true
+        provider.onEndWorker = { allowStart = false }
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Research", shouldStart: { allowStart })))
+        #expect(model.currentConversation?.id == oldID)
+        #expect(model.currentConversation?.workItemResearch == nil)
+        #expect(model.draft.isEmpty)
+        #expect(!model.isGenerating)
+        #expect(!model.isSynchronizingWorker)
+    }
+
+    @Test
+    func researchDoesNotStartAfterTheAccountChangesDuringWorkerEnd() async throws {
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.hasAskAIWorkerConsent = true
+        let model = AskAIModel(knowledgeProvider: provider, client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub(), historyScope: AskAIHistoryScope(principal: "research-user"))
+        await model.load()
+        provider.onEndWorker = {
+            model.changeHistoryScope(to: AskAIHistoryScope(principal: "other-user"), store: AskAIStoreStub())
+        }
+        let context = WorkItemResearchContext(principal: "research-user", databaseId: "db_test", itemId: "task", itemEtag: "v1")
+        #expect(!(await model.startWorkItemResearch(context: context, question: "Research")))
+        #expect(model.draft.isEmpty)
+        #expect(!model.isGenerating)
+        #expect(model.currentConversation?.workItemResearch == nil)
     }
 }

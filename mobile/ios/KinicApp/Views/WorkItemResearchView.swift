@@ -13,6 +13,9 @@ struct WorkItemResearchView: View {
     @State private var conversationID: UUID?
     @State private var prepared = false
     @State private var publishing = false
+    @State private var starting = false
+    @State private var allowPendingStart = true
+    @State private var showingDataConsent = false
     @State private var publication: WorkItemModel.ResearchPublication?
     @State private var draftOwner = UUID()
     @State private var startError: String?
@@ -75,6 +78,7 @@ struct WorkItemResearchView: View {
                             Divider()
                         }
                         publicationStatus
+                        if starting { ProgressView("Preparing research…") }
                         if running {
                             Text("Keep the app open until research finishes. The result remains available in Ask AI history.")
                                 .font(.footnote).foregroundStyle(.secondary)
@@ -86,13 +90,14 @@ struct WorkItemResearchView: View {
                                 .lineLimit(3...8)
                                 .textFieldStyle(.roundedBorder)
                                 .accessibilityIdentifier("research.request")
+                                .disabled(starting)
                             Text("\(request.count) / \(AskAIModel.maximumQuestionCharacters) characters")
                                 .font(.caption).foregroundStyle(.secondary)
                             Text("The request and relevant Wiki excerpts are processed by the same AI service used by Ask AI.")
                                 .font(.footnote).foregroundStyle(.secondary)
                             Button(conversation == nil ? "Start research" : "Send follow-up", systemImage: "sparkle.magnifyingglass", action: send)
                                 .buttonStyle(.borderedProminent)
-                                .disabled(!requestIsValid || publishing || publication == .failed || assistant.isGenerating)
+                                .disabled(!requestIsValid || starting || publishing || publication == .failed || assistant.isGenerating || assistant.isSynchronizingWorker)
                                 .accessibilityIdentifier("research.start")
                         }
                         if let error = startError ?? assistant.errorMessage {
@@ -110,15 +115,22 @@ struct WorkItemResearchView: View {
                     Button("Close") {
                         sourceToOpen = nil
                         if hasEditedRequest { confirmingDiscard = true } else { close() }
-                    }.disabled(running || publishing)
+                    }.disabled(starting || running || publishing)
                         .accessibilityIdentifier("research.close")
                 }
             }
         }
-        .interactiveDismissDisabled(running || publishing || hasEditedRequest)
+        .interactiveDismissDisabled(starting || running || publishing || hasEditedRequest)
         .alert("Discard the unsent request?", isPresented: $confirmingDiscard) {
             Button("Discard request", role: .destructive) { close() }
             Button("Keep editing", role: .cancel) {}
+        }
+        .sheet(isPresented: $showingDataConsent) {
+            AskAIDataConsentView(agree: {
+                assistant.grantDataProcessingConsent()
+                showingDataConsent = false
+                send()
+            }, cancel: { showingDataConsent = false })
         }
         .task { await prepare() }
         .task(id: finishedAnswer?.id) { await publish() }
@@ -129,10 +141,14 @@ struct WorkItemResearchView: View {
             if databaseId != context.databaseId { leaveChangedContext() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background, running { assistant.cancelGeneration() }
+            if phase == .background {
+                allowPendingStart = false
+                if running { assistant.cancelGeneration() }
+            }
         }
         .onAppear { appModel.setWorkItemDraftActive(true, owner: draftOwner) }
         .onDisappear {
+            allowPendingStart = false
             if running { assistant.cancelGeneration() }
             appModel.setWorkItemDraftActive(false, owner: draftOwner)
         }
@@ -175,20 +191,30 @@ struct WorkItemResearchView: View {
 
     private func send() {
         guard appModel.principalText == context.principal, appModel.selectedDatabaseId == context.databaseId,
-              requestIsValid, !publishing, !assistant.isGenerating else { return }
+              requestIsValid, !starting, !publishing, !assistant.isGenerating, !assistant.isSynchronizingWorker else { return }
         startError = nil
-        if conversation != nil {
-            assistant.draft = request
-            assistant.send()
-        } else if !assistant.startWorkItemResearch(context: context, question: request) {
-            startError = "Finish or clear the current Ask AI draft, then retry."
+        if assistant.requiresDataProcessingConsent {
+            showingDataConsent = true
             return
         }
-        guard assistant.isGenerating else { startError = "Research could not start. Check your database access and retry."; return }
-        conversationID = assistant.currentConversation?.id
-        request = ""
-        initialRequest = ""
-        publication = nil
+        allowPendingStart = true
+        starting = true
+        Task { @MainActor in
+            defer { starting = false }
+            if conversation != nil {
+                assistant.draft = request
+                assistant.send()
+            } else if !(await assistant.startWorkItemResearch(context: context, question: request,
+                shouldStart: { allowPendingStart })) {
+                startError = assistant.errorMessage ?? "Finish or clear the current Ask AI draft, then retry."
+                return
+            }
+            guard assistant.isGenerating else { startError = "Research could not start. Check your database access and retry."; return }
+            conversationID = assistant.currentConversation?.id
+            request = ""
+            initialRequest = ""
+            publication = nil
+        }
     }
 
     private func publish() async {
