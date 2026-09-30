@@ -134,16 +134,16 @@ export class KinicReader {
       throw new AssistantError("tool_limit");
     await this.authorize();
     if (this.route === "conversation")
-      throw new AssistantError("tool_not_allowed", 403);
+      throw new AssistantError("tool_not_allowed", 400);
     if (name === "wiki_query") {
       if (this.route && this.route !== "focused_search")
-        throw new AssistantError("tool_not_allowed", 403);
+        throw new AssistantError("tool_not_allowed", 400);
       const input = z
         .object({ question: z.string().min(1).max(4000), scope: scopeSchema })
         .strict()
         .parse(args);
       if (input.scope !== this.scope)
-        throw new AssistantError("scope_not_allowed", 403);
+        throw new AssistantError("scope_not_allowed", 400);
       const search = async (prefix: [] | [string], top_k: number) =>
         unwrap(await this.actor.search_nodes({
           database_id: this.databaseId,
@@ -219,9 +219,9 @@ export class KinicReader {
     }
     if (name === "wiki_inventory") {
       if (this.route && this.route !== "database_overview")
-        throw new AssistantError("tool_not_allowed", 403);
+        throw new AssistantError("tool_not_allowed", 400);
       if (this.scope !== "database")
-        throw new AssistantError("scope_not_allowed", 403);
+        throw new AssistantError("scope_not_allowed", 400);
       const limit = 100;
       const root = unwrap(await this.actor.list_nodes({
         database_id: this.databaseId, prefix: "/", recursive: false, limit,

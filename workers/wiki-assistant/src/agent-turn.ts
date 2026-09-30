@@ -36,7 +36,7 @@ export async function runAgentTurn(context: TurnContext, options: {
         requestId: p.input.requestId,
         providerId: null,
       });
-      const result = await createAgent(api, c.id, p.input.requestId, input);
+      const result = await createAgent(api, c.id, p.input.requestId, input, undefined, c.scope);
       await options.store.created(intent, result.id);
       if (!(await context.valid())) {
         await options.orphanCreatedSession(result.id);

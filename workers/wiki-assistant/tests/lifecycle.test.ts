@@ -9,6 +9,8 @@ import {
 } from "../src/user";
 import { AssistantError, DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
+import type { Charge } from "../src/state";
+import { VoiceBillingRejected } from "../src/billing";
 const mocks = vi.hoisted(() => ({
   deepseek: vi.fn(),
   create: vi.fn(),
@@ -30,13 +32,15 @@ const mocks = vi.hoisted(() => ({
   discardIntent: vi.fn(),
   route: vi.fn(),
   policy: vi.fn(),
+  reservation: vi.fn(),
 }));
 vi.mock("../src/deepseek", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/deepseek")>(),
   runDeepSeekTurn: mocks.deepseek,
 }));
-vi.mock("../src/billing", () => ({
-  voiceReservation: async () => null,
+vi.mock("../src/billing", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/billing")>(),
+  voiceReservation: mocks.reservation,
   reserveVoice: mocks.reserve,
   settleVoiceCharge: mocks.charge,
   stopVoiceCharge: mocks.stop,
@@ -313,6 +317,7 @@ beforeEach(() => {
   mocks.authorize.mockResolvedValue(undefined);
   mocks.stopAt.mockResolvedValue(null);
   mocks.clearStop.mockResolvedValue(undefined);
+  mocks.reservation.mockResolvedValue(null);
   mocks.reserve.mockImplementation(
     async (_env, _id, _db, _principal, _rate, seconds) => ({
       reserved_seconds: BigInt(seconds),
@@ -349,6 +354,28 @@ const question = () => ({
   scope: "/Knowledge",
 });
 describe("conversation lifecycle", () => {
+  it.each(["scope_not_allowed", "tool_not_allowed"])("keeps a native conversation after model input error %s", async (code) => {
+    const h = await harness(true);
+    const c = h.user["state"].conversation!;
+    mocks.deepseek.mockRejectedValueOnce(new AssistantError(code, 400));
+    await h.call("/questions", question());
+    await h.drain();
+    expect(h.user["state"].conversation).toBe(c);
+    expect(c.status).toBe("ready");
+    expect(c.pending).toBeNull();
+    expect(c.messages[0].error).toBe(code);
+    mocks.deepseek.mockResolvedValue({ answer: "No evidence", citations: [], insufficient: true, contradictions: [], unverified: [] });
+    expect((await h.call("/questions", question())).status).toBe(202);
+    await h.drain();
+    expect(c.messages[1].answer?.answer).toBe("No evidence");
+  });
+  it("still ends native conversations after a real permission denial", async () => {
+    const h = await harness(true);
+    mocks.deepseek.mockRejectedValueOnce(new AssistantError("wiki_read_denied", 403));
+    await h.call("/questions", question());
+    await h.drain();
+    expect(h.user["state"].conversation).toBeNull();
+  });
   it("routes consented native text to DeepSeek and preserves bounded follow-up history", async () => {
     const h = await harness(true);
     mocks.route.mockResolvedValue({ route: "conversation", durationMs: 1 });
@@ -487,6 +514,7 @@ describe("conversation lifecycle", () => {
     await h.user["enqueue"](h.user["state"].conversation!, { ...question(), scope: "/Knowledge" }, "voice-delegation");
     await h.drain();
     expect(mocks.create).toHaveBeenCalledOnce();
+    expect(mocks.create.mock.calls[0][5]).toBe("/Knowledge");
     expect(mocks.deepseek).not.toHaveBeenCalled();
   });
   it("keeps native text independent from voice policy and checks it on voice start", async () => {
@@ -818,6 +846,23 @@ async function withVoice() {
   await h.user["save"]();
   return { ...h, c, ws };
 }
+it.each(["scope_not_allowed", "tool_not_allowed"])("keeps a live voice connection after Agent tool error %s", async (code) => {
+  const h = await withVoice();
+  h.c.native = true;
+  const q = { ...question(), scope: "/Knowledge" as const };
+  const live = h.c.live;
+  mocks.items.mockResolvedValue([{ type: "message", role: "user", turn_id: "current", text: JSON.stringify({ ...q, selectedPath: null }) }]);
+  mocks.retrieve.mockResolvedValue({ status: "in_progress", required_actions: [{ type: "function_call", turn_id: "current", call_id: "call", name: "wiki_query", arguments: { question: "test", scope: "/Memory" } }] });
+  mocks.read.mockRejectedValueOnce(new AssistantError(code, 400));
+  await h.user["enqueue"](h.c, q, "voice-delegation");
+  await h.drain();
+  expect(mocks.read).toHaveBeenCalledOnce();
+  expect(h.user["state"].conversation).toBe(h.c);
+  expect(h.c.live).toBe(live);
+  expect(h.c.status).toBe("ready");
+  expect(h.c.messages[0].error).toBe(code);
+  expect(h.ws.send.mock.calls.some(([data]) => JSON.parse(data).type === "session.close")).toBe(false);
+});
 it("coalesces simultaneous stop requests into one provider close", async () => {
   const h = await withVoice();
   const spy = vi.spyOn(h.ws, "send");
@@ -989,6 +1034,64 @@ async function withCharge() {
   await h.user["save"]();
   return { ...h, charge };
 }
+it("discards a definitively rejected initial reservation without provider creation or settlement", async () => {
+  const h = await harness(true);
+  mocks.reserve.mockRejectedValueOnce(new VoiceBillingRejected("voice_balance_insufficient", 403));
+  await expect(h.user["startVoice"](h.user["state"].conversation!, "v=0", "1", crypto.randomUUID()))
+    .rejects.toThrow("voice_balance_insufficient");
+  expect(h.user["state"].charges).toEqual([]);
+  expect(h.storage.get("state")).toMatchObject({ charges: [], voiceSeconds: 0 });
+  await h.fireAlarm();
+  expect(mocks.create).not.toHaveBeenCalled();
+  expect(mocks.stop).not.toHaveBeenCalled();
+});
+it("keeps an ambiguous initial reservation until expiry and then retires confirmed absence", async () => {
+  vi.useFakeTimers();
+  const h = await harness(true);
+  mocks.reserve.mockRejectedValueOnce(new Error("transport failed"));
+  mocks.stop.mockRejectedValue(new VoiceBillingRejected("voice_billing_denied", 403));
+  await expect(h.user["startVoice"](h.user["state"].conversation!, "v=0", "1", crypto.randomUUID()))
+    .rejects.toThrow("transport failed");
+  const b = h.user["state"].charges[0];
+  expect(b).toMatchObject({ started: null, stopped: expect.any(Number) });
+  await h.user["flushCharges"]();
+  expect(h.user["state"].charges).toHaveLength(1);
+  vi.setSystemTime(b.expires);
+  mocks.reservation.mockRejectedValueOnce(new Error("query unavailable"));
+  await h.user["flushCharges"]();
+  expect(h.user["state"].charges).toHaveLength(1);
+  await h.user["flushCharges"]();
+  expect(mocks.stop).toHaveBeenCalledTimes(2);
+  vi.setSystemTime(b.nextAttempt!);
+  await h.user["flushCharges"]();
+  expect(h.user["state"].charges).toEqual([]);
+  expect(h.storage.get("state")).toMatchObject({ charges: [] });
+});
+it("settles a late confirmed reservation after an ambiguous start", async () => {
+  const h = await harness(true);
+  mocks.reserve.mockRejectedValueOnce(new Error("transport failed"));
+  await expect(h.user["startVoice"](h.user["state"].conversation!, "v=0", "1", crypto.randomUUID()))
+    .rejects.toThrow("transport failed");
+  const id = h.user["state"].charges[0].id;
+  await h.user["flushCharges"]();
+  expect(mocks.stop).toHaveBeenCalledWith(expect.anything(), id, 0);
+  expect(h.user["state"].charges).toEqual([]);
+});
+it("retains an existing reservation after expiry when stopping is still unconfirmed", async () => {
+  vi.useFakeTimers();
+  const h = await withCharge();
+  const b: Charge = { ...h.charge, started: null, stopped: Date.now() };
+  h.user["state"].charges = [b];
+  mocks.stop.mockRejectedValue(new Error("transport failed"));
+  mocks.reservation.mockResolvedValue({ closed: false, confirmed_seconds: 0n, stopped_seconds: [] });
+  vi.setSystemTime(b.expires);
+  await h.user["flushCharges"]();
+  expect(h.user["state"].charges).toHaveLength(1);
+  await h.user["flushCharges"]();
+  expect(mocks.stop).toHaveBeenCalledTimes(1);
+  h.user["state"].conversation = null;
+  expect(h.user["wakeDeadline"]()).toBe(b.nextAttempt);
+});
 it("reserves the next minute when thirty funded seconds remain", async () => {
   vi.useFakeTimers();
   const h = await withCharge();

@@ -225,6 +225,7 @@ async function runEvaluation(
     requestId,
     inputText(requestId, fixture.question, scope, undefined, [], "focused_search"),
     signal,
+    scope,
   );
   trace(fixture.id, mode, "session_created");
   let selectedGold = false;

@@ -9,12 +9,23 @@ const answer = () => completion({ role: "assistant", content: JSON.stringify(fin
 const toolMessage = { role: "assistant" as const, content: null, tool_calls: [{ id: "call-1", type: "function" as const, function: { name: "wiki_query", arguments: '{"question":"test","scope":"database"}' } }] };
 function setup() {
   return {
-    state: newDeepSeekTurn("test"), apiKey: "fake", deadline: Date.now() + 90000,
+    state: newDeepSeekTurn("test"), apiKey: "fake", scope: "database" as const, deadline: Date.now() + 90000,
     authorize: vi.fn(async () => {}), checkpoint: vi.fn(async () => {}),
     execute: vi.fn(async () => '{"hits":[]}'), fetchImpl: vi.fn<typeof fetch>(),
   };
 }
 describe("DeepSeek text turns", () => {
+  it("fixes the query scope to the conversation and excludes database inventory for a subtree", async () => {
+    const options = setup();
+    options.fetchImpl.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name))
+        .toEqual(["wiki_query", "wiki_read", "wiki_sources"]);
+      expect(body.tools[0].function.parameters.properties.scope.enum).toEqual(["/Knowledge"]);
+      return answer();
+    });
+    await runDeepSeekTurn({ ...options, scope: "/Knowledge", route: "focused_search" });
+  });
   it.each([
     ["database_overview", ["wiki_inventory", "wiki_read", "wiki_sources"]],
     ["focused_search", ["wiki_query", "wiki_read", "wiki_sources"]],

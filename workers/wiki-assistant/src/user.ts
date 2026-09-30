@@ -6,6 +6,7 @@ import {
   voiceRate,
   voicePolicy,
   voiceReservation,
+  VoiceBillingRejected,
 } from "./billing";
 import { AssistantAuth } from "./auth";
 import { AssistantStore } from "./store";
@@ -177,8 +178,10 @@ export class AssistantUser {
     if (!c) {
       for (const task of this.state?.cleanup ?? [])
         deadlines.push(task.nextAttempt ?? now + 15000);
-      for (const charge of this.state?.charges ?? [])
-        deadlines.push(charge.nextAttempt ?? now + 15000, charge.expires);
+      for (const charge of this.state?.charges ?? []) {
+        deadlines.push(charge.nextAttempt || now + 15000);
+        if (charge.stopped === null) deadlines.push(charge.expires);
+      }
     }
     if (c) {
       deadlines.push(c.activity + limits.idleMs, c.seen + limits.reconnectMs);
@@ -1400,7 +1403,11 @@ export class AssistantUser {
           60,
         );
       } catch (error) {
-        charge.stopped = Date.now();
+        if (error instanceof VoiceBillingRejected) {
+          this.state.charges = this.state.charges.filter((b) => b !== charge);
+        } else {
+          charge.stopped = Date.now();
+        }
         await this.save();
         throw error;
       }
@@ -1487,7 +1494,7 @@ export class AssistantUser {
       const persistedStop = await this.store.stopAt(b.conversationId, b.id);
       if (persistedStop !== null)
         b.stopped = Math.min(b.stopped ?? Infinity, persistedStop);
-      if ((b.nextAttempt ?? 0) > Date.now() && Date.now() < b.expires) continue;
+      if ((b.nextAttempt ?? 0) > Date.now()) continue;
       if (Date.now() >= b.expires && b.stopped === null) {
         console.error(
           JSON.stringify({ event: "voice_billing_expired", sessionId: b.id }),
@@ -1520,6 +1527,19 @@ export class AssistantUser {
             : await settleVoiceCharge(this.env, b.id, seconds, false);
         } catch (error) {
           const known = await voiceReservation(this.env, b.id);
+          // A timed-out initial reservation may still land after an early
+          // query. Retain it until its reservation window has elapsed.
+          if (!known && b.started === null && Date.now() >= b.expires) {
+            this.state.charges = this.state.charges.filter((v) => v !== b);
+            await this.store.clearStop(
+              b.conversationId,
+              b.id,
+              !this.state.charges.some((charge) => charge.conversationId === b.conversationId),
+              b.stopped ?? Date.now(),
+            );
+            await this.save();
+            continue;
+          }
           if (
             !known ||
             (closing

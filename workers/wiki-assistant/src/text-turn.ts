@@ -20,6 +20,7 @@ export async function runTextTurn(context: TurnContext, options: {
   const value = await runDeepSeekTurn({
     ...options,
     route,
+    scope: c.scope,
     state: p.deepseek,
     authorize: async () => {
       if (!(await context.valid())) throw new AssistantError("cancel_requested", 409);

@@ -34,7 +34,7 @@ it("answers a Japanese overview with validated citations through live DeepSeek",
     "このDBの内容とUIの配色を教えてください", "database", undefined, [],
     "database_overview", { kind: "database" }));
   const result = await runDeepSeekTurn({
-    state, apiKey, route: "database_overview", deadline: Date.now() + 90_000,
+    state, apiKey, scope: "database", route: "database_overview", deadline: Date.now() + 90_000,
     authorize: async () => {}, checkpoint: async () => {},
     execute: (name, args) => reader.execute(name, args),
   });

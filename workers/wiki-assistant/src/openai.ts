@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { AgentSessionItem } from "openai/resources/beta/agents/agents";
-import { instructions, toolDefinitions, AssistantError } from "./contracts";
+import { instructions, toolsForScope, AssistantError, type Scope } from "./contracts";
 
 export function client(apiKey?: string): OpenAI {
   if (!apiKey) throw new AssistantError("assistant_not_configured", 503);
@@ -13,13 +13,14 @@ export async function createAgent(
   requestId: string,
   input: string,
   signal?: AbortSignal,
+  scope: Scope = "database",
 ) {
   return api.beta.agents.sessions.create({
     environment: { type: "none" },
     agent: {
       model: "gpt-5.6-luna",
       instructions,
-      tools: toolDefinitions,
+      tools: toolsForScope(scope),
       multi_agent: { enabled: false },
       reasoning: { effort: "low" },
     },

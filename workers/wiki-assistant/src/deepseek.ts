@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AssistantError, instructions, toolDefinitions } from "./contracts";
+import { AssistantError, instructions, toolsForScope, type Scope } from "./contracts";
 import type { AskAiRoute } from "./routing";
 
 const callSchema = z.object({
@@ -33,6 +33,7 @@ export const newDeepSeekTurn = (input: string): DeepSeekTurn => ({
 export async function runDeepSeekTurn(options: {
   state: DeepSeekTurn;
   apiKey?: string;
+  scope: Scope;
   route?: AskAiRoute;
   deadline: number;
   authorize: () => Promise<void>;
@@ -88,7 +89,7 @@ export async function runDeepSeekTurn(options: {
 }
 
 async function requestCompletion(
-  options: { apiKey?: string; route?: AskAiRoute; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch },
+  options: { apiKey?: string; scope: Scope; route?: AskAiRoute; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch },
   messages: ChatMessage[],
 ) {
   const remaining = options.deadline - Date.now();
@@ -105,7 +106,7 @@ async function requestCompletion(
         model: "deepseek-flash", thinking: { type: "disabled" },
         max_tokens: 4096, stream: false, messages,
         ...(options.route === "conversation" ? {} : {
-          tools: toolDefinitions.filter(({ name }) =>
+          tools: toolsForScope(options.scope).filter(({ name }) =>
             name === "wiki_query" ? !options.route || options.route === "focused_search"
               : name === "wiki_inventory" ? !options.route || options.route === "database_overview"
               : true,

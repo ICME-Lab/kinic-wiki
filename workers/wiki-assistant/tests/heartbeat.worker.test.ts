@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   touch: vi.fn(),
 }));
-vi.mock("../src/billing", () => ({
+vi.mock("../src/billing", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/billing")>(),
   voiceReservation: async () => null,
   reserveVoice: async () => ({}),
   settleVoiceCharge: async () => ({ confirmed_seconds: 0n, closed: false }),
