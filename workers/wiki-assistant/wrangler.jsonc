@@ -9,7 +9,7 @@
     "enabled": true,
   },
   "vars": {
-    "ASSISTANT_ENABLED": "false",
+    "ASSISTANT_ENABLED": "true",
     "KINIC_WIKI_CANISTER_ID": "6emaw-iyaaa-aaaay-aacka-cai",
     "ASSISTANT_ORIGIN": "https://wiki.kinic.xyz",
     "ASSISTANT_DERIVATION_ORIGIN": "https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io",
