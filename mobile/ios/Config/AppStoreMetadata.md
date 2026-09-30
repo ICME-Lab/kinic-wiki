@@ -84,6 +84,8 @@ After signing in, open Browse and select an accessible database to inspect its f
 
 Submission preparation: verify that the review account has access to a populated database, Ask AI is available throughout review, and the current App Privacy answers match the deployed processing. These checks must be completed before copying these notes to App Store Connect.
 
+Optional voice uses existing database credits at 30,000,000,000 cycles per minute (rate version 1), settled by confirmed seconds. The app shows the current rate and requires voice consent and an enabled database-owner policy before starting. No voice purchase or database policy is applied by publishing the rate alone.
+
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
 
 To test account deletion, sign in, open Settings, and choose "Delete Account" under Account Deletion. The confirmation explains that sole-owned databases are permanently deleted, shared databases remain while the current user's access is removed, purchased access is revoked, and local account history is erased. Internet Identity itself and transaction records required for settlement and duplicate-grant prevention are not deleted. After successful deletion, the app signs out automatically.
