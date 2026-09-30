@@ -15,6 +15,20 @@ function setup() {
   };
 }
 describe("DeepSeek text turns", () => {
+  it.each([
+    ["database_overview", ["wiki_inventory", "wiki_read", "wiki_sources"]],
+    ["focused_search", ["wiki_query", "wiki_read", "wiki_sources"]],
+    ["selected_node_summary", ["wiki_read", "wiki_sources"]],
+    ["conversation", []],
+  ] as const)("offers only tools permitted for %s", async (route, names) => {
+    const options = setup();
+    options.fetchImpl.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect((body.tools ?? []).map((tool: { function: { name: string } }) => tool.function.name)).toEqual(names);
+      return answer();
+    });
+    await runDeepSeekTurn({ ...options, route });
+  });
   it("persists submission before egress and passes read tool results into the next completion", async () => {
     const options = setup();
     const saved: unknown[] = [];

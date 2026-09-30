@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AssistantError, instructions, toolDefinitions } from "./contracts";
+import type { AskAiRoute } from "./routing";
 
 const callSchema = z.object({
   id: z.string().min(1).max(128),
@@ -32,6 +33,7 @@ export const newDeepSeekTurn = (input: string): DeepSeekTurn => ({
 export async function runDeepSeekTurn(options: {
   state: DeepSeekTurn;
   apiKey?: string;
+  route?: AskAiRoute;
   deadline: number;
   authorize: () => Promise<void>;
   checkpoint: () => Promise<void>;
@@ -86,7 +88,7 @@ export async function runDeepSeekTurn(options: {
 }
 
 async function requestCompletion(
-  options: { apiKey?: string; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch },
+  options: { apiKey?: string; route?: AskAiRoute; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch },
   messages: ChatMessage[],
 ) {
   const remaining = options.deadline - Date.now();
@@ -102,7 +104,13 @@ async function requestCompletion(
       body: JSON.stringify({
         model: "deepseek-flash", thinking: { type: "disabled" },
         max_tokens: 4096, stream: false, messages,
-        tools: toolDefinitions.map(({ type, ...definition }) => ({ type, function: definition })),
+        ...(options.route === "conversation" ? {} : {
+          tools: toolDefinitions.filter(({ name }) =>
+            name === "wiki_query" ? !options.route || options.route === "focused_search"
+              : name === "wiki_inventory" ? !options.route || options.route === "database_overview"
+              : true,
+          ).map(({ type, ...definition }) => ({ type, function: definition })),
+        }),
       }),
     });
     if (!response.ok) {
