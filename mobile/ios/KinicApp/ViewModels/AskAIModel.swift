@@ -293,6 +293,34 @@ final class AskAIModel {
         isConfirmingDatabaseChange = false
     }
 
+    /// Starts only after the member reviews the complete request; never interrupts another turn.
+    func startWorkItemResearch(context: WorkItemResearchContext, question: String,
+                               shouldStart: @escaping @MainActor () -> Bool = { true }) async -> Bool {
+        guard loadState == .loaded, !isGenerating, !isSynchronizingWorker, draft.isEmpty,
+              !requiresDataProcessingConsent,
+              historyScope == AskAIHistoryScope(principal: context.principal),
+              knowledgeProvider.selectedAskAIDatabaseId == context.databaseId,
+              knowledgeProvider.canAskAI, !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              question.count <= Self.maximumQuestionCharacters else { return false }
+        return await withCheckedContinuation { continuation in
+            transitionAfterEndingWorkerConversation({
+                guard shouldStart(), self.historyScope == AskAIHistoryScope(principal: context.principal),
+                      self.knowledgeProvider.selectedAskAIDatabaseId == context.databaseId,
+                      self.knowledgeProvider.canAskAI else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                self.currentConversation = self.makeConversation(
+                    databaseId: context.databaseId,
+                    title: self.knowledgeProvider.selectedAskAIDatabaseTitle)
+                self.currentConversation?.workItemResearch = context
+                self.draft = question
+                self.send()
+                continuation.resume(returning: self.isGenerating)
+            }, onFailure: { continuation.resume(returning: false) })
+        }
+    }
+
     func newConversation() {
         let databaseId = knowledgeProvider.selectedAskAIDatabaseId
         guard !databaseId.isEmpty else {
@@ -353,8 +381,7 @@ final class AskAIModel {
     func send() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
-        if knowledgeProvider.usesWorkerAskAI,
-           !knowledgeProvider.hasAskAIWorkerConsent {
+        if requiresDataProcessingConsent {
             isShowingDataConsent = true
             return
         }
@@ -414,8 +441,16 @@ final class AskAIModel {
         }
     }
 
-    func agreeToDataProcessingAndSend() {
+    var requiresDataProcessingConsent: Bool {
+        knowledgeProvider.usesWorkerAskAI && !knowledgeProvider.hasAskAIWorkerConsent
+    }
+
+    func grantDataProcessingConsent() {
         knowledgeProvider.grantAskAIWorkerConsent()
+    }
+
+    func agreeToDataProcessingAndSend() {
+        grantDataProcessingConsent()
         isShowingDataConsent = false
         send()
     }
@@ -489,9 +524,10 @@ final class AskAIModel {
     }
 
     private func transitionAfterEndingWorkerConversation(
-        _ action: @escaping @MainActor () -> Void
+        _ action: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor () -> Void = {}
     ) {
-        guard !isSynchronizingWorker else { return }
+        guard !isSynchronizingWorker else { onFailure(); return }
         guard knowledgeProvider.usesWorkerAskAI,
               currentConversation != nil || isGenerating else {
             cancelGenerationLocally(persistFailure: false)
@@ -502,11 +538,11 @@ final class AskAIModel {
         let contextID = historyContextID
         workerLifecycleTask?.cancel()
         workerLifecycleTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self else { onFailure(); return }
             do {
                 try await knowledgeProvider.endAskAIWorkerConversation()
                 try Task.checkCancellation()
-                guard historyContextID == contextID else { return }
+                guard historyContextID == contextID else { onFailure(); return }
                 cancelGenerationLocally(persistFailure: false)
                 isSynchronizingWorker = false
                 workerLifecycleTask = nil
@@ -517,11 +553,13 @@ final class AskAIModel {
                     isSynchronizingWorker = false
                     workerLifecycleTask = nil
                 }
+                onFailure()
             } catch {
-                guard historyContextID == contextID else { return }
+                guard historyContextID == contextID else { onFailure(); return }
                 isSynchronizingWorker = false
                 workerLifecycleTask = nil
                 errorMessage = "The current server conversation could not be ended. Retry the change."
+                onFailure()
             }
         }
     }

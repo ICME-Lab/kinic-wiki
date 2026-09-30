@@ -78,6 +78,34 @@ final class HomeNavigationUITests: XCTestCase {
         app.buttons["Discard draft"].tap()
         XCTAssertTrue(app.buttons["home.newItem"].waitForExistence(timeout: 5))
     }
+    @MainActor func testResearchRequestCanBeReviewedWithoutCallingAI() {
+        let app = launch()
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
+        let research = app.buttons["workItem.research"]
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        research.tap()
+        let request = app.descendants(matching: .any)["research.request"].firstMatch
+        XCTAssertTrue(request.waitForExistence(timeout: 10))
+        XCTAssertTrue((request.value as? String ?? "").contains("Plan the next research session"))
+        capture(app, "13-research-request")
+        let reviewedRequest = request.value as? String
+        app.buttons["research.start"].tap()
+        XCTAssertTrue(app.navigationBars["Ask AI Consent"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "DeepSeek")).firstMatch.exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(request.waitForExistence(timeout: 5))
+        XCTAssertEqual(request.value as? String, reviewedRequest)
+        request.tap()
+        request.typeText(" Add a comparison.")
+        app.buttons["research.close"].tap()
+        XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5))
+        app.buttons["Keep editing"].tap()
+        XCTAssertTrue((request.value as? String ?? "").contains("Add a comparison."))
+        app.buttons["research.close"].tap()
+        app.buttons["Discard request"].tap()
+        XCTAssertTrue(research.waitForExistence(timeout: 5))
+    }
+
     @MainActor func testEditingItemLocksDatabaseAcrossTabs() {
         let app = launch()
         let item = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch

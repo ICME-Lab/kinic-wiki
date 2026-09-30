@@ -37,6 +37,14 @@ New work items can contain a title without a body. Save closes the composer once
 
 Debug UI tests use `KINIC_SCREENSHOT_MODE=navigation` for isolated, offline fixtures. `KINIC_NAV_STATE` accepts `ready`, `empty`, `offline`, `signed-out`, or `no-database`; `KINIC_LARGE_TEXT=1` and `KINIC_DARK_MODE=1` cover accessibility text and dark appearance. These fixtures are not available in Release builds. `HomeNavigationUITests` exercises navigation and saves named screenshots as XCTest attachments.
 
+## Work item research
+
+Open a work item and choose **Research with AI**. Review the request, then start research against the selected Wiki database. The existing Ask AI retrieval and answer service produces the response. Completed responses are saved as comments with the original request, source paths, excerpts, and links; insufficient evidence is explicitly labeled. The work item remains open until a person closes it.
+
+Each research conversation is pinned to its account, database, and work item, and can be reopened for follow-up requests. Existing Ask AI history stays compatible. Results are placed in the local pending queue before network submission; a lost response can be retried from **Unsent changes** without duplicating the comment. Editing or closing the work item is never performed by the model. A deleted item does not receive an orphan result.
+
+This first version runs while the app is in the foreground. Backgrounding the app stops an unfinished request; sent requests remain in Ask AI history. It is not a persistent server job, and does not execute external actions or fetch arbitrary source URLs. It uses this branch's existing Ask AI path; it does not add a new Jev integration. Requests and retrieved Wiki excerpts use the existing Ask AI processing service, and saved results are visible to database members. No API key is added to the app.
+
 ## Required App Store / Apple settings
 
 Configured Apple identifiers:

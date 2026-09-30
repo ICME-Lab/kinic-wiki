@@ -1597,6 +1597,92 @@ extension WorkItemModelTests {
 }
 
 
+extension WorkItemRepositoryTests {
+    @Test @MainActor
+    func researchResultIsIdempotentAndDoesNotCloseTheItem() async throws {
+        let vfs = WorkItemVFSStub()
+        let repository = makeRepository(vfs)
+        await vfs.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Research"))
+        await vfs.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Research", lastActivityAt: 1))
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: makeRuntime(), repository: repository, store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Evidence supports this. [S1]", sources: [
+            AskAISource(id: "S1", path: "/Knowledge/A #note", excerpt: "Exact evidence", score: 1, matchReasons: [])
+        ])
+        #expect(await model.publishResearchResult(context: context, question: "Find evidence", answer: answer) == .shared)
+        #expect(await model.publishResearchResult(context: context, question: "Find evidence", answer: answer) == .shared)
+        let comments = try await repository.loadComments(itemId: "abc", databaseId: "db", session: session)
+        #expect(comments.count == 1)
+        #expect(comments.first?.body.contains("Exact evidence") == true)
+        #expect(comments.first?.body.contains("A%20%23note") == true)
+        #expect(comments.first?.body.contains("Find evidence") == true)
+        #expect(try await repository.load(id: "abc", databaseId: "db", session: session).item.state == .open)
+        #expect(model.pendingMutations.isEmpty)
+    }
+
+    @Test @MainActor
+    func researchResultSurvivesLostResponseAndRetriesWithoutDuplicates() async throws {
+        let vfs = WorkItemVFSStub()
+        let repository = makeRepository(vfs)
+        await vfs.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Research"))
+        await vfs.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Research", lastActivityAt: 1))
+        let store = try WorkItemStore(path: ":memory:")
+        let runtime = makeRuntime()
+        let model = WorkItemModel(runtime: runtime, repository: repository, store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Not enough evidence", state: .insufficient)
+        await vfs.failAfterApplyingNextMutation()
+        #expect(await model.publishResearchResult(context: context, question: "Investigate", answer: answer) == .queued)
+        let pending = try #require(store.pendingMutations(principal: session.principal, databaseId: "db").first)
+        #expect(pending.mutationId == answer.id.uuidString.lowercased())
+        let reopened = WorkItemModel(runtime: runtime, repository: repository, store: store)
+        let operationsBeforeWrongDBRetry = await vfs.recordedOperations().count
+        runtime.selectDatabase("another-db")
+        await reopened.retryPendingMutation(pending)
+        #expect(await vfs.recordedOperations().count == operationsBeforeWrongDBRetry)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").count == 1)
+        runtime.selectDatabase("db")
+        await reopened.retryPendingMutation(pending)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").isEmpty)
+        let comments = try await repository.loadComments(itemId: "abc", databaseId: "db", session: session)
+        #expect(comments.count == 1)
+        #expect(comments.first?.body.contains("Evidence is insufficient") == true)
+    }
+
+    @Test @MainActor
+    func researchRejectsWrongContextFailedAnswersAndReaders() async throws {
+        let vfs = WorkItemVFSStub()
+        let runtime = makeRuntime()
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: runtime, repository: makeRepository(vfs), store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Result")
+        runtime.selectDatabase("other")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        runtime.selectDatabase("db", role: .reader)
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        runtime.selectDatabase("db")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: AskAIMessage(role: .assistant, text: "Partial", state: .failed)) == .failed)
+        runtime.switchAccount(to: "other-principal")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        #expect(await vfs.recordedOperations().isEmpty)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").isEmpty)
+    }
+
+    @Test @MainActor
+    func researchForDeletedItemStaysLocalIncludingOnRetry() async throws {
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: makeRuntime(), repository: makeRepository(vfs), store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "missing", itemEtag: "original")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: AskAIMessage(role: .assistant, text: "Result")) == .queued)
+        let pending = try #require(model.pendingMutations.first)
+        await model.retryPendingMutation(pending)
+        #expect(await vfs.recordedOperations().isEmpty)
+        #expect(model.pendingMutations.count == 1)
+    }
+}
 extension WorkItemModelTests {
     @Test @MainActor
     func titleOnlyCaptureIsDurableBeforeNetworkCompletes() async throws {
