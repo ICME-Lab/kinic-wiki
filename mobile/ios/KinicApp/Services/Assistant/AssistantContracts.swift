@@ -28,6 +28,18 @@ struct AssistantMessage: Codable, Identifiable, Sendable {
     let question: String
     let answer: AssistantAnswer?
     let error: String?
+    let kind: String?
+    let trace: AssistantRetrievalTrace?
+}
+struct AssistantRetrievalTrace: Codable, Sendable {
+    let route: String
+    let calls: Int
+    let characters: Int
+    let inventoryObserved: Int
+    let inventoryTruncated: Bool
+    let readCount: Int
+    let jevRouteDurationMs: Int
+    let jevRerankDurationMs: Int
 }
 struct AssistantUtterance: Codable, Identifiable, Sendable {
     let id: String
@@ -117,8 +129,13 @@ struct AssistantHTTPError: LocalizedError {
     var terminal: Bool { [401, 403, 404, 410].contains(status) || code == "assistant_disabled" }
     var errorDescription: String? {
         switch code {
-        case "assistant_disabled": "Voice conversations are currently unavailable."
-        case "assistant_not_configured": "The voice service has not been configured."
+        case "assistant_disabled": "Ask AI is currently unavailable."
+        case "assistant_not_configured": "The Ask AI service has not been configured."
+        case "consent_required": "Reconnect and review the updated Ask AI data consent."
+        case "deepseek_request_interrupted": "The answer request was interrupted. Send the question again to retry."
+        case "deepseek_unavailable", "deepseek_timeout", "deepseek_request_failed", "deepseek_invalid_response", "deepseek_response_too_large": "Could not generate the answer. Try again."
+        case "jev_unavailable": "Semantic routing is temporarily unavailable. Try again."
+        case "turn_in_progress": "Ask AI is already processing a question."
         case "voice_permission_required": "Voice is disabled. Owners can enable it in Voice Settings; members need the owner's permission."
         case "database_access_denied": "You do not have permission to view this database."
         case "kinic_session_expired": "Your sign-in session expired. Sign in again."

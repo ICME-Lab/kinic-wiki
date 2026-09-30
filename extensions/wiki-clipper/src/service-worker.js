@@ -15,7 +15,6 @@ const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST,
-  recallEnabled: false,
   showSaveControls: true
 };
 const PROVIDERS = {
@@ -48,7 +47,7 @@ const CREATE_WIKI_MENU_ID = "kinic-wiki-clipper-create-wiki";
 const SAVE_EVIDENCE_MENU_ID = "kinic-wiki-clipper-save-evidence";
 const SOURCE_CAPTURE_IN_FLIGHT_KEY = "kinic-source-capture-in-flight-v1";
 const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
-const RECALL_TIMEOUT_MS = 2_000;
+const RECALL_TIMEOUT_MS = 4_000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
 const activeSourceCaptures = new Map();
@@ -389,7 +388,7 @@ async function saveSource(capture, overrideConfig, sender) {
 async function recallSearch(message, sender) {
   if (!isOwnExtensionSender(sender) || !isRecallSender(sender)) throw new Error("recall sender is not an allowed ChatGPT page");
   const config = withFixedRuntimeConfig(await loadConfig());
-  if (!config.recallEnabled || !config.databaseId) return [];
+  if (!config.databaseId) return [];
   const query = normalizeRecallQuery(message?.query);
   if (!query) return [];
   const conversationUrl = typeof message?.conversationUrl === "string" ? message.conversationUrl : "";
@@ -410,7 +409,7 @@ async function recallSearch(message, sender) {
 async function recallFetch(message, sender) {
   if (!isOwnExtensionSender(sender) || !isRecallSender(sender)) throw new Error("recall sender is not an allowed ChatGPT page");
   const config = withFixedRuntimeConfig(await loadConfig());
-  if (!config.recallEnabled || !config.databaseId) return null;
+  if (!config.databaseId) return null;
   const path = typeof message?.path === "string" ? message.path : "";
   if (!isAllowedRecallPath(path)) throw new Error("recall path is invalid");
   const response = await withTimeout(
@@ -919,7 +918,6 @@ async function loadConfig() {
     canisterId: DEFAULT_CONFIG.canisterId,
     databaseId: String(stored.databaseId || DEFAULT_CONFIG.databaseId),
     host: DEFAULT_CONFIG.host,
-    recallEnabled: asBoolean(stored.recallEnabled),
     showSaveControls: asBoolean(stored.showSaveControls)
   };
 }
@@ -927,23 +925,20 @@ async function loadConfig() {
 async function saveConfig(config) {
   const stored = await chrome.storage.sync.get(DEFAULT_CONFIG);
   const hasDatabaseId = Object.prototype.hasOwnProperty.call(config || {}, "databaseId");
-  const hasRecallEnabled = Object.prototype.hasOwnProperty.call(config || {}, "recallEnabled");
   const hasShowSaveControls = Object.prototype.hasOwnProperty.call(config || {}, "showSaveControls");
   const databaseId = hasDatabaseId ? String(config?.databaseId || "").trim() : String(stored.databaseId || "").trim();
-  const recallEnabled = hasRecallEnabled ? asBoolean(config.recallEnabled) : asBoolean(stored.recallEnabled);
   const showSaveControls = hasShowSaveControls
     ? asBoolean(config.showSaveControls)
     : asBoolean(stored.showSaveControls);
-  await chrome.storage.sync.set({ databaseId, recallEnabled, showSaveControls });
-  await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl"]);
+  await chrome.storage.sync.set({ databaseId, showSaveControls });
+  await chrome.storage.sync.remove?.(["canisterId", "host", "generatorUrl", "recallEnabled"]);
 }
 
 function withFixedRuntimeConfig(config) {
   return {
     ...config,
     canisterId: DEFAULT_CONFIG.canisterId,
-    host: DEFAULT_CONFIG.host,
-    recallEnabled: asBoolean(config?.recallEnabled)
+    host: DEFAULT_CONFIG.host
   };
 }
 

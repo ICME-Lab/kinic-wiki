@@ -111,17 +111,18 @@ final class HomeNavigationUITests: XCTestCase {
         title.tap(); title.typeText(" edited")
         XCTAssertTrue(app.buttons["keyboard.done"].waitForExistence(timeout: 5))
         app.buttons["keyboard.done"].tap()
-        app.buttons["Manage"].firstMatch.tap()
-        app.buttons["database.choose"].firstMatch.tap()
-        let another = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Team Research")).firstMatch
-        XCTAssertTrue(another.waitForExistence(timeout: 5))
-        XCTAssertFalse(another.isEnabled)
-        app.buttons["Done"].tap()
+        for tab in ["Manage", "Browse", "Ask AI"] {
+            app.buttons[tab].firstMatch.tap()
+            let chooser = app.buttons["database.choose"].firstMatch
+            XCTAssertTrue(chooser.waitForExistence(timeout: 5))
+            XCTAssertFalse(chooser.isEnabled)
+        }
         app.buttons["Home"].firstMatch.tap()
         app.buttons["Back"].tap()
         app.buttons["Discard changes"].tap()
         XCTAssertTrue(app.buttons["home.newItem"].waitForExistence(timeout: 5))
         app.buttons["database.choose"].firstMatch.tap()
+        let another = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Team Research")).firstMatch
         XCTAssertTrue(another.waitForExistence(timeout: 5))
         XCTAssertTrue(another.isEnabled)
     }

@@ -22,6 +22,7 @@ struct AskAIComposerView: View {
                         .font(.title2)
                         .foregroundStyle(KinicDesign.hotPink)
                         .frame(minWidth: 44, minHeight: 44)
+                        .disabled(model.isSynchronizingWorker)
                 } else {
                     Button("Send", systemImage: "arrow.up.circle.fill", action: model.send)
                         .labelStyle(.iconOnly)

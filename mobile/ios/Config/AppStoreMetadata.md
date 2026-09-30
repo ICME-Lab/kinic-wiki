@@ -40,11 +40,11 @@ Create your first database at no cost. An initial usage grant is included so you
 
 wiki, knowledge, capture, links, notes, Internet Computer
 
-## What's New in 1.0.4
+## What's New in 1.0.5
 
-- Purchase database credits securely through the App Store.
-- Improved Internet Identity sign-in and saved-session reliability.
-- Improved database browsing and capture reliability.
+- Create and manage shared work items from Home and the share sheet.
+- View open work items with the new Home Screen widget.
+- Ask AI uses DeepSeek for typed answers and Jev to find relevant Wiki content, with updated consent and privacy disclosures.
 
 ## Screenshot Story
 
@@ -59,10 +59,10 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - Uses Internet Identity for sign-in.
 - Stores pending shared URLs and selected database ID in the app group container.
 - Stores Ask AI conversation history on the device.
-- Sends Ask AI questions, the selected database name, up to six recent conversation messages, and relevant document excerpts to Kinic's AI service to generate answers.
-- Discards Ask AI request bodies after processing and does not retain them in logs, caches, databases, analytics, or training datasets.
-- Does not send Ask AI data to a third-party AI provider.
-- Ask AI does not answer when the selected database has no supporting document.
+- With explicit versioned consent, sends Ask AI questions, the selected target, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe in the United States for intent classification, and sends candidate paths and previews for focused search ranking.
+- With explicit versioned consent, sends typed questions, bounded conversation context, and relevant Wiki excerpts to DeepSeek for answers. DeepSeek processes and stores data in China. Optional voice uses OpenAI in the United States under separate voice consent. Active encrypted Worker state is retained only for bounded recovery; completed history remains on the device. Provider retention and deletion follow the published privacy policy; immediate provider erasure is not promised.
+- Does not include questions, Wiki text, paths, previews, routing probabilities, or API keys in operational logs.
+- Wiki citations are checked against documents read for the current question. Ordinary conversation does not require Wiki retrieval.
 - Does not declare tracking.
 - Does not collect analytics in the native app.
 
@@ -71,15 +71,20 @@ wiki, knowledge, capture, links, notes, Internet Computer
 - User ID: Internet Identity principal used for authentication and database access.
 - Other User Content: URLs, notes, wiki documents, sources, and database metadata stored in canister state.
 - Purchase History: Database funding and purchase records when those features are used.
+- Audio Data: Review the optional voice flow and provider retention before enabling it or updating the App Store Connect declaration.
 - Purpose: App Functionality.
 - Tracking: No.
-- Ask AI request data is transient and is not retained after real-time processing.
+- Ask AI uses third-party processing and bounded encrypted recovery state as disclosed in the in-app consent and privacy policy.
 
 ## Review Notes
 
 On the KinicWiki sign-in sheet, choose "Continue with Internet Identity", "Continue with Apple", or "Continue with Google". Internet Identity appears first and supports passkey-based access. KinicWiki does not use a separate username/password account; reviewers can create or access an account with the Apple Account already configured on the review device.
 
-Public databases are shown by default. Open Browse and select the pre-populated public database "Dom's Brain" to inspect its folders and documents. In Ask AI, select "Dom's Brain" and submit a question to see the notes searched and the sources cited for a supported answer. Ask AI sends the current question, selected database name, up to six recent messages, and relevant note excerpts to Kinic's directly operated AI service. Request bodies are discarded after processing, and completed conversation history is stored only on the device.
+After signing in, open Browse and select an accessible database to inspect its folders and documents. In Ask AI, select that database, review and accept the DeepSeek/TypeSafe consent, and submit a question about a document to see the cited sources. Questions, the selected target, and bounded recent conversation context are sent to TypeSafe in the United States for intent classification; focused-search candidates are reranked there. Typed questions, bounded recent context, and relevant excerpts are sent to DeepSeek, which processes and stores data in China. Optional voice uses OpenAI under separate voice consent and requires an owner policy and configured billing rate. Active recovery state is encrypted and bounded, and completed conversation history is stored on the device.
+
+Submission preparation: verify that the review account has access to a populated database, Ask AI is available throughout review, and the current App Privacy answers match the deployed processing. These checks must be completed before copying these notes to App Store Connect.
+
+Optional voice uses existing database credits at 30,000,000,000 cycles per minute (rate version 1), settled by confirmed seconds. The app shows the current rate and requires voice consent and an enabled database-owner policy before starting. No voice purchase or database policy is applied by publishing the rate alone.
 
 To test writable features, create a database using the initial free database grant. Select that database, then share an HTTP or HTTPS URL into "Save to KinicWiki" to test capture.
 

@@ -63,6 +63,7 @@ struct DatabaseContextBar: View {
         .accessibilityIdentifier("database.choose")
         .accessibilityLabel("Choose database")
         .accessibilityValue(model.selectedDatabase?.displayTitle ?? "No database selected")
+        .disabled(model.databaseSelectionLocked || askAIModel?.isSynchronizingWorker == true)
     }
 
     private var contextBar: some View {

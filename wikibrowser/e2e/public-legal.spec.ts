@@ -35,8 +35,11 @@ test("renders the privacy policy from its legal source", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1, name: "Privacy Policy" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2 })).toHaveCount(11);
   const policy = page.getByRole("article");
-  await expect(policy).toContainText("Last Updated: August 5, 2026");
-  await expect(policy).toContainText("Effective Date: August 5, 2026");
+  await expect(policy).toContainText("Last Updated: September 30, 2026");
+  await expect(policy).toContainText("Effective Date: September 30, 2026");
+  await expect(policy).toContainText("only for users who accept the updated Ask AI consent before submitting a new question");
+  await expect(policy).toContainText("TypeSafe does not offer Zero Data Retention");
+  await expect(policy).toContainText("Source Capture generation");
   await expectSectionLinksToResolve(page, "Privacy Policy sections");
 });
 

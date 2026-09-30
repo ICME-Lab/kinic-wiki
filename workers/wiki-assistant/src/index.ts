@@ -28,8 +28,11 @@ export default {
           throw new AssistantError("invalid_origin", 403);
       }
       // Cleanup stays available when the kill switch is engaged.
-      if (path !== "/logout" && path !== "/end" && path !== "/voice/stop")
+      if (path !== "/logout" && path !== "/end" && path !== "/voice/stop") {
         requireEnabled(env);
+        if (native && !env.DEEPSEEK_API_KEY)
+          throw new AssistantError("assistant_not_configured", 503);
+      }
       if (path === "/status" && request.method === "GET")
         return json({ available: true });
       if (native && path === "/auth/start" && request.method === "POST") {
@@ -39,7 +42,7 @@ export default {
         if (!rate.success) throw new AssistantError("rate_limit", 429);
         const input = z
           .object({
-            consent: z.literal("2026-09-16"),
+            consent: z.literal("2026-09-29"),
             databaseId: z.string().min(1).max(128),
             expectedPrincipal: z.string().min(1).max(100),
           })
@@ -59,7 +62,7 @@ export default {
         });
         if (!rate.success) throw new AssistantError("rate_limit", 429);
         const input = z
-          .object({ consent: z.literal("2026-09-16") })
+          .object({ consent: z.literal("2026-09-22") })
           .strict()
           .parse(await readJson(request));
         void input;

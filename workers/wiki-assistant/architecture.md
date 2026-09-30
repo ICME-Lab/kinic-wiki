@@ -11,7 +11,7 @@ or deployed.
 | --- | --- |
 | Wiki canister (one configured target per environment) | DB balance, owner access/budgets, versioned rates, reservations, confirmed charges and idempotent settlement |
 | D1 | Short-lived authorization, encrypted recovery state, UTC usage limits, request deduplication, leases, stop intent and provider cleanup jobs |
-| Ordinary Worker | Authentication, Wiki reads, Agents turns, source validation, client control socket and outbound Live sideband |
+| Ordinary Worker | Authentication, Wiki reads, DeepSeek text turns, Agents voice/Web turns, source validation, client control socket and outbound Live sideband |
 | Scheduled Worker | Expired-session recovery and cleanup reconciliation without a running client |
 | iOS | Protected, backup-excluded preview cache, UI, microphone/playback and funded-time cutoff |
 | iOS to GPT-Live | Direct WebRTC audio; operator credentials never reach the device |
@@ -19,6 +19,31 @@ or deployed.
 D1 contains reservation identifiers and reconciliation metadata, not an independent
 balance or billing ledger. Settlement and extension errors are reconciled against
 the canister's reservation API. There are no Queues, Workflows, KV or read replicas.
+
+## Separate text and Agent execution
+
+`user.ts` owns the shared lifecycle: question lease, authorization, Jev routing,
+provider dispatch, validated-answer publication, and optional voice delivery.
+`runTurn` is the single execution dispatch point: native typed questions go to
+`text-turn.ts`; voice delegations and retained Web requests go to `agent-turn.ts`.
+
+- `text-turn.ts` owns bounded text history, DeepSeek checkpoints and text failures.
+  It calls `deepseek.ts` and the Wiki reader without importing the OpenAI adapter.
+- `agent-turn.ts` owns OpenAI session creation, polling, tool-result replay,
+  uncertain-submission reconciliation and Agent-specific failures.
+- `conversation-history.ts` collects bounded completed dialogue for text, Live and Agent handoffs. Agent input is checkpointed before submission so recovery matches the same provider item.
+  `turn-input.ts` builds the shared untrusted input envelope; `turn-context.ts`
+  exposes the lifecycle operations each runner needs. `state.ts` keeps the
+  existing encrypted state format without a storage migration.
+
+Both runners use the same reader limits and current-turn citation validator.
+The iOS client sends cancellation through the control WebSocket command protocol.
+Native text cancellation aborts the fetch, invalidates late results and clears
+only the pending text request. It does not enqueue provider cleanup, delete an
+existing voice Agent session, clear a deferred voice question, or send a voice
+stop instruction. Ending the entire conversation still cleans up all associated
+provider sessions. DeepSeek does not use Agent session reconciliation: an
+uncertain DeepSeek submission fails rather than being silently repeated.
 
 ## Storage and concurrency
 

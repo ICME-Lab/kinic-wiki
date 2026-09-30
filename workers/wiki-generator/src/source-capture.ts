@@ -8,7 +8,7 @@ import {
   sourceStemFromTitleHash
 } from "@kinic/source-contracts";
 import { enqueueSourceJob, loadJob } from "./jobs.js";
-import { loadConfig } from "./config.js";
+import { isDatabaseAllowed, loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
 import { parseOutputLanguage } from "./output-language.js";
@@ -53,6 +53,9 @@ export function validateSourceCaptureTriggerInput(env: RuntimeEnv, input: Source
   const config = loadConfig(env);
   if (input.canisterId !== config.canisterId) {
     throw new SourceCaptureTriggerError("canisterId does not match worker canister config", 400);
+  }
+  if (!isDatabaseAllowed(config, input.databaseId)) {
+    throw new SourceCaptureTriggerError("database_not_allowed", 403);
   }
   validateSourceCaptureRequestPath(input.requestPath);
   return config;

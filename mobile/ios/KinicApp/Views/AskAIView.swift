@@ -30,7 +30,7 @@ struct AskAIView: View {
                         }
 
                         Button("New conversation", systemImage: "square.and.pencil", action: model.newConversation)
-                            .disabled(appModel.selectedAskAIDatabaseId.isEmpty)
+                            .disabled(appModel.selectedAskAIDatabaseId.isEmpty || model.isSynchronizingWorker)
                     } label: {
                         Label("Conversation actions", systemImage: "ellipsis")
                     }

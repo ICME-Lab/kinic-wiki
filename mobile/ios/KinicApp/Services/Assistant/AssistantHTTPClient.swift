@@ -5,6 +5,7 @@ import Security
 final class AssistantHTTPClient {
     let baseURL: URL
     private var token: String?
+    var hasToken: Bool { token != nil }
     private let keychainService: String
     init(configuration: AppConfiguration) {
         baseURL = configuration.authOrigin.appending(path: "api/assistant/native")

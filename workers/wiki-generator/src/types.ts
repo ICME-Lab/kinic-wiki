@@ -126,6 +126,7 @@ export type ManualRunInput = {
 
 export type WorkerConfig = {
   canisterId: string;
+  allowedDatabaseId: string | null;
   icHost: string;
   model: string;
   targetRoot: string;
@@ -134,7 +135,8 @@ export type WorkerConfig = {
   maxRawChars: number;
   maxFetchedBytes: number;
   maxSourceChars: number;
-  maxContextHits: number;
+  maxContextCandidates: number;
+  maxContextSelections: number;
   maxOutputTokens: number;
 };
 

@@ -26,6 +26,13 @@ Load `extensions/wiki-clipper` as an unpacked extension after `dist/service-work
 The manifest includes a fixed Chrome extension key. Local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io` as the derivation origin, and that VFS canister allows the fixed ID, the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`, and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 Open settings from the extension details page `Extension options`.
 
+For the permanent developer staging environment, run `npm run build:staging` and load
+`extensions/wiki-clipper/tmp/staging-unpacked`. That complete directory has the name
+`Kinic Wiki Clipper (Staging)`, fixed extension ID `kdildjebipiaccglghfdhjifgknlpffg`,
+separate Chrome storage, staging canister `3ryrw-kyaaa-aaaaf-qgxpq-cai`, and only the
+staging Browser trigger endpoint. It does not modify the production `dist/`, manifest,
+or Chrome Web Store package inputs.
+
 ## Chrome Web Store release
 
 ```bash
@@ -35,7 +42,7 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude/Gemini export, active-tab capture, Internet Identity auth, and selected database storage behavior.
+Use `https://wiki.kinic.xyz/privacy-policy` as the Chrome Web Store privacy policy URL after the public page reflects the Wiki Clipper capture, export, authentication, and Recall processing described in this release.
 
 ## Flow
 
@@ -45,7 +52,9 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 4. Multiple-chat exports use the count field, whose default is `1`.
 5. Exported evidence is saved to `/Sources/<provider>/<source_id>.md`.
 
-When `Recall beta` is enabled in extension settings, ChatGPT questions are searched against `/Knowledge` first and `/Sources` second. Up to three matching previews can appear after a question is sent. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation.
+After a database is selected, Recall searches ChatGPT questions against `/Knowledge` first and `/Sources` second. New extension builds request Jev reranking; when the server has a threshold and API key, the current question and up to 20 candidate paths and short previews are sent through the Kinic Wiki server to TypeSafe for relevance ranking. Up to three related previews can appear after a question is sent; no card is shown when Jev finds no relevant candidate. If reranking is unavailable, Recall shows the existing search results. Clicking `Add context` reads the selected node and inserts a bounded citation block into the ChatGPT input without sending it. Recall does not save the question or conversation. Jev reranking requires `RECALL_JEV_THRESHOLD` and `TYPESAFE_API_KEY` in the WikiBrowser Worker. The initial production threshold is 0.39 from the exploratory evaluation described below; human label review and browser display latency measurement remain open. Previously installed extension builds without Jev support must be updated.
+
+The [Recall Jev evaluation guide](docs/recall-jev-evaluation.md) defines the opt-in 60-case run and release gate.
 
 ## Active Tab Capture
 
