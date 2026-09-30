@@ -13,6 +13,15 @@ const configured = {
 const context = {} as ExecutionContext;
 
 describe("assistant provider configuration", () => {
+  it("requires DeepSeek for native availability without changing browser availability", async () => {
+    const native = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/native/status"), configured, context);
+    expect(native.status).toBe(503);
+    const ready = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/native/status"), { ...configured, DEEPSEEK_API_KEY: "fake" }, context);
+    expect(ready.status).toBe(200);
+    const browser = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/status"), configured, context);
+    expect(browser.status).toBe(200);
+  });
+
   it("accepts an enabled service only when every provider key is configured", () => {
     expect(() => requireEnabled(configured)).not.toThrow();
   });

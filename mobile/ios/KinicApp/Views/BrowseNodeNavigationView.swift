@@ -11,6 +11,7 @@ struct BrowseNodeNavigationView: View {
     @Binding var folderPath: [BrowseFolderRoute]
     @Binding var isSearchPresented: Bool
     let requestSearchFolder: (String) -> Void
+    var showsDatabaseContext = true
 
     var body: some View {
         NavigationStack(path: $folderPath) {
@@ -19,7 +20,8 @@ struct BrowseNodeNavigationView: View {
                 folderPath: "/",
                 selectedDocumentPath: $selectedDocumentPath,
                 isSearchPresented: $isSearchPresented,
-                openSearchFolder: requestSearchFolder
+                openSearchFolder: requestSearchFolder,
+                showsDatabaseContext: showsDatabaseContext
             )
             .navigationDestination(for: BrowseFolderRoute.self) { route in
                 switch route.kind {

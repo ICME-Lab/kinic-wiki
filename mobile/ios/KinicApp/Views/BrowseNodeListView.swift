@@ -12,6 +12,8 @@ struct BrowseNodeListView: View {
     @Binding var selectedDocumentPath: String?
     @Binding var isSearchPresented: Bool
     let openSearchFolder: (String) -> Void
+    var showsDatabaseContext = false
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         List {
@@ -34,16 +36,17 @@ struct BrowseNodeListView: View {
                 childRows
             }
         }
-        .navigationTitle(model.selectedBrowseDatabase?.displayTitle ?? "Notes")
-        .searchable(text: $model.searchQuery, isPresented: $isSearchPresented, prompt: "Search nodes")
-        .searchScopes($model.browseSearchScope) {
-            ForEach(BrowseSearchScope.allCases) { scope in
-                Text(scope.title)
-                    .tag(scope)
-            }
+        .navigationTitle(normalizedFolderPath == "/" ? (showsDatabaseContext ? "" : "Browse") : URL(fileURLWithPath: normalizedFolderPath).lastPathComponent)
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if isSearchPresented { searchBar }
+        }
+        .onChange(of: isSearchPresented) { _, presented in
+            searchFocused = presented
         }
         .onSubmit(of: .search) {
             model.startSearch(in: normalizedFolderPath)
+            searchFocused = false
         }
         .onChange(of: model.searchQuery) { oldQuery, newQuery in
             model.searchQueryDidChange(
@@ -56,27 +59,70 @@ struct BrowseNodeListView: View {
             model.browseSearchScopeDidChange(folderPath: normalizedFolderPath)
         }
         .toolbar {
+            if showsDatabaseContext && normalizedFolderPath == "/" {
+                ToolbarItem(placement: .topBarLeading) {
+                    DatabaseContextBar(model: model, compact: true)
+                }
+                .databaseTitleAppearance()
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu("Sort", systemImage: "arrow.up.arrow.down") {
+                Button("Search", systemImage: "magnifyingglass", action: showSearch)
+                    .disabled(!model.canBrowse)
+
+                Menu("Browse actions", systemImage: "ellipsis") {
                     Picker("Sort by", selection: $sortOrder) {
                         ForEach(BrowseNodeSortOrder.allCases) { order in
                             Label(order.title, systemImage: order.systemImage)
                                 .tag(order)
                         }
                     }
+                    Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
+                        .disabled(!model.canBrowse || model.isLoadingBrowsePath)
                 }
-
-                Button("Search", systemImage: "magnifyingglass", action: showSearch)
-                    .disabled(!model.canBrowse)
-
-                Button("Refresh", systemImage: "arrow.clockwise", action: refresh)
-                    .disabled(!model.canBrowse || model.isLoadingBrowsePath)
             }
         }
         .task(id: normalizedFolderPath) {
             loadFolder()
             model.browseFolderDidBecomeActive(normalizedFolderPath)
         }
+    }
+
+    private var searchBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search nodes", text: $model.searchQuery)
+                        .accessibilityIdentifier("browse.searchField")
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                        .autocorrectionDisabled()
+                    if !model.searchQuery.isEmpty {
+                        Button("Clear search", systemImage: "xmark.circle.fill") { model.searchQuery = "" }
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(12)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                Button("Cancel") {
+                    searchFocused = false
+                    model.searchQuery = ""
+                    isSearchPresented = false
+                }
+                .accessibilityIdentifier("browse.cancelSearch")
+            }
+            Picker("Search scope", selection: $model.browseSearchScope) {
+                ForEach(BrowseSearchScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(.horizontal, KinicDesign.screenPadding)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .onAppear { searchFocused = true }
     }
 
     private var childRows: some View {
@@ -125,6 +171,7 @@ struct BrowseNodeListView: View {
 
     private func showSearch() {
         isSearchPresented = true
+        searchFocused = true
     }
 
     private func openDocument(_ path: String) {

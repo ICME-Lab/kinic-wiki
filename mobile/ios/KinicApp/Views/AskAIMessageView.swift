@@ -8,6 +8,8 @@ import Textual
 struct AskAIMessageView: View {
     let message: AskAIMessage
     let openSource: (AskAISource) -> Void
+    /// Hands a finished answer to Home so it can become a work item.
+    let createWorkItem: (AskAIMessage) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -46,6 +48,18 @@ struct AskAIMessageView: View {
                         sources: message.sources,
                         openSource: openSource
                     )
+                }
+
+                if message.state == .complete, !message.text.isEmpty {
+                    Button {
+                        createWorkItem(message)
+                    } label: {
+                        Label("New item", systemImage: "square.and.pencil")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(KinicDesign.hotPink)
+                    .accessibilityHint("Creates a work item from this answer in the selected database")
                 }
             }
         }

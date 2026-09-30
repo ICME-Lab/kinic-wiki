@@ -327,7 +327,7 @@ describe("read tools and citations", () => {
     ).rejects.toThrow();
     await expect(
       reader.execute("wiki_query", { question: "x", scope: "/Memory" }),
-    ).rejects.toThrow("scope_not_allowed");
+    ).rejects.toMatchObject({ code: "scope_not_allowed", status: 400 });
   });
   it("refuses source lookup until the knowledge node has been read", async () => {
     await expect(

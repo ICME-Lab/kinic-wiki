@@ -1,10 +1,11 @@
 // Where: mobile/ios/Config/Kinic.xcconfig
-// What: Shared build settings for the Kinic iOS app and Share Extension.
+// What: Shared build settings for the Kinic iOS app, Share Extension, and widget.
 // Why: App Store identifiers and Apple team values must be explicit and easy to replace.
 
 DEVELOPMENT_TEAM = AKN976G7AK
 KINIC_APP_BUNDLE_ID = xyz.kinic.ios.KinicWiki
 KINIC_SHARE_EXTENSION_BUNDLE_ID = xyz.kinic.ios.KinicWiki.ShareExtension
+KINIC_WIDGET_BUNDLE_ID = xyz.kinic.ios.KinicWiki.WorkItemsWidget
 APP_GROUP_ID = group.xyz.kinic.ios.KinicWiki
 KINIC_KEYCHAIN_ACCESS_GROUP = AKN976G7AK.xyz.kinic.ios.KinicWiki
 KINIC_CANISTER_ID = 6emaw-iyaaa-aaaay-aacka-cai

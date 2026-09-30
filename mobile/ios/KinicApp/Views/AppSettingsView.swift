@@ -17,6 +17,20 @@ struct AppSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Session") {
+                if model.isSignedIn {
+                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
+                        model.signOut()
+                        dismiss()
+                    }
+                    .disabled(model.databaseSelectionLocked)
+                } else {
+                    Button("Sign in with Internet Identity", systemImage: "person.crop.circle", action: model.startSignIn)
+                        .disabled(model.isSigningIn)
+                    if model.isSigningIn { ProgressView() }
+                }
+                if let message = model.statusMessage { Text(message).font(.footnote).foregroundStyle(.secondary) }
+            }
             if let principal = account.principal {
                 Section("Account") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -81,7 +95,7 @@ struct AppSettingsView: View {
                     Button("Delete Account", role: .destructive) {
                         showsDeleteAccountConfirmation = true
                     }
-                    .disabled(model.isDeletingAccount)
+                    .disabled(model.isDeletingAccount || model.databaseSelectionLocked)
 
                     if model.isDeletingAccount {
                         HStack(spacing: 10) {

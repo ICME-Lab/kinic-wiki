@@ -12,24 +12,28 @@ struct AskAIView: View {
 
     var body: some View {
         AskAIWorkspaceView(model: model, appModel: appModel)
+            .navigationTitle("")
             .onChange(of: isShowingPreview) { _, showing in appModel.voicePresentationActive = showing }
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    AskAIDatabaseMenu(model: model, appModel: appModel)
+                    DatabaseContextBar(model: appModel, askAIModel: model, compact: true)
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Voice Conversation", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
-                        .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
-                    Button("History", systemImage: "clock.arrow.circlepath") {
-                        isShowingHistory = true
-                    }
-                    .labelStyle(.iconOnly)
+                .databaseTitleAppearance()
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Voice Conversation", systemImage: "waveform") { appModel.voicePresentationActive = true; isShowingPreview = true }
+                            .disabled(model.isGenerating || model.loadState != .loaded || appModel.selectedAskAIDatabaseId.isEmpty)
+                        Button("Conversation history", systemImage: "clock.arrow.circlepath") {
+                            isShowingHistory = true
+                        }
 
-                    Button("New conversation", systemImage: "square.and.pencil", action: model.newConversation)
-                        .labelStyle(.iconOnly)
-                        .disabled(appModel.selectedAskAIDatabaseId.isEmpty || model.isSynchronizingWorker)
+                        Button("New conversation", systemImage: "square.and.pencil", action: model.newConversation)
+                            .disabled(appModel.selectedAskAIDatabaseId.isEmpty || model.isSynchronizingWorker)
+                    } label: {
+                        Label("Conversation actions", systemImage: "ellipsis")
+                    }
                 }
             }
             .fullScreenCover(isPresented: $isShowingPreview) {

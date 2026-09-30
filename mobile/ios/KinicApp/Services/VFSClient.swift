@@ -141,6 +141,26 @@ struct VFSClient: @unchecked Sendable {
         return try result.mutationValue()
     }
 
+    func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] {
+        try await listBrowseChildren(databaseId: databaseId, path: path, session: session)
+    }
+
+    /// Runs every operation in one canister transaction. Any failure rolls the whole batch back.
+    @discardableResult
+    func mutateNodesBatch(
+        databaseId: String,
+        operations: [VFSNodeMutationOperation],
+        session: KinicIdentitySession
+    ) async throws -> [VFSNodeMutationOutcome] {
+        guard !operations.isEmpty else { return [] }
+        let result: VFSCandidResult<[VFSNodeMutationResult], VFSNodeMutationFailure> = try await client.call(
+            method: "mutate_nodes_batch",
+            argument: VFSMutateNodesBatchRequest(databaseId: databaseId, operations: operations),
+            identity: try nativeIdentity(session)
+        )
+        return try result.mutationValue().map(\.outcome)
+    }
+
     func readBrowseNode(databaseId: String, path: String, session: KinicIdentitySession?) async throws -> VFSNode? {
         let result: VFSCandidResult<VFSNode?, String> = try await client.query(
             method: "read_node",

@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class AssistantNativeAuthorizationTests: XCTestCase {
+    func testCancelRequiresControlConnectionAndPreservesLocalConversation() async {
+        let model = VoicePreviewModel(configuration: .preview)
+        model.loadScreenshotFixture()
+        let conversationID = model.snapshot?.id
+        do {
+            try await model.cancelQuestionAndWait()
+            XCTFail("Cancellation must wait for an available control connection")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .notConnectedToInternet)
+        } catch {
+            XCTFail("Unexpected cancellation failure: \(error)")
+        }
+        XCTAssertEqual(model.snapshot?.id, conversationID)
+    }
+
     func testLiveDataChannelUsesOpenAIContract() {
         XCTAssertEqual(AssistantAudioSession.eventChannelLabel, "oai-events")
     }

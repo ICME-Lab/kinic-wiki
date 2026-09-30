@@ -5,6 +5,7 @@
 import SwiftUI
 
 struct KinicPanel<Content: View, Trailing: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let systemImage: String
     let trailing: Trailing
@@ -31,16 +32,18 @@ struct KinicPanel<Content: View, Trailing: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 12) {
-                Label(title, systemImage: systemImage)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                Spacer(minLength: 0)
-
-                trailing
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(title, systemImage: systemImage).font(.headline).foregroundStyle(.primary)
+                    trailing
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    Label(title, systemImage: systemImage)
+                        .font(.headline).foregroundStyle(.primary)
+                    Spacer(minLength: 0)
+                    trailing
+                }
             }
 
             content

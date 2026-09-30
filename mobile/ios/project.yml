@@ -47,6 +47,8 @@ targets:
       - package: WebRTC
       - target: KinicShareExtension
         embed: true
+      - target: KinicWorkItemsWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_APP_BUNDLE_ID)"
@@ -90,6 +92,9 @@ targets:
       - KinicApp/Models/SourceCaptureRequest.swift
       - KinicApp/Models/WikiOutputLanguage.swift
       - KinicApp/Models/SourceCaptureHistory.swift
+      - KinicApp/Models/WorkItem.swift
+      - KinicApp/Models/PendingWorkItemCapture.swift
+      - KinicApp/Services/PendingWorkItemCaptureQueue.swift
       - KinicApp/Services/KinicAuthSessionStore.swift
       - KinicApp/Services/KinicICClient.swift
       - KinicApp/Services/ShareCaptureSubmitter.swift
@@ -116,6 +121,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_SHARE_EXTENSION_BUNDLE_ID)"
         INFOPLIST_FILE: KinicShareExtension/Info.plist
         CODE_SIGN_ENTITLEMENTS: KinicShareExtension/KinicShareExtension.entitlements
+        SKIP_INSTALL: true
+  KinicWorkItemsWidget:
+    type: app-extension
+    platform: iOS
+    configFiles:
+      Debug: Config/Kinic.xcconfig
+      Release: Config/Kinic.xcconfig
+    sources:
+      - KinicWorkItemsWidget
+      - KinicApp/Models/WorkItemWidgetSnapshot.swift
+      - KinicApp/Services/WorkItemWidgetSnapshotStore.swift
+      - KinicApp/Utilities/Bundle+Configuration.swift
+      - KinicApp/Utilities/WorkItemUniversalLink.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(KINIC_WIDGET_BUNDLE_ID)"
+        INFOPLIST_FILE: KinicWorkItemsWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: KinicWorkItemsWidget/KinicWorkItemsWidget.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: true
   KinicTests:
     type: bundle.unit-test

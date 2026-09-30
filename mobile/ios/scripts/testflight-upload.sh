@@ -304,8 +304,10 @@ archive_build="$(plutil -extract ApplicationProperties.CFBundleVersion raw -o - 
 
 app_privacy="$archive_path/Products/Applications/KinicWiki.app/PrivacyInfo.xcprivacy"
 extension_privacy="$archive_path/Products/Applications/KinicWiki.app/PlugIns/KinicShareExtension.appex/PrivacyInfo.xcprivacy"
+widget_privacy="$archive_path/Products/Applications/KinicWiki.app/PlugIns/KinicWorkItemsWidget.appex/PrivacyInfo.xcprivacy"
 [[ -f "$app_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from app archive"
 [[ -f "$extension_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from Share Extension archive"
+[[ -f "$widget_privacy" ]] || fail "PrivacyInfo.xcprivacy missing from work items widget archive"
 
 printf 'Exporting signed IPA...\n'
 xcodebuild -exportArchive \

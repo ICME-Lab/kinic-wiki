@@ -6,6 +6,8 @@ import {
 import { AssistantError } from "./contracts";
 import type { Env } from "./env";
 type Result<T> = { Ok: T } | { Err: string };
+// A returned canister Err is definitive; transport failures remain ambiguous.
+export class VoiceBillingRejected extends AssistantError {}
 export type Rate = {
   version: bigint;
   cycles_per_minute: bigint;
@@ -137,7 +139,7 @@ function unwrap<T>(r: Result<T>): T {
       "voice rate or reservation changed": "voice_price_consent_required",
       "voice billing not configured": "voice_billing_not_configured",
     };
-    throw new AssistantError(codes[r.Err] ?? "voice_billing_denied", 403);
+    throw new VoiceBillingRejected(codes[r.Err] ?? "voice_billing_denied", 403);
   }
   return r.Ok;
 }

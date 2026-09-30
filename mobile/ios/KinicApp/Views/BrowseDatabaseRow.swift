@@ -18,30 +18,10 @@ struct BrowseDatabaseRow: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(database.displayTitle)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .layoutPriority(1)
-
-                    Spacer(minLength: 8)
-
-                    if database.status == .pending || isPublicReadable || isPurchased {
-                        HStack(spacing: 6) {
-                            if database.status == .pending {
-                                browseBadge("Pending")
-                            }
-                            if isPublicReadable {
-                                browseBadge("Public")
-                            }
-                            if isPurchased {
-                                browseBadge("Purchased")
-                            }
-                        }
-                        .fixedSize()
-                    }
-                }
+                Text(database.displayTitle)
+                    .font(.headline).foregroundStyle(.primary).lineLimit(2)
+                Text(([database.status.displayName] + (isPublicReadable ? ["Public"] : []) + (isPurchased ? ["Purchased"] : [])).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
 
                 Text(showsCyclesBalance ? database.roleAndCyclesBalanceText : database.role.displayName)
                     .font(.subheadline)
@@ -54,12 +34,4 @@ struct BrowseDatabaseRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func browseBadge(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.bold())
-            .foregroundStyle(KinicDesign.hotPink)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(KinicDesign.hotPink.opacity(0.12), in: Capsule())
-    }
 }

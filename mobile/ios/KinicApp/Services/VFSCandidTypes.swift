@@ -23,7 +23,7 @@ private func variantTag(_ value: CandidValue, type: CandidType) throws -> (Strin
     guard case .variant(let variant) = value, case .variant(let declared) = type else {
         throw ICClientError.invalidCandid("expected variant")
     }
-    for name in ["Ok", "Err", "Owner", "Writer", "Reader", "Active", "Deleted", "Pending", "Folder", "File", "Source", "Directory", "Light", "ContentStart", "None", "EtagConflict", "NotFound", "Forbidden", "WriteUnavailable", "InvalidOperation", "Path", "Content"] where Candid.fieldID(name) == variant.tag && declared.contains(where: { $0.id == variant.tag }) {
+    for name in ["Ok", "Err", "Owner", "Writer", "Reader", "Active", "Deleted", "Pending", "Folder", "File", "Source", "Directory", "Light", "ContentStart", "None", "EtagConflict", "NotFound", "Forbidden", "WriteUnavailable", "InvalidOperation", "Path", "Content", "Write", "Mkdir", "Append", "Edit", "MultiEdit", "Move", "Delete"] where Candid.fieldID(name) == variant.tag && declared.contains(where: { $0.id == variant.tag }) {
         return (name, variant.value)
     }
     throw ICClientError.invalidCandid("unknown variant tag \(variant.tag)")
@@ -140,6 +140,117 @@ struct VFSWriteNodeItem: CandidConvertible {
     init(content: String, kind: VFSNodeKind, path: String, expectedEtag: String?, metadataJson: String) { self.content = content; self.kind = kind; self.path = path; self.expectedEtag = expectedEtag; self.metadataJson = metadataJson }
     init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); content = try r.required("content"); kind = try r.required("kind"); path = try r.required("path"); expectedEtag = try r.required("expected_etag"); metadataJson = try r.required("metadata_json") }
     var candidValue: CandidValue { recordValue(Self.candidType, [("content", content.candidValue), ("kind", kind.candidValue), ("path", path.candidValue), ("expected_etag", expectedEtag.candidValue), ("metadata_json", metadataJson.candidValue)]) }
+}
+
+extension VFSWriteNodeItem: Equatable {}
+
+struct VFSMkdirNodeResult: CandidConvertible {
+    let created: Bool; let path: String
+    static let candidType: CandidType = .record(fields([("created", .bool), ("path", .text)]))
+    init(created: Bool, path: String) { self.created = created; self.path = path }
+    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); created = try r.required("created"); path = try r.required("path") }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("created", created.candidValue), ("path", path.candidValue)]) }
+}
+
+// `NodeMutation` is declared with seven tags. Candid variant subtyping lets a client send a narrower
+// variant, so the app only declares the operations it actually issues.
+enum VFSNodeMutationOperation: Equatable, Sendable, CandidConvertible {
+    case write(VFSWriteNodeItem)
+    case mkdir(path: String)
+
+    static let candidType: CandidType = .variant(fields([("Write", VFSWriteNodeItem.candidType), ("Mkdir", .text)]))
+
+    init(candidValue: CandidValue) throws {
+        let (tag, payload) = try variantTag(candidValue, type: Self.candidType)
+        switch tag {
+        case "Write": self = .write(try VFSWriteNodeItem(candidValue: payload))
+        case "Mkdir": self = .mkdir(path: try String(candidValue: payload))
+        default: throw ICClientError.invalidCandid("invalid node mutation")
+        }
+    }
+
+    var candidValue: CandidValue {
+        switch self {
+        case .write(let item): variantValue(Self.candidType, tag: "Write", value: item.candidValue)
+        case .mkdir(let path): variantValue(Self.candidType, tag: "Mkdir", value: path.candidValue)
+        }
+    }
+}
+
+enum VFSNodeMutationResult: CandidConvertible {
+    case multiEdit(VFSEditNodeResult)
+    case edit(VFSEditNodeResult)
+    case move(VFSMoveNodeResult)
+    case write(VFSWriteNodeResult)
+    case mkdir(VFSMkdirNodeResult)
+    case delete(VFSDeleteNodeResult)
+    case append(VFSWriteNodeResult)
+
+    static let candidType: CandidType = .variant(fields([
+        ("MultiEdit", VFSEditNodeResult.candidType),
+        ("Edit", VFSEditNodeResult.candidType),
+        ("Move", VFSMoveNodeResult.candidType),
+        ("Write", VFSWriteNodeResult.candidType),
+        ("Mkdir", VFSMkdirNodeResult.candidType),
+        ("Delete", VFSDeleteNodeResult.candidType),
+        ("Append", VFSWriteNodeResult.candidType),
+    ]))
+
+    init(candidValue: CandidValue) throws {
+        let (tag, payload) = try variantTag(candidValue, type: Self.candidType)
+        switch tag {
+        case "MultiEdit": self = .multiEdit(try VFSEditNodeResult(candidValue: payload))
+        case "Edit": self = .edit(try VFSEditNodeResult(candidValue: payload))
+        case "Move": self = .move(try VFSMoveNodeResult(candidValue: payload))
+        case "Write": self = .write(try VFSWriteNodeResult(candidValue: payload))
+        case "Mkdir": self = .mkdir(try VFSMkdirNodeResult(candidValue: payload))
+        case "Delete": self = .delete(try VFSDeleteNodeResult(candidValue: payload))
+        case "Append": self = .append(try VFSWriteNodeResult(candidValue: payload))
+        default: throw ICClientError.invalidCandid("invalid node mutation result")
+        }
+    }
+
+    var candidValue: CandidValue {
+        switch self {
+        case .multiEdit(let result): variantValue(Self.candidType, tag: "MultiEdit", value: result.candidValue)
+        case .edit(let result): variantValue(Self.candidType, tag: "Edit", value: result.candidValue)
+        case .move(let result): variantValue(Self.candidType, tag: "Move", value: result.candidValue)
+        case .write(let result): variantValue(Self.candidType, tag: "Write", value: result.candidValue)
+        case .mkdir(let result): variantValue(Self.candidType, tag: "Mkdir", value: result.candidValue)
+        case .delete(let result): variantValue(Self.candidType, tag: "Delete", value: result.candidValue)
+        case .append(let result): variantValue(Self.candidType, tag: "Append", value: result.candidValue)
+        }
+    }
+
+    var outcome: VFSNodeMutationOutcome {
+        switch self {
+        case .multiEdit(let result): .multiEdited(node: result.node, replacementCount: result.replacementCount)
+        case .edit(let result): .edited(node: result.node, replacementCount: result.replacementCount)
+        case .move(let result): .moved(node: result.node, fromPath: result.fromPath, overwrote: result.overwrote)
+        case .write(let result): .wrote(created: result.created, node: result.node)
+        case .mkdir(let result): .madeDirectory(created: result.created, path: result.path)
+        case .delete(let result): .deleted(path: result.path)
+        case .append(let result): .appended(created: result.created, node: result.node)
+        }
+    }
+}
+
+enum VFSNodeMutationOutcome: Equatable, Sendable {
+    case multiEdited(node: VFSNodeMutationAck, replacementCount: UInt32)
+    case edited(node: VFSNodeMutationAck, replacementCount: UInt32)
+    case moved(node: VFSNodeMutationAck, fromPath: String, overwrote: Bool)
+    case wrote(created: Bool, node: VFSNodeMutationAck)
+    case madeDirectory(created: Bool, path: String)
+    case deleted(path: String)
+    case appended(created: Bool, node: VFSNodeMutationAck)
+}
+
+struct VFSMutateNodesBatchRequest: CandidConvertible {
+    let databaseId: String; let operations: [VFSNodeMutationOperation]
+    static let candidType: CandidType = .record(fields([("operations", [VFSNodeMutationOperation].candidType), ("database_id", .text)]))
+    init(databaseId: String, operations: [VFSNodeMutationOperation]) { self.databaseId = databaseId; self.operations = operations }
+    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); operations = try r.required("operations"); databaseId = try r.required("database_id") }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("operations", operations.candidValue), ("database_id", databaseId.candidValue)]) }
 }
 
 struct VFSWriteNodeRequest: CandidConvertible {
@@ -305,6 +416,23 @@ struct VFSDeleteNodeResult: CandidConvertible {
     static let candidType: CandidType = .record(fields([("path", .text)]))
     init(candidValue: CandidValue) throws { path = try CandidRecord(candidValue).required("path") }
     var candidValue: CandidValue { recordValue(Self.candidType, [("path", path.candidValue)]) }
+}
+
+struct VFSEditNodeResult: CandidConvertible {
+    let node: VFSNodeMutationAck
+    let replacementCount: UInt32
+    static let candidType: CandidType = .record(fields([("node", VFSNodeMutationAck.candidType), ("replacement_count", .nat32)]))
+    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); node = try r.required("node"); replacementCount = try r.required("replacement_count") }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("node", node.candidValue), ("replacement_count", replacementCount.candidValue)]) }
+}
+
+struct VFSMoveNodeResult: CandidConvertible {
+    let fromPath: String
+    let node: VFSNodeMutationAck
+    let overwrote: Bool
+    static let candidType: CandidType = .record(fields([("from_path", .text), ("node", VFSNodeMutationAck.candidType), ("overwrote", .bool)]))
+    init(candidValue: CandidValue) throws { let r = try CandidRecord(candidValue); fromPath = try r.required("from_path"); node = try r.required("node"); overwrote = try r.required("overwrote") }
+    var candidValue: CandidValue { recordValue(Self.candidType, [("from_path", fromPath.candidValue), ("node", node.candidValue), ("overwrote", overwrote.candidValue)]) }
 }
 
 struct VFSNode: Identifiable, Equatable, Sendable {

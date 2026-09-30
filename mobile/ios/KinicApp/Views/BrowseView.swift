@@ -1,6 +1,6 @@
 // Where: mobile/ios/KinicApp/Views/BrowseView.swift
-// What: Root split navigation for browsing readable Kinic Wiki databases.
-// Why: The Browse tab should behave like iOS Notes: databases, note lists, then document detail.
+// What: Compact folder navigation and regular-width split navigation for readable databases.
+// Why: iPhone opens the selected database's content directly; iPad keeps its database sidebar.
 
 import SwiftUI
 
@@ -8,6 +8,7 @@ struct BrowseView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var model: AppModel
     let rootNavigationID: Int
+    @State private var columnVisibility = NavigationSplitViewVisibility.doubleColumn
     @State private var selectedDatabaseId: String?
     @State private var selectedDocumentPath: String?
     @State private var folderPath: [BrowseFolderRoute] = []
@@ -15,15 +16,10 @@ struct BrowseView: View {
     @State private var navigationGate = BrowseNavigationGate()
 
     var body: some View {
-        NavigationSplitView {
-            BrowseDatabaseListView(
-                model: model,
-                selectedDatabaseId: selectedDatabaseBinding,
-                selectedDocumentPath: selectedDocumentPathBinding,
-                folderPath: $folderPath
-            )
-        } content: {
-            if let selectedDatabaseId {
+        Group {
+            if horizontalSizeClass == .compact,
+               model.canListBrowseDatabases,
+               let selectedDatabaseId {
                 BrowseNodeNavigationView(
                     model: model,
                     databaseId: selectedDatabaseId,
@@ -33,16 +29,9 @@ struct BrowseView: View {
                     requestSearchFolder: requestSearchFolder
                 )
             } else {
-                ContentUnavailableView("Select a database", systemImage: "externaldrive")
-            }
-        } detail: {
-            if let selectedDocumentPath {
-                BrowseDocumentView(model: model, path: selectedDocumentPath)
-            } else {
-                ContentUnavailableView("Select a node", systemImage: "doc.text")
+                databaseSplitView
             }
         }
-        .navigationSplitViewStyle(.balanced)
         .confirmationDialog(
             "Discard unsaved changes?",
             isPresented: pendingNavigationPresented,
@@ -72,6 +61,42 @@ struct BrowseView: View {
         }
         .onChange(of: folderPath) { _, newPath in
             syncCompactDocumentSelection(with: newPath)
+        }
+    }
+
+    private var databaseSplitView: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            BrowseDatabaseListView(
+                model: model,
+                selectedDatabaseId: selectedDatabaseBinding,
+                selectedDocumentPath: selectedDocumentPathBinding,
+                folderPath: $folderPath,
+                showsDatabaseContext: horizontalSizeClass == .compact
+            )
+        } content: {
+            if let selectedDatabaseId {
+                BrowseNodeNavigationView(
+                    model: model,
+                    databaseId: selectedDatabaseId,
+                    selectedDocumentPath: selectedDocumentPathBinding,
+                    folderPath: $folderPath,
+                    isSearchPresented: $isBrowseSearchPresented,
+                    requestSearchFolder: requestSearchFolder,
+                    showsDatabaseContext: horizontalSizeClass == .compact
+                )
+            } else {
+                ContentUnavailableView("Select a database", systemImage: "externaldrive")
+            }
+        } detail: {
+            if let selectedDocumentPath {
+                BrowseDocumentView(model: model, path: selectedDocumentPath)
+            } else {
+                ContentUnavailableView("Select a node", systemImage: "doc.text")
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if horizontalSizeClass != .compact { DatabaseContextBar(model: model) }
         }
     }
 
