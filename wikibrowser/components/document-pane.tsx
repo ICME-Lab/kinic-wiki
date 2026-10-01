@@ -676,7 +676,7 @@ function FolderDocument({
     );
   }
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-3 sm:p-6">
       <div className="space-y-6">
         <FolderIndexSection
           folderPath={folder.path}
@@ -721,7 +721,7 @@ function FolderIndexSection({
   }
   const indexNode = folderIndexNode.data;
   return (
-    <section className="rounded-2xl border border-line bg-paper p-5">
+    <section className="rounded-2xl border border-line bg-paper p-4 sm:p-5">
       <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Folder note</p>
       <div className="mt-4">
         {view === "raw" ? (
@@ -750,7 +750,7 @@ function DirectoryDocument({
   parentPath: string;
 }) {
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-3 sm:p-6">
       <DirectoryChildrenCard childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={parentPath} />
     </div>
   );
@@ -769,7 +769,7 @@ function DirectoryChildrenCard({
 }) {
   const children = childrenState.data ? visibleChildren(childrenState.data, parentPath) : null;
   return (
-    <div className="rounded-2xl border border-line bg-paper p-5">
+    <div className="rounded-2xl border border-line bg-paper p-4 sm:p-5">
       <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Directory</p>
       <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Children</h3>
       <div className="mt-5 grid gap-2">

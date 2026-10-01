@@ -14,9 +14,9 @@ const config: Config = {
         midLine: "#d0d0d0",
         accentSoft: "#ff81be26",
         accentLine: "#ffcde5",
-        accentText: "#ff2686",
+        accentText: "#b81459",
         action: "#000000",
-        actionHover: "#ff2686",
+        actionHover: "#b81459",
         kinicMagenta: "#ff2686",
         kinicCyan: "#2d68ff",
         infoSoft: "#eaf4ff",
@@ -43,7 +43,7 @@ const config: Config = {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))"
         },
-        accent: "#ff2686",
+        accent: "#b81459",
         "accent-foreground": "hsl(var(--accent-foreground))",
         popover: {
           DEFAULT: "hsl(var(--popover))",

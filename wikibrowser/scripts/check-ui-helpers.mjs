@@ -92,7 +92,7 @@ assert.doesNotMatch(explorerTreeSource, /onDeleteMarkdownNode/);
 assert.doesNotMatch(explorerTreeSource, /group-hover:opacity-100/);
 assert.doesNotMatch(explorerTreeSource, /New Markdown under/);
 assert.match(panelSource, /actions\?: ReactNode/);
-assert.match(panelSource, /\{actions \? <div className="shrink-0">\{actions\}<\/div> : null\}/);
+assert.match(panelSource, /\{actions \? <div className="ml-auto shrink-0">\{actions\}<\/div> : null\}/);
 assert.match(wikiBrowserSource, /data-tid="header-login-button"/);
 assert.match(wikiBrowserSource, /onClick=\{onLogin\}/);
 assert.match(wikiBrowserSource, /src="\/kinic-mark\.png"/);
@@ -492,7 +492,19 @@ assert.match(globalsCss, /prefers-reduced-motion/);
 assert.match(globalsCss, /\.markdown-body img \{/);
 assert.match(globalsCss, /max-width: 100%;/);
 assert.match(globalsCss, /height: auto;/);
-assert.match(tailwindConfig, /accent: "#ff2686"/);
+const readableAccent = tailwindConfig.match(/accent: "(#[a-f0-9]{6})"/i)?.[1];
+assert.ok(readableAccent, "Accent token must be a hex color");
+const luminance = (hex) => {
+  const channels = hex.slice(1).match(/../g).map((part) => {
+    const value = parseInt(part, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+};
+for (const surface of ["#ffffff", "#f8f8f8", "#fae7f0"]) {
+  const values = [luminance(readableAccent), luminance(surface)].sort((a, b) => a - b);
+  assert.ok((values[1] + 0.05) / (values[0] + 0.05) >= 4.5, `Accent text must meet AA on ${surface}`);
+}
 assert.match(tailwindConfig, /action: "#000000"/);
 assert.match(tailwindConfig, /paper: "#f8f8f8"/);
 assert.doesNotMatch(tailwindConfig, /#1f6feb|#7c3aed|#6d28d9|#f6f1e8|#fffdf8|#ded7cb/);
