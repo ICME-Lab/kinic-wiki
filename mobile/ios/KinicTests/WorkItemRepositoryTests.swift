@@ -1030,6 +1030,7 @@ extension WorkItemRepositoryTests {
 
         let posted = await model.postComment(itemId: "abc", body: "Please review")
         #expect(!posted)
+        #expect(model.actionError != nil)
         let pending = try #require(model.pendingMutations.first)
         #expect(pending.kind == .comment)
         #expect(pending.commentPayload?.body == "Please review")
@@ -1053,6 +1054,7 @@ extension WorkItemRepositoryTests {
         )
         #expect(children.filter { $0.kind == .file }.count == 1)
         #expect(model.pendingMutations.isEmpty)
+        #expect(model.actionError == nil)
     }
 
     @Test

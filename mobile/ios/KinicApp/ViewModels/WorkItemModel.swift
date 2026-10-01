@@ -712,6 +712,11 @@ final class WorkItemModel {
                 actionError = Self.message(for: error)
                 return
             }
+            // The send succeeded. Clear its previous failure before loading comments,
+            // so a new read failure can still report its own error.
+            if self.databaseId == databaseId, runtime.workItemPrincipal == session.principal {
+                actionError = nil
+            }
             try? store.deletePendingMutation(id: mutation.mutationId)
             refreshPendingMutations()
             await loadComments(mutation.itemId)
