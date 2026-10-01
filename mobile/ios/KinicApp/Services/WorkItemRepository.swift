@@ -87,7 +87,7 @@ struct WorkItemRepository: Sendable {
         do {
             children = try await vfs.listChildren(databaseId: databaseId, path: WorkItemPaths.root, session: session)
         } catch {
-            if Self.isMissingPath(error) {
+            if Self.isMissingPath(error, path: WorkItemPaths.root) {
                 return WorkItemListSnapshot(entries: [], totalCount: 0, isTruncated: false, unreadableCount: 0)
             }
             throw error
@@ -397,7 +397,7 @@ struct WorkItemRepository: Sendable {
         do {
             children = try await vfs.listChildren(databaseId: databaseId, path: directory, session: session)
         } catch {
-            if Self.isMissingPath(error) { return [] }
+            if Self.isMissingPath(error, path: directory) { return [] }
             throw error
         }
         // Newest first before trimming: a read limit must drop the oldest comments, not random ones.
@@ -760,9 +760,12 @@ struct WorkItemRepository: Sendable {
         return nil
     }
 
-    private static func isMissingPath(_ error: Error) -> Bool {
+    private static func isMissingPath(_ error: Error, path: String) -> Bool {
         guard case VFSCandidError.canisterRejected(let message) = error else { return false }
-        return message.hasPrefix("path not found")
+        // The SQLite store wraps missing-folder errors before returning them through Candid.
+        // Match only the requested path so unrelated storage failures still reach the UI.
+        let missingPath = "path not found: \(path)"
+        return message == missingPath || message == "sqlite error 1: \(missingPath)"
     }
 }
 

@@ -379,6 +379,34 @@ struct WorkItemRepositoryTests {
     }
 
     @Test
+    func listIsEmptyWhenSQLiteReportsTheRootFolderDoesNotExist() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.rejectList(with: "sqlite error 1: path not found: /WorkItems")
+        let snapshot = try await makeRepository(stub).list(databaseId: "db", session: session)
+        #expect(snapshot.entries.isEmpty)
+        #expect(snapshot.totalCount == 0)
+        #expect(!snapshot.isTruncated)
+        #expect(snapshot.unreadableCount == 0)
+    }
+
+    @Test(arguments: [
+        "sqlite error 1: database is locked",
+        "sqlite error 1: path not found: /WorkItemsOther",
+        "path not found: /Other",
+        "permission denied"
+    ])
+    func listPreservesUnrelatedCanisterErrors(message: String) async throws {
+        let stub = WorkItemVFSStub()
+        await stub.rejectList(with: message)
+        do {
+            _ = try await makeRepository(stub).list(databaseId: "db", session: session)
+            Issue.record("Expected the canister error to be preserved")
+        } catch let VFSCandidError.canisterRejected(actual) {
+            #expect(actual == message)
+        }
+    }
+
+    @Test
     func listReadsMetaAndSortsByMostRecentActivity() async throws {
         let stub = WorkItemVFSStub()
         await stub.makeRootExist()
