@@ -12,15 +12,15 @@ export function PanelHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-line bg-white px-4 py-3">
-      <div className="flex min-w-0 items-center gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-white px-4 py-3">
+      <div className="flex min-w-[8rem] flex-1 items-center gap-2">
         <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accentSoft text-accentText">{icon}</span>
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">{title}</h2>
+          <h2 className="break-words text-sm font-semibold">{title}</h2>
           {subtitle ? <p className="truncate text-xs text-muted">{subtitle}</p> : null}
         </div>
       </div>
-      {actions ? <div className="shrink-0">{actions}</div> : null}
+      {actions ? <div className="ml-auto shrink-0">{actions}</div> : null}
     </div>
   );
 }

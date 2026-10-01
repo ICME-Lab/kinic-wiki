@@ -214,7 +214,7 @@ struct WorkItemListView: View {
                 .padding(.horizontal, 16)
                 .frame(minHeight: 44)
                 .foregroundStyle(.white)
-                .background(KinicDesign.hotPink, in: RoundedRectangle(cornerRadius: 12))
+                .background(KinicDesign.actionPink, in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
         .disabled(!model.canWrite)
@@ -327,7 +327,7 @@ struct WorkItemListView: View {
             ProgressView("Loading work items…")
         case .failed:
             ContentUnavailableView {
-                Label("Could not load work items", systemImage: "wifi.exclamationmark")
+                Label("Could not load work items", systemImage: "exclamationmark.triangle")
             } actions: {
                 Button("Try again") { Task { await refreshHome(force: true) } }
             }
@@ -485,16 +485,25 @@ private struct WorkItemRow: View {
                 .foregroundStyle(entry.isUnsupportedVersion ? KinicDesign.bodyGray : Color.primary)
                 .lineLimit(2)
 
-            HStack(spacing: 10) {
-                Label(entry.state.displayName, systemImage: entry.state == .open ? "circle" : "checkmark.circle.fill")
-                Label("\(entry.commentCount)", systemImage: "bubble.left")
-                Text(WorkItemListView.date(fromMilliseconds: entry.updatedAt).formatted(.relative(presentation: .named)))
+            ViewThatFits(in: .horizontal) {
+                metadata
+                VStack(alignment: .leading, spacing: 4) { metadataContents }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
+    }
+
+    private var metadata: some View {
+        HStack(spacing: 10) { metadataContents }
+    }
+
+    @ViewBuilder private var metadataContents: some View {
+        Label(entry.state.displayName, systemImage: entry.state == .open ? "circle" : "checkmark.circle.fill")
+        Label("\(entry.commentCount)", systemImage: "bubble.left")
+        Text(WorkItemListView.date(fromMilliseconds: entry.updatedAt).formatted(.relative(presentation: .named)))
     }
 }
 
@@ -538,12 +547,14 @@ private struct WorkItemSearchOverlay: View {
     @Bindable var model: WorkItemModel
     let onClose: () -> Void
     let onSelect: (String) -> Void
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search work items", text: $model.searchQuery)
+                    .focused($isSearchFocused)
                     .submitLabel(.search)
                     .accessibilityIdentifier("home.searchField")
                 Button("Close search", systemImage: "xmark") { onClose() }
@@ -600,7 +611,7 @@ private struct WorkItemSearchOverlay: View {
         .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color(uiColor: .separator).opacity(0.3)))
         .shadow(color: .black.opacity(0.15), radius: 18, y: 8)
-        .task { model.clearSearch() }
+        .task { model.clearSearch(); isSearchFocused = true }
         .task(id: model.searchQuery) {
             let query = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { model.clearSearchResults(); return }

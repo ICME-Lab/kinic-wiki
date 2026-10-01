@@ -297,24 +297,26 @@ function HeaderSearch({
   }
 
   return (
-    <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-[20px] border border-line bg-white px-2 py-1.5 text-sm shadow-[0_4px_10px_#14142b0a] sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
-      <div className="flex shrink-0 rounded-2xl border border-line bg-paper p-1 text-xs">
-        <SearchKindButton active={kind === "path"} label="Path" onClick={() => setDraft({ key: draftKey, text, kind: "path" })} />
-        <SearchKindButton active={kind === "full"} label="Full text" onClick={() => setDraft({ key: draftKey, text, kind: "full" })} />
-      </div>
-      <Search size={15} className="hidden shrink-0 text-muted min-[360px]:block" />
-      <input
-        className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-muted"
-        value={text}
-        onChange={(event) => setDraft({ key: draftKey, text: event.target.value, kind })}
-        placeholder="Search wiki"
-        aria-label="Search wiki"
-      />
-      <Button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
-        <Search size={15} aria-hidden />
-        <span className="sr-only sm:not-sr-only">Search</span>
-      </Button>
-    </form>
+    <search aria-label="Search this database">
+      <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-[20px] border border-line bg-white px-2 py-1.5 text-sm shadow-[0_4px_10px_#14142b0a] sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
+        <div className="flex shrink-0 rounded-2xl border border-line bg-paper p-1 text-xs">
+          <SearchKindButton active={kind === "path"} label="Path" onClick={() => setDraft({ key: draftKey, text, kind: "path" })} />
+          <SearchKindButton active={kind === "full"} label="Full text" onClick={() => setDraft({ key: draftKey, text, kind: "full" })} />
+        </div>
+        <Search size={15} className="hidden shrink-0 text-muted min-[360px]:block" />
+        <input
+          className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-muted"
+          value={text}
+          onChange={(event) => setDraft({ key: draftKey, text: event.target.value, kind })}
+          placeholder="Search wiki"
+          aria-label="Search wiki"
+        />
+        <Button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
+          <Search size={15} aria-hidden />
+          <span className="sr-only sm:not-sr-only">Search</span>
+        </Button>
+      </form>
+    </search>
   );
 }
 
@@ -322,6 +324,7 @@ function SearchKindButton({ active, label, onClick }: { active: boolean; label: 
   return (
     <button
       type="button"
+      aria-pressed={active}
       className={`rounded-xl px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
       onClick={onClick}
     >

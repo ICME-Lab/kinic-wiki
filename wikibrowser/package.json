@@ -26,7 +26,8 @@
     "e2e:ii": "scripts/run-ii-e2e.sh",
     "e2e:ii:headed": "scripts/run-ii-e2e.sh --headed",
     "e2e:ii:setup": "../scripts/setup-wikibrowser-ii-e2e.sh",
-    "e2e:public": "playwright test e2e/public-marketing.spec.ts e2e/public-legal.spec.ts --project chromium"
+    "e2e:public": "playwright test e2e/public-marketing.spec.ts e2e/public-legal.spec.ts --project chromium",
+    "quality:ui": "node scripts/check-ui-quality.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "6.5.0",
@@ -69,6 +70,7 @@
     "@cloudflare/vite-plugin": "1.44.0",
     "@dfinity/internet-identity-playwright": "^3.0.0",
     "@kinic/candid-tools": "workspace:*",
+    "@mizchi/vlmkit": "0.23.0",
     "@playwright/test": "^1.59.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "24.10.1",
