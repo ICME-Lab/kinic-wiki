@@ -1731,3 +1731,70 @@ private actor SuspendedWorkItemVFS: WorkItemVFSProviding {
     func waitForWrite() async { while write == nil { await Task.yield() } }
     func failWrite() { write?.resume(throwing: URLError(.notConnectedToInternet)); write = nil }
 }
+
+
+extension WorkItemModelTests {
+    @Test @MainActor
+    func cachedReadFailureStaysQuietAndDoesNotReplaceSaveError() async throws {
+        let runtime = WorkItemRuntimeStub()
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        try store.replaceListCache(
+            principal: runtime.workItemPrincipal, databaseId: "db",
+            entries: [WorkItemListCacheRecord(itemId: "cached", title: "Saved item", state: .open, commentCount: 0, updatedAt: 1)],
+            fetchedAt: 1
+        )
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store)
+        model.actionError = "Your changes could not be saved."
+        await vfs.failListTransport(true)
+        await model.refreshRemote(force: true)
+        #expect(model.phase == .ready)
+        #expect(model.entries.first?.title == "Saved item")
+        #expect(model.isShowingCachedItems)
+        #expect(model.listAccessError == nil)
+        #expect(model.listFailureDetails == nil)
+        #expect(model.actionError == "Your changes could not be saved.")
+
+        await vfs.failListTransport(false)
+        await model.refreshRemote(force: true)
+        #expect(!model.isShowingCachedItems)
+        #expect(model.actionError == "Your changes could not be saved.")
+    }
+
+    @Test @MainActor
+    func readFailureWithoutCacheHasOneActionableStateAndSeparateDetails() async {
+        let vfs = WorkItemVFSStub()
+        let model = WorkItemModel(runtime: WorkItemRuntimeStub(), repository: WorkItemRepository(vfs: vfs), store: nil)
+        await vfs.rejectList(with: "sqlite error 1: unexpected internal failure")
+        await model.refreshRemote(force: true)
+        guard case .failed(let message) = model.phase else {
+            Issue.record("Expected a failed list state")
+            return
+        }
+        #expect(!message.contains("sqlite"))
+        #expect(model.listFailureDetails == "sqlite error 1: unexpected internal failure")
+        #expect(model.actionError == nil)
+        #expect(model.listAccessError == nil)
+        #expect(!model.isShowingCachedItems)
+    }
+
+    @Test @MainActor
+    func cachedAccessLossRemainsVisibleAndContextChangeClearsReadNotice() async throws {
+        let runtime = WorkItemRuntimeStub()
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        try store.replaceListCache(
+            principal: runtime.workItemPrincipal, databaseId: "db",
+            entries: [WorkItemListCacheRecord(itemId: "cached", title: "Saved item", state: .open, commentCount: 0, updatedAt: 1)],
+            fetchedAt: 1
+        )
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store)
+        await vfs.rejectList(with: "principal has no access to database: db")
+        await model.refreshRemote(force: true)
+        #expect(model.listAccessError?.contains("sign in again") == true)
+        model.resetContext()
+        #expect(model.listAccessError == nil)
+        #expect(model.listFailureDetails == nil)
+        #expect(!model.isShowingCachedItems)
+    }
+}

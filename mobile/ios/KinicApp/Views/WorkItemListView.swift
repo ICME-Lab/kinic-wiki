@@ -163,6 +163,14 @@ struct WorkItemListView: View {
                 if let message = model.actionError {
                     StatusPanel(message: message).padding(.bottom, 12)
                 }
+                if let message = model.listAccessError {
+                    StatusPanel(message: message).padding(.bottom, 12)
+                } else if model.isShowingCachedItems {
+                    Label("Showing saved items · Updates unavailable", systemImage: "clock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 8)
+                }
                 Picker("Filter", selection: $filter) {
                     ForEach(WorkItemFilter.allCases) { option in Text(option.displayName).tag(option) }
                 }
@@ -325,11 +333,25 @@ struct WorkItemListView: View {
         switch model.phase {
         case .loading:
             ProgressView("Loading work items…")
-        case .failed:
+        case .failed(let message):
             ContentUnavailableView {
                 Label("Could not load work items", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
             } actions: {
                 Button("Try again") { Task { await refreshHome(force: true) } }
+            }
+            if let details = model.listFailureDetails {
+                DisclosureGroup("Technical details") {
+                    Text(details)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .font(.caption)
+                .tint(.secondary)
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
             }
         default:
             VStack(alignment: .leading, spacing: 10) {

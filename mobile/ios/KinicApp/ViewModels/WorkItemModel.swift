@@ -41,6 +41,10 @@ final class WorkItemModel {
     private(set) var isTruncated = false
     private(set) var unreadableCount = 0
     var actionError: String?
+    /// Read failures must not replace or dismiss an unresolved save failure.
+    private(set) var listAccessError: String?
+    private(set) var listFailureDetails: String?
+    private(set) var isShowingCachedItems = false
     var isSaving = false
 
     // Comments for the item currently open in the detail view.
@@ -147,6 +151,7 @@ final class WorkItemModel {
         entries = []
         comments = []
         phase = .idle
+        clearListFailure()
         actionError = nil
         conflict = nil
         isLoadingComments = false
@@ -183,6 +188,7 @@ final class WorkItemModel {
         guard let databaseId = databaseId, let session = runtime.workItemSession else {
             entries = []
             phase = .idle
+            clearListFailure()
             renderedDatabaseId = nil
             renderedPrincipal = nil
             return
@@ -220,21 +226,32 @@ final class WorkItemModel {
                 entries: snapshot.entries,
                 fetchedAt: fetchedAt
             )
-            actionError = nil
+            clearListFailure()
             phase = .ready
         } catch {
             guard generation == loadGeneration,
                   databaseId == self.databaseId,
                   runtime.workItemPrincipal == session.principal else { return }
-            // Whatever the cache already shows stays visible; the failure is still reported.
-            let message = Self.message(for: error)
-            actionError = message
+            let accessLost = Self.isDefinitiveAccessLoss(error)
+            let message = accessLost
+                ? "This database is no longer available to your account. Choose another database or sign in again."
+                : "Try again in a moment."
+            // Cached rows remain usable during a temporary read failure. Keep the
+            // stale-data indication quiet, while access loss remains actionable.
+            isShowingCachedItems = !entries.isEmpty
+            listAccessError = accessLost && !entries.isEmpty ? message : nil
+            listFailureDetails = entries.isEmpty ? Self.message(for: error) : nil
             phase = entries.isEmpty ? .failed(message) : .ready
-            // The widget must not keep showing titles for a database the app can no longer read.
-            if Self.isDefinitiveAccessLoss(error) {
+            if accessLost {
                 widgetSnapshot?.workItemListDidLoseAccess(databaseId: databaseId)
             }
         }
+    }
+
+    private func clearListFailure() {
+        listAccessError = nil
+        listFailureDetails = nil
+        isShowingCachedItems = false
     }
 
     /// Clears the previous database's list so its counters never describe another database.
@@ -243,6 +260,7 @@ final class WorkItemModel {
         guard renderedDatabaseId != databaseId || renderedPrincipal != principal else { return }
         renderedDatabaseId = databaseId
         renderedPrincipal = principal
+        clearListFailure()
         clearSearch()
         entries = []
         totalCount = 0
