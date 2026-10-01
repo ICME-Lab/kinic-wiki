@@ -216,6 +216,12 @@ extension HomeNavigationUITests {
         let title = app.textFields["Title"]
         title.tap()
         title.typeText(" unsaved")
+        // XCUI can return before the last keystroke reaches SwiftUI. Capture the
+        // completed input rather than comparing a transient value after relaunch.
+        let inputComplete = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", " unsaved"), object: title
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [inputComplete], timeout: 5), .completed)
         let editedTitle = title.value as? String
         XCTAssertNotEqual(editedTitle, "Plan the next research session")
         app.terminate()
