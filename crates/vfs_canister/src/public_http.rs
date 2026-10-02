@@ -8,7 +8,7 @@ const MAX_ENTRIES: usize = 256;
 const MAX_TEXT: usize = 16_000;
 const MAX_RESPONSE_BYTES: usize = 128_000;
 thread_local! {
-    static ENTRIES: RefCell<BTreeMap<String, HttpCertificationTreeEntry<'static>>> = RefCell::new(BTreeMap::new());
+    static ENTRIES: RefCell<BTreeMap<String, HttpCertificationTreeEntry<'static>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(super) fn reset() {

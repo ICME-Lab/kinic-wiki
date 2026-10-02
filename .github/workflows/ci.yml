@@ -101,6 +101,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          package-manager-cache: false
       - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:cf-config
