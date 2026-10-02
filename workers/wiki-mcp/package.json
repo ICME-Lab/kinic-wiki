@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "wrangler deploy --dry-run --config wrangler.jsonc",
-    "build:private": "wrangler deploy --dry-run --config wrangler.private.jsonc",
-    "build:staging": "wrangler deploy --dry-run --config wrangler.staging.jsonc",
-    "deploy:private": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:private && wrangler deploy --config wrangler.private.jsonc",
-    "deploy:staging": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:staging && wrangler deploy --config wrangler.staging.jsonc",
+    "build": "cf deploy --dry-run",
+    "build:private": "cf deploy --dry-run --mode private",
+    "build:staging": "cf deploy --dry-run --mode staging",
+    "deploy:private": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:private && node ../../scripts/cloudflare/deploy.mjs --mode private",
+    "deploy:staging": "node ../../scripts/staging/check_worker_deploy_source.mjs && pnpm run build:staging && node ../../scripts/cloudflare/deploy.mjs --mode staging",
     "deploy:staging:v5-migration": "node scripts/deploy-v5-migration.mjs staging",
     "deploy:private:v5-migration": "node scripts/deploy-v5-migration.mjs private",
-    "dev": "wrangler dev --config wrangler.jsonc --port 8787 --ip 127.0.0.1",
+    "dev": "cf dev --port 8787 --ip 127.0.0.1",
     "review:smoke": "node scripts/check-submission-cases.mjs",
     "review:seed": "node scripts/seed-review-fixture.mjs",
     "smoke:staging": "node scripts/staging-smoke.mjs",
@@ -27,14 +27,15 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.20.2",
-    "@cloudflare/workers-types": "5.20260804.1",
+    "@cloudflare/workers-types": "5.20260921.1",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
     "ajv": "^8.20.0",
     "js-yaml": "^4.3.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "wrangler": "4.119.0"
+    "wrangler": "4.136.0",
+    "cf": "1.0.0-beta.2"
   },
   "packageManager": "pnpm@11.0.8"
 }

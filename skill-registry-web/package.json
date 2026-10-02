@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --host 127.0.0.1 --port 3000",
-    "build": "npm run typecheck && vite build",
+    "dev": "cf dev",
+    "build": "pnpm run typecheck && vite build",
     "lint": "oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --ignore-pattern dist --ignore-pattern src/routeTree.gen.ts --deny-warnings .",
     "test": "node scripts/check-skill-registry-web.mjs",
     "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
-    "build:worker": "VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai npm run build && node scripts/check-built-client-config.mjs 6emaw-iyaaa-aaaay-aacka-cai && wrangler deploy --dry-run",
-    "preview": "npm run build && vite preview --host 127.0.0.1 --port 3000"
+    "build:worker": "node ../scripts/cloudflare/deploy.mjs --dry-run && node scripts/check-built-client-config.mjs 6emaw-iyaaa-aaaay-aacka-cai",
+    "preview": "pnpm run build && vite preview --host 127.0.0.1 --port 3000"
   },
   "dependencies": {
     "@icp-sdk/auth": "5.0.0",
@@ -30,14 +30,15 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.4.22",
-    "@cloudflare/vite-plugin": "1.44.0",
+    "@cloudflare/vite-plugin": "1.57.0",
     "@vitejs/plugin-react": "6.0.3",
     "oxlint": "1.74.0",
     "postcss": "8.5.23",
     "tailwindcss": "3.4.18",
     "typescript": "7.0.2",
     "vite": "8.1.4",
-    "wrangler": "4.110.0"
+    "wrangler": "4.136.0",
+    "cf": "1.0.0-beta.2"
   },
   "packageManager": "pnpm@11.0.8"
 }

@@ -44,13 +44,13 @@ catalog changes; only newly created intents receive the current fixed amount.
 
 ## Deployment
 
-`wrangler.jsonc` is a local/dev config and intentionally does not bind `payment.kinic.xyz`.
+`cloudflare.config.ts` is a local/dev config and intentionally does not bind `payment.kinic.xyz`.
 
-The committed `wrangler.sandbox.jsonc` is isolated to `kinic-payment-sandbox`, the staging
+The committed `cloudflare.sandbox.ts` is isolated to `kinic-payment-sandbox`, the staging
 VFS canister, a dedicated D1 database name, and dedicated Rate Limiting namespaces. Before
-the first deployment, create the D1 database with Wrangler's `--update-config` and apply both
-migrations remotely. Store the IAP identity PEM and Apple credentials only with
-`wrangler secret put`; never write them to a file in this repository. Apple root fingerprints
+the first deployment, create the D1 database with `pnpm d1:create:sandbox`, record its returned ID in
+`cloudflare.sandbox.ts`, and apply migrations with `cf d1 migrations apply <database-id> --dir migrations`. Store the IAP identity PEM and Apple credentials only with
+`CLOUDFLARE_SECRETS_FILE` on the guarded deploy commands (see [Cloudflare CLI](../../docs/CLOUDFLARE_CLI.md)); never write them to a file in this repository. Apple root fingerprints
 are public trust anchors committed in the Worker configuration.
 
 ```bash
@@ -65,7 +65,7 @@ catalog intentionally exposes only `xyz.kinic.dbcredits.small`.
 Production deploy requires an explicit config:
 
 ```bash
-cp workers/payment/wrangler.production.jsonc.example workers/payment/wrangler.production.jsonc
+cp workers/payment/cloudflare.production.example.ts workers/payment/cloudflare.production.ts
 ```
 
 The production Worker can verify both `Sandbox` and `Production`: TestFlight produces Sandbox
@@ -75,10 +75,10 @@ transaction to report the same allowed environment. Sandbox fulfillment is disab
 production. It may be enabled only for a bounded TestFlight or App Review window, and the production
 guard caps the lifetime Sandbox grant count at 10.
 
-Fill the IAP authority principal, `database_id`, and both Rate Limiting `namespace_id`
+Fill the IAP authority principal, D1 `id`, and both Rate Limiting `namespace`
 placeholders with production IDs. The Worker rejects the PEM at runtime if its derived principal
 does not equal `KINIC_IAP_AUTHORITY_ID`.
-Set secrets with `wrangler secret put` for `KINIC_IAP_AUTHORITY_IDENTITY_PEM`,
+Set secrets with `CLOUDFLARE_SECRETS_FILE` on the guarded deploy commands (see [Cloudflare CLI](../../docs/CLOUDFLARE_CLI.md)) for `KINIC_IAP_AUTHORITY_IDENTITY_PEM`,
 `APP_STORE_ISSUER_ID`, `APP_STORE_KEY_ID`, and `APP_STORE_PRIVATE_KEY_PEM`.
 
 Then deploy with:
@@ -96,7 +96,7 @@ marked approved with the App Store CLI readback timestamp.
 1. Confirm the Paid Apps Agreement is active and approve the recorded `$4.99` price for the
    fixed `2,000,000,000,000` cycle grant.
 2. Create the production D1 database and Rate Limiting namespaces, copy the example config to
-   the ignored `wrangler.production.jsonc`, replace all resource ID placeholders, and apply D1
+   the ignored `cloudflare.production.ts`, replace all resource ID placeholders, and apply D1
    migrations remotely.
 3. Store all four production secrets listed above. Keep the IAP authority identity separate
    from the billing authority.

@@ -39,6 +39,6 @@ pnpm build
 pnpm build:worker
 ```
 
-This app runs on TanStack Start and can be deployed as an independent Cloudflare Worker with `wrangler.jsonc`. It intentionally has no production custom domain; WikiBrowser remains the public `/skills/<database-id>` surface.
+This app runs on TanStack Start and can be deployed as an independent Cloudflare Worker with `cloudflare.config.ts`. It intentionally has no production custom domain; WikiBrowser remains the public `/skills/<database-id>` surface.
 
 `VITE_*` values are embedded into the browser bundle at build time. Wrangler `vars` remain available to Worker runtime code, but do not configure the client build. `pnpm build:worker` therefore supplies the production public IC host and canister ID explicitly, verifies that the canister ID is present in `dist/client`, and then runs Wrangler's dry-run deploy.

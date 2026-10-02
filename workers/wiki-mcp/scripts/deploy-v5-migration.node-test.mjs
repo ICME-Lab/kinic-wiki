@@ -57,7 +57,7 @@ test("reports the explicit retry after the final V5 deployment fails", () => {
       },
       log() {}
     }),
-    /transitional version remains active.*wrangler deploy --config wrangler\.private\.jsonc/us
+    /transitional version remains active.*deploy\.mjs --mode private/us
   );
   assert.equal(calls, total);
 });

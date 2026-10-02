@@ -79,7 +79,7 @@ jobs:
             fi
           }
 
-          js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^crates/vfs_canister/vfs\.did$)'
+          js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
 
           set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
           set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
@@ -93,6 +93,17 @@ jobs:
           set_output payment "($js_workspace|^workers/payment/|^packages/|^\.github/workflows/ci\.yml$)"
           set_output skill_registry_web "($js_workspace|^packages/vfs-candid/|^skill-registry-web/|^wikibrowser/app/skills/|^wikibrowser/scripts/check-skill-registry\.mjs|^skills/)"
           set_output ios '^(mobile/ios/|\.github/workflows/ci\.yml)'
+
+  cloudflare-config-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.0.8 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:cf-config
 
   regression-groups-check:
     runs-on: ubuntu-latest
@@ -235,7 +246,7 @@ jobs:
       - name: Build Cloudflare Worker
         run: pnpm build
       - name: Verify Worker deploy path from clean artifacts
-        run: pnpm exec wrangler deploy --dry-run
+        run: pnpm exec cf deploy --dry-run
 
   wiki-assistant-check:
     needs: changes
