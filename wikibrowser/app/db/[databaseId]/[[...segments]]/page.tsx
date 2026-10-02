@@ -2,14 +2,11 @@
 // What: Server-render public wiki node content and page-level metadata.
 // Why: Crawlers and OGP consumers cannot see VFS content fetched only by the client WikiBrowser shell.
 
-import { cache } from "react";
-import { ServerMarkdownPreview } from "@/components/server-markdown-preview";
-import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
 import { canonicalDatabaseId, hrefForPath } from "@/lib/paths";
 import { databaseRouteBase } from "@/lib/share-links";
-import type { ChildNode, DatabaseSummary, WikiNode } from "@/lib/types";
-import { listChildren, listDatabasesPublic, readNode } from "@/lib/vfs-client";
-import { wikiSeoDescription, wikiSeoNodeSummary, wikiSeoRouteFromSegments, wikiSeoTitle } from "@/lib/wiki-seo";
+import type { ChildNode } from "@/lib/types";
+import { fetchPublicSeoPayload } from "@/lib/public-seo-http";
+import { wikiSeoNodeSummary, wikiSeoRouteFromSegments, type WikiSeoNodeSummary } from "@/lib/wiki-seo";
 
 type WikiDatabasePageProps = {
   params: Promise<{
@@ -18,25 +15,13 @@ type WikiDatabasePageProps = {
   }>;
 };
 
-type PublicNodePayload = {
-  database: DatabaseSummary | null;
-  node: WikiNode | null;
-  folderIndexNode: WikiNode | null;
-  children: ChildNode[];
-};
-
-export const revalidate = 86_400;
+const MAX_SEO_CHILDREN = 100;
 
 export async function generateMetadata({ params }: WikiDatabasePageProps): Promise<Record<string, unknown>> {
   const { databaseId, segments } = await params;
-  const canonicalId = canonicalDatabaseId(databaseId);
-  const route = wikiSeoRouteFromSegments(segments);
-  const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
-  const payload = route.indexable ? await loadPublicNodePayload(canisterId, canonicalId, route.nodePath) : emptyPublicNodePayload(null);
-  const databaseTitle = payload.database?.metadata.name.trim() || canonicalId;
-  const metadataNode = payload.folderIndexNode ?? payload.node;
-  const title = route.indexable ? wikiSeoTitle(databaseTitle, route.nodePath, metadataNode) : `Kinic Wiki: ${databaseTitle}`;
-  const description = route.indexable ? wikiSeoDescription(payload.database, metadataNode, payload.children) : "Use the Kinic Wiki browser tools for search, graph, and help views.";
+  const data = await loadWikiDatabasePageData(databaseId, segments);
+  const { canisterId, databaseId: canonicalId, route, summary } = data;
+  const { title, description } = summary;
   const canonical = route.indexable ? hrefForPath(canisterId, canonicalId, route.nodePath) : databaseRouteBase(canonicalId);
   const imageBase = databaseRouteBase(canonicalId);
   const imageAlt = `${title} link preview`;
@@ -89,24 +74,33 @@ export type WikiDatabasePageData = {
   canisterId: string;
   databaseId: string;
   route: ReturnType<typeof wikiSeoRouteFromSegments>;
-  payload: PublicNodePayload;
+  summary: WikiSeoNodeSummary;
+  hasContent: boolean;
+  children: Pick<ChildNode, "path" | "name">[];
+  childrenTruncated: boolean;
 };
 
 export async function loadWikiDatabasePageData(databaseId: string, segments?: string[]): Promise<WikiDatabasePageData> {
   const canonicalId = canonicalDatabaseId(databaseId);
   const route = wikiSeoRouteFromSegments(segments);
-  if (!route.indexable) return { canisterId: "", databaseId: canonicalId, route, payload: emptyPublicNodePayload(null) };
   const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
-  const payload = await loadPublicNodePayload(canisterId, canonicalId, route.nodePath);
-  return { canisterId, databaseId: canonicalId, route, payload };
+  const payload = route.indexable ? await fetchPublicSeoPayload(canisterId, canonicalId, route.nodePath) : null;
+  const renderNode = payload?.node ?? null;
+  const summary = route.indexable
+    ? wikiSeoNodeSummary(payload?.database ?? null, route.nodePath, renderNode, payload?.children ?? [], canonicalId)
+    : { title: `Kinic Wiki: ${canonicalId}`, description: "Use the Kinic Wiki browser tools for search, graph, and help views.", textExcerpt: "" };
+  // Serialize only the excerpt and visible links, never the complete VFS document.
+  return {
+    canisterId, databaseId: canonicalId, route, summary,
+    hasContent: payload?.hasContent ?? false,
+    children: (payload?.children ?? []).slice(0, MAX_SEO_CHILDREN).map(({ path, name }) => ({ path, name })),
+    childrenTruncated: payload?.childrenTruncated ?? false
+  };
 }
 
 export function WikiDatabaseDocument({ data }: { data: WikiDatabasePageData }) {
-  const { canisterId, databaseId: canonicalId, route, payload } = data;
-  if (!route.indexable) return null;
-  const renderNode = payload.folderIndexNode ?? payload.node;
-  if (!payload.database && !renderNode && payload.children.length === 0) return null;
-  const summary = wikiSeoNodeSummary(payload.database, route.nodePath, renderNode, payload.children);
+  const { canisterId, databaseId: canonicalId, route, summary, children, childrenTruncated } = data;
+  if (!route.indexable || !data.hasContent) return null;
   return (
     <article className="wiki-seo-document markdown-body bg-canvas px-6 py-8 text-ink">
       <header className="mx-auto max-w-3xl border-b border-line pb-6">
@@ -115,19 +109,18 @@ export function WikiDatabaseDocument({ data }: { data: WikiDatabasePageData }) {
         <p className="mt-3 text-base leading-7 text-muted">{summary.description}</p>
       </header>
       <div className="mx-auto max-w-3xl">
-        {renderNode ? (
-          <ServerMarkdownPreview canisterId={canisterId} databaseId={canonicalId} nodePath={renderNode.path} content={summary.markdown} />
-        ) : null}
-        {payload.children.length > 0 ? (
+        {summary.textExcerpt ? <p className="whitespace-pre-wrap break-words">{summary.textExcerpt}</p> : null}
+        {children.length > 0 ? (
           <nav aria-label="Folder contents" className="mt-8 border-t border-line pt-6">
             <h2>Folder contents</h2>
             <ul>
-              {payload.children.map((child) => (
+              {children.map((child) => (
                 <li key={child.path}>
                   <a href={hrefForPath(canisterId, canonicalId, child.path)}>{child.name}</a>
                 </li>
               ))}
             </ul>
+            {childrenTruncated ? <p>Showing the first {children.length} entries. Open this folder in the Wiki browser to see all entries.</p> : null}
           </nav>
         ) : null}
       </div>
@@ -136,11 +129,8 @@ export function WikiDatabaseDocument({ data }: { data: WikiDatabasePageData }) {
 }
 
 export function wikiDatabaseHead(data: WikiDatabasePageData) {
-  const { canisterId, databaseId, route, payload } = data;
-  const metadataNode = payload.folderIndexNode ?? payload.node;
-  const databaseTitle = payload.database?.metadata.name.trim() || databaseId;
-  const title = route.indexable ? wikiSeoTitle(databaseTitle, route.nodePath, metadataNode) : `Kinic Wiki: ${databaseTitle}`;
-  const description = route.indexable ? wikiSeoDescription(payload.database, metadataNode, payload.children) : "Use the Kinic Wiki browser tools for search, graph, and help views.";
+  const { canisterId, databaseId, route, summary } = data;
+  const { title, description } = summary;
   const canonical = route.indexable ? hrefForPath(canisterId, databaseId, route.nodePath) : databaseRouteBase(databaseId);
   const image = `${databaseRouteBase(databaseId)}/opengraph-image`;
   return {
@@ -159,54 +149,5 @@ export function wikiDatabaseHead(data: WikiDatabasePageData) {
       { name: "twitter:image", content: `${databaseRouteBase(databaseId)}/twitter-image` }
     ],
     links: [{ rel: "canonical", href: canonical }]
-  };
-}
-
-const loadPublicNodePayload = cache(async function loadPublicNodePayload(canisterId: string, databaseId: string, nodePath: string): Promise<PublicNodePayload> {
-  if (!canisterId) return emptyPublicNodePayload(null);
-  const [database, node] = await Promise.all([loadPublicDatabase(canisterId, databaseId), loadPublicNode(canisterId, databaseId, nodePath)]);
-  const childPath = node?.kind === "folder" || !node ? nodePath : "";
-  const [folderIndexNode, children] = childPath ? await Promise.all([
-    loadPublicNode(canisterId, databaseId, folderIndexPath(childPath)),
-    loadVisibleChildren(canisterId, databaseId, childPath)
-  ]) : [null, []];
-  return {
-    database,
-    node,
-    folderIndexNode,
-    children
-  };
-});
-
-const loadPublicDatabase = cache(async function loadPublicDatabase(canisterId: string, databaseId: string): Promise<DatabaseSummary | null> {
-  try {
-    return (await listDatabasesPublic(canisterId)).find((database) => database.databaseId === databaseId) ?? null;
-  } catch {
-    return null;
-  }
-});
-
-const loadPublicNode = cache(async function loadPublicNode(canisterId: string, databaseId: string, nodePath: string): Promise<WikiNode | null> {
-  try {
-    return await readNode(canisterId, databaseId, nodePath);
-  } catch {
-    return null;
-  }
-});
-
-const loadVisibleChildren = cache(async function loadVisibleChildren(canisterId: string, databaseId: string, nodePath: string): Promise<ChildNode[]> {
-  try {
-    return visibleChildren(await listChildren(canisterId, databaseId, nodePath), nodePath);
-  } catch {
-    return [];
-  }
-});
-
-function emptyPublicNodePayload(database: DatabaseSummary | null): PublicNodePayload {
-  return {
-    database,
-    node: null,
-    folderIndexNode: null,
-    children: []
   };
 }

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build:probe": "cargo build -p ic-sqlite-vfs-probe --target wasm32-unknown-unknown --release",
+    "build:wiki": "cargo build -p vfs-canister --target wasm32-unknown-unknown --release",
+    "test:public-http": "npm run build:wiki && node --test integration/public-http.test.mjs",
     "test": "npm run build:probe && node scripts/run-tests.mjs"
   },
   "devDependencies": {

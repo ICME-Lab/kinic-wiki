@@ -56,6 +56,11 @@ export default createServerEntry({
       return applyStaging(cacheable);
     }
 
+    if (url.pathname.startsWith("/db/")) {
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "no-store");
+      return applyStaging(new Response(response.body, { status: response.status, statusText: response.statusText, headers }));
+    }
     return applyStaging(response);
   }
 });

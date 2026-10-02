@@ -2,7 +2,6 @@ import { PublicMarkdownPreview } from "@/components/public-markdown-preview";
 import { AppLink as Link } from "@/components/app-link";
 import { publicNodeUrl } from "@/lib/share-links";
 import type { PublicNode } from "@/lib/types";
-import { readPublicNode } from "@/lib/vfs-client";
 
 export type PublicNodePageData = {
   node: PublicNode | null;
@@ -14,6 +13,9 @@ export async function loadPublicNodePageData(publicId: string): Promise<PublicNo
   if (!/^[0-9a-f]{32}$/.test(publicId)) return emptyPageData();
   const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   if (!canisterId) throw new Error("VITE_KINIC_WIKI_CANISTER_ID is required to load public nodes");
+  // This loader is registered on every route; only published-note requests need
+  // the SDK. Keep its crypto initialization out of unrelated article requests.
+  const { readPublicNode } = await import("@/lib/vfs-client");
   const node = await readPublicNode(canisterId, publicId);
   if (!node) return emptyPageData();
   return {

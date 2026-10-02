@@ -277,6 +277,9 @@ importers:
       '@kinic/candid-tools':
         specifier: workspace:*
         version: link:../tools/candid
+      '@mizchi/vlmkit':
+        specifier: 0.23.0
+        version: 0.23.0(@playwright/test@1.61.1)(playwright@1.61.1)
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.61.1
@@ -481,6 +484,37 @@ importers:
         version: 4.119.0(@cloudflare/workers-types@5.20260804.1)(@types/node@24.10.1)
 
 packages:
+
+  '@mizchi/vlmkit@0.23.0':
+    resolution: {integrity: sha512-89hDJHZ8sGX3peUYPK0dsW61kVTWtjunixuC2CXoVPjNgeLqsUmcUQZBWQcOVTNmJUeCc8E+zHh4sruMkkxnOg==}
+    engines: {node: '>=24'}
+    hasBin: true
+    peerDependencies:
+      '@jsquash/webp': ^1
+      '@playwright/test': '>=1.61 <2'
+      playwright: '>=1.61 <2'
+    peerDependenciesMeta:
+      '@jsquash/webp':
+        optional: true
+      '@playwright/test':
+        optional: true
+
+  cac@7.0.0:
+    resolution: {integrity: sha512-tixWYgm5ZoOD+3g6UTea91eow5z6AAHaho3g0V9CNSNb45gM8SmflpAc+GRd1InC4AqN/07Unrgp56Y94N9hJQ==}
+    engines: {node: '>=20.19.0'}
+
+  pixelmatch@7.2.0:
+    resolution: {integrity: sha512-xhcb4yHu9sM/G7foGzoLtXYcC0zHEaOXXjRKhGup0fw78Nf2Tkiapv4EQyMzrbcmQPsllAI7DbFY2UT7PlI9Pg==}
+    hasBin: true
+
+  pngjs@7.0.0:
+    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
+    engines: {node: '>=14.19.0'}
+
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -4556,6 +4590,32 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@mizchi/vlmkit@0.23.0(@playwright/test@1.61.1)(playwright@1.61.1)':
+    dependencies:
+      '@hono/node-server': 2.0.10(hono@4.13.5)
+      cac: 7.0.0
+      hono: 4.13.5
+      pixelmatch: 7.2.0
+      playwright: 1.61.1
+      pngjs: 7.0.0
+      typescript: 6.0.3
+      ws: 8.21.0
+    optionalDependencies:
+      '@playwright/test': 1.61.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  cac@7.0.0: {}
+
+  pixelmatch@7.2.0:
+    dependencies:
+      pngjs: 7.0.0
+
+  pngjs@7.0.0: {}
+
+  typescript@6.0.3: {}
 
   '@alloc/quick-lru@5.2.0': {}
 
