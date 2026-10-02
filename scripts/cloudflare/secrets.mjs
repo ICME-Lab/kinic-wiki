@@ -1,3 +1,4 @@
+import { parseDeployArgs, profileArgs } from "./args.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -13,9 +14,10 @@ export function secretFileNames() {
 }
 
 export function assertWorkerSecrets(projectRoot, worker, required) {
+  const { profile } = parseDeployArgs(process.argv.slice(2));
   const names = secretFileNames();
   if (!required.every(name => names.has(name))) {
-    const listed = JSON.parse(execFileSync("pnpm", ["exec", "cf", "workers", "secrets", "list", "--worker", worker], {
+    const listed = JSON.parse(execFileSync("pnpm", ["exec", "cf", "workers", "secrets", "list", "--worker", worker, ...profileArgs(profile)], {
       cwd: projectRoot, encoding: "utf8"
     }));
     assert.ok(Array.isArray(listed), "cf secret list must return an array");

@@ -6,14 +6,15 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { writeRootConfig, writeWorkerConfig, getWorkerBundleDir, getWorkerConfigPath } from "@cloudflare/build-output-utils";
 
-for (const scenario of ["preserve", "list-fails", "collision", "dry-run"]) {
+for (const scenario of ["preserve", "list-fails", "collision", "dry-run", "mode-equals", "profile-chain", "profile-chain-equals"]) {
   test(`deploy wrapper: ${scenario}`, async () => {
     const root = mkdtempSync(join(tmpdir(), "cf-deploy-test-"));
     try {
       const env = { LABEL: { type: "text", value: "unchanged" } };
-      const worker = { name: "fixture", entrypoint: "index.js", compatibilityDate: "2026-07-15", env };
-      writeFileSync(join(root, "package.json"), '{"type":"module"}');
-      writeFileSync(join(root, "cloudflare.config.ts"), `export default ${JSON.stringify({ worker })}`);
+      const modeTest = scenario === "mode-equals";
+      const worker = { name: modeTest ? "fixture-staging" : "fixture", entrypoint: "index.js", compatibilityDate: "2026-07-15", env };
+      writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module", ...(modeTest ? { devDependencies: { "@cloudflare/vite-plugin": "fixture" } } : {}) }));
+      writeFileSync(join(root, "cloudflare.config.ts"), `export default (ctx) => ({worker: {...${JSON.stringify(worker)}, name: ${modeTest} ? "fixture-" + (ctx.mode ?? "production") : "fixture"}})`);
       await writeRootConfig(root, {}, { isPreview: false });
       await writeWorkerConfig({ root, config: worker, manifest: { type: "complete", mainModule: "index.js", modules: { "index.js": { type: "esm" } } } });
       mkdirSync(getWorkerBundleDir(root), { recursive: true });
@@ -30,7 +31,16 @@ if(args.includes('list')) {
 `, { mode: 0o755 });
       const childEnv = { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}`, SCENARIO: scenario };
       delete childEnv.CLOUDFLARE_SECRETS_FILE;
-      const result = spawnSync(process.execPath, [resolve("scripts/cloudflare/deploy.mjs"), "--prebuilt", "--profile", "fixture", ...(scenario === "dry-run" ? ["--dry-run"] : [])], { cwd: root, env: childEnv, encoding: "utf8" });
+      delete childEnv.KINIC_CF_PROFILE;
+      const chainTest = scenario.startsWith("profile-chain");
+      writeFileSync(join(root, "guard.mjs"), `import { assertWorkerSecrets } from ${JSON.stringify(new URL("./secrets.mjs", import.meta.url).href)}; assertWorkerSecrets(process.cwd(), "fixture", ["OPTIONAL_TOKEN"]);`);
+      // Package scripts run the guard before the upload, not just the wrapper alone.
+      const quote = value => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+      const command = `${quote(process.execPath)} guard.mjs && ${quote(process.execPath)} ${quote(resolve("scripts/cloudflare/deploy.mjs"))} --prebuilt`;
+      const invocation = chainTest
+        ? [resolve("scripts/cloudflare/with-profile.mjs"), command, ...(scenario.endsWith("-equals") ? ["--profile=fixture"] : ["--profile", "fixture"])]
+        : [resolve("scripts/cloudflare/deploy.mjs"), ...(modeTest ? ["--mode=staging"] : ["--prebuilt"]), "--profile=fixture", ...(scenario === "dry-run" ? ["--dry-run"] : [])];
+      const result = spawnSync(process.execPath, invocation, { cwd: root, env: childEnv, encoding: "utf8" });
       assert.ok(existsSync(join(root, "calls.jsonl")), result.stderr);
       const calls = readFileSync(join(root, "calls.jsonl"), "utf8").trim().split('\n').map(JSON.parse);
       if (["list-fails", "collision"].includes(scenario)) {
@@ -41,9 +51,19 @@ if(args.includes('list')) {
         assert.equal(calls.filter(args => args.includes("deploy")).length, 1);
         const config = JSON.parse(readFileSync(getWorkerConfigPath(root), "utf8"));
         assert.deepEqual(config.env.LABEL, env.LABEL);
-        if (scenario === "preserve") {
+        if (scenario !== "dry-run") {
           assert.deepEqual(config.env.OPTIONAL_TOKEN, { type: "secret" });
-          assert.ok(calls[0].includes("fixture"));
+          for (const call of calls.filter(args => args.includes("list") || args.includes("deploy"))) {
+            assert.equal(call[call.indexOf("--profile") + 1], "fixture");
+          }
+          if (chainTest) assert.equal(calls.filter(args => args.includes("list")).length, 2);
+          if (modeTest) {
+            assert.ok(calls.some(args => args.includes("cf-vite") && args.includes("build")));
+            for (const call of calls.filter(args => args.includes("build") || args.includes("deploy"))) {
+              assert.equal(call[call.indexOf("--mode") + 1], "staging");
+              assert.equal(call.includes("production"), false);
+            }
+          }
         } else assert.equal(calls.some(args => args.includes("list")), false);
       }
     } finally { rmSync(root, { recursive: true }); }

@@ -3,16 +3,17 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { loadConfig } from "./config.mjs";
 import { basename } from "node:path";
 import { secretFileNames, preserveSecretBindings } from "./secrets.mjs";
+import { parseDeployArgs, profileArgs } from "./args.mjs";
 import { readBuildOutput } from "@cloudflare/build-output-utils";
 
 secretFileNames();
-const args = ["exec", "cf", "deploy", ...process.argv.slice(2)];
+const parsed = parseDeployArgs(process.argv.slice(2));
+const args = ["exec", "cf", "deploy", ...parsed.args];
 if (process.env.CLOUDFLARE_SECRETS_FILE) args.push("--secrets-file", process.env.CLOUDFLARE_SECRETS_FILE);
-const modeIndex = args.findIndex(arg => arg === "--mode" || arg === "-m");
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
 const usesVite = Boolean(manifest.devDependencies?.["@cloudflare/vite-plugin"]);
-const mode = modeIndex < 0 ? (usesVite ? "production" : undefined) : args[modeIndex + 1];
-if (modeIndex < 0 && usesVite) args.push("--mode", mode);
+const mode = parsed.mode ?? (usesVite ? "production" : undefined);
+if (parsed.mode === undefined && usesVite) args.push("--mode", mode);
 const { worker } = await loadConfig(process.cwd(), mode);
 const buildEnv = { ...process.env };
 for (const [name, binding] of Object.entries(worker.env ?? {})) {
@@ -41,8 +42,7 @@ const { workers } = await readBuildOutput(process.cwd());
 const built = workers.default;
 if (built.config.name !== worker.name) throw new Error("Build output targets a different Worker");
 if (!args.includes("--dry-run")) {
-  const profileIndex = args.indexOf("--profile");
-  const profile = profileIndex < 0 ? [] : ["--profile", args[profileIndex + 1]];
+  const profile = profileArgs(parsed.profile);
   // Fail closed on auth/API errors: an incomplete list could erase live secrets.
   const listed = JSON.parse(execFileSync("pnpm", ["exec", "cf", "workers", "secrets", "list", "--worker", worker.name, ...profile], { encoding: "utf8", env: buildEnv }));
   if (!Array.isArray(listed) || listed.some(x => typeof x.name !== "string")) throw new Error("Invalid secret-name response");

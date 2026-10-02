@@ -13,6 +13,20 @@ pnpm build:worker # WikiBrowser/Skill Registry
 node ../scripts/cloudflare/deploy.mjs --mode staging --dry-run
 ```
 
+Named authentication profiles must be selected before deployment guards run:
+
+```sh
+pnpm deploy:staging --profile kinic-production
+pnpm deploy:production --profile=kinic-production
+```
+
+The package deployment scripts accept `--profile` and share it with all guards and
+upload steps through the internal `KINIC_CF_PROFILE` environment variable. They reject
+other extra options; use the shared `deploy.mjs` directly for build/dry-run options.
+The shared wrapper accepts both `--mode staging` and `--mode=staging` (also `-m`),
+and both profile spellings. Missing or conflicting mode/profile values fail before
+building or contacting Cloudflare.
+
 Package scripts and CI call cf. Vite and Wrangler remain dependencies where cf delegates
 build/dev or the Workers test pool requires them. The retained `wrangler*.jsonc` files
 serve migration parity tests and preserve the original Durable Object migration history.
