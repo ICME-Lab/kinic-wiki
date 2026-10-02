@@ -9,6 +9,7 @@ const DEFAULT_DESCRIPTION = "Browse, search, and query this Kinic Wiki database.
 const MAX_TITLE_LENGTH = 72;
 const MAX_DESCRIPTION_LENGTH = 160;
 const MAX_BODY_CHARS = 8000;
+const MAX_SEO_INPUT_CHARS = 16_000;
 
 export type WikiSeoRoute = {
   indexable: boolean;
@@ -18,7 +19,7 @@ export type WikiSeoRoute = {
 export type WikiSeoNodeSummary = {
   title: string;
   description: string;
-  markdown: string;
+  textExcerpt: string;
 };
 
 export function wikiSeoRouteFromSegments(segments: string[] | undefined): WikiSeoRoute {
@@ -34,7 +35,7 @@ export function wikiSeoTitle(databaseTitle: string, nodePath: string, node: Wiki
   return truncateText(`${nodeTitle} - ${databaseTitle}`, MAX_TITLE_LENGTH);
 }
 
-export function wikiSeoDescription(database: DatabaseSummary | null, node: WikiNode | null, children: ChildNode[]): string {
+export function wikiSeoDescription(database: { metadata: Pick<DatabaseSummary["metadata"], "name" | "description"> } | null, node: Pick<WikiNode, "content" | "metadataJson"> | null, children: Pick<ChildNode, "name" | "path">[]): string {
   if (node) {
     const nodeDescription = descriptionFromNode(node);
     if (nodeDescription) return nodeDescription;
@@ -46,14 +47,54 @@ export function wikiSeoDescription(database: DatabaseSummary | null, node: WikiN
   return truncateText(databaseDescription || DEFAULT_DESCRIPTION, MAX_DESCRIPTION_LENGTH);
 }
 
-export function wikiSeoNodeSummary(database: DatabaseSummary | null, nodePath: string, node: WikiNode | null, children: ChildNode[]): WikiSeoNodeSummary {
-  const databaseTitle = database?.metadata.name.trim() || "Kinic Wiki";
-  const markdown = node ? markdownBody(node.content) : "";
-  return {
-    title: wikiSeoTitle(databaseTitle, nodePath, node),
-    description: wikiSeoDescription(database, node, children),
-    markdown
+export function wikiSeoNodeSummary(database: { metadata: Pick<DatabaseSummary["metadata"], "name" | "description"> } | null, nodePath: string, node: Pick<WikiNode, "content" | "metadataJson"> | null, children: Pick<ChildNode, "name" | "path">[], fallbackTitle = "Kinic Wiki"): WikiSeoNodeSummary {
+  const databaseTitle = database?.metadata.name.trim() || fallbackTitle;
+  if (!node) return {
+    title: wikiSeoTitle(databaseTitle, nodePath, null),
+    description: wikiSeoDescription(database, null, children),
+    textExcerpt: ""
   };
+  const parsed = parseSeoNode(node);
+  return {
+    title: truncateText(`${parsedTitle(parsed, nodePath)} - ${databaseTitle}`, MAX_TITLE_LENGTH),
+    description: parsedDescription(parsed),
+    textExcerpt: plainTextExcerpt(parsed.body, MAX_BODY_CHARS)
+  };
+}
+
+type ParsedSeoNode = {
+  fields: { key: string; value: string }[];
+  metadata: Record<string, unknown> | null;
+  body: string;
+};
+
+// Bound work before parsing; never copy or scan the complete document for SEO.
+function parseSeoNode(node: Pick<WikiNode, "content" | "metadataJson">): ParsedSeoNode {
+  const content = node.content.slice(0, MAX_SEO_INPUT_CHARS);
+  const frontmatter = splitMarkdownFrontmatter(content);
+  // An incomplete frontmatter block is metadata, not a body excerpt.
+  const body = content.startsWith("---\n") && !frontmatter ? "" : (frontmatter?.body ?? content);
+  return {
+    fields: frontmatter?.fields ?? [],
+    metadata: node.metadataJson.length <= MAX_SEO_INPUT_CHARS ? parseMetadataJson(node.metadataJson) : null,
+    body: body.slice(0, MAX_BODY_CHARS)
+  };
+}
+
+function parsedTitle(parsed: ParsedSeoNode, fallbackPath: string): string {
+  return truncateText(
+    frontmatterValue(parsed.fields, ["metadata.title", "title", "name"])
+      ?? metadataValue(parsed.metadata, ["metadata.title", "title", "name"])
+      ?? firstMarkdownHeading(parsed.body)
+      ?? titleFromPath(fallbackPath),
+    MAX_TITLE_LENGTH
+  );
+}
+
+function parsedDescription(parsed: ParsedSeoNode): string {
+  const description = frontmatterValue(parsed.fields, ["description", "summary", "metadata.description", "metadata.summary"])
+    ?? metadataValue(parsed.metadata, ["description", "summary", "metadata.description", "metadata.summary"]);
+  return description ? truncateText(description, MAX_DESCRIPTION_LENGTH) : plainTextExcerpt(parsed.body);
 }
 
 export function titleFromNode(node: WikiNode): string {
@@ -61,14 +102,7 @@ export function titleFromNode(node: WikiNode): string {
 }
 
 function titleFromNodeOrFallbackPath(node: WikiNode, fallbackPath: string): string {
-  const frontmatter = splitMarkdownFrontmatter(node.content);
-  const frontmatterTitle = frontmatterValue(frontmatter?.fields ?? [], ["metadata.title", "title", "name"]);
-  if (frontmatterTitle) return truncateText(frontmatterTitle, MAX_TITLE_LENGTH);
-  const metadataTitle = metadataJsonValue(node.metadataJson, ["metadata.title", "title", "name"]);
-  if (metadataTitle) return truncateText(metadataTitle, MAX_TITLE_LENGTH);
-  const markdownTitle = firstMarkdownHeading(frontmatter ? frontmatter.body : node.content);
-  if (markdownTitle) return truncateText(markdownTitle, MAX_TITLE_LENGTH);
-  return titleFromPath(fallbackPath);
+  return parsedTitle(parseSeoNode(node), fallbackPath);
 }
 
 export function titleFromPath(path: string): string {
@@ -79,22 +113,16 @@ export function titleFromPath(path: string): string {
   return truncateText(decodeReadablePathPart(withoutExtension) || "Knowledge", MAX_TITLE_LENGTH);
 }
 
-export function descriptionFromNode(node: WikiNode): string {
-  const frontmatter = splitMarkdownFrontmatter(node.content);
-  const frontmatterDescription = frontmatterValue(frontmatter?.fields ?? [], ["description", "summary", "metadata.description", "metadata.summary"]);
-  if (frontmatterDescription) return truncateText(frontmatterDescription, MAX_DESCRIPTION_LENGTH);
-  const metadataDescription = metadataJsonValue(node.metadataJson, ["description", "summary", "metadata.description", "metadata.summary"]);
-  if (metadataDescription) return truncateText(metadataDescription, MAX_DESCRIPTION_LENGTH);
-  return plainTextExcerpt(frontmatter ? frontmatter.body : node.content, MAX_DESCRIPTION_LENGTH);
+export function descriptionFromNode(node: Pick<WikiNode, "content" | "metadataJson">): string {
+  return parsedDescription(parseSeoNode(node));
 }
 
 export function markdownBody(content: string): string {
-  const frontmatter = splitMarkdownFrontmatter(content);
-  return (frontmatter ? frontmatter.body : content).slice(0, MAX_BODY_CHARS);
+  return parseSeoNode({ content, metadataJson: "{}" }).body;
 }
 
 export function plainTextExcerpt(markdown: string, maxLength = MAX_DESCRIPTION_LENGTH): string {
-  const text = markdown
+  const text = markdown.slice(0, MAX_BODY_CHARS)
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
@@ -102,7 +130,8 @@ export function plainTextExcerpt(markdown: string, maxLength = MAX_DESCRIPTION_L
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^>\s?/gm, "")
     .replace(/<[^>]+>/g, " ")
-    .replace(/[*_~#>-]+/g, " ")
+    .replace(/[*_~]+/g, "")
+    .replace(/[#>-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return truncateText(text || DEFAULT_DESCRIPTION, maxLength);
@@ -128,8 +157,7 @@ function frontmatterValue(fields: { key: string; value: string }[], keys: string
   return null;
 }
 
-function metadataJsonValue(metadataJson: string, keys: string[]): string | null {
-  const metadata = parseMetadataJson(metadataJson);
+function metadataValue(metadata: Record<string, unknown> | null, keys: string[]): string | null {
   if (!metadata) return null;
   for (const key of keys) {
     const value = valueAtDottedKey(metadata, key);

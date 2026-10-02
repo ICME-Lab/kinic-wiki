@@ -269,6 +269,228 @@ fn test_http_get(url: &str) -> HttpRequest {
 }
 
 #[test]
+fn public_http_certifies_fresh_bounded_payload_and_invalidates_after_write() {
+    install_test_service();
+    super::public_http::reset();
+    ensure_parent_folders("/Knowledge/public.md");
+    let write = |content: String| {
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: "/Knowledge/public.md".into(),
+            kind: NodeKind::File,
+            content,
+            metadata_json: "{}".into(),
+            expected_etag: super::read_node("default".into(), "/Knowledge/public.md".into())
+                .unwrap()
+                .map(|node| node.etag),
+        })
+        .expect("write succeeds")
+    };
+    write(format!("# Original\n{}TAILSENTINEL", "あ".repeat(20_000)));
+    let url = "/api/wiki-seo/default/Knowledge/public.md";
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(true));
+    let registered = super::http_request_update(test_http_get(url));
+    assert_eq!(registered.status_code, 200);
+    assert_eq!(registered.upgrade, Some(false));
+    assert!(
+        registered
+            .headers
+            .iter()
+            .any(|(key, value)| key == "Cache-Control" && value == "no-store")
+    );
+    let json: serde_json::Value = serde_json::from_slice(&registered.body).unwrap();
+    assert_eq!(
+        json["node"]["content"].as_str().unwrap().chars().count(),
+        16_000
+    );
+    assert!(
+        !String::from_utf8(registered.body.clone())
+            .unwrap()
+            .contains("TAILSENTINEL")
+    );
+    assert_eq!(http_request(test_http_get(url)).body, registered.body);
+    let old_root = super::certified_http_tree().root_hash();
+    // A second URL must coexist with the first proof.
+    super::http_request_update(test_http_get("/api/wiki-seo/default/Knowledge"));
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(false));
+    write("# Changed\nNew body".into());
+    assert_ne!(old_root, super::certified_http_tree().root_hash());
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(true));
+    let new = super::http_request_update(test_http_get(url));
+    assert!(String::from_utf8(new.body).unwrap().contains("New body"));
+    // Upgrade starts with no derived proofs; canonical content remains readable.
+    super::public_http::reset();
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(true));
+    assert!(
+        String::from_utf8(super::http_request_update(test_http_get(url)).body)
+            .unwrap()
+            .contains("New body")
+    );
+}
+
+#[test]
+fn public_http_preserves_proofs_for_failed_auth_unrelated_updates_and_other_databases() {
+    install_test_service();
+    super::public_http::reset();
+    let url = "/api/wiki-seo/default/Knowledge";
+    super::http_request_update(test_http_get(url));
+    let root = super::certified_http_tree().root_hash();
+    super::with_service(|service| service.expire_voice_reservations(1_700_000_100_000)).unwrap();
+    assert_eq!(root, super::certified_http_tree().root_hash());
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(false));
+
+    // A rejected authorization must not change the certified root.
+    super::set_test_caller_principal_for_test(candid::Principal::management_canister());
+    assert!(super::revoke_database_access("default".into(), "2vxsx-fae".into()).is_err());
+    assert!(
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: "/Knowledge/denied.md".into(),
+            kind: NodeKind::File,
+            content: "Denied".into(),
+            metadata_json: "{}".into(),
+            expected_etag: None,
+        })
+        .is_err()
+    );
+    super::set_test_caller_principal_for_test(candid::Principal::anonymous());
+    assert_eq!(root, super::certified_http_tree().root_hash());
+
+    super::with_service(|service| service.create_database("other", "2vxsx-fae", 1)).unwrap();
+    let other_url = "/api/wiki-seo/other/Knowledge";
+    super::http_request_update(test_http_get(other_url));
+    super::rename_database(vfs_types::RenameDatabaseRequest {
+        database_id: "other".into(),
+        name: "Renamed".into(),
+    })
+    .unwrap();
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(false));
+    assert_eq!(http_request(test_http_get(other_url)).upgrade, Some(true));
+}
+
+#[test]
+fn public_http_fits_escaped_unicode_and_long_child_links_without_losing_the_article() {
+    install_test_service();
+    super::public_http::reset();
+    ensure_parent_folders("/Knowledge/wide/index.md");
+    let metadata = serde_json::json!({
+        "title": "記事タイトル", "metadata": {"description": "説明😀".repeat(10_000)},
+        "unused": "x".repeat(20_000)
+    })
+    .to_string();
+    write_node(WriteNodeRequest {
+        database_id: "default".into(),
+        path: "/Knowledge/wide/index.md".into(),
+        kind: NodeKind::File,
+        content: format!("# Article\n{}", "😀\u{1}\\\"".repeat(10_000)),
+        metadata_json: metadata,
+        expected_etag: None,
+    })
+    .unwrap();
+    for index in 0..100 {
+        write_node(WriteNodeRequest {
+            database_id: "default".into(),
+            path: format!("/Knowledge/wide/{index:03}-{}.md", "長".repeat(240)),
+            kind: NodeKind::File,
+            content: "Child".into(),
+            metadata_json: "{}".into(),
+            expected_etag: None,
+        })
+        .unwrap();
+    }
+    let response =
+        super::http_request_update(test_http_get("/api/wiki-seo/default/Knowledge/wide"));
+    assert_eq!(response.status_code, 200);
+    assert!(response.body.len() <= 128_000);
+    let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(
+        payload["node"]["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("# Article")
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_str(payload["node"]["metadataJson"].as_str().unwrap()).unwrap();
+    assert_eq!(metadata["title"], "記事タイトル");
+    assert!(metadata.get("unused").is_none());
+    assert_eq!(payload["childrenTruncated"], true);
+    let links = payload["children"].as_array().unwrap();
+    assert!(!links.is_empty() && links.len() < 100);
+    for link in links {
+        assert!(
+            super::read_node("default".into(), link["path"].as_str().unwrap().into())
+                .unwrap()
+                .is_some()
+        );
+        assert!(link["name"].as_str().unwrap().ends_with(".md"));
+    }
+}
+
+#[test]
+fn public_http_never_uses_gateway_caller_authority_and_revocation_removes_proof() {
+    install_test_service();
+    super::public_http::reset();
+    let owner = "owner-principal";
+    super::with_service(|service| {
+        service.create_database("private_http", owner, 1)?;
+        Ok(())
+    })
+    .unwrap();
+    let url = "/api/wiki-seo/private_http/Knowledge";
+    assert_eq!(
+        super::http_request_update(test_http_get(url)).status_code,
+        404
+    );
+    super::with_unmetered_update("test_grant", None, |service, _, _| {
+        service.grant_database_access(
+            "private_http",
+            owner,
+            "2vxsx-fae",
+            vfs_types::DatabaseRole::Reader,
+            2,
+        )
+    })
+    .unwrap();
+    assert_eq!(http_request(test_http_get(url)).upgrade, Some(true));
+    assert_eq!(
+        super::http_request_update(test_http_get(url)).status_code,
+        200
+    );
+    super::with_unmetered_update("test_revoke", None, |service, _, _| {
+        service.revoke_database_access("private_http", owner, "2vxsx-fae")
+    })
+    .unwrap();
+    assert_eq!(
+        super::http_request_update(test_http_get(url)).status_code,
+        404
+    );
+    assert_eq!(http_request(test_http_get(url)).status_code, 404);
+}
+
+#[test]
+fn public_http_rejects_malformed_paths_and_preserves_static_certificates() {
+    install_test_service();
+    super::public_http::reset();
+    for path in [
+        "/api/wiki-seo/default/%GG",
+        "/api/wiki-seo/default/%FF",
+        "/api/wiki-seo/default/Knowledge/%2e%2e/private",
+        "/api/wiki-seo/default/Knowledge/%00",
+    ] {
+        assert_eq!(http_request(test_http_get(path)).status_code, 400);
+    }
+    super::http_request_update(test_http_get("/api/wiki-seo/default/Knowledge"));
+    let static_response = http_request(test_http_get(II_APP_METADATA_PATH));
+    assert_eq!(static_response.status_code, 200);
+    assert!(
+        static_response
+            .headers
+            .iter()
+            .any(|(name, _)| name == CERTIFICATE_EXPRESSION_HEADER_NAME)
+    );
+}
+
+#[test]
 fn canister_search_respects_prefix_and_hides_deleted_nodes() {
     install_test_service();
 

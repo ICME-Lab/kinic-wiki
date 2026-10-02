@@ -30,9 +30,9 @@ The expected controllers are the default principal above and the production reco
 lqfvd-m7ihy-e5dvc-gngvr-blzbt-pupeq-6t7ua-r7v4p-bvqjw-ea7gl-4qe
 ```
 
-The authoritative canister mapping is `.icp/data/mappings/staging.ids.json`. The Worker configuration is `wikibrowser/wrangler.jsonc`, and the canister initialization and deploy guard are in `scripts/staging/deploy_wiki.sh`.
+The authoritative canister mapping is `.icp/data/mappings/staging.ids.json`. The Worker configuration is `wikibrowser/cloudflare.config.ts`, and the canister initialization and deploy guard are in `scripts/staging/deploy_wiki.sh`.
 
-The staging Browser Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`, and the staging Generator only through the same command in `workers/wiki-generator/`. Both commands verify the fixed Source Capture database boundary and required secrets before a dry run and deployment. The staging MCP Worker must be deployed only through `pnpm deploy:staging` from `workers/wiki-mcp/`; use its separate `pnpm deploy:staging:v4-migration` command only for the one-time V3-to-V4 Durable Object migration. These commands fetch `origin/main`, refuse a HEAD that does not contain the fetched commit, reject unresolved conflicts, and verify the public-node publication files before Wrangler runs. A direct `wrangler deploy` bypasses these checks and must not be used for staging deployment.
+The staging Browser Worker must be deployed only through `pnpm deploy:staging` from `wikibrowser/`, and the staging Generator only through the same command in `workers/wiki-generator/`. Both commands verify the fixed Source Capture database boundary and required secrets before a dry run and deployment. The staging MCP Worker must be deployed only through `pnpm deploy:staging` from `workers/wiki-mcp/`; use its separate `pnpm deploy:staging:v5-migration` command only for the one-time V4-to-V5 Durable Object migration. These commands fetch `origin/main`, refuse a HEAD that does not contain the fetched commit, reject unresolved conflicts, and verify the public-node publication files before cf runs. A direct `cf deploy` bypasses these checks and must not be used for staging deployment.
 
 ## Isolation and Safety
 
@@ -114,13 +114,13 @@ Apply the three Generator migrations once when creating the environment:
 
 ```bash
 cd workers/wiki-generator
-pnpm wrangler d1 migrations apply DB --env staging --remote
+pnpm exec cf d1 migrations apply 0fb15a11-05da-4afd-b306-e3b5b0af582a --dir migrations
 ```
 
 Inspect the resolved Browser bindings without deploying:
 
 ```bash
-CLOUDFLARE_ENV=staging pnpm wrangler deploy --dry-run
+pnpm exec cf deploy --mode staging --dry-run
 ```
 
 The dry run must show the staging canister, staging KV/R2/Queue resources, the staging Generator URL and dedicated database boundary, and no production custom-domain route. Deploy the same staging configuration:
@@ -160,7 +160,7 @@ Deploy the staging MCP Worker from `workers/wiki-mcp/`. For an environment still
 
 ```bash
 cd workers/wiki-mcp
-KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging:v4-migration
+KINIC_STAGING_DEPLOY_ALLOW_DIRTY=1 pnpm deploy:staging:v5-migration
 ```
 
 The command dry-runs both configurations, deploys a transitional version without the `MCP_AUTH_STATE` binding, and immediately deploys V4. Authenticated MCP requests can return `503` during that short interval, and all V3 OAuth sessions become invalid. If the final phase fails, do not roll back to V3; fix forward with the retry command printed by the script.
@@ -214,7 +214,7 @@ Check the deployed Worker version:
 
 ```bash
 cd wikibrowser
-pnpm wrangler deployments list --env staging
+pnpm exec cf workers deployments list --worker kinic-wiki-browser-staging
 ```
 
 ## Rollback
@@ -223,7 +223,8 @@ Cloudflare Worker deployments are versioned. If the Worker fails after deploymen
 
 ```bash
 cd wikibrowser
-pnpm wrangler rollback --env staging <version-id>
+pnpm exec cf workers deployments create --worker kinic-wiki-browser-staging \
+  --strategy percentage --versions '[{"version_id":"<version-id>","percentage":100}]'
 ```
 
 Do not roll the canister back to an older Wasm after a schema migration. Migrations are forward-only in this repository, and an older module may not understand the upgraded stable state. Fix forward and deploy a new compatible Wasm instead.

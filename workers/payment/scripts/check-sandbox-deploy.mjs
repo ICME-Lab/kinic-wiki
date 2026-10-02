@@ -1,5 +1,6 @@
+import { assertWorkerSecrets } from "../../../scripts/cloudflare/secrets.mjs";
+import { loadWorkerConfig } from "../../../scripts/cloudflare/config.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -48,21 +49,9 @@ export function validateSandboxConfig(config, { requireProvisioned = false } = {
 }
 
 function assertSandboxSecrets() {
-  const result = spawnSync(
-    "wrangler",
-    ["secret", "list", "--config", "wrangler.sandbox.jsonc", "--format", "json"],
-    { cwd: paymentRoot, encoding: "utf8" }
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const names = new Set(JSON.parse(result.stdout).map((secret) => secret.name));
-  for (const required of [
-    "KINIC_IAP_AUTHORITY_IDENTITY_PEM",
-    "APP_STORE_ISSUER_ID",
-    "APP_STORE_KEY_ID",
-    "APP_STORE_PRIVATE_KEY_PEM"
-  ]) {
-    assert.ok(names.has(required), `missing sandbox Worker secret: ${required}`);
-  }
+  assertWorkerSecrets(paymentRoot, "kinic-payment-sandbox", [
+    "KINIC_IAP_AUTHORITY_IDENTITY_PEM", "APP_STORE_ISSUER_ID", "APP_STORE_KEY_ID", "APP_STORE_PRIVATE_KEY_PEM"
+  ]);
 }
 
 function runGit(args) {
@@ -85,7 +74,7 @@ function assertGitReady() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const config = JSON.parse(readFileSync(join(paymentRoot, "wrangler.sandbox.jsonc"), "utf8"));
+  const config = await loadWorkerConfig(paymentRoot, "sandbox");
   const configOnly = process.argv.includes("--config-only");
   validateSandboxConfig(config, { requireProvisioned: !configOnly });
   if (!configOnly) {

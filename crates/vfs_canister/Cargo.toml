@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-canbench-rs = ["dep:canbench-rs", "dep:serde_json"]
+canbench-rs = ["dep:canbench-rs"]
 
 [dependencies]
 canbench-rs = { version = "0.4.1", optional = true }
@@ -16,7 +16,7 @@ ic-cdk = "0.20.0"
 ic-cdk-timers = "1.0.0"
 ic-http-certification = "3.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.145", optional = true }
+serde_json = "1.0.145"
 vfs-runtime = { path = "../vfs_runtime" }
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
 

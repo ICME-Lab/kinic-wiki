@@ -68,7 +68,7 @@ overrides:
   postcss: 8.5.23
   qs: 6.16.0
   sharp: 0.35.4
-  'kinic-wiki-generator>wrangler': 4.110.0
-  'kinic-wiki-mcp>wrangler': 4.119.0
+  'kinic-wiki-generator>wrangler': 4.136.0
+  'kinic-wiki-mcp>wrangler': 4.136.0
   undici: 7.29.1
   ws: 8.21.0

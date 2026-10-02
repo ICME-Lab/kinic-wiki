@@ -3,7 +3,6 @@
 // Why: Crawlers need explicit entry points before they can follow server-rendered wiki node links.
 
 import { publicDatabasePath } from "@/lib/share-links";
-import { listDatabasesPublic } from "@/lib/vfs-client";
 
 const SITE_ORIGIN = "https://wiki.kinic.xyz";
 const STATIC_PATHS = [
@@ -35,6 +34,9 @@ export default async function sitemap(): Promise<SitemapEntry[]> {
   const canisterId = import.meta.env.VITE_KINIC_WIKI_CANISTER_ID ?? "";
   if (!canisterId) return staticEntries;
   try {
+    // The router imports this handler for every request. Load the SDK only when
+    // the sitemap itself is requested, not when serving an article's SEO HTML.
+    const { listDatabasesPublic } = await import("@/lib/vfs-client");
     const databases = await listDatabasesPublic(canisterId);
     const databaseEntries = databases
       .filter((database) => database.status === "active")

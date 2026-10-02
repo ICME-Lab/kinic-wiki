@@ -21,7 +21,7 @@ const { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } 
 const {
   activePublicDatabases,
   databaseLinkPreviewImageKey: generatedDatabaseLinkPreviewImageKey,
-  wranglerObjectPutArgs
+  cfObjectUploadArgs
 } = await import("./generate-link-preview-images.mjs");
 const {
   LINK_PREVIEW_IMAGE_CACHE_CONTROL,
@@ -191,7 +191,7 @@ assert.equal(existsSync(openGraphImagePath), false);
 assert.equal(existsSync(twitterImagePath), false);
 assert.match(linkPreviewGeneratorSource, /@vercel\/og/);
 assert.match(linkPreviewGeneratorSource, /ImageResponse/);
-assert.match(linkPreviewGeneratorSource, /wranglerObjectPutArgs/);
+assert.match(linkPreviewGeneratorSource, /cfObjectUploadArgs/);
 assert.doesNotMatch(`${homePageSource}\n${databaseOpenGraphImageSource}\n${databaseTwitterImageSource}`, /next\/og|ImageResponse/);
 assert.match(databaseLayoutSource, /wikiDatabaseHead/);
 assert.match(databaseLayoutSource, /<div className="wiki-seo-region">/);
@@ -215,20 +215,9 @@ assert.deepEqual(
   [{ databaseId: "db_active", title: "Active DB", description: "Public database" }]
 );
 assert.equal(generatedDatabaseLinkPreviewImageKey(" db alpha "), "db-link-preview/v1/db%20alpha.png");
-assert.deepEqual(wranglerObjectPutArgs("bucket", "db-link-preview/v1/db_alpha.png", "/tmp/db_alpha.png"), [
-  "exec",
-  "wrangler",
-  "r2",
-  "object",
-  "put",
-  "bucket/db-link-preview/v1/db_alpha.png",
-  "--remote",
-  "--file",
-  "/tmp/db_alpha.png",
-  "--content-type",
-  "image/png",
-  "--cache-control",
-  "public, max-age=300, s-maxage=86400"
+assert.deepEqual(cfObjectUploadArgs("bucket", "db-link-preview/v1/db_alpha.png", "/tmp/db_alpha.png"), [
+  "exec", "cf", "r2", "buckets", "objects", "upload", "db-link-preview/v1/db_alpha.png",
+  "--bucket-name", "bucket", "--file", "/tmp/db_alpha.png", "--content-type", "image/png"
 ]);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);

@@ -845,6 +845,7 @@ service : (CyclesBillingConfig) -> {
   graph_links : (GraphLinksRequest) -> (Result_18) query;
   graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_18) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
+  http_request_update : (HttpRequest) -> (HttpResponse);
   icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
   icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
       Icrc21ConsentMessageResponse,

@@ -1,3 +1,4 @@
+import { readBuildOutput } from "@cloudflare/build-output-utils";
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,9 +8,10 @@ const expectedCanisterId = process.argv[2]?.trim();
 assert.ok(expectedCanisterId, "expected canister ID argument is required");
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const clientDirectory = path.join(packageRoot, "dist/client");
+const { workers } = await readBuildOutput(packageRoot);
+const clientDirectory = workers.default.assetsDir;
 const assets = await clientAssetFiles(clientDirectory);
-assert.ok(assets.length > 0, "dist/client does not contain any built client assets");
+assert.ok(assets.length > 0, "cf output does not contain any built client assets");
 
 let configuredAsset = null;
 for (const asset of assets) {

@@ -40,11 +40,11 @@ VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai
 Query Q&A uses `DEEPSEEK_API_KEY` only in the server runtime. Store it in `wikibrowser/.env.local` for local runs. For production, set it as a Cloudflare Worker secret:
 
 ```bash
-pnpm exec wrangler secret put DEEPSEEK_API_KEY
-pnpm exec wrangler kv namespace create QUERY_ANSWER_RATE_LIMIT
+CLOUDFLARE_SECRETS_FILE=/absolute/path/outside-repo/browser-secrets.json pnpm deploy
+pnpm exec cf kv namespaces create --title QUERY_ANSWER_RATE_LIMIT
 ```
 
-Copy the returned KV namespace id into the `QUERY_ANSWER_RATE_LIMIT` binding in `wrangler.jsonc` before deploy. Never expose the API key through a `VITE_*` variable.
+Copy the returned KV namespace id into the `QUERY_ANSWER_RATE_LIMIT` binding in `cloudflare.config.ts` before deploy. Never expose the API key through a `VITE_*` variable.
 
 Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic counter, so the limit is a practical abuse throttle, not an exact quota under concurrent requests.
 
@@ -214,7 +214,7 @@ Both variables are public browser bundle values. Set them as Cloudflare build va
 CLI deploy from this directory:
 
 ```bash
-pnpm wrangler whoami
+pnpm exec cf auth whoami
 pnpm deploy:production
 ```
 
@@ -236,3 +236,129 @@ pnpm smoke:public -- --base-url https://<deployment>.workers.dev --database-id <
 ```
 
 `--path` must point to an existing file node on the mainnet canister.
+
+## Wiki article CPU validation
+
+The `/db/` SEO document uses a bounded text excerpt, while the interactive Wiki browser
+continues to render Markdown. SEO parsing examines at most 16,000 input characters;
+the body is limited to 8,000 characters and folder navigation to 100 entries. The
+loader serializes this summary instead of the complete VFS node. The database route
+renders only the SEO document and a loading placeholder on the server. `ClientWikiBrowser`
+uses TanStack `ClientOnly` and React `lazy` so the interactive browser/editor mounts
+after hydration; its controls keep the same client behavior. Sitemap and published-note
+loaders also import the ICP SDK on demand, avoiding crypto initialization on unrelated
+article requests. HTML and node content
+are not cached between requests, and `/db/` responses use `Cache-Control: no-store`.
+SEO reads use the verifying `https://<canister>.icp0.io/api/wiki-seo/<database>/<path>`
+HTTP gateway. The SSR Worker does not use HttpAgent or verify ICP query signatures
+for these reads; authenticated and browser-side VFS operations remain unchanged.
+Titles, canonical URLs, OGP metadata, and
+folder links remain in the initial HTML; body Markdown links and formatting do not.
+
+Local Miniflare/workerd verification uses the installed Wrangler runtime:
+
+```bash
+node scripts/check-wiki-miniflare.mjs
+# Build the actual Worker with the intended public canister, then include live reads:
+VITE_WIKI_IC_HOST=https://icp0.io \
+VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai \
+VITE_II_DERIVATION_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io \
+pnpm exec vite build
+node scripts/check-wiki-miniflare.mjs --gateway-fixture
+# After the matching Canister endpoint has been deployed:
+node scripts/check-wiki-miniflare.mjs --live
+```
+
+The default test bundles the actual page loader, SEO helpers, and React document into
+a fixture Worker, replacing only HTTP payload reads with synthetic data. It checks seven
+cases with 20 sequential requests and 20 requests in batches of five, then tests
+public-access revocation and browser-only routes. This fixture does not test ICP
+transport or the application router. `--gateway-fixture` also checks the complete
+application router and SSR with synthetic HTTP responses and rejects ICP query
+subrequests. `--live` runs the complete built
+application against public canister data through the verifying gateway,
+and checks 40 article requests plus missing-database and browser-only responses.
+It writes `outputs/wiki-cpu/miniflare/report.json` and `live.cpuprofile` at the repository
+root. Miniflare needs local listening ports; live reads also need internet access
+and inspector port 9235. Reported elapsed times and sampled profiles are diagnostics,
+not hosted Workers CPU measurements or proof of meeting the 10ms free-plan limit.
+
+The Canister regenerates each public JSON payload from canonical storage and always
+checks anonymous reader access. It retains at most 256 URL certification entries
+(hashes, not bodies); authorized node mutations and changes to database metadata/access remove only
+that database's entries before state can change. Rejected authorization, other
+databases' edits and unrelated billing/voice timers preserve proofs. Account deletion
+invalidates owned databases, and ledger/IAP activation invalidates the affected database.
+Updates that pass authorization but later fail may conservatively invalidate the target;
+they never evict unrelated databases.
+Initialization and upgrades restore the static HTTP root; page proofs start empty.
+An uncatalogued response requests a gateway update call to register its current hash.
+Subsequent queries return a version-2 HTTP witness. Updates may therefore add latency
+and Canister execution costs to the first request, including after proof invalidation.
+The response contains at most 16,000 Unicode characters of node content, selected
+SEO metadata fields encoded as valid JSON, 100 child links, and 128,000 JSON bytes.
+Text is bounded by its escaped JSON byte size. Child links keep their full paths;
+links that do not fit the remaining byte budget are omitted with `childrenTruncated`.
+Size pressure shortens the response instead of producing a 404. Both payload and HTML
+use `no-store`.
+
+Deploy the Canister endpoint before deploying this Worker. The Worker deliberately
+does not fall back to unverified responses or the old SDK fetch path. An unavailable
+gateway or an old Canister version produces the browser shell without SEO article
+content, so rollout must verify article presence before proceeding. The initial
+response registers a proof via consensus; warm responses are verified by the HTTP
+gateway. This moves verification out of the Worker rather than disabling it globally.
+
+After building the production-configured Worker above, install the existing
+`pocketic-tests` dependencies and run its `test:public-http` script with
+`POCKET_IC_BIN` pointing to a compatible PocketIC binary. The isolated integration
+test installs the actual Wasm, exercises cold and certified warm HTTP responses,
+passes 40 requests through the complete Miniflare Worker and real local gateway,
+and verifies content updates, an upgrade preserving canonical storage, anonymous
+access revocation, and account deletion. It advances the real Wasm timer past 60 seconds
+and checks that denied writes and another database's activation/rename preserve warm
+certificates. A folder with 100 long Japanese names exercises the byte budget through
+the gateway and complete Worker. It independently checks the BLS certificate, certified root,
+URL expression path and response hash, and rejects modified bodies, witnesses and
+the wrong Canister ID. It creates no remote databases and does not touch an existing
+local network. `POCKETIC_TEST_RESOLVE_FROM` can point to a package manifest when
+the test dependencies are installed in a separate directory.
+
+Before production rollout, use an anonymous-readable **staging** database with cases
+covering an ordinary article, a long article, tables/links, a folder with over 100
+children, a missing node, and a non-public database. Use only synthetic public data.
+Do not make an existing private database public for this test. The missing/private
+cases should specify `expectArticle: false` only if they produce no article under
+the existing route behavior; a missing node in a listed database can still show a
+database heading.
+
+Create a local cases JSON file with 1–6 cases:
+
+```json
+[
+  { "name": "ordinary", "path": "/db/TEST_DB/Knowledge/note.md", "expectArticle": true, "status": 200 },
+  { "name": "private", "path": "/db/PRIVATE_TEST_DB/Knowledge/note.md", "expectArticle": false, "status": 200 }
+]
+```
+
+With authenticated `cf` and Workers invocation logging enabled, run from this directory:
+
+```bash
+node scripts/check-wiki-cpu.mjs \
+  --origin https://kinic-wiki-browser-staging.hude.workers.dev \
+  --worker kinic-wiki-browser-staging \
+  --cases /absolute/path/to/cases.json > /absolute/path/to/cpu-report.json
+```
+
+Each case receives 20 sequential requests and 20 requests in batches of five. The
+gate requires all invocation logs without sampling, the expected HTML/status,
+`no-store`, CPU p95 below 8ms, and no non-`ok` outcomes. CPU comes from Workers Logs,
+not HTTP elapsed time. Missing telemetry fails the gate; `--report-only` emits a
+baseline report without enforcing its exit status. Readable probe markers avoid
+opaque query values being redacted in logs.
+
+Keep production rollout on hold if this gate fails. Profile remaining costs with
+the local Worker inspector without disabling signature verification. After rollout,
+compare a complete 24-hour window with the preceding window: CPU exceedance count,
+exceedance rate per invocation, and 503 count. Target at least a 90% reduction in
+the CPU exceedance rate. Local renderer benchmarks alone do not meet this gate.

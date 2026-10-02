@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "cf-typegen": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts",
-    "cf-typecheck": "wrangler types --include-runtime false --env-interface Env src/worker-configuration.d.ts --check",
-    "deploy": "pnpm run build && wrangler deploy",
-    "deploy:staging": "node ../../scripts/staging/check_worker_deploy_source.mjs && node scripts/check-staging-deploy.mjs && CLOUDFLARE_ENV=staging pnpm run build && CLOUDFLARE_ENV=staging wrangler deploy --env staging --dry-run && CLOUDFLARE_ENV=staging wrangler deploy --env staging",
-    "dev": "wrangler dev --test-scheduled",
+    "cf-typegen": "node ../../scripts/cloudflare/types.mjs",
+    "cf-typecheck": "node ../../scripts/cloudflare/types.mjs --check",
+    "deploy": "node ../../scripts/cloudflare/with-profile.mjs 'pnpm run build && node ../../scripts/cloudflare/deploy.mjs'",
+    "deploy:staging": "node ../../scripts/cloudflare/with-profile.mjs 'node ../../scripts/staging/check_worker_deploy_source.mjs && node scripts/check-staging-deploy.mjs && node ../../scripts/cloudflare/deploy.mjs --mode staging --dry-run && node ../../scripts/cloudflare/deploy.mjs --mode staging'",
+    "dev": "cf dev --test-scheduled",
     "test": "node scripts/check-candid-drift.mjs && tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "typecheck": "tsc --noEmit",
@@ -24,16 +24,17 @@
     "satori": "0.29.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.44.0",
+    "@cloudflare/vite-plugin": "1.57.0",
     "@cloudflare/vitest-pool-workers": "0.20.2",
-    "@cloudflare/workers-types": "4.20260702.1",
+    "@cloudflare/workers-types": "5.20260921.1",
     "@kinic/candid-tools": "workspace:*",
     "@types/node": "24.10.1",
     "@types/react": "19.2.7",
     "typescript": "7.0.2",
     "vite": "8.1.4",
     "vitest": "4.1.11",
-    "wrangler": "4.110.0"
+    "wrangler": "4.136.0",
+    "cf": "1.0.0-beta.2"
   },
   "pnpm": {
     "overrides": {

@@ -217,7 +217,7 @@ The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral 
 
 ## Configuration
 
-Public search uses `wrangler.jsonc`; Private production uses `wrangler.private.jsonc`; Private staging uses `wrangler.staging.jsonc`. Each Private deployment has its own Worker, Durable Object namespace, rate-limit namespace, and encryption key.
+`cloudflare.config.ts` selects public search by default, Private production with `--mode private`, and Private staging with `--mode staging`. Each Private deployment has its own Worker, Durable Object namespace, rate-limit namespace, and encryption key.
 
 - public search and Private production: `KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai`
 - Private staging: `KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai`
@@ -244,8 +244,8 @@ Cloudflare custom domains:
 Before deploying either Private Worker, create a separate 32-byte random value and store its base64/base64url form as a secret:
 
 ```bash
-pnpm --dir workers/wiki-mcp exec wrangler secret put MCP_KEY_ENCRYPTION_KEY --config wrangler.private.jsonc
-pnpm --dir workers/wiki-mcp exec wrangler secret put MCP_KEY_ENCRYPTION_KEY --config wrangler.staging.jsonc
+CLOUDFLARE_SECRETS_FILE=/absolute/path/outside-repo/private-mcp-secrets.json pnpm --dir workers/wiki-mcp deploy:private
+CLOUDFLARE_SECRETS_FILE=/absolute/path/outside-repo/staging-mcp-secrets.json pnpm --dir workers/wiki-mcp deploy:staging
 ```
 
 Do not put these values in Wrangler vars or logs. Public search has no auth-state binding. Private production and staging never share OAuth state or encryption keys.

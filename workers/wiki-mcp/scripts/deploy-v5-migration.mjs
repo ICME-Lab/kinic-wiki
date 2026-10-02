@@ -6,12 +6,12 @@ import { pathToFileURL } from "node:url";
 
 const TARGETS = {
   staging: {
-    unbindConfig: "wrangler.staging-v5-unbind.jsonc",
-    finalConfig: "wrangler.staging.jsonc"
+    unbindMode: "staging-v5-unbind",
+    finalMode: "staging"
   },
   private: {
-    unbindConfig: "wrangler.private-v5-unbind.jsonc",
-    finalConfig: "wrangler.private.jsonc"
+    unbindMode: "private-v5-unbind",
+    finalMode: "private"
   }
 };
 
@@ -26,23 +26,23 @@ export function v5MigrationSteps(target) {
     },
     {
       label: "transitional configuration dry run",
-      command: "pnpm",
-      args: ["exec", "wrangler", "deploy", "--dry-run", "--config", config.unbindConfig]
+      command: "node",
+      args: ["../../scripts/cloudflare/deploy.mjs", "--dry-run", "--mode", config.unbindMode]
     },
     {
       label: "V5 configuration dry run",
-      command: "pnpm",
-      args: ["exec", "wrangler", "deploy", "--dry-run", "--config", config.finalConfig]
+      command: "node",
+      args: ["../../scripts/cloudflare/deploy.mjs", "--dry-run", "--mode", config.finalMode]
     },
     {
       label: "V4 binding removal",
-      command: "pnpm",
-      args: ["exec", "wrangler", "deploy", "--config", config.unbindConfig]
+      command: "node",
+      args: ["../../scripts/cloudflare/deploy.mjs", "--mode", config.unbindMode]
     },
     {
       label: "V5 Durable Object deployment",
-      command: "pnpm",
-      args: ["exec", "wrangler", "deploy", "--config", config.finalConfig]
+      command: "node",
+      args: ["../../scripts/cloudflare/deploy.mjs", "--mode", config.finalMode]
     }
   ];
 }
@@ -57,7 +57,7 @@ export function deployV5Migration(target, { run = runCommand, log = console.erro
       throw new Error(
         `V5 deploy failed after ${target} removed MCP_AUTH_STATE. ` +
           `The transitional version remains active; fix the error and retry ` +
-          `\`pnpm exec wrangler deploy --config ${TARGETS[target].finalConfig}\`.`
+          `\`node ../../scripts/cloudflare/deploy.mjs --mode ${TARGETS[target].finalMode}\`.`
       );
     }
     throw new Error(`${step.label} failed; no later migration step was run`);

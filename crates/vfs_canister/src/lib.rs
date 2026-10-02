@@ -68,6 +68,7 @@ use vfs_types::{
 };
 
 mod candid_normalization;
+mod public_http;
 
 #[cfg(not(target_arch = "wasm32"))]
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
@@ -318,7 +319,7 @@ fn post_upgrade_hook() {
     let config =
         post_upgrade_cycles_billing_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
     initialize_upgrade_or_trap(config);
-    certify_http_responses();
+    public_http::reset();
     schedule_storage_billing_timer();
 }
 
@@ -331,6 +332,9 @@ fn http_request(request: HttpRequest) -> HttpResponse {
             body: b"Method not allowed".to_vec(),
             upgrade: Some(false),
         };
+    }
+    if request.url.starts_with(public_http::PREFIX) {
+        return public_http::response(&request, false);
     }
     let request_path = request_path(&request.url);
     let Some((path, entry, tree, mut response)) = certified_static_response(request_path) else {
@@ -348,6 +352,19 @@ fn http_request(request: HttpRequest) -> HttpResponse {
         add_v2_certificate_header(&certificate, &mut response, &witness, &path.to_expr_path());
     }
     http_response_from_certified(response)
+}
+
+#[update]
+fn http_request_update(request: HttpRequest) -> HttpResponse {
+    if request.method != "GET" || !request.url.starts_with(public_http::PREFIX) {
+        return HttpResponse {
+            status_code: 405,
+            headers: text_headers(),
+            body: Vec::new(),
+            upgrade: Some(false),
+        };
+    }
+    public_http::response(&request, true)
 }
 
 #[query]
@@ -840,7 +857,13 @@ fn grant_database_cycles_from_iap(
     with_unmetered_update(
         "grant_database_cycles_from_iap",
         None,
-        |service, caller, now| service.grant_database_cycles_from_iap(request, caller, now),
+        |service, caller, now| {
+            let config = service.cycles_billing_config()?;
+            if config.iap_authority_id.as_deref() == Some(caller) {
+                public_http::invalidate_database(&request.database_id);
+            }
+            service.grant_database_cycles_from_iap(request, caller, now)
+        },
     )
 }
 
@@ -906,6 +929,9 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
     database_id: &str,
     now: i64,
 ) -> Result<(), String> {
+    // The ledger-success callback is authorized by the purchase saga. Activation
+    // can change a previously certified 404 into an available database.
+    public_http::invalidate_database(database_id);
     let activation =
         with_service(|service| service.prepare_pending_database_activation(database_id, now))?;
     if let Some(meta) = &activation
@@ -1237,6 +1263,13 @@ fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
 fn delete_account() -> Result<(), String> {
     require_authenticated_caller()?;
     with_unmetered_update("delete_account", None, |service, caller, now| {
+        // Account deletion may commit multiple database deletions before failing.
+        // Only databases this authenticated caller owns can lose public contents.
+        for database in service.list_database_summaries_for_caller(caller)? {
+            if database.role == DatabaseRole::Owner {
+                public_http::invalidate_database(&database.database_id);
+            }
+        }
         let outcome = service.delete_account(caller, now)?;
         for db_file_name in outcome.deleted_database_file_names {
             unmount_database_file(&db_file_name);
@@ -2273,6 +2306,7 @@ where
         })?;
         let cycles_billing_config =
             service.prepare_node_mutation(authorization_database_id, &caller)?;
+        public_http::invalidate_database(authorization_database_id);
         let result = f(service, &caller, now);
         let after_charge_units = update_charge_units();
         if result.is_ok() {
@@ -2310,6 +2344,7 @@ where
             .as_deref()
             .ok_or_else(|| "database_id is required for role check".to_string())?;
         service.require_database_role(database_id, caller, required_role)?;
+        public_http::invalidate_metadata_mutation(method, database_id);
         f(service, caller, now)
     })
 }
@@ -2333,6 +2368,9 @@ where
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
         let cycles_billing_config = authorize(service, &caller)?;
+        if let Some(database_id) = database_id.as_deref() {
+            public_http::invalidate_metadata_mutation(method, database_id);
+        }
         let result = f(service, &caller, now);
         let after_charge_units = update_charge_units();
         if result.is_ok()
@@ -2455,7 +2493,7 @@ fn canonical_roles() -> Vec<CanonicalRole> {
 }
 
 fn certify_http_responses() {
-    let tree = certified_static_tree();
+    let tree = certified_http_tree();
     set_certified_data(tree.root_hash());
 }
 
@@ -2468,16 +2506,17 @@ fn certified_static_response(
     CertifiedHttpResponse<'static>,
 )> {
     let responses = certified_static_responses();
-    let tree = certified_static_tree_from_entries(
-        responses
-            .iter()
-            .map(|(_, entry, _)| entry.clone())
-            .collect::<Vec<_>>(),
-    );
+    let tree = certified_http_tree();
     responses
         .into_iter()
         .find(|(path, _, _)| *path == request_path)
         .map(|(path, entry, response)| (HttpCertificationPath::exact(path), entry, tree, response))
+}
+
+fn certified_http_tree() -> HttpCertificationTree {
+    let mut tree = certified_static_tree();
+    public_http::add_to_tree(&mut tree);
+    tree
 }
 
 fn certified_static_tree() -> HttpCertificationTree {

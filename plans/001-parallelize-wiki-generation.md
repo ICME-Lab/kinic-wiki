@@ -32,7 +32,7 @@ Dynamic Workers or Worker Loader.
 - `pnpm typecheck`
 - `pnpm cf-typecheck`
 - `pnpm test`
-- `pnpm exec wrangler deploy --dry-run`
+- `pnpm exec cf deploy --dry-run`
 - local D1 application of migrations 0001 and 0002
 - `/Users/0xhude/Desktop/MyCLI/checker/lint.sh`
 - `/Users/0xhude/Desktop/MyCLI/checker/check.sh`

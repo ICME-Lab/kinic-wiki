@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/env.ts
-// What: Secret and optional tuning vars layered on Wrangler-generated bindings.
-// Why: `wrangler types` omits secrets, but source code must type-check their usage.
+// What: Secret and optional tuning vars layered on cf-generated bindings.
+// Why: `cf workers types` omits secrets, but source code must type-check their usage.
 import type { QueueMessage, WikiGenerationFailureMessage } from "./types.js";
 
 export type RuntimeEnv = Omit<
