@@ -2,6 +2,9 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import { createHash } from "node:crypto";
 import { defineConfig } from "vitest/config";
+import { loadTestConfig } from "../../scripts/cloudflare/test-config.mjs";
+
+const workerConfig = await loadTestConfig(import.meta.dirname, "staging");
 
 const reviewIdentity = Ed25519KeyIdentity.generate();
 const credentialHash = (value: string) => createHash("sha256").update(value).digest("base64url");
@@ -9,10 +12,12 @@ const credentialHash = (value: string) => createHash("sha256").update(value).dig
 export default defineConfig({
   plugins: [
     cloudflareTest({
+      ...workerConfig,
       main: "./tests/auth-worker-entry.ts",
-      wrangler: { configPath: "./wrangler.staging.jsonc" },
       miniflare: {
+        ...workerConfig.miniflare,
         bindings: {
+          ...workerConfig.miniflare.bindings,
           MCP_KEY_ENCRYPTION_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
           MCP_REVIEW_LOGIN_ENABLED: "true",
           MCP_REVIEW_USERNAME_HASH: credentialHash("openai-review"),

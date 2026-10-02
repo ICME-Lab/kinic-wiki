@@ -1,3 +1,6 @@
+import { convertToWranglerConfig } from "@cloudflare/config";
+import { readBuildOutput } from "@cloudflare/build-output-utils";
+import { Miniflare } from "miniflare";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { realpathSync } from "node:fs";
@@ -254,15 +257,18 @@ test("public HTTP certification with real Wasm and the complete Miniflare Worker
     const folderWarm = await get(folderPath);
     await verifyProof(folderWarm.r, folderWarm.text, canisterId, status.root_key, folderPath);
 
-    const workerReq = createRequire(
-      realpathSync(root + "/wikibrowser/node_modules/wrangler/package.json"),
-    );
-    const { Miniflare } = workerReq("miniflare");
+    const { workers } = await readBuildOutput(root + "/wikibrowser");
+    const built = workers.default;
+    const config = convertToWranglerConfig({ worker: built.config, containers: [] });
+
     const mf = new Miniflare({
       modules: true,
-      scriptPath: root + "/wikibrowser/dist/server/index.js",
+      bindings: config.vars,
+      // Match the standalone SSR verifier; this is a functional test, not a hosted CPU measurement.
+      inspectorPort: 9236,
+      scriptPath: built.bundleDir + "/" + built.config.manifest.mainModule,
       modulesRules: [
-        { type: "ESModule", include: ["**/*.js"], fallthrough: true },
+        { type: "ESModule", include: ["**/*.js", "**/*.mjs"], fallthrough: true },
       ],
       compatibilityDate: "2026-07-15",
       compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],

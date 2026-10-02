@@ -47,21 +47,21 @@ export function activePublicDatabases(databases) {
     });
 }
 
-export function wranglerObjectPutArgs(bucket, key, filePath) {
+export function cfObjectUploadArgs(bucket, key, filePath) {
   return [
     "exec",
-    "wrangler",
+    "cf",
     "r2",
-    "object",
-    "put",
-    `${bucket}/${key}`,
-    "--remote",
+    "buckets",
+    "objects",
+    "upload",
+    key,
+    "--bucket-name",
+    bucket,
     "--file",
     filePath,
     "--content-type",
-    LINK_PREVIEW_CONTENT_TYPE,
-    "--cache-control",
-    LINK_PREVIEW_CACHE_CONTROL
+    LINK_PREVIEW_CONTENT_TYPE
   ];
 }
 
@@ -262,7 +262,7 @@ async function generateDatabaseImage(database, filePath) {
 }
 
 function uploadObject(key, filePath) {
-  const result = spawnSync("pnpm", wranglerObjectPutArgs(LINK_PREVIEW_BUCKET, key, filePath), {
+  const result = spawnSync("pnpm", cfObjectUploadArgs(LINK_PREVIEW_BUCKET, key, filePath), {
     cwd: wikibrowserDir,
     encoding: "utf8",
     stdio: "inherit"

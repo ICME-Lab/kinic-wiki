@@ -4,19 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cf-typegen": "wrangler types --env-interface PaymentBindings worker-configuration.d.ts",
-    "cf-typecheck": "wrangler types --env-interface PaymentBindings worker-configuration.d.ts --check",
+    "cf-typegen": "node ../../scripts/cloudflare/types.mjs",
+    "cf-typecheck": "node ../../scripts/cloudflare/types.mjs --check",
     "check:catalog": "node scripts/validate-iap-catalog.mjs",
     "check:catalog:production": "node scripts/validate-iap-catalog.mjs --production",
     "check:sandbox": "node scripts/check-sandbox-deploy.mjs --config-only && node scripts/validate-iap-catalog.mjs",
     "check:production:example": "node scripts/check-production-deploy.mjs --example --config-only && node scripts/validate-iap-catalog.mjs",
-    "deploy": "node scripts/check-production-deploy.mjs && node scripts/validate-iap-catalog.mjs --production && wrangler deploy --config wrangler.production.jsonc",
-    "deploy:sandbox": "node scripts/check-sandbox-deploy.mjs && node scripts/validate-iap-catalog.mjs && wrangler deploy --config wrangler.sandbox.jsonc",
-    "deploy:sandbox:dry-run": "node scripts/check-sandbox-deploy.mjs --config-only && node scripts/validate-iap-catalog.mjs && wrangler deploy --dry-run --config wrangler.sandbox.jsonc",
-    "d1:create:sandbox": "wrangler d1 create kinic-payment-sandbox --binding DB --update-config --use-remote --config wrangler.sandbox.jsonc",
-    "d1:migrate:sandbox": "wrangler d1 migrations apply DB --remote --config wrangler.sandbox.jsonc",
-    "d1:migrations:list:sandbox": "wrangler d1 migrations list DB --remote --config wrangler.sandbox.jsonc",
-    "dev": "wrangler dev --config wrangler.jsonc",
+    "deploy": "node scripts/check-production-deploy.mjs && node scripts/validate-iap-catalog.mjs --production && node ../../scripts/cloudflare/deploy.mjs --mode production",
+    "deploy:sandbox": "node scripts/check-sandbox-deploy.mjs && node scripts/validate-iap-catalog.mjs && node ../../scripts/cloudflare/deploy.mjs --mode sandbox",
+    "deploy:sandbox:dry-run": "node scripts/check-sandbox-deploy.mjs --config-only && node scripts/validate-iap-catalog.mjs && cf deploy --dry-run --mode sandbox",
+    "d1:create:sandbox": "cf d1 create --name kinic-payment-sandbox",
+    "d1:migrate:sandbox": "node ../../scripts/cloudflare/d1.mjs apply sandbox",
+    "d1:migrations:list:sandbox": "node ../../scripts/cloudflare/d1.mjs list sandbox",
+    "dev": "cf dev",
     "test": "tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js && node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
@@ -26,7 +26,8 @@
   "devDependencies": {
     "@types/node": "24.10.1",
     "typescript": "7.0.2",
-    "wrangler": "^4.103.0"
+    "wrangler": "4.136.0",
+    "cf": "1.0.0-beta.2"
   },
   "packageManager": "pnpm@11.0.8"
 }

@@ -1,3 +1,4 @@
+import { loadWorkerConfig } from "../../scripts/cloudflare/config.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -12,16 +13,15 @@ const {
   derivationOriginUrl
 } = await importTs("../lib/auth.ts");
 
-const wranglerSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
-const wranglerConfig = JSON.parse(wranglerSource);
+const workerConfig = await loadWorkerConfig(new URL("..", import.meta.url).pathname);
 const packageConfig = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const serverEntrySource = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
 const robotsRouteSource = readFileSync(new URL("../src/routes/robots[.]txt.ts", import.meta.url), "utf8");
 const sitemapRouteSource = readFileSync(new URL("../src/routes/sitemap[.]xml.ts", import.meta.url), "utf8");
 
-assert.match(wranglerSource, /"main"\s*:\s*"src\/server\.ts"/);
-assert.match(wranglerSource, /"pattern"\s*:\s*"kinic\.xyz"/);
-assert.match(wranglerSource, /"pattern"\s*:\s*"wiki\.kinic\.xyz"/);
+assert.equal(workerConfig.main, "src/server.ts");
+assert.ok(workerConfig.routes.some(route => route.pattern === "kinic.xyz"));
+assert.ok(workerConfig.routes.some(route => route.pattern === "wiki.kinic.xyz"));
 assert.match(serverEntrySource, /url\.hostname === "kinic\.xyz"/);
 assert.match(serverEntrySource, /url\.hostname = "wiki\.kinic\.xyz"/);
 assert.match(serverEntrySource, /Response\.redirect\(url, 308\)/);
@@ -30,10 +30,10 @@ assert.match(serverEntrySource, /noindex, nofollow/);
 assert.match(robotsRouteSource, /Disallow: \//);
 assert.match(sitemapRouteSource, /KINIC_DEPLOYMENT_ENV === "staging" \? \[\]/);
 
-const staging = wranglerConfig.env.staging;
+const staging = await loadWorkerConfig(new URL("..", import.meta.url).pathname, "staging");
 assert.equal(staging.name, "kinic-wiki-browser-staging");
 assert.equal(staging.workers_dev, true);
-assert.deepEqual(staging.routes, []);
+assert.deepEqual(staging.routes ?? [], []);
 assert.equal(staging.vars.KINIC_DEPLOYMENT_ENV, "staging");
 assert.equal(staging.vars.VITE_KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
 assert.equal(staging.vars.KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
@@ -43,20 +43,17 @@ assert.equal(staging.vars.KINIC_WIKI_ALLOWED_DATABASE_ID, "db_nuzrspghca5q");
 assert.equal(staging.vars.KINIC_WIKI_CLIPPER_ORIGIN, "chrome-extension://kdildjebipiaccglghfdhjifgknlpffg");
 assert.equal(staging.r2_buckets[0].bucket_name, "kinic-wiki-link-preview-images-staging");
 assert.equal(staging.queues.producers[0].queue, "kinic-wiki-generation-staging");
-assert.notEqual(staging.kv_namespaces[0].id, wranglerConfig.kv_namespaces[0].id);
+assert.notEqual(staging.kv_namespaces[0].id, workerConfig.kv_namespaces[0].id);
 assert.match(packageConfig.scripts["deploy:production"], /VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai/);
 assert.match(
   packageConfig.scripts["deploy:production"],
   /VITE_II_DERIVATION_ORIGIN=https:\/\/6emaw-iyaaa-aaaay-aacka-cai\.icp0\.io/
 );
-assert.match(packageConfig.scripts["deploy:staging"], /VITE_KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai/);
+assert.equal(staging.vars.VITE_KINIC_WIKI_CANISTER_ID, "3ryrw-kyaaa-aaaaf-qgxpq-cai");
 assert.match(packageConfig.scripts["deploy:staging"], /check_worker_deploy_source\.mjs/);
 assert.match(packageConfig.scripts["deploy:staging"], /check-staging-deploy\.mjs/);
-assert.match(packageConfig.scripts["deploy:staging"], /wrangler deploy --dry-run/);
-assert.match(
-  packageConfig.scripts["deploy:staging"],
-  /VITE_II_DERIVATION_ORIGIN=https:\/\/3ryrw-kyaaa-aaaaf-qgxpq-cai\.icp0\.io/
-);
+assert.match(packageConfig.scripts["deploy:staging"], /cloudflare\/deploy\.mjs --mode staging --dry-run/);
+assert.equal(staging.vars.VITE_II_DERIVATION_ORIGIN, "https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io");
 execFileSync(process.execPath, ["scripts/check-staging-deploy.mjs", "--offline"], {
   cwd: new URL("..", import.meta.url),
   stdio: "pipe"

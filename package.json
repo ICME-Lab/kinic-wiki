@@ -10,7 +10,14 @@
     "ios:sandbox-config:test": "node mobile/ios/scripts/check-sandbox-runtime.mjs",
     "lint:wikibrowser": "npm --prefix wikibrowser run lint",
     "lint:skill-registry-web": "npm --prefix skill-registry-web run lint",
-    "lint:web": "npm run lint:wikibrowser && npm run lint:skill-registry-web"
+    "lint:web": "npm run lint:wikibrowser && npm run lint:skill-registry-web",
+    "test:cf-config": "node --test scripts/cloudflare/*.test.mjs"
   },
-  "packageManager": "pnpm@11.0.8"
+  "packageManager": "pnpm@11.0.8",
+  "devDependencies": {
+    "@cloudflare/config": "0.20.0",
+    "jsonc-parser": "3.3.1",
+    "@cloudflare/build-output-utils": "0.8.2",
+    "miniflare": "5.20260801.0-alpha"
+  }
 }

@@ -127,8 +127,8 @@ test("adds an isolated private production worker without changing the public wor
   assert.notEqual(privateConfig.ratelimits[0].namespace_id, stagingConfig.ratelimits[0].namespace_id);
   assert.notEqual(privateConfig.name, productionConfig.name);
   assert.notEqual(privateConfig.name, stagingConfig.name);
-  assert.match(packageConfig.scripts["build:private"], /wrangler\.private\.jsonc/u);
-  assert.match(packageConfig.scripts["deploy:private"], /build:private.*wrangler\.private\.jsonc/u);
+  assert.match(packageConfig.scripts["build:private"], /--mode private/u);
+  assert.match(packageConfig.scripts["deploy:private"], /build:private.*--mode private/u);
 });
 
 test("keeps the V5 migration unbind configurations aligned with their final targets", () => {
@@ -152,7 +152,7 @@ test("keeps the V5 migration unbind configurations aligned with their final targ
   assert.match(v5UnbindEntrypoint, /McpAuthStateV5 as McpAuthStateV4/u);
   assert.match(
     packageConfig.scripts["deploy:staging"],
-    /check_worker_deploy_source\.mjs.*build:staging.*wrangler deploy/u
+    /check_worker_deploy_source\.mjs.*build:staging.*cloudflare\/deploy\.mjs.*--mode staging/u
   );
   assert.equal(packageConfig.scripts["deploy:staging:v5-migration"], "node scripts/deploy-v5-migration.mjs staging");
   assert.equal(packageConfig.scripts["deploy:private:v5-migration"], "node scripts/deploy-v5-migration.mjs private");

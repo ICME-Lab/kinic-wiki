@@ -103,3 +103,7 @@ extensions/wiki-clipper/release/
 
 # Local iOS preview verification artifacts
 /mobile/ios/.derivedData/
+
+# cf build output and generated runtime state (binding declarations are checked in).
+**/.cloudflare/
+workers/payment/cloudflare.production.ts

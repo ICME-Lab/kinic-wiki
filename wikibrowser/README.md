@@ -40,11 +40,11 @@ VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai
 Query Q&A uses `DEEPSEEK_API_KEY` only in the server runtime. Store it in `wikibrowser/.env.local` for local runs. For production, set it as a Cloudflare Worker secret:
 
 ```bash
-pnpm exec wrangler secret put DEEPSEEK_API_KEY
-pnpm exec wrangler kv namespace create QUERY_ANSWER_RATE_LIMIT
+CLOUDFLARE_SECRETS_FILE=/absolute/path/outside-repo/browser-secrets.json pnpm deploy
+pnpm exec cf kv namespaces create --title QUERY_ANSWER_RATE_LIMIT
 ```
 
-Copy the returned KV namespace id into the `QUERY_ANSWER_RATE_LIMIT` binding in `wrangler.jsonc` before deploy. Never expose the API key through a `VITE_*` variable.
+Copy the returned KV namespace id into the `QUERY_ANSWER_RATE_LIMIT` binding in `cloudflare.config.ts` before deploy. Never expose the API key through a `VITE_*` variable.
 
 Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic counter, so the limit is a practical abuse throttle, not an exact quota under concurrent requests.
 
@@ -214,7 +214,7 @@ Both variables are public browser bundle values. Set them as Cloudflare build va
 CLI deploy from this directory:
 
 ```bash
-pnpm wrangler whoami
+pnpm exec cf auth whoami
 pnpm deploy:production
 ```
 

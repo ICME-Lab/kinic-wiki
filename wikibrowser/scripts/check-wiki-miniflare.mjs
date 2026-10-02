@@ -1,6 +1,9 @@
+import { Miniflare } from "miniflare";
+import { readBuildOutput } from "@cloudflare/build-output-utils";
+import { convertToWranglerConfig } from "@cloudflare/config";
 // Local workerd verification. This does not measure the hosted Workers CPU quota.
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -8,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(realpathSync(resolve(root, "node_modules/wrangler/package.json")));
-const { Miniflare } = require("miniflare");
+
 const { build } = require("esbuild");
 const output = resolve(root, "../outputs/wiki-cpu/miniflare");
 await mkdir(output, { recursive: true });
@@ -125,9 +128,11 @@ try {
 if (process.argv.includes("--live") || process.argv.includes("--gateway-fixture")) {
   const gatewayFixture = process.argv.includes("--gateway-fixture");
   const api = gatewayFixture ? await import(`data:text/javascript;base64,${Buffer.from(fixtureHttp).toString("base64")}`) : null;
-  const config = JSON.parse(await readFile(resolve(root, "dist/server/wrangler.json"), "utf8"));
+  const { workers } = await readBuildOutput(root);
+  const built = workers.default;
+  const config = convertToWranglerConfig({ worker: built.config, containers: [] });
   const worker = new Miniflare({
-    ...base, modules: true, scriptPath: resolve(root, "dist/server", config.main),
+    ...base, modules: true, scriptPath: resolve(built.bundleDir, built.config.manifest.mainModule),
     modulesRules: [{type: "ESModule", include: ["**/*.js", "**/*.mjs"], fallthrough: true}],
     bindings: config.vars, inspectorPort: 9235,
     ...(gatewayFixture ? {outboundService: async request => {

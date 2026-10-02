@@ -5,8 +5,13 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  server: { host: "127.0.0.1", port: 3010 },
   plugins: [
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    cloudflare({
+      viteEnvironment: { name: "ssr" },
+      persistState: { path: ".wrangler/state" },
+      experimental: { newConfig: { types: { generate: false }, cfBuildOutput: true } }
+    }),
     tanstackStart(),
     react()
   ],

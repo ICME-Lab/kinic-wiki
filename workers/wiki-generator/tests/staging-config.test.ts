@@ -27,8 +27,7 @@ test("staging Generator uses only dedicated resources and database boundary", ()
   assert.equal(staging.queues.consumers[0].queue, "kinic-wiki-generation-staging");
   assert.equal(staging.queues.consumers[0].max_retries, 5);
   assert.equal(config.vars.KINIC_WIKI_ALLOWED_DATABASE_ID, undefined);
-  assert.match(packageConfig.scripts["deploy:staging"], /CLOUDFLARE_ENV=staging pnpm run build/);
-  assert.match(packageConfig.scripts["deploy:staging"], /wrangler deploy --env staging --dry-run/);
+  assert.match(packageConfig.scripts["deploy:staging"], /cloudflare\/deploy\.mjs --mode staging --dry-run/);
 });
 
 test("offline deploy guard validates checked-in staging contract", async () => {

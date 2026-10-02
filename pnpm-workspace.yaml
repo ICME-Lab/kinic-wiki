@@ -58,16 +58,16 @@ overrides:
   browserslist: 4.28.7
   esbuild: 0.28.1
   fflate: 0.7.5
-  fast-uri: 3.1.7
+  fast-uri: 3.1.8
   form-data: 4.0.6
-  hono: 4.13.5
-  ip-address: 10.5.1
+  hono: 4.13.7
+  ip-address: 10.7.1
   js-yaml: 4.3.2
   nanoid: 3.3.18
   postcss: 8.5.23
   qs: 6.16.0
   sharp: 0.35.4
-  'kinic-wiki-generator>wrangler': 4.110.0
-  'kinic-wiki-mcp>wrangler': 4.119.0
+  'kinic-wiki-generator>wrangler': 4.136.0
+  'kinic-wiki-mcp>wrangler': 4.136.0
   undici: 7.29.1
   ws: 8.21.0

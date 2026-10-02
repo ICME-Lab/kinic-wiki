@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --host 127.0.0.1 --port 3010",
-    "build": "npm run typecheck && vite build",
+    "dev": "cf dev",
+    "build": "pnpm run typecheck && vite build",
     "lint": "oxlint --react-plugin --import-plugin --jsdoc-plugin --jsx-a11y-plugin --ignore-pattern dist --ignore-pattern src/routeTree.gen.ts --deny-warnings .",
     "smoke": "node scripts/smoke-ui.mjs",
     "smoke:mobile": "node scripts/smoke-mobile-layout.mjs",
@@ -17,12 +17,12 @@
     "test": "vitest run && node ../scripts/check-staging-worker-deploy.mjs && node scripts/check-candid-drift.mjs && node scripts/check-paths.mjs && node scripts/check-seo.mjs && node scripts/check-legal-content.mjs && node scripts/check-ios-assets.mjs && node scripts/check-ui-helpers.mjs && node scripts/check-wiki-navigation.mjs && node scripts/check-api-errors.mjs && node scripts/check-auth.mjs && node scripts/check-smoke-url.mjs && node scripts/check-dashboard.mjs && node scripts/check-cycles.mjs && node scripts/check-cycles-wallet.mjs && node scripts/check-marketplace.mjs && node scripts/check-profile.mjs && node scripts/check-skill-registry.mjs && node scripts/check-url-security.mjs",
     "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
-    "build:worker": "npm run build && wrangler deploy --dry-run",
-    "preview": "npm run build && vite preview --host 127.0.0.1 --port 3010",
-    "deploy": "npm run build && wrangler deploy",
-    "deploy:production": "VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai VITE_II_DERIVATION_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io VITE_ENABLE_LOCAL_II_E2E= VITE_II_PROVIDER_URL= npm run deploy",
-    "deploy:staging": "node ../scripts/staging/check_worker_deploy_source.mjs && node scripts/check-staging-deploy.mjs && VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=3ryrw-kyaaa-aaaaf-qgxpq-cai VITE_II_DERIVATION_ORIGIN=https://3ryrw-kyaaa-aaaaf-qgxpq-cai.icp0.io VITE_ENABLE_LOCAL_II_E2E= VITE_II_PROVIDER_URL= CLOUDFLARE_ENV=staging npm run build && CLOUDFLARE_ENV=staging wrangler deploy --dry-run && CLOUDFLARE_ENV=staging wrangler deploy",
-    "cf-typegen": "wrangler types --include-runtime false --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "build:worker": "node ../scripts/cloudflare/deploy.mjs --dry-run",
+    "preview": "pnpm run build && vite preview --host 127.0.0.1 --port 3010",
+    "deploy": "pnpm run build && node ../scripts/cloudflare/deploy.mjs",
+    "deploy:production": "VITE_WIKI_IC_HOST=https://icp0.io VITE_KINIC_WIKI_CANISTER_ID=6emaw-iyaaa-aaaay-aacka-cai VITE_II_DERIVATION_ORIGIN=https://6emaw-iyaaa-aaaay-aacka-cai.icp0.io VITE_ENABLE_LOCAL_II_E2E= VITE_II_PROVIDER_URL= pnpm run deploy",
+    "deploy:staging": "node ../scripts/staging/check_worker_deploy_source.mjs && node scripts/check-staging-deploy.mjs && node ../scripts/cloudflare/deploy.mjs --mode staging --dry-run && node ../scripts/cloudflare/deploy.mjs --mode staging",
+    "cf-typegen": "node ../scripts/cloudflare/types.mjs",
     "e2e:ii": "scripts/run-ii-e2e.sh",
     "e2e:ii:headed": "scripts/run-ii-e2e.sh --headed",
     "e2e:ii:setup": "../scripts/setup-wikibrowser-ii-e2e.sh",
@@ -66,7 +66,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.44.0",
+    "@cloudflare/vite-plugin": "1.57.0",
     "@dfinity/internet-identity-playwright": "^3.0.0",
     "@kinic/candid-tools": "workspace:*",
     "@mizchi/vlmkit": "0.23.0",
@@ -86,7 +86,8 @@
     "typescript": "7.0.2",
     "vite": "8.1.4",
     "vitest": "4.1.11",
-    "wrangler": "4.110.0"
+    "wrangler": "4.136.0",
+    "cf": "1.0.0-beta.2"
   },
   "packageManager": "pnpm@11.0.8"
 }

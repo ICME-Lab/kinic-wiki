@@ -1,5 +1,6 @@
+import { assertWorkerSecrets } from "../../../scripts/cloudflare/secrets.mjs";
+import { loadWorkerConfig } from "../../../scripts/cloudflare/config.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -65,21 +66,9 @@ function assertUuid(value, label) {
 }
 
 function assertProductionSecrets() {
-  const result = spawnSync(
-    "wrangler",
-    ["secret", "list", "--config", "wrangler.production.jsonc", "--format", "json"],
-    { cwd: paymentRoot, encoding: "utf8" }
-  );
-  assert.equal(result.status, 0, result.stderr);
-  const names = new Set(JSON.parse(result.stdout).map((secret) => secret.name));
-  for (const required of [
-    "KINIC_IAP_AUTHORITY_IDENTITY_PEM",
-    "APP_STORE_ISSUER_ID",
-    "APP_STORE_KEY_ID",
-    "APP_STORE_PRIVATE_KEY_PEM"
-  ]) {
-    assert.ok(names.has(required), `missing production Worker secret: ${required}`);
-  }
+  assertWorkerSecrets(paymentRoot, "kinic-payment", [
+    "KINIC_IAP_AUTHORITY_IDENTITY_PEM", "APP_STORE_ISSUER_ID", "APP_STORE_KEY_ID", "APP_STORE_PRIVATE_KEY_PEM"
+  ]);
 }
 
 function assertGitReady() {
@@ -100,8 +89,8 @@ function assertGitReady() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const configOnly = process.argv.includes("--config-only");
   const example = process.argv.includes("--example");
-  const filename = example ? "wrangler.production.jsonc.example" : "wrangler.production.jsonc";
-  const config = JSON.parse(readFileSync(join(paymentRoot, filename), "utf8"));
+  const filename = example ? "cloudflare.production.example.ts" : "cloudflare.production.ts";
+  const config = await loadWorkerConfig(paymentRoot, "production", filename);
   validateProductionConfig(config, { requireProvisioned: !configOnly && !example });
   if (!configOnly && !example) {
     assertProductionSecrets();

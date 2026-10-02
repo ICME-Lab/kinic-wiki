@@ -1,3 +1,4 @@
+import { loadWorkerConfig } from "../../../scripts/cloudflare/config.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -38,8 +39,8 @@ function readJSON(path) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   validateCatalog({
     record: readJSON(join(paymentRoot, "operations", "xyz.kinic.dbcredits.small.json")),
-    sandboxConfig: readJSON(join(paymentRoot, "wrangler.sandbox.jsonc")),
-    productionConfig: readJSON(join(paymentRoot, "wrangler.production.jsonc.example")),
+    sandboxConfig: await loadWorkerConfig(paymentRoot, "sandbox"),
+    productionConfig: await loadWorkerConfig(paymentRoot, "production", "cloudflare.production.example.ts"),
     production: process.argv.includes("--production")
   });
   console.log("IAP catalog and fixed cycles grant OK");

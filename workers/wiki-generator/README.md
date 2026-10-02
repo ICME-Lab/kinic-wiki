@@ -57,17 +57,13 @@ The `source_capture` rename is a breaking operational boundary. Drain old `url_i
 ## Cloudflare Setup
 
 ```bash
-pnpm exec wrangler queues create kinic-wiki-generation
-pnpm exec wrangler queues create kinic-wiki-generation-failures
-pnpm exec wrangler d1 create kinic-wiki-generator
-pnpm exec wrangler d1 migrations apply kinic-wiki-generator --remote
-pnpm exec wrangler secret put DEEPSEEK_API_KEY
-pnpm exec wrangler secret put TYPESAFE_API_KEY
-pnpm exec wrangler secret put KINIC_WIKI_WORKER_TOKEN
-pnpm exec wrangler secret put KINIC_WIKI_WORKER_IDENTITY_PEM
+pnpm exec cf queues create --queue-name kinic-wiki-generation
+pnpm exec cf queues create --queue-name kinic-wiki-generation-failures
+pnpm exec cf d1 create --name kinic-wiki-generator
+pnpm exec cf d1 migrations apply <database-id> --dir migrations
 ```
 
-After `d1 create`, copy the returned database id into `wrangler.jsonc`.
+After `cf d1 create`, copy the returned database ID into the DB binding in `cloudflare.config.ts`. Supply `DEEPSEEK_API_KEY`, `TYPESAFE_API_KEY`, `KINIC_WIKI_WORKER_TOKEN`, and `KINIC_WIKI_WORKER_IDENTITY_PEM` in an external JSON secrets file and run `CLOUDFLARE_SECRETS_FILE=/absolute/path/outside-repo/generator-secrets.json pnpm deploy`. See [Cloudflare CLI](../../docs/CLOUDFLARE_CLI.md).
 
 Migration `0003_source_job_target_snapshot.sql` must be applied before deploying the Worker that reads the target snapshot columns. Pause the source Queue consumer while applying the migration and deploying the Worker. Existing `generated` checkpoints have no target snapshot, so they resume conservatively: an absent target or exact content match is accepted, while a different existing target stops for manual resolution.
 
