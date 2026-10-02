@@ -154,8 +154,8 @@ test("keeps the V5 migration unbind configurations aligned with their final targ
     packageConfig.scripts["deploy:staging"],
     /check_worker_deploy_source\.mjs.*build:staging.*cloudflare\/deploy\.mjs.*--mode staging/u
   );
-  assert.equal(packageConfig.scripts["deploy:staging:v5-migration"], "node scripts/deploy-v5-migration.mjs staging");
-  assert.equal(packageConfig.scripts["deploy:private:v5-migration"], "node scripts/deploy-v5-migration.mjs private");
+  assert.equal(packageConfig.scripts["deploy:staging:v5-migration"], "node ../../scripts/cloudflare/with-profile.mjs 'node scripts/deploy-v5-migration.mjs staging'");
+  assert.equal(packageConfig.scripts["deploy:private:v5-migration"], "node ../../scripts/cloudflare/with-profile.mjs 'node scripts/deploy-v5-migration.mjs private'");
 });
 
 test("creates independent high-entropy OAuth states", () => {
