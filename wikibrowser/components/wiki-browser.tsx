@@ -794,6 +794,9 @@ function WikiBrowserContent() {
 
   return (
     <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
+      <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-action focus:px-4 focus:py-3 focus:text-white" href="#wiki-document">
+        Skip to content
+      </a>
       <TopBar
         canisterId={canisterId}
         databaseId={databaseId}
@@ -821,7 +824,7 @@ function WikiBrowserContent() {
         onMobileSidebarToggle={() => setMobileSidebarOpen((open) => !open)}
         canLeaveDirtyEdit={canLeaveDirtyEdit}
       />
-      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[320px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)_320px]"}`}>
+      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[256px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)_272px]"}`}>
         <aside
           id="wiki-mobile-sidebar"
           data-tid="wiki-explorer-panel"
@@ -929,7 +932,7 @@ function WikiBrowserContent() {
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
         </aside>
-        <section data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
+        <section id="wiki-document" tabIndex={-1} aria-label="Wiki content" data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
           {isHelpPage ? (
             <HelpPanel />
           ) : isGraphPage ? (
@@ -986,7 +989,7 @@ function WikiBrowserContent() {
           )}
         </section>
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
-          <details className="order-3 rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">
+          <details className="order-3 min-w-0 overflow-hidden rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">Details</summary>
             <Inspector
               canisterId={canisterId}

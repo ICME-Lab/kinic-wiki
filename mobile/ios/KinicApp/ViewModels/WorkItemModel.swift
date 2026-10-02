@@ -41,6 +41,10 @@ final class WorkItemModel {
     private(set) var isTruncated = false
     private(set) var unreadableCount = 0
     var actionError: String?
+    /// Read failures must not replace or dismiss an unresolved save failure.
+    private(set) var listAccessError: String?
+    private(set) var listFailureDetails: String?
+    private(set) var isShowingCachedItems = false
     var isSaving = false
 
     // Comments for the item currently open in the detail view.
@@ -147,6 +151,7 @@ final class WorkItemModel {
         entries = []
         comments = []
         phase = .idle
+        clearListFailure()
         actionError = nil
         conflict = nil
         isLoadingComments = false
@@ -183,6 +188,7 @@ final class WorkItemModel {
         guard let databaseId = databaseId, let session = runtime.workItemSession else {
             entries = []
             phase = .idle
+            clearListFailure()
             renderedDatabaseId = nil
             renderedPrincipal = nil
             return
@@ -220,21 +226,32 @@ final class WorkItemModel {
                 entries: snapshot.entries,
                 fetchedAt: fetchedAt
             )
-            actionError = nil
+            clearListFailure()
             phase = .ready
         } catch {
             guard generation == loadGeneration,
                   databaseId == self.databaseId,
                   runtime.workItemPrincipal == session.principal else { return }
-            // Whatever the cache already shows stays visible; the failure is still reported.
-            let message = Self.message(for: error)
-            actionError = message
+            let accessLost = Self.isDefinitiveAccessLoss(error)
+            let message = accessLost
+                ? "This database is no longer available to your account. Choose another database or sign in again."
+                : "Try again in a moment."
+            // Cached rows remain usable during a temporary read failure. Keep the
+            // stale-data indication quiet, while access loss remains actionable.
+            isShowingCachedItems = !entries.isEmpty
+            listAccessError = accessLost && !entries.isEmpty ? message : nil
+            listFailureDetails = entries.isEmpty ? Self.message(for: error) : nil
             phase = entries.isEmpty ? .failed(message) : .ready
-            // The widget must not keep showing titles for a database the app can no longer read.
-            if Self.isDefinitiveAccessLoss(error) {
+            if accessLost {
                 widgetSnapshot?.workItemListDidLoseAccess(databaseId: databaseId)
             }
         }
+    }
+
+    private func clearListFailure() {
+        listAccessError = nil
+        listFailureDetails = nil
+        isShowingCachedItems = false
     }
 
     /// Clears the previous database's list so its counters never describe another database.
@@ -243,6 +260,7 @@ final class WorkItemModel {
         guard renderedDatabaseId != databaseId || renderedPrincipal != principal else { return }
         renderedDatabaseId = databaseId
         renderedPrincipal = principal
+        clearListFailure()
         clearSearch()
         entries = []
         totalCount = 0
@@ -488,6 +506,53 @@ final class WorkItemModel {
         }
     }
 
+    enum ResearchPublication: Equatable { case shared, queued, failed }
+
+    /// Save the result locally before any network call. A failed send is retried as the same comment.
+    func publishResearchResult(context: WorkItemResearchContext, question: String,
+                               answer: AskAIMessage) async -> ResearchPublication {
+        guard WorkItemResearch.isFinished(answer),
+              context.principal == runtime.workItemPrincipal,
+              context.databaseId == databaseId,
+              let session = runtime.workItemSession, session.principal == context.principal,
+              canWrite, let store else { return .failed }
+        let commentId = answer.id.uuidString.lowercased()
+        let body = WorkItemResearch.comment(question: question, answer: answer, databaseId: context.databaseId)
+        let createdAt = Int64(answer.createdAt.timeIntervalSince1970 * 1000)
+        let mutation = WorkItemPendingMutation(mutationId: commentId, kind: .comment,
+            itemId: context.itemId, createdAt: createdAt,
+            payloadJson: WorkItemPendingMutation.encoded(
+                WorkItemPendingMutation.CommentPayload(body: body, author: context.principal)))
+        do {
+            try store.insertPendingMutation(mutation, principal: context.principal, databaseId: context.databaseId)
+        } catch {
+            actionError = "The result could not be saved on this device. Keep the research screen open and retry."
+            return .failed
+        }
+        refreshPendingMutations()
+        do {
+            // Do not create orphan comments if the task was deleted while research was running.
+            let detail = try await repository.load(id: context.itemId, databaseId: context.databaseId, session: session)
+            guard context.principal == runtime.workItemPrincipal, context.databaseId == databaseId,
+                  runtime.workItemSession?.principal == context.principal, canWrite,
+                  !detail.isUnsupportedVersion else { return .queued }
+            _ = try await repository.postComment(
+                WorkItemCommentDraft(id: commentId, body: body, author: context.principal, createdAt: createdAt),
+                itemId: context.itemId, databaseId: context.databaseId, session: session)
+            try store.deletePendingMutation(id: commentId)
+        } catch {
+            if context.principal == runtime.workItemPrincipal, context.databaseId == databaseId {
+                actionError = "The result is saved on this device. Use Send under Unsent changes to share it."
+            }
+            return .queued
+        }
+        guard context.principal == runtime.workItemPrincipal, context.databaseId == databaseId else { return .shared }
+        refreshPendingMutations()
+        await loadComments(context.itemId)
+        await repository.refreshCommentProjection(itemId: context.itemId, databaseId: context.databaseId, session: session)
+        return .shared
+    }
+
     // MARK: - Comments
 
     func loadComments(_ itemId: String) async {
@@ -624,7 +689,11 @@ final class WorkItemModel {
         }
         switch mutation.kind {
         case .comment:
-            guard let payload = mutation.commentPayload else {
+            // Re-read the account/DB-scoped queue: a stale view must not retarget a queued result.
+            guard session.principal == runtime.workItemPrincipal, canWrite,
+                  let queued = try? store.pendingMutations(principal: session.principal, databaseId: databaseId),
+                  queued.contains(mutation) else { return }
+            guard let payload = mutation.commentPayload, payload.author == session.principal else {
                 discardPendingMutation(mutation.mutationId)
                 return
             }
@@ -635,10 +704,18 @@ final class WorkItemModel {
                 createdAt: mutation.createdAt
             )
             do {
+                let detail = try await repository.load(id: mutation.itemId, databaseId: databaseId, session: session)
+                guard !detail.isUnsupportedVersion, self.databaseId == databaseId,
+                      runtime.workItemPrincipal == session.principal, canWrite else { return }
                 _ = try await repository.postComment(draft, itemId: mutation.itemId, databaseId: databaseId, session: session)
             } catch {
                 actionError = Self.message(for: error)
                 return
+            }
+            // The send succeeded. Clear its previous failure before loading comments,
+            // so a new read failure can still report its own error.
+            if self.databaseId == databaseId, runtime.workItemPrincipal == session.principal {
+                actionError = nil
             }
             try? store.deletePendingMutation(id: mutation.mutationId)
             refreshPendingMutations()

@@ -20,7 +20,7 @@ struct StatusPanel: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white)
+        .background(KinicDesign.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
         .overlay {
             RoundedRectangle(cornerRadius: KinicDesign.radius)

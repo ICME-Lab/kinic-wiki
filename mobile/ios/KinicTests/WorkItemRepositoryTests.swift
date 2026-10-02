@@ -379,6 +379,34 @@ struct WorkItemRepositoryTests {
     }
 
     @Test
+    func listIsEmptyWhenSQLiteReportsTheRootFolderDoesNotExist() async throws {
+        let stub = WorkItemVFSStub()
+        await stub.rejectList(with: "sqlite error 1: path not found: /WorkItems")
+        let snapshot = try await makeRepository(stub).list(databaseId: "db", session: session)
+        #expect(snapshot.entries.isEmpty)
+        #expect(snapshot.totalCount == 0)
+        #expect(!snapshot.isTruncated)
+        #expect(snapshot.unreadableCount == 0)
+    }
+
+    @Test(arguments: [
+        "sqlite error 1: database is locked",
+        "sqlite error 1: path not found: /WorkItemsOther",
+        "path not found: /Other",
+        "permission denied"
+    ])
+    func listPreservesUnrelatedCanisterErrors(message: String) async throws {
+        let stub = WorkItemVFSStub()
+        await stub.rejectList(with: message)
+        do {
+            _ = try await makeRepository(stub).list(databaseId: "db", session: session)
+            Issue.record("Expected the canister error to be preserved")
+        } catch let VFSCandidError.canisterRejected(actual) {
+            #expect(actual == message)
+        }
+    }
+
+    @Test
     func listReadsMetaAndSortsByMostRecentActivity() async throws {
         let stub = WorkItemVFSStub()
         await stub.makeRootExist()
@@ -1030,6 +1058,7 @@ extension WorkItemRepositoryTests {
 
         let posted = await model.postComment(itemId: "abc", body: "Please review")
         #expect(!posted)
+        #expect(model.actionError != nil)
         let pending = try #require(model.pendingMutations.first)
         #expect(pending.kind == .comment)
         #expect(pending.commentPayload?.body == "Please review")
@@ -1053,6 +1082,7 @@ extension WorkItemRepositoryTests {
         )
         #expect(children.filter { $0.kind == .file }.count == 1)
         #expect(model.pendingMutations.isEmpty)
+        #expect(model.actionError == nil)
     }
 
     @Test
@@ -1597,6 +1627,92 @@ extension WorkItemModelTests {
 }
 
 
+extension WorkItemRepositoryTests {
+    @Test @MainActor
+    func researchResultIsIdempotentAndDoesNotCloseTheItem() async throws {
+        let vfs = WorkItemVFSStub()
+        let repository = makeRepository(vfs)
+        await vfs.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Research"))
+        await vfs.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Research", lastActivityAt: 1))
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: makeRuntime(), repository: repository, store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Evidence supports this. [S1]", sources: [
+            AskAISource(id: "S1", path: "/Knowledge/A #note", excerpt: "Exact evidence", score: 1, matchReasons: [])
+        ])
+        #expect(await model.publishResearchResult(context: context, question: "Find evidence", answer: answer) == .shared)
+        #expect(await model.publishResearchResult(context: context, question: "Find evidence", answer: answer) == .shared)
+        let comments = try await repository.loadComments(itemId: "abc", databaseId: "db", session: session)
+        #expect(comments.count == 1)
+        #expect(comments.first?.body.contains("Exact evidence") == true)
+        #expect(comments.first?.body.contains("A%20%23note") == true)
+        #expect(comments.first?.body.contains("Find evidence") == true)
+        #expect(try await repository.load(id: "abc", databaseId: "db", session: session).item.state == .open)
+        #expect(model.pendingMutations.isEmpty)
+    }
+
+    @Test @MainActor
+    func researchResultSurvivesLostResponseAndRetriesWithoutDuplicates() async throws {
+        let vfs = WorkItemVFSStub()
+        let repository = makeRepository(vfs)
+        await vfs.seed(path: WorkItemPaths.item("abc"), content: "Body", metadataJson: try itemMetadata(captureId: "abc", title: "Research"))
+        await vfs.seed(path: WorkItemPaths.listMetadata("abc"), metadataJson: try listMetadata(title: "Research", lastActivityAt: 1))
+        let store = try WorkItemStore(path: ":memory:")
+        let runtime = makeRuntime()
+        let model = WorkItemModel(runtime: runtime, repository: repository, store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Not enough evidence", state: .insufficient)
+        await vfs.failAfterApplyingNextMutation()
+        #expect(await model.publishResearchResult(context: context, question: "Investigate", answer: answer) == .queued)
+        let pending = try #require(store.pendingMutations(principal: session.principal, databaseId: "db").first)
+        #expect(pending.mutationId == answer.id.uuidString.lowercased())
+        let reopened = WorkItemModel(runtime: runtime, repository: repository, store: store)
+        let operationsBeforeWrongDBRetry = await vfs.recordedOperations().count
+        runtime.selectDatabase("another-db")
+        await reopened.retryPendingMutation(pending)
+        #expect(await vfs.recordedOperations().count == operationsBeforeWrongDBRetry)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").count == 1)
+        runtime.selectDatabase("db")
+        await reopened.retryPendingMutation(pending)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").isEmpty)
+        let comments = try await repository.loadComments(itemId: "abc", databaseId: "db", session: session)
+        #expect(comments.count == 1)
+        #expect(comments.first?.body.contains("Evidence is insufficient") == true)
+    }
+
+    @Test @MainActor
+    func researchRejectsWrongContextFailedAnswersAndReaders() async throws {
+        let vfs = WorkItemVFSStub()
+        let runtime = makeRuntime()
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: runtime, repository: makeRepository(vfs), store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "abc", itemEtag: "original")
+        let answer = AskAIMessage(role: .assistant, text: "Result")
+        runtime.selectDatabase("other")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        runtime.selectDatabase("db", role: .reader)
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        runtime.selectDatabase("db")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: AskAIMessage(role: .assistant, text: "Partial", state: .failed)) == .failed)
+        runtime.switchAccount(to: "other-principal")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: answer) == .failed)
+        #expect(await vfs.recordedOperations().isEmpty)
+        #expect(try store.pendingMutations(principal: session.principal, databaseId: "db").isEmpty)
+    }
+
+    @Test @MainActor
+    func researchForDeletedItemStaysLocalIncludingOnRetry() async throws {
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        let model = WorkItemModel(runtime: makeRuntime(), repository: makeRepository(vfs), store: store)
+        let context = WorkItemResearchContext(principal: session.principal, databaseId: "db", itemId: "missing", itemEtag: "original")
+        #expect(await model.publishResearchResult(context: context, question: "Q", answer: AskAIMessage(role: .assistant, text: "Result")) == .queued)
+        let pending = try #require(model.pendingMutations.first)
+        await model.retryPendingMutation(pending)
+        #expect(await vfs.recordedOperations().isEmpty)
+        #expect(model.pendingMutations.count == 1)
+    }
+}
 extension WorkItemModelTests {
     @Test @MainActor
     func titleOnlyCaptureIsDurableBeforeNetworkCompletes() async throws {
@@ -1644,4 +1760,71 @@ private actor SuspendedWorkItemVFS: WorkItemVFSProviding {
     }
     func waitForWrite() async { while write == nil { await Task.yield() } }
     func failWrite() { write?.resume(throwing: URLError(.notConnectedToInternet)); write = nil }
+}
+
+
+extension WorkItemModelTests {
+    @Test @MainActor
+    func cachedReadFailureStaysQuietAndDoesNotReplaceSaveError() async throws {
+        let runtime = WorkItemRuntimeStub()
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        try store.replaceListCache(
+            principal: runtime.workItemPrincipal, databaseId: "db",
+            entries: [WorkItemListCacheRecord(itemId: "cached", title: "Saved item", state: .open, commentCount: 0, updatedAt: 1)],
+            fetchedAt: 1
+        )
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store)
+        model.actionError = "Your changes could not be saved."
+        await vfs.failListTransport(true)
+        await model.refreshRemote(force: true)
+        #expect(model.phase == .ready)
+        #expect(model.entries.first?.title == "Saved item")
+        #expect(model.isShowingCachedItems)
+        #expect(model.listAccessError == nil)
+        #expect(model.listFailureDetails == nil)
+        #expect(model.actionError == "Your changes could not be saved.")
+
+        await vfs.failListTransport(false)
+        await model.refreshRemote(force: true)
+        #expect(!model.isShowingCachedItems)
+        #expect(model.actionError == "Your changes could not be saved.")
+    }
+
+    @Test @MainActor
+    func readFailureWithoutCacheHasOneActionableStateAndSeparateDetails() async {
+        let vfs = WorkItemVFSStub()
+        let model = WorkItemModel(runtime: WorkItemRuntimeStub(), repository: WorkItemRepository(vfs: vfs), store: nil)
+        await vfs.rejectList(with: "sqlite error 1: unexpected internal failure")
+        await model.refreshRemote(force: true)
+        guard case .failed(let message) = model.phase else {
+            Issue.record("Expected a failed list state")
+            return
+        }
+        #expect(!message.contains("sqlite"))
+        #expect(model.listFailureDetails == "sqlite error 1: unexpected internal failure")
+        #expect(model.actionError == nil)
+        #expect(model.listAccessError == nil)
+        #expect(!model.isShowingCachedItems)
+    }
+
+    @Test @MainActor
+    func cachedAccessLossRemainsVisibleAndContextChangeClearsReadNotice() async throws {
+        let runtime = WorkItemRuntimeStub()
+        let vfs = WorkItemVFSStub()
+        let store = try WorkItemStore(path: ":memory:")
+        try store.replaceListCache(
+            principal: runtime.workItemPrincipal, databaseId: "db",
+            entries: [WorkItemListCacheRecord(itemId: "cached", title: "Saved item", state: .open, commentCount: 0, updatedAt: 1)],
+            fetchedAt: 1
+        )
+        let model = WorkItemModel(runtime: runtime, repository: WorkItemRepository(vfs: vfs), store: store)
+        await vfs.rejectList(with: "principal has no access to database: db")
+        await model.refreshRemote(force: true)
+        #expect(model.listAccessError?.contains("sign in again") == true)
+        model.resetContext()
+        #expect(model.listAccessError == nil)
+        #expect(model.listFailureDetails == nil)
+        #expect(!model.isShowingCachedItems)
+    }
 }

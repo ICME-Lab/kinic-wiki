@@ -46,6 +46,7 @@ minimumReleaseAgeExclude:
   - '@typescript/typescript-sunos-x64@7.0.2'
   - '@typescript/typescript-win32-arm64@7.0.2'
   - '@typescript/typescript-win32-x64@7.0.2'
+  - '@mizchi/vlmkit@0.23.0'
 
 peerDependencyRules:
   allowedVersions:

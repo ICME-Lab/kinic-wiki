@@ -12,6 +12,7 @@ struct AskAIConversation: Codable, Identifiable, Equatable, Sendable {
     var messages: [AskAIMessage]
     let createdAt: Date
     var updatedAt: Date
+    var workItemResearch: WorkItemResearchContext?
 
     init(
         id: UUID = UUID(),
