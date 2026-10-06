@@ -1,23 +1,10 @@
 import { expect, it, vi } from "vitest";
 
-// The heartbeat exchange is what lets the client tell a quiet voice session
+// The heartbeat exchange is what lets the client tell a quiet conversation
 // from a dead peer, so it is exercised against the real control-message path.
 const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   touch: vi.fn(),
-}));
-vi.mock("../src/billing", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../src/billing")>(),
-  voiceReservation: async () => null,
-  reserveVoice: async () => ({}),
-  settleVoiceCharge: async () => ({ confirmed_seconds: 0n, closed: false }),
-  stopVoiceCharge: async (_env: unknown, _id: string, seconds: number) => ({
-    confirmed_seconds: BigInt(seconds),
-    stopped_seconds: [BigInt(seconds)],
-    closed: true,
-  }),
-  voicePolicy: async () => ({ enabled: true, daily_budget_cycles: 1000n }),
-  voiceRate: async () => ({ version: 1n, cycles_per_minute: 60n }),
 }));
 vi.mock("@kinic/ii-server/internet-identity", () => ({
   restoreKinicIdentity: () => ({}),
@@ -75,9 +62,7 @@ function harness() {
     principal: "owner",
     day: new Date().toISOString().slice(0, 10),
     questions: 0,
-    voiceSeconds: 0,
     cleanup: [],
-    charges: [],
     conversation: {
       id: "conversation-1",
       authId: "auth",

@@ -27,8 +27,11 @@ export default {
         if (!native && request.headers.get("origin") !== env.ASSISTANT_ORIGIN)
           throw new AssistantError("invalid_origin", 403);
       }
+      // All retired voice routes are unavailable, including stop.
+      if (path === "/voice" || path.startsWith("/voice/"))
+        throw new AssistantError("not_found", 404);
       // Cleanup stays available when the kill switch is engaged.
-      if (path !== "/logout" && path !== "/end" && path !== "/voice/stop") {
+      if (path !== "/logout" && path !== "/end") {
         requireEnabled(env);
         if (native && !env.DEEPSEEK_API_KEY)
           throw new AssistantError("assistant_not_configured", 503);
@@ -138,18 +141,17 @@ export default {
             const store = new AssistantStore(env),
               state = (await store.load(authorization.principal)).state;
             if (state.conversation)
-              await store.requestStop(
+              await store.requestEnd(
                 authorization.principal,
                 authCookie.id,
                 state.conversation.id,
-                "*",
                 receivedAt,
               );
             await (
               await new AssistantUser(env, authorization.principal, (p) =>
                 ctx.waitUntil(p),
               ).initialize()
-            ).endOwned(authCookie.id, undefined, receivedAt);
+            ).endOwned(authCookie.id);
           }
         } catch {
           /* Expiry/kill switch is also enforced by the scheduled recovery worker. */
@@ -168,48 +170,22 @@ export default {
           .string()
           .uuid()
           .parse(url.searchParams.get("conversationId"));
-        await new AssistantStore(env).requestStop(
+        await new AssistantStore(env).requestEnd(
           owner.principal,
           owner.authId,
           conversationId,
-          "*",
           receivedAt,
         );
         await (
           await new AssistantUser(env, owner.principal, (p) =>
             ctx.waitUntil(p),
           ).initialize()
-        ).endOwned(owner.authId, conversationId, receivedAt);
+        ).endOwned(owner.authId, conversationId);
         return json({ ended: true });
-      }
-      if (path === "/voice/stop" && request.method === "POST") {
-        const owner = await auth.ownerForCleanup(authCookie.token);
-        if (!owner) throw new AssistantError("authentication_required", 401);
-        const conversationId = z
-          .string()
-          .uuid()
-          .parse(url.searchParams.get("conversationId"));
-        const voiceId = z
-          .object({ voiceId: z.string().uuid() })
-          .strict()
-          .parse(await readJson(request)).voiceId;
-        await new AssistantStore(env).requestStop(
-          owner.principal,
-          owner.authId,
-          conversationId,
-          voiceId,
-          receivedAt,
-        );
-        await (
-          await new AssistantUser(env, owner.principal, (p) =>
-            ctx.waitUntil(p),
-          ).initialize()
-        ).stopVoiceOwned(owner.authId, conversationId, receivedAt, voiceId);
-        return json({ stopped: true });
       }
       if (
         request.method === "POST" &&
-        ["/questions", "/voice", "/voice/connected", "/cancel"].includes(path)
+        ["/questions", "/cancel"].includes(path)
       )
         throw new AssistantError("control_connection_required", 405);
       const authorization = await auth.authorize(authCookie.token);

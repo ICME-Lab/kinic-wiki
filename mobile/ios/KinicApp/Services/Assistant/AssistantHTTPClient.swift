@@ -2,13 +2,37 @@ import Foundation
 import Security
 
 @MainActor
-final class AssistantHTTPClient {
+protocol AssistantHTTPProviding: AnyObject {
+    var hasToken: Bool { get }
+    func setToken(_ token: String) throws
+    func clearToken()
+    func request(_ path: String, conversation: String?, method: String, body: [String: Any]?) throws -> URLRequest
+    func send(_ request: URLRequest) async throws -> Data
+    func data(_ path: String, conversation: String?, method: String, body: [String: Any]?) async throws -> Data
+    func snapshot(conversation: String, metadata: Data?) async throws -> AssistantSnapshot
+}
+
+extension AssistantHTTPProviding {
+    func request(_ path: String, conversation: String? = nil, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
+        try request(path, conversation: conversation, method: method, body: body)
+    }
+    func data(_ path: String, conversation: String? = nil, method: String = "GET", body: [String: Any]? = nil) async throws -> Data {
+        try await data(path, conversation: conversation, method: method, body: body)
+    }
+    func snapshot(conversation: String) async throws -> AssistantSnapshot {
+        try await snapshot(conversation: conversation, metadata: nil)
+    }
+}
+
+@MainActor
+final class AssistantHTTPClient: AssistantHTTPProviding {
     let baseURL: URL
     private var token: String?
     var hasToken: Bool { token != nil }
     private let keychainService: String
     init(configuration: AppConfiguration) {
         baseURL = configuration.authOrigin.appending(path: "api/assistant/native")
+        // Keep the existing Keychain service so sign-out also removes tokens from older builds.
         keychainService = "xyz.kinic.voice-preview.\(configuration.canisterId)"
         var value: CFTypeRef?
         if SecItemCopyMatching([kSecClass: kSecClassGenericPassword, kSecAttrService: keychainService,

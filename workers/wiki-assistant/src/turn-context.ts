@@ -10,7 +10,7 @@ export type TurnResult = {
 };
 
 // Shared lifecycle operations; provider runners do not own leases, publication,
-// voice delivery, or conversation teardown.
+// conversation teardown.
 export type TurnContext = {
   conversation: Conversation;
   pending: Pending;

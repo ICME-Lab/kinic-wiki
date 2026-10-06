@@ -61,19 +61,6 @@ extension AppModel: AskAIKnowledgeProviding {
     }
 
     var usesWorkerAskAI: Bool { true }
-    var hasAskAIWorkerConsent: Bool {
-        UserDefaults.standard.bool(
-            forKey: "askai.consent.\(principalText).2026-09-29"
-        )
-    }
-
-    func grantAskAIWorkerConsent() {
-        UserDefaults.standard.set(
-            true,
-            forKey: "askai.consent.\(principalText).2026-09-29"
-        )
-    }
-
     func selectAskAIDatabase(_ databaseId: String) -> BrowseDatabaseSelectionDisposition {
         requestBrowseDatabaseSelection(databaseId)
     }
@@ -158,33 +145,6 @@ extension AppModel: AskAIKnowledgeProviding {
         )
     }
 
-    func voiceAccess(databaseId: String, principal: String, initializeOwner: Bool = false) async throws -> VoiceAccessInfo {
-        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
-        let native = ICClient(configuration: try configuration.makeICClientConfiguration())
-        let identity = try session.requireNativeSession()
-        if initializeOwner {
-            let result: VFSCandidResult<VoicePolicyInput, String> = try await native.call(method: "initialize_voice_policy", arguments: CandidArguments([try CandidTypedValue(databaseId)]), identity: identity)
-            _ = try result.textValue()
-        }
-        let result: VFSCandidResult<VoiceAccessInfo, String> = try await native.query(method: "get_voice_access", arguments: CandidArguments([try CandidTypedValue(databaseId), try CandidTypedValue(principal)]), identity: identity)
-        return try result.textValue()
-    }
-
-    func voiceMembers(databaseId: String) async throws -> [DatabaseMember] {
-        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
-        return try await client.listDatabaseMembers(databaseId: databaseId, session: session)
-    }
-
-    func saveVoicePolicy(databaseId: String, principal: String, enabled: Bool, budget: UInt64) async throws {
-        guard let session else { throw KinicAuthSessionStoreError.reauthenticationRequired }
-        let native = ICClient(configuration: try configuration.makeICClientConfiguration())
-        let result: VFSCandidResult<CandidNull, String> = try await native.call(
-            method: "set_voice_policy",
-            arguments: CandidArguments([try CandidTypedValue(VoicePolicyInput(databaseId: databaseId, principal: principal, enabled: enabled, budget: budget))]),
-            identity: try session.requireNativeSession())
-        _ = try result.textValue()
-    }
-
     func openAskAISource(databaseId: String, path: String) {
         let databaseId = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !databaseId.isEmpty else { return }
@@ -198,30 +158,36 @@ extension AppModel: AskAIKnowledgeProviding {
         question: String,
         history: [AskAIMessage]
     ) async throws -> AskAIWorkerResult {
+#if DEBUG
+        if isNavigationFixture {
+            try await Task.sleep(for: .milliseconds(200))
+            return NavigationFixture.researchResult
+        }
+#endif
         guard let session else {
             throw KinicAuthSessionStoreError.reauthenticationRequired
         }
-        if voicePreview.snapshot != nil,
-           (voicePreview.historyConversationID != conversationId
-                || voicePreview.snapshot?.databaseId != databaseId
-                || voicePreview.snapshot?.scope != "database") {
-            try await voicePreview.endAndRevoke()
+        if assistantConversation.snapshot != nil,
+           (assistantConversation.historyConversationID != conversationId
+                || assistantConversation.snapshot?.databaseId != databaseId
+                || assistantConversation.snapshot?.scope != "database") {
+            try await assistantConversation.endAndRevoke()
         }
-        voicePreview.scope = "database"
-        voicePreview.historyConversationID = conversationId
-        voicePreview.historyDatabaseTitle = databaseTitle
-        if voicePreview.snapshot == nil {
-            await voicePreview.connect(
+        assistantConversation.scope = "database"
+        assistantConversation.historyConversationID = conversationId
+        assistantConversation.historyDatabaseTitle = databaseTitle
+        if assistantConversation.snapshot == nil {
+            await assistantConversation.connect(
                 databaseId: databaseId,
                 identity: session,
                 history: AssistantHistoryContext.make(history)
             )
         }
-        guard voicePreview.snapshot?.databaseId == databaseId,
-              voicePreview.snapshot?.scope == "database" else {
+        guard assistantConversation.snapshot?.databaseId == databaseId,
+              assistantConversation.snapshot?.scope == "database" else {
             throw AskAIKnowledgeError.workerUnavailable
         }
-        let message = try await voicePreview.askText(question)
+        let message = try await assistantConversation.askText(question)
         guard let answer = message.answer else {
             throw AskAIKnowledgeError.workerUnavailable
         }
@@ -243,11 +209,17 @@ extension AppModel: AskAIKnowledgeProviding {
     }
 
     func cancelAskAIWorkerTurn() async throws {
-        try await voicePreview.cancelQuestionAndWait()
+#if DEBUG
+        if isNavigationFixture { return }
+#endif
+        try await assistantConversation.cancelQuestionAndWait()
     }
 
     func endAskAIWorkerConversation() async throws {
-        try await voicePreview.endAndRevoke()
+#if DEBUG
+        if isNavigationFixture { return }
+#endif
+        try await assistantConversation.endAndRevoke()
     }
 
     private func isAskAIDatabaseAvailable(_ databaseId: String) -> Bool {
@@ -392,7 +364,7 @@ final class AppModel {
     private var activeBrowseSearchRequest: BrowseSearchRequest?
     private var pendingWorkItemSelection: PendingWorkItemSelection?
 
-    let voicePreview: VoicePreviewModel
+    let assistantConversation: AssistantConversationModel
     let configuration: AppConfiguration
     var selectedDatabaseId: String
     var selectedBrowseDatabaseId: String {
@@ -401,8 +373,6 @@ final class AppModel {
     }
     var databaseListError: String?
     private var databaseRefreshGeneration = 0
-    var voiceSettingsHasChanges = false
-    var voicePresentationActive = false
     var isNavigationFixture: Bool {
 #if DEBUG
         ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "navigation"
@@ -412,18 +382,17 @@ final class AppModel {
     }
     var workItemDraftOwners: Set<UUID> = []
     var databaseSelectionLockReason: String {
-        workItemDraftOwners.isEmpty ? Self.databaseSelectionLockMessage : "Save or discard the work item draft before switching databases."
+        "Save or discard the work item draft before switching databases."
     }
     func setWorkItemDraftActive(_ active: Bool, owner: UUID) {
         if active { workItemDraftOwners.insert(owner) } else { workItemDraftOwners.remove(owner) }
     }
     var databaseSelectionLocked: Bool {
-        !workItemDraftOwners.isEmpty || voicePresentationActive || voicePreview.busy || voicePreview.voiceActive || voicePreview.finishing || voicePreview.endingRequested || voicePreview.snapshot != nil
+        !workItemDraftOwners.isEmpty
     }
-    static let databaseSelectionLockMessage = "End the voice conversation before switching databases."
 
     func restoreSharedDatabaseSelection() {
-        guard !databaseSelectionLocked, !voiceSettingsHasChanges, !isLoadingDatabases, requestedBrowseDatabaseSelection == nil else { return }
+        guard !databaseSelectionLocked, !isLoadingDatabases, requestedBrowseDatabaseSelection == nil else { return }
         let saved = settingsStore.selectedDatabase(configuration: configuration, principal: principalText)
         guard !saved.isEmpty, saved != selectedDatabaseId,
               readableDatabases.contains(where: { $0.databaseId == saved && $0.status != .deleted }) else { return }
@@ -629,7 +598,7 @@ final class AppModel {
         initialSession: KinicIdentitySession? = nil
     ) {
         self.configuration = configuration
-        voicePreview = VoicePreviewModel(configuration: configuration)
+        assistantConversation = AssistantConversationModel(configuration: configuration)
         self.authService = authService
         self.client = client
         self.creditStore = creditStore ?? DatabaseCreditStore(configuration: configuration)
@@ -1572,19 +1541,11 @@ final class AppModel {
         }
     }
 
-    func connectVoicePreview(databaseId: String, selectedPath: String?, history: [[String: String]] = []) async {
-        guard let session else {
-            voicePreview.authenticationUnavailable()
-            return
-        }
-        await voicePreview.connect(databaseId: databaseId, identity: session, selectedPath: selectedPath, history: history)
-    }
-
     func signOut() {
         pendingWorkItemSelection = nil
         requestedWorkItemDetail = nil
         requestedWorkItemCompose = nil
-        voicePreview.end()
+        assistantConversation.end()
         do {
             try authService.signOut()
         } catch {
@@ -1651,7 +1612,7 @@ final class AppModel {
 
         var localCleanupFailureCount = 0
         settingsStore.selectDatabase("", configuration: configuration, principal: session.principal)
-        do { try await voicePreview.deleteAccountRecovery(principal: session.principal) }
+        do { try await assistantConversation.deleteAccountRecovery(principal: session.principal) }
         catch { localCleanupFailureCount += 1 }
         do {
             if let coordinatedHistoryDeletion {
@@ -1997,14 +1958,13 @@ final class AppModel {
                 pendingWorkItemSelection = nil
                 requestedWorkItemDetail = nil
                 requestedWorkItemCompose = nil
-                voicePreview.end()
+                assistantConversation.end()
                 cancelRequestedBrowseDatabaseSelection()
                 cancelRequestedBrowseDeepLink()
                 directBrowseDatabaseIds = []
                 selectedDatabaseId = ""
                 readableDatabases = []
                 databases = []
-                voiceSettingsHasChanges = false
                 documentEditSession = nil
                 resetBrowseStateForRoot()
             }
@@ -2116,7 +2076,7 @@ final class AppModel {
             reconcileBrowseDatabaseAccessAfterRefresh()
             settingsStore.writableDatabases = databases
             databaseListLastRefreshed = Date()
-            if !databaseSelectionLocked && !voiceSettingsHasChanges && documentEditSession?.hasChanges != true && !directBrowseDatabaseIds.contains(selectedDatabaseId) {
+            if !databaseSelectionLocked && documentEditSession?.hasChanges != true && !directBrowseDatabaseIds.contains(selectedDatabaseId) {
                 let saved = settingsStore.selectedDatabase(configuration: configuration, principal: principalText)
                 let desired = Self.initialDatabaseID(readableDatabases, saved: saved.isEmpty ? selectedDatabaseId : saved)
                 if desired != selectedDatabaseId {
@@ -2674,7 +2634,7 @@ final class AppModel {
 
     func reconcileBrowseDatabaseAccessAfterRefresh() {
         reconcileBrowseDocumentWriteRestriction()
-        guard !databaseSelectionLocked, !voiceSettingsHasChanges else { return }
+        guard !databaseSelectionLocked else { return }
         guard !selectedBrowseDatabaseId.isEmpty,
               !readableDatabases.contains(where: { $0.databaseId == selectedBrowseDatabaseId }),
               !directBrowseDatabaseIds.contains(selectedBrowseDatabaseId) else {

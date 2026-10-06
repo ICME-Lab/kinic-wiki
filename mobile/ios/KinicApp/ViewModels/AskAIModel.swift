@@ -3,7 +3,6 @@
 // Why: Ask AI views stay declarative while every conversation remains pinned to one database.
 
 import Foundation
-import CryptoKit
 import Observation
 
 @MainActor
@@ -14,7 +13,7 @@ final class AskAIModel {
     private let knowledgeProvider: AskAIKnowledgeProviding
     private let client: AskAICompleting
     private var store: AskAIConversationPersisting
-    @ObservationIgnored private var deleteVoiceRecovery: ((UUID?) throws -> Void)?
+    @ObservationIgnored private var deleteAssistantRecovery: ((UUID?) throws -> Void)?
     private let generationTimeout: Duration
     @ObservationIgnored private var generationTask: Task<Void, Never>?
     @ObservationIgnored private var generationTimeoutTask: Task<Void, Never>?
@@ -31,8 +30,8 @@ final class AskAIModel {
     var currentConversation: AskAIConversation?
     var draft = "" {
         didSet {
-            if draft.count > Self.maximumQuestionCharacters {
-                draft = String(draft.prefix(Self.maximumQuestionCharacters))
+            if !AskAIQuestionLimit.contains(draft) {
+                draft = AskAIQuestionLimit.prefix(draft)
             }
         }
     }
@@ -44,7 +43,6 @@ final class AskAIModel {
     var pendingDatabaseTitle: String?
     var isConfirmingDatabaseChange = false
     var isConfirmingHistoryReset = false
-    var isShowingDataConsent = false
 
     init(
         knowledgeProvider: AskAIKnowledgeProviding,
@@ -68,9 +66,9 @@ final class AskAIModel {
             store: AskAIConversationStore.live(scope: historyScope),
             historyScope: historyScope
         )
-        deleteVoiceRecovery = { [weak appModel] id in
+        deleteAssistantRecovery = { [weak appModel] id in
             guard let appModel else { return }
-            try appModel.voicePreview.forgetRecovery(conversationID: id, principal: appModel.principalText)
+            try appModel.assistantConversation.forgetRecovery(conversationID: id, principal: appModel.principalText)
         }
     }
 
@@ -297,11 +295,10 @@ final class AskAIModel {
     func startWorkItemResearch(context: WorkItemResearchContext, question: String,
                                shouldStart: @escaping @MainActor () -> Bool = { true }) async -> Bool {
         guard loadState == .loaded, !isGenerating, !isSynchronizingWorker, draft.isEmpty,
-              !requiresDataProcessingConsent,
               historyScope == AskAIHistoryScope(principal: context.principal),
               knowledgeProvider.selectedAskAIDatabaseId == context.databaseId,
               knowledgeProvider.canAskAI, !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              question.count <= Self.maximumQuestionCharacters else { return false }
+              AskAIQuestionLimit.contains(question) else { return false }
         return await withCheckedContinuation { continuation in
             transitionAfterEndingWorkerConversation({
                 guard shouldStart(), self.historyScope == AskAIHistoryScope(principal: context.principal),
@@ -352,8 +349,8 @@ final class AskAIModel {
     }
 
     func deleteConversation(_ conversation: AskAIConversation) {
-        do { try deleteVoiceRecovery?(conversation.id) }
-        catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
+        do { try deleteAssistantRecovery?(conversation.id) }
+        catch { errorMessage = "Conversation recovery data could not be deleted. Retry."; return }
         if currentConversation?.id == conversation.id {
             transitionAfterEndingWorkerConversation {
                 self.currentConversation = nil
@@ -368,8 +365,8 @@ final class AskAIModel {
     }
 
     func deleteAllConversations() {
-        do { try deleteVoiceRecovery?(nil) }
-        catch { errorMessage = "Voice recovery data could not be deleted. Retry."; return }
+        do { try deleteAssistantRecovery?(nil) }
+        catch { errorMessage = "Conversation recovery data could not be deleted. Retry."; return }
         transitionAfterEndingWorkerConversation {
             self.conversations = []
             self.currentConversation = nil
@@ -381,10 +378,6 @@ final class AskAIModel {
     func send() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend, !question.isEmpty, var conversation = currentConversation else { return }
-        if requiresDataProcessingConsent {
-            isShowingDataConsent = true
-            return
-        }
 
         let history = AskAIHistoryFormatter.semanticHistory(conversation.messages)
         let outputLanguage = knowledgeProvider.askAIOutputLanguage
@@ -439,20 +432,6 @@ final class AskAIModel {
             guard !Task.isCancelled else { return }
             self?.timeoutGeneration(requestID: requestID, assistantID: assistantID)
         }
-    }
-
-    var requiresDataProcessingConsent: Bool {
-        knowledgeProvider.usesWorkerAskAI && !knowledgeProvider.hasAskAIWorkerConsent
-    }
-
-    func grantDataProcessingConsent() {
-        knowledgeProvider.grantAskAIWorkerConsent()
-    }
-
-    func agreeToDataProcessingAndSend() {
-        grantDataProcessingConsent()
-        isShowingDataConsent = false
-        send()
     }
 
     func cancelGeneration() {
@@ -1070,48 +1049,6 @@ final class AskAIModel {
         }
         currentConversation = makeConversation(databaseId: databaseId, title: knowledgeProvider.selectedAskAIDatabaseTitle)
         errorMessage = nil
-    }
-
-    /// Acknowledges durable storage before the voice session may be deleted.
-    func saveVoiceSnapshot(_ snapshot: AssistantSnapshot, conversationID: UUID, title: String, scope: AskAIHistoryScope) async throws {
-        guard historyScope == scope, loadState == .loaded else { throw CancellationError() }
-        let contextID = historyContextID
-        var conversation = conversations.first { $0.id == conversationID }
-            ?? currentConversation.flatMap { $0.id == conversationID ? $0 : nil }
-            ?? AskAIConversation(id: conversationID, databaseId: snapshot.databaseId, databaseTitle: title)
-        guard conversation.databaseId == snapshot.databaseId else { throw CancellationError() }
-        func stableID(_ key: String) -> UUID {
-            let bytes = Array(SHA256.hash(data: Data((snapshot.id + key).utf8)).prefix(16))
-            return bytes.withUnsafeBytes { UUID(uuid: $0.loadUnaligned(as: uuid_t.self)) }
-        }
-        func put(_ message: AskAIMessage) {
-            if let index = conversation.messages.firstIndex(where: { $0.id == message.id }) { conversation.messages[index] = message }
-            else { conversation.messages.append(message) }
-        }
-        for utterance in snapshot.utterances {
-            put(AskAIMessage(id: stableID(utterance.id), role: utterance.role == "user" ? .user : .assistant, text: utterance.text))
-        }
-        for message in snapshot.messages {
-            if !message.voice { put(AskAIMessage(id: stableID(message.requestId + ":question"), role: .user, text: message.question)) }
-            if let answer = message.answer {
-                put(AskAIMessage(id: stableID(message.requestId + ":answer"), role: .assistant, text: answer.displayText,
-                    sources: answer.citations.map { AskAISource(id: $0.id, path: $0.path, excerpt: $0.excerpt, score: 0, matchReasons: []) }))
-            }
-        }
-        guard !conversation.messages.isEmpty else { return }
-        conversation.title = String(conversation.messages.first(where: { $0.role == .user })?.text.prefix(60) ?? "Voice Conversation")
-        conversation.updatedAt = .now
-        conversations.removeAll { $0.id == conversationID }
-        conversations.insert(conversation, at: 0)
-        currentConversation = conversation
-        let previous = persistenceTask
-        let targetStore = store
-        let all = conversations
-        let operation = Task { await previous?.value; try await targetStore.save(all) }
-        persistenceTask = Task { _ = await operation.result }
-        try await operation.value
-        guard historyScope == scope, historyContextID == contextID else { throw CancellationError() }
-        hasStoredConversationData = true
     }
 
     private func persistCurrentConversation() {

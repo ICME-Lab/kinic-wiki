@@ -95,8 +95,6 @@ export function validateAnswer(
 
 export type Limits = {
   questions: number;
-  voiceSeconds: number;
-  connectionSeconds: number;
   calls: number;
   characters: number;
   turnMs: number;
@@ -105,8 +103,6 @@ export type Limits = {
 };
 export const DEFAULT_LIMITS: Limits = {
   questions: 50,
-  voiceSeconds: 1200,
-  connectionSeconds: 600,
   calls: 12,
   characters: 24000,
   turnMs: 90000,

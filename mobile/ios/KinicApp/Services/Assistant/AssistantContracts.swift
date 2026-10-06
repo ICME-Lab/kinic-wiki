@@ -117,12 +117,6 @@ enum AssistantSnapshotOrdering {
         currentRevision.map { incomingRevision > $0 } ?? true
     }
 }
-struct AssistantQuote: Codable, Sendable {
-    let rateVersion: String
-    let cyclesPerMinute: String
-    let maximumCycles: String
-    let maximumSeconds: Int
-}
 struct AssistantHTTPError: LocalizedError {
     let status: Int
     let code: String
@@ -131,35 +125,24 @@ struct AssistantHTTPError: LocalizedError {
         switch code {
         case "assistant_disabled": "Ask AI is currently unavailable."
         case "assistant_not_configured": "The Ask AI service has not been configured."
-        case "consent_required": "Reconnect and review the updated Ask AI data consent."
+        case "consent_required": "Reconnect to update your Ask AI session and retry."
         case "deepseek_request_interrupted": "The answer request was interrupted. Send the question again to retry."
         case "deepseek_unavailable", "deepseek_timeout", "deepseek_request_failed", "deepseek_invalid_response", "deepseek_response_too_large": "Could not generate the answer. Try again."
         case "jev_unavailable": "Semantic routing is temporarily unavailable. Try again."
         case "turn_in_progress": "Ask AI is already processing a question."
-        case "voice_permission_required": "Voice is disabled. Owners can enable it in Voice Settings; members need the owner's permission."
         case "database_access_denied": "You do not have permission to view this database."
         case "kinic_session_expired": "Your sign-in session expired. Sign in again."
         case "choose_questions_only", "invalid_delegation", "invalid_delegation_key", "invalid_delegation_target", "invalid_delegation_expiry": "Your access could not be verified. Sign in again and retry."
         case "identity_changed": "Use the same account that you used to sign in to the Wiki."
-        case "voice_connection_failed": "Could not connect to voice. Check your connection and retry."
-        case "voice_close_pending": "Voice is stopping. Text responses will continue to arrive."
-        case "microphone_denied": "The microphone is unavailable. Allow microphone access in iPhone Settings."
-        case "voice_billing_not_configured": "Voice pricing has not been configured."
-        case "voice_price_consent_required": "The rate has changed. Retry to review the new rate."
-        case "authentication_required": "Voice authentication expired. Reconnect and retry."
-        case "voice_budget_exhausted": "Today's voice budget has been reached. You can change the limit in Voice Settings."
-        case "voice_balance_insufficient": "The database does not have enough cycles."
-        case "voice_billing_denied": "Voice eligibility could not be verified. Check Voice Settings."
-        case "voice_context_limit": "Voice stopped because the conversation became too long. Save the history and start a new conversation."
+        case "authentication_required": "Ask AI authentication expired. Reconnect and retry."
         case "rate_limit": "The connection limit has been reached. Wait a moment and retry."
-        default: "Voice processing failed. Retry."
+        default: "Ask AI processing failed. Retry."
         }
     }
 }
 
 /// Keep the complete JSON request below the Worker's 64 KiB body limit,
-/// including multi-byte text and JSON escaping. The smaller context budget
-/// also fits Live's 16,384-token startup instruction limit.
+/// including multi-byte text and JSON escaping.
 enum AssistantHistoryContext {
     static func make(_ messages: [AskAIMessage]) -> [[String: String]] {
         var result: [[String: String]] = []
@@ -186,26 +169,24 @@ enum AssistantHistoryContext {
     }
 }
 
-/// A stop acknowledgement is not a finalized transcript. Poll only until the
-/// server has persisted the final voice state; the caller then saves and logs out.
-@MainActor
-enum AssistantVoiceFinalization {
-    static func waitForStop(
-        conversationID: String, databaseID: String,
-        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        pause: () async throws -> Void = { try await Task.sleep(for: .seconds(1)) },
-        fetch: (TimeInterval) async throws -> AssistantSnapshot
-    ) async throws -> AssistantSnapshot {
-        let deadline = now() + 30
-        while true {
-            try Task.checkCancellation()
-            let remaining = deadline - now()
-            guard remaining > 0 else { throw URLError(.timedOut) }
-            let snapshot = try await fetch(remaining)
-            guard snapshot.id == conversationID, snapshot.databaseId == databaseID else { throw URLError(.cannotParseResponse) }
-            if snapshot.voice == "off" { return snapshot }
-            guard deadline - now() >= 1 else { throw URLError(.timedOut) }
-            try await pause()
+/// Bound visible characters and the Worker's UTF-16 limit without splitting a grapheme.
+enum AskAIQuestionLimit {
+    static let maximumUTF16Units = 4_000
+
+    static func contains(_ text: String) -> Bool {
+        text.count <= AskAIRouter.maximumQuestionCharacters && text.utf16.count <= maximumUTF16Units
+    }
+
+    static func prefix(_ text: String) -> String {
+        var result = ""
+        var units = 0
+        for character in text.prefix(AskAIRouter.maximumQuestionCharacters) {
+            let value = String(character)
+            let count = value.utf16.count
+            guard units + count <= maximumUTF16Units else { break }
+            result.append(character)
+            units += count
         }
+        return result
     }
 }

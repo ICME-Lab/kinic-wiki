@@ -25,27 +25,6 @@ export type Transcript = {
   start: number;
   end: number;
 };
-export type Charge = {
-  attempts?: number;
-  nextAttempt?: number;
-  id: string;
-  conversationId: string;
-  databaseId: string;
-  principal: string;
-  rate: string;
-  reserved: number;
-  started: number | null;
-  stopped: number | null;
-  expires: number;
-  confirmed: number;
-};
-export type VoiceUsage = {
-  chargeId?: string;
-  started: number;
-  reserved: number;
-  usageDay: string;
-  settled: boolean;
-};
 export type Conversation = {
   format: 3;
   native?: boolean;
@@ -83,11 +62,7 @@ export type Conversation = {
       jevRerankDurationMs: number;
     } | null;
   }[];
-  live: {
-    id: string | null;
-    usage: VoiceUsage;
-    stopping: boolean;
-  } | null;
+  live?: unknown; // Legacy persisted marker; never executed.
   transcripts: Transcript[];
   delegations: string[];
   deferred: { id: string; offset: number } | null;
@@ -100,15 +75,13 @@ export type Cleanup = {
   unknownCreate: boolean;
   liveId: string | null;
   requestId?: string;
-  voiceUsage?: VoiceUsage;
+  voiceUsage?: unknown; // Legacy persisted marker; never reconciled.
 };
 export type UserState = {
   endRequested?: number;
-  charges: Charge[];
   principal: string | null;
   day: string;
   questions: number;
-  voiceSeconds: number;
   conversation: Conversation | null;
   cleanup: Cleanup[];
 };

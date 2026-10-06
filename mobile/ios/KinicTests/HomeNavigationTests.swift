@@ -42,8 +42,5 @@ struct HomeNavigationTests {
         #expect(model.databaseSelectionLocked)
         model.setWorkItemDraftActive(false, owner: composer)
         #expect(!model.databaseSelectionLocked)
-        model.voicePresentationActive = true
-        #expect(model.databaseSelectionLockReason == AppModel.databaseSelectionLockMessage)
-        #expect(model.databaseSelectionLocked)
     }
 }

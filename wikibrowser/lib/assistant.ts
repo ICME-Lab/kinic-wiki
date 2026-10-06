@@ -58,11 +58,8 @@ const errors: Record<string, string> = {
     "Confirming deletion of the previous conversation. Please wait.",
   turn_in_progress: "A question is being processed. Please wait or cancel it.",
   question_limit: "You have reached your daily question limit.",
-  voice_limit: "You have reached your daily voice limit.",
   turn_timeout: "The request timed out. Try a more specific question.",
   wiki_read_denied: "Unable to verify read access to this Wiki.",
-  voice_connection_failed: "Unable to connect voice. You can continue in text.",
-  voice_close_pending: "Confirming that the voice session has ended.",
   invalid_citation:
     "The sources could not be verified, so the answer cannot be displayed.",
   unsupported_answer: "No verified sources support this answer.",
@@ -71,10 +68,6 @@ const errors: Record<string, string> = {
   checking_request_status:
     "The connection was interrupted. Checking the request status.",
   cancel_requested: "Cancellation requested.",
-  voice_transcript_missing:
-    "The spoken question could not be identified. Please try again.",
-  voice_context_limit:
-    "The voice conversation has reached its length limit. You can continue in text.",
 };
 export function assistantError(code: string): string {
   return (
@@ -259,133 +252,5 @@ export class AssistantControl {
         reject(error);
       }
     });
-  }
-}
-
-export class AssistantVoice {
-  private peer: RTCPeerConnection | null = null;
-  private microphone: MediaStream | null = null;
-  private channel: RTCDataChannel | null = null;
-  private disposed = false;
-  private opened = false;
-  private voiceId: string | null = null;
-  constructor(
-    private audio: HTMLAudioElement,
-    private onStatus: (status: string) => void,
-    private control: AssistantControl,
-  ) {}
-  get isClosed(): boolean {
-    return this.disposed;
-  }
-  async start(conversationId: string): Promise<void> {
-    try {
-      const peer = new RTCPeerConnection();
-      this.peer = peer;
-      peer.addEventListener("track", (event) => {
-        if (this.disposed) return;
-        this.audio.srcObject = new MediaStream([event.track]);
-        void this.audio
-          .play()
-          .catch(() => this.onStatus("Press Play on the audio player."));
-      });
-      const microphone = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      if (this.disposed) {
-        microphone.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      this.microphone = microphone;
-      for (const track of microphone.getAudioTracks())
-        peer.addTrack(track, microphone);
-      const channel = peer.createDataChannel("oai-events");
-      this.channel = channel;
-      channel.addEventListener("message", (event) => {
-        try {
-          const value = JSON.parse(event.data);
-          if (value.type === "session.started") {
-            this.opened = true;
-            this.onStatus("Voice is ready. Sources will appear on screen.");
-          }
-          if (value.type === "session.closed") {
-            this.dispose();
-            this.onStatus("Voice has ended.");
-          }
-        } catch {
-          this.onStatus("Unable to read the voice event.");
-        }
-      });
-      channel.addEventListener("close", () => {
-        if (!this.disposed) {
-          this.dispose();
-          this.onStatus("Voice disconnected. You can continue in text.");
-        }
-      });
-      await peer.setLocalDescription(await peer.createOffer());
-      if (peer.iceGatheringState !== "complete")
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            peer.removeEventListener("icegatheringstatechange", check);
-            reject(new Error("Voice connection setup timed out."));
-          }, 10000);
-          const check = () => {
-            if (peer.iceGatheringState === "complete") {
-              clearTimeout(timer);
-              peer.removeEventListener("icegatheringstatechange", check);
-              resolve();
-            }
-          };
-          peer.addEventListener("icegatheringstatechange", check);
-          check();
-        });
-      if (this.disposed) return;
-      const result = await this.control.command<{
-        sdp: string;
-        voiceId: string;
-      }>("voice", { sdp: peer.localDescription?.sdp });
-      this.voiceId = result.voiceId;
-      if (this.disposed) {
-        void assistantRequest("/voice/stop", {
-          conversationId,
-          body: { voiceId: this.voiceId },
-        }).catch(() => {});
-        return;
-      }
-      await peer.setRemoteDescription({ type: "answer", sdp: result.sdp });
-    } catch (error) {
-      this.dispose();
-      void assistantRequest("/voice/stop", {
-        conversationId,
-        body: { voiceId: this.voiceId },
-      }).catch(() => {});
-      throw error;
-    }
-  }
-  async stop(conversationId: string): Promise<void> {
-    this.audio.muted = true;
-    this.microphone?.getTracks().forEach((track) => {
-      track.enabled = false;
-    });
-    if (this.opened && this.channel?.readyState === "open")
-      this.channel.send(JSON.stringify({ type: "session.close" }));
-    try {
-      if (this.voiceId)
-        await assistantRequest("/voice/stop", {
-          conversationId,
-          body: { voiceId: this.voiceId },
-        });
-    } finally {
-      this.dispose();
-    }
-  }
-  muteOutput(): void {
-    this.audio.muted = true;
-  }
-  dispose(): void {
-    this.disposed = true;
-    this.microphone?.getTracks().forEach((track) => track.stop());
-    this.channel?.close();
-    this.peer?.close();
-    this.audio.srcObject = null;
   }
 }

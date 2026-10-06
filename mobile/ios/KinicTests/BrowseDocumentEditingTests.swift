@@ -9,21 +9,18 @@ import Testing
 
 struct BrowseDocumentEditingTests {
     @MainActor @Test
-    func sharedSelectionWaitsForVoiceAndPreservesDraftOnCancel() throws {
+    func sharedSelectionWaitsForWorkItemDraftAndPreservesDocumentOnCancel() throws {
         let fixture = try BrowseEditingFixture()
         defer { fixture.cleanup() }
         let model = fixture.model
         configure(model, role: .owner, status: .active, path: "/Knowledge/Page.md", kind: .file)
         model.readableDatabases.append(DatabaseSummary(databaseId: "shared", title: "Shared", description: "", metadata: nil, role: .reader, status: .active, logicalSizeBytes: 0, cyclesBalance: nil, cyclesSuspendedAtMs: nil, deletedAtMs: nil))
         fixture.settings.selectDatabase("shared", configuration: .preview, principal: model.principalText)
-        model.voicePresentationActive = true
+        let draftOwner = UUID()
+        model.setWorkItemDraftActive(true, owner: draftOwner)
         model.restoreSharedDatabaseSelection()
         #expect(model.selectedDatabaseId == "db_edit")
-        model.voicePresentationActive = false
-        model.voiceSettingsHasChanges = true
-        model.restoreSharedDatabaseSelection()
-        #expect(model.selectedDatabaseId == "db_edit")
-        model.voiceSettingsHasChanges = false
+        model.setWorkItemDraftActive(false, owner: draftOwner)
         #expect(model.startEditingBrowseDocument("/Knowledge/Page.md"))
         model.updateBrowseDocumentDraft("keep me")
         model.restoreSharedDatabaseSelection()

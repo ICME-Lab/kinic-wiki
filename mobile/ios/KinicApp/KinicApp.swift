@@ -14,7 +14,7 @@ struct KinicApp: App {
 #if DEBUG
         if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "navigation" {
             _model = State(initialValue: NavigationFixture.makeModel())
-        } else if ["ask-ai", "voice-preview", "voice-settings"].contains(ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] ?? "") {
+        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
             _model = State(initialValue: .preview())
         } else {
             _model = State(initialValue: .live())
@@ -37,12 +37,6 @@ struct KinicApp: App {
             HomeView(model: model, workItemModel: NavigationFixture.makeWorkItemModel(model))
                 .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["KINIC_LARGE_TEXT"] == "1" ? .accessibility3 : .large)
                 .preferredColorScheme(ProcessInfo.processInfo.environment["KINIC_DARK_MODE"] == "1" ? .dark : .light)
-        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "voice-settings" {
-            NavigationStack { VoiceSettingsView(appModel: model) }
-                .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["KINIC_LARGE_TEXT"] == "1" ? .accessibility3 : .large)
-        } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "voice-preview" {
-            VoicePreviewView(appModel: model, model: model.voicePreview)
-                .task { model.voicePreview.loadScreenshotFixture() }
         } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
             AskAIScreenshotPreview()
                 .tint(KinicDesign.hotPink)

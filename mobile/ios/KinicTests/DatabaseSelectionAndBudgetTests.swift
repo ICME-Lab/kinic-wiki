@@ -3,43 +3,6 @@ import Testing
 @testable import Kinic
 
 struct DatabaseSelectionAndBudgetTests {
-    @Test func budgetRoundTripsWithoutRounding() {
-        for amount: UInt64 in [0, 1, 999_999, 1_000_000, 999_999_999, 30_000_000_000, 300_000_000_000, 3_999_460_636_530, UInt64(Int64.max)] {
-            for unit in CycleBudgetUnit.allCases {
-                #expect(unit.cycles(from: unit.text(for: amount)) == amount)
-            }
-        }
-        #expect(CycleBudgetUnit.preferred(for: 300_000_000_000) == .billion)
-        #expect(CycleBudgetUnit.billion.text(for: 300_000_000_000) == "300")
-        #expect(CycleBudgetUnit.billion.cycles(from: "0.000000001") == 1)
-    }
-    @Test func budgetRejectsInvalidAndOverflowAmounts() {
-        for text in ["", "-1", "1e3", "1.2.3", "NaN", "9223372036854775808"] {
-            #expect(CycleBudgetUnit.cycles.cycles(from: text) == nil)
-        }
-        #expect(CycleBudgetUnit.billion.cycles(from: "0.0000000001") == nil)
-        #expect(CycleBudgetUnit.trillion.cycles(from: "9223372.036854775808") == nil)
-        #expect(CycleBudgetUnit.cycles.cycles(from: "0.0") == 0)
-    }
-    @Test func budgetPresentationAutomaticallySelectsAndNormalizesUnits() throws {
-        let standard = CycleBudgetUnit.presentation(for: 300_000_000_000, fallback: 30_000_000_000)
-        #expect(standard.unit == .billion)
-        #expect(standard.text == "300")
-
-        let zero = CycleBudgetUnit.presentation(for: 0, fallback: 30_000_000_000)
-        #expect(zero.unit == .billion)
-        #expect(zero.text == "0")
-
-        let normalized = try #require(CycleBudgetUnit.billion.normalizedPresentation(for: "2000", fallback: 30_000_000_000))
-        #expect(normalized.cycles == 2_000_000_000_000)
-        #expect(normalized.unit == .trillion)
-        #expect(normalized.text == "2")
-
-        let decimal = try #require(CycleBudgetUnit.billion.normalizedPresentation(for: "0.5", fallback: 30_000_000_000))
-        #expect(decimal.cycles == 500_000_000)
-        #expect(decimal.unit == .million)
-        #expect(decimal.text == "500")
-    }
     @Test func selectionIsSharedButAccountScoped() throws {
         let name = "selection-tests.\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: name))
@@ -64,14 +27,15 @@ struct DatabaseSelectionAndBudgetTests {
         #expect(AppModel.initialDatabaseID([db("b", .reader), db("c", .writer)], saved: "") == "c")
         #expect(AppModel.initialDatabaseID([], saved: "gone").isEmpty)
     }
-    @MainActor @Test func commonSelectionRejectsSwitchDuringVoicePresentation() {
+    @MainActor @Test func idleTextConversationDoesNotLockDatabaseSelection() {
         let model = AppModel.preview()
         model.selectedDatabaseId = "first"
-        #expect(model.selectedAskAIDatabaseId == "first")
-        model.voicePresentationActive = true
-        #expect(model.requestBrowseDatabaseSelection("other") == .unchanged)
-        #expect(model.selectedDatabaseId == "first")
-        #expect(model.statusMessage == AppModel.databaseSelectionLockMessage)
+        model.assistantConversation.loadScreenshotFixture()
+        #expect(model.assistantConversation.snapshot != nil)
+        #expect(!model.databaseSelectionLocked)
+        #expect(model.requestBrowseDatabaseSelection("other") == .applied)
+        #expect(model.selectedDatabaseId == "other")
+        #expect(model.selectedAskAIDatabaseId == "other")
     }
 
     @MainActor @Test func writableSelectionSubmitsPendingURL() async throws {

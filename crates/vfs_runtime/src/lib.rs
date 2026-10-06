@@ -5,7 +5,6 @@ mod accounts;
 mod billing;
 mod cycles;
 mod databases;
-mod voice;
 #[cfg(any(test, debug_assertions))]
 pub use databases::generated_database_id_for_test;
 pub(crate) use databases::*;
