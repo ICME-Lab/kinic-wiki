@@ -12,7 +12,6 @@ import { AssistantPanel } from "./assistant-panel";
 import {
   assistantRequest,
   assistantSnapshot,
-  AssistantVoice,
   AssistantControl,
   type AssistantSnapshot,
   type AssistantState,
@@ -116,6 +115,16 @@ const openPanel = () =>
     screen.getByRole("button", { name: /Ask AI Answers with sources/ }),
   );
 describe("Ask AI panel", () => {
+  it("offers typed questions without voice controls or browser audio capture", async () => {
+    active = snapshot();
+    render(<AssistantPanel databaseId="db" principal="owner" selectedPath="/Knowledge" onOpenSource={() => {}} />);
+    openPanel();
+    await screen.findByRole("button", { name: "Send question" });
+    expect(screen.queryByRole("button", { name: /Start voice|Stop voice/ })).toBeNull();
+    expect(document.querySelector("audio")).toBeNull();
+    expect(requests.some((r) => r.path.includes("/voice"))).toBe(false);
+  });
+
   it("requires Wiki login and explicit data-transfer consent", async () => {
     render(
       <AssistantPanel
@@ -247,59 +256,7 @@ describe("Ask AI panel", () => {
     expect(requests.some((r) => r.path.endsWith("/active"))).toBe(false);
   });
 });
-describe("voice cleanup", () => {
-  it("stops a late microphone stream after the component is disposed", async () => {
-    let resolve!: (stream: MediaStream) => void;
-    const stop = vi.fn();
-    vi.stubGlobal("navigator", {
-      mediaDevices: {
-        getUserMedia: () =>
-          new Promise<MediaStream>((r) => {
-            resolve = r;
-          }),
-      },
-    });
-    vi.stubGlobal(
-      "RTCPeerConnection",
-      class {
-        addEventListener() {}
-        close() {}
-      },
-    );
-    const voice = new AssistantVoice(
-      document.createElement("audio"),
-      () => {},
-      new AssistantControl(),
-    );
-    const pending = voice.start(id);
-    voice.dispose();
-    resolve({ getTracks: () => [{ stop }] } as unknown as MediaStream);
-    await pending;
-    expect(stop).toHaveBeenCalledOnce();
-    expect(requests.some((r) => r.path.endsWith("/voice"))).toBe(false);
-  });
-  it("does not create a paid session when microphone permission is denied", async () => {
-    vi.stubGlobal("navigator", {
-      mediaDevices: {
-        getUserMedia: () => Promise.reject(new Error("microphone denied")),
-      },
-    });
-    vi.stubGlobal(
-      "RTCPeerConnection",
-      class {
-        addEventListener() {}
-        close() {}
-      },
-    );
-    const voice = new AssistantVoice(
-      document.createElement("audio"),
-      () => {},
-      new AssistantControl(),
-    );
-    await expect(voice.start(id)).rejects.toThrow("microphone denied");
-    expect(requests.some((r) => r.path.endsWith("/voice"))).toBe(false);
-  });
-});
+
 
 it("does not expose an upstream HTML or text error as a JSON parser error", async () => {
   vi.stubGlobal(
@@ -486,21 +443,7 @@ it("ignores an old reconnect response after changing DB", async () => {
   expect(sockets).toHaveLength(1);
   expect(screen.queryByText("前の質問")).toBeNull();
 });
-it("releases browser audio immediately when the server marks voice stopping", async () => {
-  await mountedConversation();
-  vi.spyOn(AssistantVoice.prototype, "start").mockResolvedValue();
-  const dispose = vi.spyOn(AssistantVoice.prototype, "dispose");
-  fireEvent.click(screen.getByRole("button", { name: "Start voice" }));
-  await waitFor(() =>
-    expect(AssistantVoice.prototype.start).toHaveBeenCalled(),
-  );
-  active = { ...active!, revision: active!.revision + 1, voice: "stopping" };
-  act(() =>
-    sockets[0].message({ ...state(active!), type: "snapshot" }),
-  );
-  await waitFor(() => expect(dispose).toHaveBeenCalled());
-  expect(screen.getByText("前の質問")).toBeTruthy();
-});
+
 
 it("keeps the displayed history when a newer revision cannot be fetched", async () => {
   await mountedConversation();
@@ -581,7 +524,7 @@ it("routes command responses over the control socket and rejects disconnected re
     body: { ok: true },
   });
   await expect(result).resolves.toEqual({ ok: true });
-  const lost = control.command("voice", {}, citationId);
+  const lost = control.command("cancel", {}, citationId);
   const rejected = expect(lost).rejects.toThrow();
   control.detach();
   await rejected;

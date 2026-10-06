@@ -1,6 +1,6 @@
 import Foundation
 
-/// Temporary preview recovery data, separate from the existing QA history.
+/// Temporary Worker recovery data, separate from completed Ask AI history.
 struct AssistantConversationCache {
     struct Entry: Codable {
         let principal: String
@@ -9,8 +9,14 @@ struct AssistantConversationCache {
         let databaseTitle: String
     }
     let directory: URL
-    init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "VoicePreviewCache", directoryHint: .isDirectory)) {
+    init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appending(path: "AssistantPreviewCache", directoryHint: .isDirectory)) {
         self.directory = directory
+    }
+    /// The retired voice namespaces contain only temporary recovery data, never saved Ask AI history.
+    static func discardRetiredVoiceRecovery(in applicationSupportDirectory: URL) throws {
+        for name in ["VoiceHistoryRecovery", "VoicePreviewCache"] {
+            try AssistantConversationCache(directory: applicationSupportDirectory.appending(path: name, directoryHint: .isDirectory)).clear()
+        }
     }
     private var file: URL { directory.appending(path: "conversation-v3.json") }
     func load() throws -> Entry? {

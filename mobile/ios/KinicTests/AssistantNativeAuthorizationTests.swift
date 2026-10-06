@@ -5,8 +5,45 @@ import XCTest
 
 @MainActor
 final class AssistantNativeAuthorizationTests: XCTestCase {
+    func testAskTextWaitsForControlAndCanBeCancelled() async {
+        let model = AssistantConversationModel(configuration: .preview)
+        model.loadScreenshotFixture()
+        let task = Task { try await model.askText("Summarize this Wiki") }
+        // A created conversation with no socket used to fail immediately with
+        // -1009. It must remain pending while the listener is connecting.
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(model.busy)
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("A cancelled question must not be sent")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Unexpected failure while waiting for control: \(error)")
+        }
+        XCTAssertFalse(model.busy)
+        XCTAssertEqual(model.snapshot?.databaseId, "demo")
+    }
+
+    func testAskTextStopsWaitingWhenConversationEnds() async {
+        let model = AssistantConversationModel(configuration: .preview)
+        model.loadScreenshotFixture()
+        let task = Task { try await model.askText("Summarize this Wiki") }
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(model.busy)
+        model.contextChanged(databaseId: "other", principal: "owner")
+        do {
+            _ = try await task.value
+            XCTFail("The question must not reach a different conversation")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Unexpected failure after context changed: \(error)")
+        }
+        XCTAssertNil(model.snapshot)
+    }
+
     func testCancelRequiresControlConnectionAndPreservesLocalConversation() async {
-        let model = VoicePreviewModel(configuration: .preview)
+        let model = AssistantConversationModel(configuration: .preview)
         model.loadScreenshotFixture()
         let conversationID = model.snapshot?.id
         do {
@@ -20,8 +57,88 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.id, conversationID)
     }
 
-    func testLiveDataChannelUsesOpenAIContract() {
-        XCTAssertEqual(AssistantAudioSession.eventChannelLabel, "oai-events")
+    func testRequestedEndNotificationDoesNotCancelHTTPTeardown() async throws {
+        let http = AssistantHTTPStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http)
+        model.loadScreenshotFixture()
+        http.onData = { [weak model] path in
+            XCTAssertEqual(path, "end")
+            XCTAssertTrue(model?.endingRequested == true)
+            model?.receiveEndNotification()
+            XCTAssertNotNil(model?.snapshot)
+            XCTAssertNil(model?.error)
+            return Data()
+        }
+
+        try await model.endAndRevoke()
+
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(model.busy)
+        XCTAssertFalse(model.endingRequested)
+        XCTAssertNil(model.error)
+        XCTAssertEqual(http.sentPaths, ["logout"])
+    }
+
+    func testUnrequestedEndNotificationEndsConversation() {
+        let model = AssistantConversationModel(configuration: .preview, http: AssistantHTTPStub())
+        model.loadScreenshotFixture()
+        model.receiveEndNotification()
+        XCTAssertNil(model.snapshot)
+        XCTAssertNotNil(model.error)
+    }
+
+    func testLateSnapshotCannotRestoreConversationAfterSignOutOrDatabaseChange() async throws {
+        for changeDatabase in [false, true] {
+            let http = AssistantHTTPStub()
+            let model = AssistantConversationModel(configuration: .preview, http: http)
+            model.loadScreenshotFixture()
+            let old = try XCTUnwrap(model.snapshot)
+            let gate = AssistantSnapshotGate()
+            http.onSnapshot = { await gate.wait(); return old }
+            let task = Task { try await model.refreshSnapshot(old) }
+            while !gate.entered { await Task.yield() }
+            if changeDatabase { model.contextChanged(databaseId: "other", principal: "owner") }
+            else { model.end(revoke: false) }
+            gate.release()
+
+            do {
+                _ = try await task.value
+                XCTFail("A response from an ended context must be discarded")
+            } catch is CancellationError {
+            } catch { XCTFail("Unexpected late-response error: \(error)") }
+            XCTAssertNil(model.snapshot)
+        }
+    }
+
+    func testCancelledSnapshotReadDoesNotApplyItsResponse() async throws {
+        let http = AssistantHTTPStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http)
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        let gate = AssistantSnapshotGate()
+        let newer = original.withRevision(original.revision + 1)
+        http.onSnapshot = { await gate.wait(); return newer }
+        let task = Task { try await model.refreshSnapshot(original) }
+        while !gate.entered { await Task.yield() }
+        task.cancel()
+        gate.release()
+        do {
+            _ = try await task.value
+            XCTFail("A cancelled read must not update the conversation")
+        } catch is CancellationError {
+        } catch { XCTFail("Unexpected cancellation error: \(error)") }
+        XCTAssertEqual(model.snapshot?.revision, original.revision)
+    }
+
+    func testSnapshotReadUpdatesTheCurrentConversation() async throws {
+        let http = AssistantHTTPStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http)
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        let newer = original.withRevision(original.revision + 1)
+        http.onSnapshot = { newer }
+        _ = try await model.refreshSnapshot(original)
+        XCTAssertEqual(model.snapshot?.revision, newer.revision)
     }
 
     private func identity(configuration: AppConfiguration = .preview) throws -> KinicIdentitySession {
@@ -95,7 +212,7 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
     }
 
     func testPreviewKeepsConversationForItsBoundContext() {
-        let model = VoicePreviewModel(configuration: .preview)
+        let model = AssistantConversationModel(configuration: .preview)
         model.loadScreenshotFixture()
 
         model.contextChanged(databaseId: "demo", principal: "owner")
@@ -104,7 +221,7 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
     }
 
     func testPreviewEndsConversationWhenBoundDatabaseChanges() {
-        let model = VoicePreviewModel(configuration: .preview)
+        let model = AssistantConversationModel(configuration: .preview)
         model.loadScreenshotFixture()
 
         model.contextChanged(databaseId: "other", principal: "owner")
@@ -128,7 +245,7 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         XCTAssertEqual(try cache.load()?.snapshot.id, "conversation")
         XCTAssertEqual(try cache.directory.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
         #if !targetEnvironment(simulator)
-        let attributes = try FileManager.default.attributesOfItem(atPath: cache.directory.appending(path: "conversation-v2.json").path)
+        let attributes = try FileManager.default.attributesOfItem(atPath: cache.directory.appending(path: "conversation-v3.json").path)
         XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .completeUntilFirstUserAuthentication)
         #endif
         let conversationID = try XCTUnwrap(cache.load()?.conversationID)
@@ -140,5 +257,77 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         XCTAssertFalse(try reopened.isEnding(conversationID: conversationID))
         XCTAssertNil(try cache.load())
         XCTAssertEqual(try String(contentsOf: history, encoding: .utf8), "existing history")
+    }
+
+    func testStartupDiscardsAllRetiredVoiceRecoveryAndPreservesTextData() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Remove even damaged/older cache formats without decoding private content.
+        for path in ["VoiceHistoryRecovery/account-one/conversation-v3.json",
+                     "VoiceHistoryRecovery/account-two/conversation-v2.json",
+                     "VoicePreviewCache/conversation-v1.json"] {
+            let file = root.appending(path: path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("retired recovery".utf8).write(to: file)
+        }
+        let textRecovery = root.appending(path: "AssistantHistoryRecovery/account-one/conversation-v3.json")
+        try FileManager.default.createDirectory(at: textRecovery.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("current text recovery".utf8).write(to: textRecovery)
+        let history = root.appending(path: "qa-history.json")
+        try Data("saved conversation history".utf8).write(to: history)
+        let http = AssistantHTTPStub()
+
+        for _ in 0..<2 {
+            let model = AssistantConversationModel(configuration: .preview, http: http, applicationSupportDirectory: root)
+            XCTAssertNil(model.error)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "VoiceHistoryRecovery").path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appending(path: "VoicePreviewCache").path))
+            XCTAssertEqual(try String(contentsOf: textRecovery, encoding: .utf8), "current text recovery")
+            XCTAssertEqual(try String(contentsOf: history, encoding: .utf8), "saved conversation history")
+            XCTAssertTrue(http.sentPaths.isEmpty)
+        }
+    }
+}
+
+@MainActor
+private final class AssistantHTTPStub: AssistantHTTPProviding {
+    var hasToken = false
+    var onData: ((String) async throws -> Data)?
+    var onSnapshot: (() async throws -> AssistantSnapshot)?
+    var sentPaths: [String] = []
+    func setToken(_ token: String) throws { hasToken = true }
+    func clearToken() { hasToken = false }
+    func request(_ path: String, conversation: String?, method: String, body: [String: Any]?) throws -> URLRequest {
+        URLRequest(url: URL(string: "https://example.invalid/" + path)!)
+    }
+    func send(_ request: URLRequest) async throws -> Data {
+        sentPaths.append(request.url!.lastPathComponent)
+        return Data()
+    }
+    func data(_ path: String, conversation: String?, method: String, body: [String: Any]?) async throws -> Data {
+        try await onData?(path) ?? Data()
+    }
+    func snapshot(conversation: String, metadata: Data?) async throws -> AssistantSnapshot {
+        try await onSnapshot!()
+    }
+}
+
+@MainActor
+private final class AssistantSnapshotGate {
+    var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+private extension AssistantSnapshot {
+    func withRevision(_ revision: Int) -> Self {
+        Self(revision: revision, id: id, databaseId: databaseId, scope: scope,
+             status: status, error: error, generation: generation, reconnectGraceMs: reconnectGraceMs,
+             messages: messages, utterances: utterances, voice: voice, voiceDeadline: voiceDeadline,
+             voiceId: voiceId, progress: progress)
     }
 }

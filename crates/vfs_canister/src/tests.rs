@@ -3251,3 +3251,70 @@ fn is_canister_method_entrypoint(value: &str) -> bool {
     }
     parts.next().is_none_or(|path| path.starts_with('/'))
 }
+
+#[test]
+fn retired_voice_methods_cannot_modify_or_reconcile_credits() {
+    let retired = Err("voice retired".to_string());
+    assert_eq!(
+        super::configure_voice_rate(vfs_types::VoiceRate {
+            version: 1,
+            cycles_per_minute: 60,
+            authority: "authority".into(),
+        }),
+        retired
+    );
+    assert_eq!(super::get_voice_rate().unwrap_err(), "voice retired");
+    assert_eq!(
+        super::initialize_voice_policy("db".into()).unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::get_voice_access("db".into(), "owner".into()).unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::set_voice_policy(vfs_types::VoicePolicy {
+            database_id: "db".into(),
+            principal: "owner".into(),
+            enabled: true,
+            daily_budget_cycles: 600,
+        }),
+        retired
+    );
+    assert_eq!(
+        super::get_voice_policy("db".into(), "owner".into()).unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::reserve_voice(vfs_types::VoiceReserveRequest {
+            session_id: "session".into(),
+            database_id: "db".into(),
+            principal: "owner".into(),
+            rate_version: 1,
+            reserved_seconds: 60,
+        })
+        .unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::settle_voice(vfs_types::VoiceSettleRequest {
+            session_id: "session".into(),
+            confirmed_seconds: 7,
+            close: true
+        })
+        .unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::stop_voice(vfs_types::VoiceStopRequest {
+            session_id: "session".into(),
+            final_seconds: 7
+        })
+        .unwrap_err(),
+        "voice retired"
+    );
+    assert_eq!(
+        super::get_voice_reservation("session".into()).unwrap_err(),
+        "voice retired"
+    );
+}

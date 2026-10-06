@@ -17,8 +17,7 @@ struct MarkdownContent: View {
             .textual.structuredTextStyle(.gitHub)
             .textual.overflowMode(.wrap)
             .textual.textSelection(.enabled)
-            .foregroundStyle(.black)
-            .environment(\.colorScheme, .light)
+            .foregroundStyle(.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

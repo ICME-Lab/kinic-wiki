@@ -6,7 +6,7 @@ The existing statements about directly operated AI and transient-only processing
 
 ## Optional Web Ask AI preview
 
-When you explicitly consent and start a Web Ask AI conversation, Kinic sends your questions, necessary excerpts from the selected Wiki database, and conversation context to OpenAI to generate answers. Starting voice additionally sends microphone audio to OpenAI's GPT-Live service. Kinic's application does not retain audio recordings, and Live session recording is disabled.
+When you explicitly consent and start a Web Ask AI conversation, Kinic sends your questions, necessary excerpts from the selected Wiki database, and conversation context to OpenAI to generate answers. Voice conversation is no longer offered.
 
 OpenAI's Agents API retains session state in the United States and does not support Zero Data Retention. Kinic also retains active conversation state, bounded source excerpts and short-lived authentication material in Cloudflare infrastructure to operate the conversation, verify citations and recover from brief connection failures. API keys are kept on the server; II credentials are encrypted at rest.
 

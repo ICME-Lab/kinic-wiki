@@ -335,7 +335,10 @@ fn public_http_preserves_proofs_for_failed_auth_unrelated_updates_and_other_data
     let url = "/api/wiki-seo/default/Knowledge";
     super::http_request_update(test_http_get(url));
     let root = super::certified_http_tree().root_hash();
-    super::with_service(|service| service.expire_voice_reservations(1_700_000_100_000)).unwrap();
+    assert_eq!(
+        super::get_voice_reservation("retired".into()).unwrap_err(),
+        "voice retired"
+    );
     assert_eq!(root, super::certified_http_tree().root_hash());
     assert_eq!(http_request(test_http_get(url)).upgrade, Some(false));
 

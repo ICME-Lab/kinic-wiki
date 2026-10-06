@@ -78,32 +78,59 @@ final class HomeNavigationUITests: XCTestCase {
         app.buttons["Discard draft"].tap()
         XCTAssertTrue(app.buttons["home.newItem"].waitForExistence(timeout: 5))
     }
-    @MainActor func testResearchRequestCanBeReviewedWithoutCallingAI() {
+    @MainActor func testWorkItemBodyCardAndNoResearchAction() {
         let app = launch()
         app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
-        let research = app.buttons["workItem.research"]
-        XCTAssertTrue(research.waitForExistence(timeout: 5))
-        research.tap()
-        let request = app.descendants(matching: .any)["research.request"].firstMatch
-        XCTAssertTrue(request.waitForExistence(timeout: 10))
-        XCTAssertTrue((request.value as? String ?? "").contains("Plan the next research session"))
-        capture(app, "13-research-request")
-        let reviewedRequest = request.value as? String
-        app.buttons["research.start"].tap()
-        XCTAssertTrue(app.navigationBars["Ask AI Consent"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "DeepSeek")).firstMatch.exists)
-        app.buttons["Cancel"].tap()
-        XCTAssertTrue(request.waitForExistence(timeout: 5))
-        XCTAssertEqual(request.value as? String, reviewedRequest)
-        request.tap()
-        request.typeText(" Add a comparison.")
-        app.buttons["research.close"].tap()
-        XCTAssertTrue(app.buttons["Keep editing"].waitForExistence(timeout: 5))
-        app.buttons["Keep editing"].tap()
-        XCTAssertTrue((request.value as? String ?? "").contains("Add a comparison."))
-        app.buttons["research.close"].tap()
-        app.buttons["Discard request"].tap()
-        XCTAssertTrue(research.waitForExistence(timeout: 5))
+        let body = app.otherElements["workItem.body"]
+        XCTAssertTrue(body.waitForExistence(timeout: 5))
+        XCTAssertTrue(body.staticTexts["Gather sources and write down the next steps."].exists)
+        XCTAssertFalse(app.buttons["workItem.research"].exists)
+        XCTAssertFalse(app.staticTexts["Comments"].exists)
+        capture(app, "work-item-body-card")
+    }
+
+    @MainActor func testWorkItemBodyAndCommentComposerInBothAppearances() {
+        for (name, dark, large) in [("light", false, false), ("dark", true, false), ("dark-large", true, true)] {
+            let app = launch(large: large, dark: dark)
+            app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
+            XCTAssertTrue(app.staticTexts["Gather sources and write down the next steps."].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["Item"].exists)
+            XCTAssertFalse(app.staticTexts["No comments yet."].exists)
+            let comment = app.textFields["New comment"]
+            for _ in 0..<4 where !comment.isHittable { app.swipeUp() }
+            XCTAssertTrue(comment.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(comment.frame.height, 80)
+            let post = app.buttons["workItem.postComment"]
+            for _ in 0..<4 where !post.exists || !post.isHittable { app.swipeUp() }
+            XCTAssertTrue(post.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(post.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(post.frame.height, 44)
+            XCTAssertFalse(post.isEnabled)
+            capture(app, "work-item-\(name)")
+            comment.tap()
+            comment.typeText("First line\nSecond line\nThird line\nFourth line")
+            XCTAssertTrue(post.isEnabled)
+            XCTAssertTrue((comment.value as? String ?? "").contains("Fourth line"))
+            app.buttons["keyboard.done"].tap()
+            capture(app, "work-item-\(name)-comment")
+            app.terminate()
+        }
+    }
+
+    @MainActor func testCommentAuthorCompactAndCopyMenu() {
+        let app = launch(state: "comment-author", dark: true)
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
+        let author = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Author: eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae")).firstMatch
+        XCTAssertTrue(author.waitForExistence(timeout: 5))
+        let posted = app.otherElements["workItem.comment.11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(posted.exists)
+        XCTAssertEqual(posted.textFields.count, 0)
+        XCTAssertTrue(app.staticTexts["New comment"].exists)
+        for _ in 0..<4 where !author.isHittable { app.swipeUp() }
+        capture(app, "comment-author-compact")
+        author.press(forDuration: 1)
+        XCTAssertTrue(app.buttons["Copy Principal ID"].waitForExistence(timeout: 5))
+        capture(app, "comment-author-copy-menu")
     }
 
     @MainActor func testEditingItemLocksDatabaseAcrossTabs() {
@@ -239,6 +266,14 @@ extension HomeNavigationUITests {
         comment.typeText("Keyboard visibility check")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(comment.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        let post = app.buttons["workItem.postComment"]
+        let done = app.buttons["keyboard.done"]
+        for _ in 0..<4 where !post.isHittable { app.swipeUp() }
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        XCTAssertTrue(post.isHittable)
+        XCTAssertTrue(done.isHittable)
+        XCTAssertFalse(post.frame.intersects(done.frame))
+        XCTAssertLessThanOrEqual(post.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
         capture(app, "work-item-comment-keyboard")
         app.buttons["keyboard.done"].tap()
         app.buttons["Back"].tap()

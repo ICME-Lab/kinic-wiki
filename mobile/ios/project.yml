@@ -22,9 +22,6 @@ settings:
       base:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
 packages:
-  WebRTC:
-    url: https://github.com/stasel/WebRTC
-    exactVersion: 153.0.0
   ICNativeClient:
     url: https://github.com/humandebri/ICNativeClient
     exactVersion: 0.8.0
@@ -44,7 +41,6 @@ targets:
     dependencies:
       - package: ICNativeClient
       - package: Textual
-      - package: WebRTC
       - target: KinicShareExtension
         embed: true
       - target: KinicWorkItemsWidget

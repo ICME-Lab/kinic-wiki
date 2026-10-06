@@ -2,36 +2,34 @@
 
 The Assistant runs without Durable Objects. The unpublished DO classes, bindings,
 migration and test shim have been removed. There is no compatibility migration or
-DO fallback. The single service kill switch remains false, and no cloud resources were created
-or deployed.
+DO fallback. The service kill switch controls text requests; text Agent cleanup remains
+available when disabled.
 
 ## Responsibilities
 
 | Component | Responsibility |
 | --- | --- |
-| Wiki canister (one configured target per environment) | DB balance, owner access/budgets, versioned rates, reservations, confirmed charges and idempotent settlement |
+| Wiki canister (one configured target per environment) | Wiki data and access authorization |
 | D1 | Short-lived authorization, encrypted recovery state, UTC usage limits, request deduplication, leases, stop intent and provider cleanup jobs |
-| Ordinary Worker | Authentication, Wiki reads, DeepSeek text turns, Agents voice/Web turns, source validation, client control socket and outbound Live sideband |
+| Ordinary Worker | Authentication, Wiki reads, DeepSeek text turns, retained Web Agent turns, source validation and client control socket |
 | Scheduled Worker | Expired-session recovery and cleanup reconciliation without a running client |
-| iOS | Protected, backup-excluded preview cache, UI, microphone/playback and funded-time cutoff |
-| iOS to GPT-Live | Direct WebRTC audio; operator credentials never reach the device |
+| iOS | Typed Ask AI UI and account-scoped local history |
 
-D1 contains reservation identifiers and reconciliation metadata, not an independent
-balance or billing ledger. Settlement and extension errors are reconciled against
-the canister's reservation API. There are no Queues, Workflows, KV or read replicas.
+D1 stores text conversation recovery and provider cleanup metadata. There are no
+Queues, Workflows, KV or read replicas.
 
 ## Separate text and Agent execution
 
 `user.ts` owns the shared lifecycle: question lease, authorization, Jev routing,
-provider dispatch, validated-answer publication, and optional voice delivery.
+provider dispatch and validated-answer publication.
 `runTurn` is the single execution dispatch point: native typed questions go to
-`text-turn.ts`; voice delegations and retained Web requests go to `agent-turn.ts`.
+`text-turn.ts`; retained Web requests go to `agent-turn.ts`.
 
 - `text-turn.ts` owns bounded text history, DeepSeek checkpoints and text failures.
   It calls `deepseek.ts` and the Wiki reader without importing the OpenAI adapter.
 - `agent-turn.ts` owns OpenAI session creation, polling, tool-result replay,
   uncertain-submission reconciliation and Agent-specific failures.
-- `conversation-history.ts` collects bounded completed dialogue for text, Live and Agent handoffs. Agent input is checkpointed before submission so recovery matches the same provider item.
+- `conversation-history.ts` collects bounded completed dialogue for text and Agent turns. Agent input is checkpointed before submission so recovery matches the same provider item.
   `turn-input.ts` builds the shared untrusted input envelope; `turn-context.ts`
   exposes the lifecycle operations each runner needs. `state.ts` keeps the
   existing encrypted state format without a storage migration.
@@ -39,15 +37,13 @@ provider dispatch, validated-answer publication, and optional voice delivery.
 Both runners use the same reader limits and current-turn citation validator.
 The iOS client sends cancellation through the control WebSocket command protocol.
 Native text cancellation aborts the fetch, invalidates late results and clears
-only the pending text request. It does not enqueue provider cleanup, delete an
-existing voice Agent session, clear a deferred voice question, or send a voice
-stop instruction. Ending the entire conversation still cleans up all associated
+only the pending text request. It does not create provider cleanup for DeepSeek. Ending the entire conversation still cleans up all associated
 provider sessions. DeepSeek does not use Agent session reconciliation: an
 uncertain DeepSeek submission fails rather than being silently repeated.
 
 ## Storage and concurrency
 
-Apply D1 migration 0001 once through Wrangler's versioned migration runner.
+Keep D1 migrations 0001 and 0002 and apply them with the official `cf` CLI.
 Authentication claims use conditional updates; principal and conversation uniqueness,
 revision checks and per-commit guards protect multi-statement D1 batches.
 Bearer tokens are hashed. Existing encrypted key/delegation records remain encrypted.
@@ -63,11 +59,9 @@ two minutes, question execution is bounded at 90 seconds, and inactivity at 10 m
 The native and retained Web client send request-ID commands over the control socket.
 Questions retain their IDs across uncertain submission; saved Agents turn/actions are
 checked before continuing. A persisted command with an unknown non-question outcome
-is never blindly re-executed. HTTP remains available for voice stop and conversation
-end. An ownership-bound stop intent and its server receipt time survive independently
-of the socket and are applied by the next invocation. The canister's authority-only
-stop finalization closes the reservation and refunds any settlement beyond that
-earliest stop time in one transaction. Voice interruption preserves pending text work.
+is never blindly re-executed. HTTP remains available for text conversation end.
+All voice routes, including stop, return 404. The ownership-bound text conversation
+end intent survives independently of the socket and is applied by the next invocation.
 
 Snapshots carry a monotonically increasing D1 revision and contain control state
 only. Messages, citations and utterances are fetched in revision-bound pages of at
@@ -86,13 +80,13 @@ Cron runs every minute with four concurrent runners and at most twenty recovery 
 (ten user-state recovery units and ten provider jobs). Provider-job failures back off
 exponentially from one minute to at most thirty minutes. Each job uses a renewed lease;
 only its current generation can acknowledge completion. Provider deletion is retried
-until confirmed and is independent of the canister's 24-hour reservation expiry.
+until confirmed for retained text Agent sessions.
 
-A live connection and iOS enforce the funded cutoff directly; cron is not a
-second-precision audio watchdog. Without the connection owner, recovery stops billing
-at the last confirmed connection activity, reconciles the canister, and closes Live.
-An unconfirmed interval must not extend the charge. D1/provider failure cannot safely
-authorize more paid time. The canister releases unconfirmed reservations after 24 hours.
+Voice creation, extensions, transcript processing, speech delegation, legacy provider
+close and financial reconciliation are removed. Stored voice conversation state and
+voice cleanup tasks are discarded locally. Maintenance only handles Agent jobs.
+All canister voice methods return `voice retired`; the voice runtime and expiry
+timer are removed. Historical schema and financial records remain as inert stored data.
 
 D1 Time Travel can retain prior encrypted records after application deletion. Its
 backup history is not erased by deleting a current row. Privacy text discloses that
@@ -102,25 +96,11 @@ canonical canister and provider state.
 
 ## Validation and release gates
 
-Local workerd tests exercise ordinary Worker WebSockets with mock sideband, fresh
-invocations sharing D1, lease takeover, stale-write rejection, one-time authentication,
-encrypted command replay, and atomic content removal with late provider completion.
-Lifecycle tests retain pending-action, deadline, voice failure and billing cases.
-A separate Miniflare test terminates and recreates workerd with a persistent D1
-directory and verifies takeover using the production lease implementation. These
-local tests are not evidence of successful real API calls or production acceptance.
+Local workerd tests exercise ordinary Worker WebSockets, fresh invocations sharing
+D1, lease takeover, stale-write rejection, authentication, encrypted command replay,
+retired-route rejection and cleanup recovery. Lifecycle tests cover text requests,
+deadlines, cancellation and text Agent cleanup. A separate Miniflare
+test recreates workerd with persistent D1 and verifies lease takeover.
 
-Real II direct grants, actual provider create-response loss and Live discovery/close,
-20-question semantic evaluation, physical-device locked/background audio, and alert
-delivery remain release gates. Unknown Live creation cannot currently be resolved
-automatically without its provider ID; its job is retained and emits a content-free
-`assistant_live_creation_unresolved` operational event with the conversation, request,
-and voice identifiers already stored in D1. SDP is not persisted, and the scheduled
-Worker never retries Live creation. The service kill switch must remain off until an
-official idempotent-create or reconciliation API is verified against the real service.
-No alternate API or authority expansion is used.
-
-Wrangler database IDs are explicit unprovisioned placeholders. Provision separate
-staging/production D1 databases, replace their IDs, apply migrations and configure
-secrets/alerts only in the authorized release workflow. This implementation does not
-perform those actions.
+Offline tests do not prove real provider connectivity or production deployment.
+Historical voice jobs are no longer processed and do not require a billing key.

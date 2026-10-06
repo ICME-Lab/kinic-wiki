@@ -15,7 +15,6 @@ struct WorkItemResearchView: View {
     @State private var publishing = false
     @State private var starting = false
     @State private var allowPendingStart = true
-    @State private var showingDataConsent = false
     @State private var publication: WorkItemModel.ResearchPublication?
     @State private var draftOwner = UUID()
     @State private var startError: String?
@@ -38,7 +37,7 @@ struct WorkItemResearchView: View {
     private var hasEditedRequest: Bool { !request.isEmpty && request != initialRequest }
     private var requestIsValid: Bool {
         !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && request.count <= AskAIModel.maximumQuestionCharacters
+            && AskAIQuestionLimit.contains(request)
     }
 
     var body: some View {
@@ -125,13 +124,6 @@ struct WorkItemResearchView: View {
             Button("Discard request", role: .destructive) { close() }
             Button("Keep editing", role: .cancel) {}
         }
-        .sheet(isPresented: $showingDataConsent) {
-            AskAIDataConsentView(agree: {
-                assistant.grantDataProcessingConsent()
-                showingDataConsent = false
-                send()
-            }, cancel: { showingDataConsent = false })
-        }
         .task { await prepare() }
         .task(id: finishedAnswer?.id) { await publish() }
         .onChange(of: appModel.principalText) { _, principal in
@@ -193,10 +185,6 @@ struct WorkItemResearchView: View {
         guard appModel.principalText == context.principal, appModel.selectedDatabaseId == context.databaseId,
               requestIsValid, !starting, !publishing, !assistant.isGenerating, !assistant.isSynchronizingWorker else { return }
         startError = nil
-        if assistant.requiresDataProcessingConsent {
-            showingDataConsent = true
-            return
-        }
         allowPendingStart = true
         starting = true
         Task { @MainActor in

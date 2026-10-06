@@ -58,7 +58,7 @@ When a user funds a database or uses a paid database feature, the Service proces
 
 ### Ask AI processing
 
-When the user starts the consented Ask AI Agent feature and submits a question, Kinic processes:
+When the user submits an Ask AI question, Kinic processes:
 
 - The current question.
 - The selected database and search scope.
@@ -66,7 +66,7 @@ When the user starts the consented Ask AI Agent feature and submits a question, 
 - Relevant excerpts and bounded portions of notes and source material selected from that database.
 - Bounded recent conversation context when needed to answer the question.
 
-Kinic sends every submitted question, the selected target type or path, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe's United States service to classify whether the request is a database overview, a selected-page summary, a focused search, or ordinary conversation. For focused searches, Kinic additionally sends candidate paths and previews to TypeSafe for ranking. Paths and previews returned to the answering agent are routing data and are not treated as citation evidence. For iOS typed Ask AI requests, Kinic sends the question, bounded conversation context, and necessary Wiki excerpts to DeepSeek to generate the answer. DeepSeek is based in China; its [published privacy policy](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html) describes processing and storage in China. Processing of API data is subject to the applicable provider terms; Kinic does not promise Zero Data Retention or immediate provider erasure. Voice-delegated questions and the browser Agent continue to use OpenAI's United States service. [TypeSafe's Privacy Policy](https://typesafe.ai/privacy) states that it does not train or fine-tune artificial-intelligence or machine-learning models on customer Input. TypeSafe does not offer Zero Data Retention under that public policy: it retains personal data for as long as reasonably necessary to provide its services or support its business or commercial purposes, subject to deletion requests and legal obligations.
+Kinic sends every submitted question, the selected target type or path, and up to six recent conversation messages totaling up to 4,000 characters to TypeSafe's United States service to classify whether the request is a database overview, a selected-page summary, a focused search, or ordinary conversation. For focused searches, Kinic additionally sends candidate paths and previews to TypeSafe for ranking. Paths and previews returned to the answering agent are routing data and are not treated as citation evidence. For iOS typed Ask AI requests, Kinic sends the question, bounded conversation context, and necessary Wiki excerpts to DeepSeek to generate the answer. DeepSeek is based in China; its [published privacy policy](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html) describes processing and storage in China. Processing of API data is subject to the applicable provider terms; Kinic does not promise Zero Data Retention or immediate provider erasure. The retained browser Agent uses OpenAI's United States service. [TypeSafe's Privacy Policy](https://typesafe.ai/privacy) states that it does not train or fine-tune artificial-intelligence or machine-learning models on customer Input. TypeSafe does not offer Zero Data Retention under that public policy: it retains personal data for as long as reasonably necessary to provide its services or support its business or commercial purposes, subject to deletion requests and legal obligations.
 
 Kinic logs only bounded operational measurements for routing and reranking, such as workflow, candidate and selected counts, selected route, elapsed time, input character count, and HTTP status. Questions, Wiki text, paths, previews, probabilities, and API keys are not included in those logs.
 
@@ -84,17 +84,13 @@ When the user starts an active-tab capture, the Wiki Clipper reads that page's U
 
 After the user selects a Wiki database in the Wiki Clipper, Kinic searches it for the current ChatGPT question. There is no separate Recall switch; signing out clears the database selection and stops Recall searches. When Jev relevance ranking is available, the question and up to 20 candidate Wiki paths and short previews are sent through Kinic Wiki to TypeSafe's United States service. Jev may select up to three cards or none. If ranking is unavailable, Recall shows the existing search results. Recall does not save the question or preview text in Kinic operational logs, and it does not automatically send a selected Wiki excerpt to ChatGPT. The user chooses whether to insert context. The TypeSafe training and retention terms above apply.
 
-### Optional voice preview (disabled pending release acceptance)
+### Retired voice preview
 
-The optional iOS voice conversation uses the same on-device conversation history as Ask AI. When permitted by the selected database owner, it asks for consent before sending questions, conversation context and necessary Wiki excerpts to OpenAI. Starting voice also sends microphone audio directly to OpenAI. Voice continues while the device is locked or another app is foreground until the user stops it, an interruption occurs, or a server limit ends it. Muting stops microphone audio from being sent without ending the connection.
+Voice conversations are no longer offered. Existing saved text transcripts and cited answers remain in on-device Ask AI history until the user deletes that history. New audio sessions cannot be started.
 
-OpenAI Agents sessions are stored in the United States and do not support Zero Data Retention. Kinic keeps encrypted bounded conversation content, tool results and short-lived authorization material in Cloudflare D1 to operate and recover the preview. Bearer tokens are stored as hashes. The iOS app may also keep a temporary preview cache in a device-protected area excluded from backups; the cache is separated by signed-in account. Text transcripts and cited answers are saved to the existing on-device Ask AI history, including when recovering a previously interrupted conversation. A new microphone connection requires opening voice; restoring history alone never starts recording. Ending voice stops the connection without deleting on-device history; users delete that history separately. Kinic does not persist voice recordings.
+Kinic no longer performs provider-session termination, settlement, refunds or reservation expiry for historical voice sessions. Stored voice recovery state is discarded by the application without calling the provider or changing database credits. Historical financial records remain stored under the database's billing-history permissions.
 
-Ending the conversation, signing out, changing database or account, or reaching the session deadline removes active server conversation content and requests deletion of the OpenAI session. This does not promise immediate erasure of every provider record. Failed cleanup retains provider and reservation identifiers and retry metadata, without conversation content. Removing current D1 records does not immediately remove prior encrypted copies from Cloudflare backup history. D1 Time Travel retains recovery history according to the applicable service retention period; see [Cloudflare Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/). The temporary device cache is removed after confirmed history persistence and successful conversation end. If saving or cleanup fails, an account-scoped recovery copy remains until retry succeeds. Saved Ask AI history is deleted separately by the user. Content-free billing records retain database, authorized user, session identifier, rate version, confirmed duration and cycles amounts; access follows the database's billing-history permissions.
-
-The preview charges the selected database's service credits, denominated in cycles, at the displayed connection-time rate. Silence, microphone mute and device-lock time are included. Reservations protect the agreed budget; unused reservations are released. Existing StoreKit purchase verification remains unchanged. The operator pays infrastructure and AI providers separately.
-
-The preview remains disabled until staging, device, pricing and privacy-disclosure acceptance are complete. Publication dates and App Store disclosures must be updated before activation.
+Kinic does not persist voice recordings. Historical provider records and prior encrypted Cloudflare backup copies are subject to the applicable provider retention periods; removing local recovery state does not promise provider erasure. Saved Ask AI history is deleted separately by the user.
 
 ## 3. How we store and secure information
 
@@ -124,7 +120,7 @@ No system can be guaranteed completely secure. Users should not store secrets su
 
 ## 5. Sharing and disclosure
 
-We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. The consented Ask AI feature uses TypeSafe for intent classification and semantic reranking, DeepSeek for iOS text answers, and OpenAI for voice and browser Agent operation. Source Capture uses TypeSafe for semantic reranking and the configured generation provider, currently DeepSeek, for page generation.
+We do not sell personal information. We do not share information for advertising, profiling, or cross-service tracking. Ask AI uses TypeSafe for intent classification and semantic reranking, DeepSeek for iOS text answers, and OpenAI for retained browser Agent operation. Source Capture uses TypeSafe for semantic reranking and the configured generation provider, currently DeepSeek, for page generation.
 
 Information may be processed or disclosed only to:
 
@@ -167,7 +163,7 @@ The Service is not directed to children under 13, and we do not knowingly proces
 
 ## 10. Changes to this Policy
 
-We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. The iOS typed Ask AI processing described in this September 30, 2026 update takes effect when this update is posted, but only for users who accept the updated Ask AI consent before submitting a new question. Posting this update alone does not send existing conversations or Wiki content to DeepSeek. Other material changes to existing processing take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
+We will post changes to this Policy on the public Privacy Policy page and update the "Last Updated" date. The iOS typed Ask AI processing described in the September 30, 2026 update occurs when users submit a new question. The iOS app does not show a separate Ask AI consent screen; processing is described in this Policy. Posting this update alone does not send existing conversations or Wiki content to DeepSeek. Other material changes to existing processing take effect 30 days after posting unless a longer period is required by law. We may provide additional notice where required.
 
 ## 11. Contact us
 

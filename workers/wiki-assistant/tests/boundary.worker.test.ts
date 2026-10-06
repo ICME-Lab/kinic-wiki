@@ -4,7 +4,7 @@ import { AssistantStore } from "../src/store";
 import { AssistantUser } from "../src/user";
 import { Leases } from "../src/leases";
 import { sweep } from "../src/reaper";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 const bindings = env as Env;
 beforeAll(async () => {
@@ -17,6 +17,17 @@ beforeAll(async () => {
 });
 const origin = "https://wiki.kinic.xyz";
 describe("assistant HTTP and D1 authentication boundary", () => {
+  it.each(["/voice", "/voice/quote", "/voice/connected", "/voice/stop"])(
+    "returns 404 for retired native voice route %s before authentication or configuration",
+    async (path) => {
+      const response = await SELF.fetch("https://assistant/api/assistant/native" + path, {
+        method: path === "/voice/quote" ? "GET" : "POST",
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+    },
+  );
+
   it("discards only fenced provider-free Agent intents", async () => {
     const store = new AssistantStore(bindings);
     const leases = new Leases(bindings.ASSISTANT_DB);
@@ -88,122 +99,14 @@ describe("assistant HTTP and D1 authentication boundary", () => {
       .run();
     await leases.release(replacement!);
   });
-  it("keeps an uncertain Live create without storing or replaying SDP", async () => {
+  it("ignores legacy Live cleanup jobs without contacting providers or retrying", async () => {
     const id = "live:" + crypto.randomUUID();
-    const store = new AssistantStore(bindings);
-    await store.intent(id, "replay-owner", "replay-conversation", "live", {
-      providerId: null,
-      requestId: "replay-request",
-      voiceId: "replay-voice",
-    });
-    await bindings.ASSISTANT_DB.prepare(
-      "UPDATE assistant_jobs SET state='pending' WHERE id=?",
-    )
-      .bind(id)
-      .run();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await bindings.ASSISTANT_DB.prepare("INSERT INTO assistant_jobs(id,principal,conversation_id,kind,state,data,next_attempt,attempts,created_at) VALUES (?,?,?,'live','pending',?,0,0,0)")
+      .bind(id, "retired-owner", "retired-conversation", JSON.stringify({ providerId: null, requestId: "retired-request" })).run();
     await sweep(bindings);
-    const row = await bindings.ASSISTANT_DB.prepare(
-      "SELECT conversation_id,data,state,attempts,next_attempt FROM assistant_jobs WHERE id=?",
-    )
-      .bind(id)
-      .first<{
-        conversation_id: string;
-        data: string;
-        state: string;
-        attempts: number;
-        next_attempt: number;
-      }>();
-    expect(row).toMatchObject({
-      conversation_id: "replay-conversation",
-      state: "pending",
-      attempts: 1,
-    });
-    expect(JSON.parse(row!.data)).toEqual({
-      providerId: null,
-      requestId: "replay-request",
-      voiceId: "replay-voice",
-    });
-    expect(row!.next_attempt).toBeGreaterThan(Date.now());
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("assistant_live_creation_unresolved"),
-    );
-    error.mockRestore();
-    await bindings.ASSISTANT_DB.prepare("DELETE FROM assistant_jobs WHERE id=?")
-      .bind(id)
-      .run();
-  });
-  it("closes and completes a known Live job once", async () => {
-    const id = "live:" + crypto.randomUUID();
-    await new AssistantStore(bindings).intent(
-      id,
-      "known-owner",
-      "known-conversation",
-      "live",
-      {
-        providerId: "live-provider",
-        requestId: "known-request",
-        voiceId: "known-voice",
-      },
-    );
-    await bindings.ASSISTANT_DB.prepare(
-      "UPDATE assistant_jobs SET state='pending' WHERE id=?",
-    )
-      .bind(id)
-      .run();
-    const closed: string[] = [];
-    const close = async (_env: Env, providerId: string) => {
-      closed.push(providerId);
-    };
-    await sweep(bindings, close);
-    await sweep(bindings, close);
-    expect(closed).toEqual(["live-provider"]);
-    expect(
-      await bindings.ASSISTANT_DB.prepare(
-        "SELECT 1 FROM assistant_jobs WHERE id=?",
-      )
-        .bind(id)
-        .first(),
-    ).toBeNull();
-  });
-  it("does not complete a known Live job after its lease is superseded", async () => {
-    const id = "live:" + crypto.randomUUID();
-    await new AssistantStore(bindings).intent(
-      id,
-      "stale-owner",
-      "stale-conversation",
-      "live",
-      {
-        providerId: "stale-provider",
-        requestId: "stale-request",
-        voiceId: "stale-voice",
-      },
-    );
-    await bindings.ASSISTANT_DB.prepare(
-      "UPDATE assistant_jobs SET state='pending' WHERE id=?",
-    )
-      .bind(id)
-      .run();
-    await sweep(bindings, async () => {
-      await bindings.ASSISTANT_DB.prepare(
-        "UPDATE assistant_leases SET expires_at=0 WHERE scope='cleanup' AND id=?",
-      )
-        .bind(id)
-        .run();
-      expect(
-        await new Leases(bindings.ASSISTANT_DB).claim("cleanup", id),
-      ).not.toBeNull();
-    });
-    expect(
-      await bindings.ASSISTANT_DB.prepare(
-        "SELECT state FROM assistant_jobs WHERE id=?",
-      )
-        .bind(id)
-        .first(),
-    ).toEqual({ state: "pending" });
-    await bindings.ASSISTANT_DB.prepare("DELETE FROM assistant_jobs WHERE id=?")
-      .bind(id)
-      .run();
+    expect(await bindings.ASSISTANT_DB.prepare("SELECT state,attempts,next_attempt FROM assistant_jobs WHERE id=?").bind(id).first())
+      .toEqual({ state: "pending", attempts: 0, next_attempt: 0 });
+    await bindings.ASSISTANT_DB.prepare("DELETE FROM assistant_jobs WHERE id=?").bind(id).run();
   });
   it("requires authentication for private routes", async () => {
     const response = await SELF.fetch(origin + "/api/assistant/conversations", {
@@ -445,95 +348,23 @@ it("deduplicates control commands and encrypts their recorded responses", async 
   ).not.toContain("private SDP");
 });
 
-it("persists a stop before the handling invocation disappears and ignores old voice IDs", async () => {
-  const principal = crypto.randomUUID(),
-    user = await new AssistantUser(bindings, principal).initialize(),
-    store = new AssistantStore(bindings);
-  const now = Date.now(),
-    id = crypto.randomUUID(),
-    voiceId = crypto.randomUUID();
+it("persists an owner-bound text end across invocations", async () => {
+  const principal = crypto.randomUUID();
+  const user = await new AssistantUser(bindings, principal).initialize();
+  const now = Date.now(), id = crypto.randomUUID();
   user["state"].conversation = {
-    id,
-    authId: "auth",
-    principal,
-    databaseId: "db",
-    scope: "/Knowledge",
-    sessionId: null,
-    generation: 0,
-    pending: null,
-    activity: now,
-    seen: now,
-    status: "ready",
-    error: null,
-    messages: [],
-    format: 3,
-    transcripts: [],
-    history: [],
-    utterances: [],
-    delegations: [],
-    deferred: null,
-    live: {
-      id: "live-provider",
-      stopping: false,
-      usage: {
-        chargeId: voiceId,
-        started: now,
-        reserved: 60,
-        usageDay: "2026-09-14",
-        settled: false,
-      },
-    },
+    id, authId: "text-owner", principal, databaseId: "db", scope: "database",
+    native: true, nativeTextProvider: "deepseek", format: 3,
+    sessionId: null, generation: 0, pending: null, activity: now, seen: now,
+    status: "ready", error: null, messages: [], transcripts: [], history: [],
+    utterances: [], delegations: [], deferred: null,
   };
-  user["state"].charges = [
-    {
-      id: voiceId,
-      conversationId: id,
-      databaseId: "db",
-      principal,
-      rate: "1",
-      reserved: 60,
-      started: now,
-      stopped: null,
-      expires: now + 86400000,
-      confirmed: 0,
-    },
-  ];
   await user["save"]();
-  expect(
-    await store.requestStop(principal, "auth", id, "old-voice", now + 10000),
-  ).toBe(false);
-  expect(
-    await store.requestStop(principal, "auth", id, voiceId, now + 10000),
-  ).toBe(true);
-  await store.requestStop(principal, "auth", id, voiceId, now + 20000);
-  const recovered = (await new AssistantStore(bindings).load(principal)).state;
-  expect(recovered.conversation?.live?.stopping).toBe(true);
-  expect(recovered.charges[0].stopped).toBe(now + 10000);
-});
-
-it("keeps an earlier stop that arrives while a later cutoff is being finalized", async () => {
   const store = new AssistantStore(bindings);
-  const conversationId = crypto.randomUUID();
-  const voiceId = crypto.randomUUID();
-  const started = Date.now();
-  await bindings.ASSISTANT_DB.batch([
-    bindings.ASSISTANT_DB.prepare(
-      "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) VALUES (?,?,?)",
-    ).bind(conversationId, voiceId, started + 45000),
-    bindings.ASSISTANT_DB.prepare(
-      "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) VALUES (?,?,?)",
-    ).bind(conversationId, "*", started + 55000),
-  ]);
-
-  await store.clearStop(conversationId, voiceId, true, started + 50000);
-  expect(await store.stopAt(conversationId, voiceId)).toBe(started + 45000);
-  const rows = await bindings.ASSISTANT_DB.prepare(
-    "SELECT voice_id FROM assistant_stops WHERE conversation_id=? ORDER BY voice_id",
-  )
-    .bind(conversationId)
-    .all<{ voice_id: string }>();
-  expect(rows.results.map((row) => row.voice_id)).toEqual([voiceId]);
-
-  await store.clearStop(conversationId, voiceId, true, started + 45000);
-  expect(await store.stopAt(conversationId, voiceId)).toBeNull();
+  expect(await store.requestEnd(principal, "wrong-owner", id, now)).toBe(false);
+  expect((await store.load(principal)).state.endRequested).toBeUndefined();
+  expect(await store.requestEnd(principal, "text-owner", id, now)).toBe(true);
+  expect((await store.load(principal)).state.endRequested).toBe(now);
+  const next = await new AssistantUser(bindings, principal).initialize();
+  expect(next["state"].conversation).toBeNull();
 });

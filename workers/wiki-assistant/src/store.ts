@@ -96,17 +96,14 @@ export class AssistantStore {
         data: string | null;
         usage_day: string;
         questions: number;
-        voice_seconds: number;
         seen: number;
       }>();
     const state: UserState = {
       principal,
       day: row?.usage_day ?? new Date().toISOString().slice(0, 10),
       questions: row?.questions ?? 0,
-      voiceSeconds: row?.voice_seconds ?? 0,
       conversation: null,
       cleanup: [],
-      charges: [],
     };
     if (row?.data) {
       state.conversation = await this.decode(
@@ -134,41 +131,12 @@ export class AssistantStore {
       .prepare("SELECT data FROM assistant_cleanup WHERE principal=?")
       .bind(principal)
       .first<{ data: string }>();
-    if (cleanup) Object.assign(state, JSON.parse(cleanup.data));
-    const conversationIds = new Set(
-      state.charges.map((charge) => charge.conversationId),
-    );
-    if (state.conversation) conversationIds.add(state.conversation.id);
-    for (const conversationId of conversationIds) {
-      const stops = await this.db
-        .prepare(
-          "SELECT voice_id,stopped_at FROM assistant_stops WHERE conversation_id=?",
-        )
-        .bind(conversationId)
-        .all<{ voice_id: string; stopped_at: number }>();
-      for (const stop of stops.results) {
-        if (
-          state.conversation?.id === conversationId &&
-          stop.voice_id === "*"
-        )
-          state.endRequested = stop.stopped_at;
-        if (
-          state.conversation?.id === conversationId &&
-          state.conversation.live &&
-          (stop.voice_id === "*" ||
-            state.conversation.live.usage.chargeId === stop.voice_id)
-        )
-          state.conversation.live.stopping = true;
-        for (const charge of state.charges)
-          if (
-            charge.conversationId === conversationId &&
-            (stop.voice_id === "*" || charge.id === stop.voice_id)
-          )
-            charge.stopped = Math.min(
-              charge.stopped ?? Infinity,
-              stop.stopped_at,
-            );
-      }
+    if (cleanup) {
+      const saved = JSON.parse(cleanup.data) as Pick<UserState, "cleanup">;
+      state.cleanup = (saved.cleanup ?? []).filter((task) => !task.liveId && !task.voiceUsage);
+    }
+    if (state.conversation) {
+      state.endRequested = (await this.db.prepare("SELECT MIN(stopped_at) AS stopped_at FROM assistant_stops WHERE conversation_id=? AND voice_id='*'").bind(state.conversation.id).first<{ stopped_at: number | null }>())?.stopped_at ?? undefined;
     }
     return { revision: row?.revision ?? 0, state };
   }
@@ -206,7 +174,7 @@ export class AssistantStore {
           payload,
           state.day,
           state.questions,
-          state.voiceSeconds,
+          0,
           c?.seen ?? 0,
           c?.activity ?? 0,
           next,
@@ -216,7 +184,7 @@ export class AssistantStore {
           fence?.owner ?? null,
           fence?.generation ?? null,
           Date.now(),
-          c?.live?.usage.chargeId ?? null,
+          null,
         ),
       this.db
         .prepare(
@@ -230,7 +198,7 @@ export class AssistantStore {
         .bind(
           principal,
           commit,
-          JSON.stringify({ cleanup: state.cleanup, charges: state.charges }),
+          JSON.stringify({ cleanup: state.cleanup }),
         ),
     ];
     for (const message of c?.messages ?? [])
@@ -250,9 +218,9 @@ export class AssistantStore {
     statements.push(
       this.db
         .prepare(
-          `UPDATE assistant_jobs SET state='pending' WHERE principal=?1 AND ${condition} AND (conversation_id<>?3 OR (?4 IS NULL AND kind='live'))`,
+          `UPDATE assistant_jobs SET state='pending' WHERE principal=?1 AND ${condition} AND kind='agent' AND conversation_id<>?3`,
         )
-        .bind(principal, commit, c?.id ?? "", c?.live?.id ?? null),
+        .bind(principal, commit, c?.id ?? ""),
     );
     if (!c) {
       statements.push(
@@ -265,7 +233,7 @@ export class AssistantStore {
       statements.push(
         this.db
           .prepare(
-            `UPDATE assistant_jobs SET state='pending' WHERE principal=?1 AND ${condition}`,
+            `UPDATE assistant_jobs SET state='pending' WHERE principal=?1 AND kind='agent' AND ${condition}`,
           )
           .bind(principal, commit),
       );
@@ -280,57 +248,25 @@ export class AssistantStore {
       throw new AssistantError("stale_state", 409);
     return revision + 1;
   }
-  async canSend(principal: string, id: string, voiceId: string) {
-    return !!(await this.db
-      .prepare(
-        "SELECT 1 FROM assistant_users WHERE principal=?1 AND conversation_id=?2 AND voice_id=?3 AND NOT EXISTS(SELECT 1 FROM assistant_stops WHERE conversation_id=?2 AND voice_id IN ('*',?3))",
-      )
-      .bind(principal, id, voiceId)
-      .first());
-  }
-  async requestStop(
+  async requestEnd(
     principal: string,
     authId: string,
     id: string,
-    voiceId: string,
     at: number,
   ) {
     const result = await this.db.batch([
       this.db
         .prepare(
-          "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) SELECT ?1,?2,?3 FROM assistant_users WHERE principal=?4 AND auth_id=?5 AND conversation_id=?1 AND (?2='*' OR voice_id=?2) ON CONFLICT(conversation_id,voice_id) DO UPDATE SET stopped_at=MIN(stopped_at,excluded.stopped_at)",
+          "INSERT INTO assistant_stops(conversation_id,voice_id,stopped_at) SELECT ?1,'*',?2 FROM assistant_users WHERE principal=?3 AND auth_id=?4 AND conversation_id=?1 ON CONFLICT(conversation_id,voice_id) DO UPDATE SET stopped_at=MIN(stopped_at,excluded.stopped_at)",
         )
-        .bind(id, voiceId, at, principal, authId),
+        .bind(id, at, principal, authId),
       this.db
         .prepare(
-          "UPDATE assistant_users SET revision=revision+1,next_attempt=0 WHERE principal=?1 AND auth_id=?2 AND conversation_id=?3 AND EXISTS(SELECT 1 FROM assistant_stops WHERE conversation_id=?3 AND voice_id=?4)",
+          "UPDATE assistant_users SET revision=revision+1,next_attempt=0 WHERE principal=?1 AND auth_id=?2 AND conversation_id=?3 AND EXISTS(SELECT 1 FROM assistant_stops WHERE conversation_id=?3 AND voice_id='*')",
         )
-        .bind(principal, authId, id, voiceId),
+        .bind(principal, authId, id),
     ]);
     return result[0].meta.changes === 1;
-  }
-  async stopAt(conversationId: string, voiceId: string) {
-    return (
-      await this.db
-        .prepare(
-          "SELECT MIN(stopped_at) AS stopped_at FROM assistant_stops WHERE conversation_id=?1 AND voice_id IN ('*',?2)",
-        )
-        .bind(conversationId, voiceId)
-        .first<{ stopped_at: number | null }>()
-    )?.stopped_at ?? null;
-  }
-  async clearStop(
-    conversationId: string,
-    voiceId: string,
-    clearWildcard: boolean,
-    appliedAt: number,
-  ) {
-    await this.db
-      .prepare(
-        "DELETE FROM assistant_stops WHERE conversation_id=?1 AND (voice_id=?2 OR (?3=1 AND voice_id='*')) AND stopped_at>=?4",
-      )
-      .bind(conversationId, voiceId, clearWildcard ? 1 : 0, appliedAt)
-      .run();
   }
   async touch(principal: string, id: string) {
     await this.db
@@ -344,7 +280,7 @@ export class AssistantStore {
     id: string,
     principal: string,
     conversationId: string,
-    kind: "agent" | "live",
+    kind: "agent",
     data: unknown,
   ) {
     await this.db

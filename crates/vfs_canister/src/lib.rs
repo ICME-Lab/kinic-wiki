@@ -790,63 +790,47 @@ async fn purchase_database_cycles(
     .await
 }
 
+// Retained Candid signatures let old clients fail deterministically after voice retirement.
+// No voice operation performs provider or accounting work.
 #[update]
-fn configure_voice_rate(rate: VoiceRate) -> Result<(), String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("configure_voice_rate", None, |service, caller, _| {
-        service.configure_voice_rate(caller, rate)
-    })
+fn configure_voice_rate(_rate: VoiceRate) -> Result<(), String> {
+    Err("voice retired".into())
 }
 #[query]
 fn get_voice_rate() -> Result<VoiceRate, String> {
-    with_service(|s| s.get_voice_rate())
+    Err("voice retired".into())
 }
 #[update]
-fn initialize_voice_policy(database_id: String) -> Result<VoicePolicy, String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("initialize_voice_policy", None, |s, caller, _| {
-        s.initialize_voice_policy(caller, &database_id)
-    })
+fn initialize_voice_policy(_database_id: String) -> Result<VoicePolicy, String> {
+    Err("voice retired".into())
 }
 #[query]
-fn get_voice_access(database_id: String, principal: String) -> Result<VoiceAccess, String> {
-    with_service(|s| s.get_voice_access(&caller_text(), &database_id, &principal, now_millis()))
+fn get_voice_access(_database_id: String, _principal: String) -> Result<VoiceAccess, String> {
+    Err("voice retired".into())
 }
 #[update]
-fn set_voice_policy(policy: VoicePolicy) -> Result<(), String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("set_voice_policy", None, |s, caller, _| {
-        s.set_voice_policy(caller, policy)
-    })
+fn set_voice_policy(_policy: VoicePolicy) -> Result<(), String> {
+    Err("voice retired".into())
 }
 #[query]
-fn get_voice_policy(database_id: String, principal: String) -> Result<VoicePolicy, String> {
-    with_service(|s| s.get_voice_policy(&caller_text(), &database_id, &principal))
+fn get_voice_policy(_database_id: String, _principal: String) -> Result<VoicePolicy, String> {
+    Err("voice retired".into())
 }
 #[update]
-fn reserve_voice(request: VoiceReserveRequest) -> Result<VoiceReservation, String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("reserve_voice", None, |s, caller, now| {
-        s.reserve_voice(caller, request, now)
-    })
+fn reserve_voice(_request: VoiceReserveRequest) -> Result<VoiceReservation, String> {
+    Err("voice retired".into())
 }
 #[update]
-fn settle_voice(request: VoiceSettleRequest) -> Result<VoiceReservation, String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("settle_voice", None, |s, caller, now| {
-        s.settle_voice(caller, request, now)
-    })
+fn settle_voice(_request: VoiceSettleRequest) -> Result<VoiceReservation, String> {
+    Err("voice retired".into())
 }
 #[update]
-fn stop_voice(request: VoiceStopRequest) -> Result<VoiceReservation, String> {
-    require_authenticated_caller()?;
-    with_unmetered_update("stop_voice", None, |s, caller, now| {
-        s.stop_voice(caller, request, now)
-    })
+fn stop_voice(_request: VoiceStopRequest) -> Result<VoiceReservation, String> {
+    Err("voice retired".into())
 }
 #[query]
-fn get_voice_reservation(session_id: String) -> Result<Option<VoiceReservation>, String> {
-    with_service(|s| s.get_voice_reservation(&caller_text(), &session_id))
+fn get_voice_reservation(_session_id: String) -> Result<Option<VoiceReservation>, String> {
+    Err("voice retired".into())
 }
 
 #[update]
@@ -1491,13 +1475,6 @@ fn initialize_upgrade_or_trap(config: Option<CyclesBillingConfig>) {
 fn schedule_storage_billing_timer() {
     #[cfg(target_arch = "wasm32")]
     {
-        set_timer_interval(Duration::from_secs(60), || async {
-            match with_service(|s| s.expire_voice_reservations(now_millis())) {
-                Ok(count) if count > 0 => ic_cdk::println!("voice_billing_expired count={count}"),
-                Err(error) => ic_cdk::println!("voice_billing_expiry_failed: {error}"),
-                _ => {}
-            }
-        });
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
         set_timer(Duration::ZERO, async {
             run_cycles_top_up_check_from_timer().await;

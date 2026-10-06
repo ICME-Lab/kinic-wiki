@@ -8,12 +8,14 @@ struct KinicPanel<Content: View, Trailing: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     let systemImage: String
+    let padding: CGFloat
     let trailing: Trailing
     let content: Content
 
-    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) where Trailing == EmptyView {
+    init(title: String, systemImage: String, padding: CGFloat = KinicDesign.panelPadding, @ViewBuilder content: () -> Content) where Trailing == EmptyView {
         self.title = title
         self.systemImage = systemImage
+        self.padding = padding
         trailing = EmptyView()
         self.content = content()
     }
@@ -21,11 +23,13 @@ struct KinicPanel<Content: View, Trailing: View>: View {
     init(
         title: String,
         systemImage: String,
+        padding: CGFloat = KinicDesign.panelPadding,
         @ViewBuilder trailing: () -> Trailing,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.systemImage = systemImage
+        self.padding = padding
         self.trailing = trailing()
         self.content = content()
     }
@@ -48,7 +52,7 @@ struct KinicPanel<Content: View, Trailing: View>: View {
 
             content
         }
-        .padding(KinicDesign.panelPadding)
+        .padding(padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KinicDesign.panelBackground)
         .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))

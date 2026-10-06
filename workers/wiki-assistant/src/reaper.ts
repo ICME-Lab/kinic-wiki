@@ -4,24 +4,10 @@ import { AssistantUser } from "./user";
 import { Leases } from "./leases";
 import {
   client,
-  closeLiveSession,
   cancelAgent,
   deleteAgent,
 } from "./openai";
-import { AssistantError } from "./contracts";
-export async function closeLive(env: Env, id: string) {
-  try {
-    await closeLiveSession(env.OPENAI_API_KEY!, id);
-  } catch (e) {
-    // A session the provider no longer knows is already closed.
-    if (!(e instanceof AssistantError && e.code === "voice_session_gone"))
-      throw e;
-  }
-}
-export async function sweep(
-  env: Env,
-  closeProvider: (env: Env, id: string) => Promise<void> = closeLive,
-) {
+export async function sweep(env: Env) {
   const store = new AssistantStore(env),
     leases = new Leases(env.ASSISTANT_DB);
   const users = await store.due(10);
@@ -68,7 +54,7 @@ export async function sweep(
     );
   const jobs = (
     await env.ASSISTANT_DB.prepare(
-      "SELECT id,principal,kind,data,conversation_id,attempts FROM assistant_jobs WHERE state='pending' AND next_attempt<=? ORDER BY next_attempt LIMIT ?",
+      "SELECT id,principal,kind,data,conversation_id,attempts FROM assistant_jobs WHERE kind='agent' AND state='pending' AND next_attempt<=? ORDER BY next_attempt LIMIT ?",
     )
       .bind(Date.now(), 10)
       .all<{
@@ -93,10 +79,9 @@ export async function sweep(
             providerId?: string;
             requestId?: string;
           };
-          // The user cleanup record also settles the daily voice reservation.
-          // Do not race it or bypass its backoff with a duplicate close.
+          // Do not race the user cleanup record or bypass its backoff.
           const owned = await env.ASSISTANT_DB.prepare(
-            "SELECT 1 FROM assistant_cleanup,json_each(assistant_cleanup.data,'$.cleanup') AS task WHERE principal=?1 AND (json_extract(task.value,'$.sessionId')=?2 OR json_extract(task.value,'$.liveId')=?2 OR (json_extract(task.value,'$.unknownCreate')=1 AND json_extract(task.value,'$.requestId')=?3))",
+            "SELECT 1 FROM assistant_cleanup,json_each(assistant_cleanup.data,'$.cleanup') AS task WHERE principal=?1 AND (json_extract(task.value,'$.sessionId')=?2 OR (json_extract(task.value,'$.unknownCreate')=1 AND json_extract(task.value,'$.requestId')=?3))",
           )
             .bind(
               job.principal,
@@ -118,60 +103,30 @@ export async function sweep(
               .run();
             return;
           }
-          if (job.kind === "live") {
-            if (!data.providerId) {
-              const delay = Math.min(
-                1800000,
-                60000 * 2 ** Math.min(job.attempts, 5),
-              );
-              const deferred = await env.ASSISTANT_DB.prepare(
-                "UPDATE assistant_jobs SET attempts=attempts+1,next_attempt=?2 WHERE id=?1 AND EXISTS(SELECT 1 FROM assistant_leases WHERE scope='cleanup' AND id=?1 AND owner=?3 AND generation=?4 AND expires_at>?5)",
+          const api = client(env.OPENAI_API_KEY);
+          const ids: string[] = [];
+          if (data.providerId) ids.push(data.providerId);
+          else {
+            let count = 0;
+            for await (const session of api.beta.agents.sessions.list({
+              limit: 100,
+            })) {
+              if (
+                session.metadata.kinic_conversation === job.conversation_id &&
+                session.metadata.kinic_request === data.requestId
               )
-                .bind(
-                  job.id,
-                  Date.now() + delay,
-                  lease.owner,
-                  lease.generation,
-                  Date.now(),
-                )
-                .run();
-              if (deferred.meta.changes === 1)
-                console.error(
-                  JSON.stringify({
-                    event: "assistant_live_creation_unresolved",
-                    operationId: job.id,
-                    attempts: job.attempts + 1,
-                  }),
-                );
-              return;
+                ids.push(session.id);
+              if (++count >= 300) break;
             }
-            await closeProvider(env, data.providerId);
-          } else {
-            const api = client(env.OPENAI_API_KEY);
-            const ids: string[] = [];
-            if (data.providerId) ids.push(data.providerId);
-            else {
-              let count = 0;
-              for await (const session of api.beta.agents.sessions.list({
-                limit: 100,
-              })) {
-                if (
-                  session.metadata.kinic_conversation === job.conversation_id &&
-                  session.metadata.kinic_request === data.requestId
-                )
-                  ids.push(session.id);
-                if (++count >= 300) break;
-              }
-              if (!ids.length) throw new Error("unknown_agent_creation");
+            if (!ids.length) throw new Error("unknown_agent_creation");
+          }
+          for (const id of ids) {
+            try {
+              await cancelAgent(api, id);
+            } catch {
+              /* Deletion is authoritative. */
             }
-            for (const id of ids) {
-              try {
-                await cancelAgent(api, id);
-              } catch {
-                /* Deletion is authoritative. */
-              }
-              await deleteAgent(api, id);
-            }
+            await deleteAgent(api, id);
           }
           await env.ASSISTANT_DB.prepare(
             "DELETE FROM assistant_jobs WHERE id=?1 AND EXISTS(SELECT 1 FROM assistant_leases WHERE scope='cleanup' AND id=?1 AND owner=?2 AND generation=?3 AND expires_at>?4)",

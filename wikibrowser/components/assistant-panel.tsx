@@ -1,13 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, Mic, Send, Square, X } from "lucide-react";
+import { MessageCircle, Send, Square, X } from "lucide-react";
 import {
   assistantRequest,
   assistantSnapshot,
   assistantUrl,
   assistantError,
   AssistantRequestError,
-  AssistantVoice,
   AssistantControl,
   CONSENT_VERSION,
   type AssistantSnapshot,
@@ -80,11 +79,8 @@ function Conversation({
   const [question, setQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState("");
   const idRef = useRef<string | null>(null);
   const [control] = useState(() => new AssistantControl());
-  const voice = useRef<AssistantVoice | null>(null);
-  const audio = useRef<HTMLAudioElement | null>(null);
   const live = useRef(true);
   const popup = useRef<Window | null>(null);
   const pendingQuestion = useRef<{
@@ -176,7 +172,6 @@ function Conversation({
     };
     window.addEventListener("message", receive);
     const unload = () => {
-      voice.current?.dispose();
       if (idRef.current)
         void assistantRequest("/end", {
           conversationId: idRef.current,
@@ -263,9 +258,6 @@ function Conversation({
       pendingQuestion.current = null;
       setQuestion("");
       setSnapshot(null);
-      voice.current?.dispose();
-      voice.current = null;
-      setVoiceStatus("");
       if (
         ["authentication_required", "identity_changed"].includes(code)
       )
@@ -328,8 +320,6 @@ function Conversation({
         if (disposed || attempt !== generation) return;
         generation++;
         control.detach();
-        voice.current?.dispose();
-        voice.current = null;
         if (deadline === undefined)
           deadline = setTimeout(() => ended("reconnect_expired"), grace);
         retry = setTimeout(() => void reconnect(), 3000);
@@ -350,14 +340,7 @@ function Conversation({
       clearInterval(heartbeat);
     };
   }, [snapshot?.id, snapshot?.reconnectGraceMs, control]);
-  useEffect(() => {
-    if (snapshot?.voice === "stopping" || snapshot?.voice === "off") {
-      if (voice.current)
-        setVoiceStatus("Voice has ended. You can continue in text.");
-      voice.current?.dispose();
-      voice.current = null;
-    }
-  }, [snapshot?.voice]);
+
   async function authorize() {
     setBusy(true);
     setError(null);
@@ -436,7 +419,6 @@ function Conversation({
   }
   async function cancel() {
     if (!snapshot) return;
-    voice.current?.muteOutput();
     try {
       const result = await control.command<AssistantCommandResult>(
         "cancel",
@@ -445,41 +427,6 @@ function Conversation({
       await refreshSnapshot.current?.(result.revision);
     } catch (cause) {
       report(cause);
-    }
-  }
-  async function toggleVoice() {
-    if (!snapshot || !audio.current) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (
-        snapshot.voice !== "off" ||
-        (voice.current && !voice.current.isClosed)
-      ) {
-        if (voice.current) await voice.current.stop(snapshot.id);
-        else
-          await assistantRequest("/voice/stop", {
-            conversationId: snapshot.id,
-            body: { voiceId: snapshot.voiceId },
-          });
-        voice.current = null;
-      } else {
-        audio.current.muted = false;
-        voice.current = new AssistantVoice(
-          audio.current,
-          (status) => {
-            if (live.current) setVoiceStatus(status);
-          },
-          control,
-        );
-        setVoiceStatus("Connecting voice…");
-        await voice.current.start(snapshot.id);
-      }
-    } catch (cause) {
-      voice.current = null;
-      report(cause);
-    } finally {
-      if (live.current) setBusy(false);
     }
   }
   async function end() {
@@ -491,7 +438,6 @@ function Conversation({
           body: {},
         });
       idRef.current = null;
-      voice.current?.dispose();
       onClose();
     } catch (cause) {
       report(cause);
@@ -534,13 +480,13 @@ function Conversation({
               I consent to sending my questions, selected target, and up to six
               recent conversation messages to TypeSafe for intent classification,
               plus necessary Wiki paths and previews for focused search ranking,
-              and questions, audio, and necessary
+              and questions and necessary
               Wiki excerpts to OpenAI. Both providers process this data in the United
               States. TypeSafe does not train or fine-tune models on Input, but
               retains data as reasonably necessary rather than offering Zero
               Data Retention. Ending a conversation requests deletion of its
               OpenAI session, but does not mean all provider records are erased
-              immediately. The app does not retain audio recordings.
+              immediately.
             </span>
           </label>
           <label className="flex items-center gap-2">
@@ -555,8 +501,7 @@ function Conversation({
             </select>
           </label>
           <p className="text-xs text-muted">
-            Default limits: 50 questions and 20 minutes of voice per day, with
-            10 minutes per voice session. Select “Questions only” when
+            Default limit: 50 questions per day. Select “Questions only” when
             connecting with Internet Identity.
           </p>
           <button
@@ -675,18 +620,7 @@ function Conversation({
             </button>
           </form>
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={
-                busy ||
-                (snapshot.voice === "off" && snapshot.status !== "ready")
-              }
-              onClick={() => void toggleVoice()}
-              className="flex items-center gap-1 rounded-lg border border-line bg-white px-3 py-2 disabled:opacity-40"
-            >
-              <Mic size={16} />
-              {snapshot.voice === "off" ? "Start voice" : "Stop voice"}
-            </button>
+
             {snapshot.status !== "ready" && (
               <button
                 type="button"
@@ -703,16 +637,6 @@ function Conversation({
           </div>
         </>
       )}
-      <output className="text-xs text-muted">{voiceStatus}</output>
-      <audio
-        ref={audio}
-        controls
-        className={
-          snapshot?.voice !== "off" && snapshot ? "h-9 w-full" : "hidden"
-        }
-      >
-        <track kind="captions" />
-      </audio>
     </section>
   );
 }

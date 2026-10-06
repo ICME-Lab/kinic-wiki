@@ -1,6 +1,6 @@
 # Kinic Wiki Assistant
 
-Database-scoped text and GPT-Live conversations for iOS. The retained Web implementation is disconnected from the product UI and public proxy. The service has one emergency kill switch and is disabled by default. Index migration 005 adds DB voice billing; Wiki content, search schema and the public MCP tool contract are unchanged.
+Database-scoped typed conversations for iOS. Voice conversations have been retired. The retained Web implementation is disconnected from the product UI and public proxy. The service has one emergency kill switch and is disabled by default. Index migration 005 is retained for historical billing data; Wiki content, search schema and the public MCP tool contract are unchanged.
 
 ## Architecture revision
 
@@ -16,7 +16,7 @@ The browser Worker proxies only `/api/assistant/native/*` through the `WIKI_ASSI
 Worker secrets:
 
 - `DEEPSEEK_API_KEY`: operator-owned DeepSeek key required for native iOS text answers. Never expose it to the client.
-- `OPENAI_API_KEY`: operator-owned project key with Agents read/write, Responses inference, and GPT-Live access. Never expose it to the browser.
+- `OPENAI_API_KEY`: operator-owned project key for retained browser text Agent requests and Agent session cleanup. Retired Live sessions are no longer terminated or reconciled by the Worker. Never expose it to the browser.
 - `TYPESAFE_API_KEY`: operator-owned TypeSafe key used only by the Worker for Jev reranking. Never expose it to browser or iOS code.
 - `ASSISTANT_KEY_ENCRYPTION_KEY`: base64-encoded 32-byte AES key for short-lived II credentials and conversation recovery records. Store it as a Worker secret, not in source control. Do not rotate it while sessions are active; stop and clear sessions first.
 
@@ -32,13 +32,13 @@ Wrangler 4.119.0 and the existing test runtime support compatibility date 2026-0
 
 ## Authentication and data handling
 
-The existing MCP II registration, five-minute app delegation, encryption, and basic node-read invocation are shared in `@kinic/ii-server`. Users select **Questions only** in II. The server independently mints the identity, matches the signed-in principal, binds each conversation to one DB and scope, and checks canister read access before text retrieval. Starting a paid voice connection additionally requires the database owner's voice policy.
+The existing MCP II registration, five-minute app delegation, encryption, and basic node-read invocation are shared in `@kinic/ii-server`. Users select **Questions only** in II. The server independently mints the identity, matches the signed-in principal, binds each conversation to one DB and scope, and checks canister read access before text retrieval.
 
 The read actor has only six query methods, including the existing canister `search_nodes` and `list_nodes` APIs. Its Candid record projections decode only fields used by the assistant. Jev first classifies each request as a database overview, focused search, selected-node summary, or ordinary conversation. Ambiguous classifications return a clarification without starting Wiki retrieval or answer generation. `wiki_query` fetches at most 20 lightweight candidates and Jev selects at most five. `wiki_inventory` returns a bounded overview of direct root documents plus `/Knowledge` and `/Memory`, excluding `/Sources`, `/Skills`, `/Sessions`, and other root folders. The model receives only `wiki_query`, `wiki_inventory`, `wiki_read`, and `wiki_sources`; database selection and credentials are never tool arguments. Focused-search `wiki_read` includes bounded source references so the agent can read the original source next without another tool round trip. Raw source and root-document reads require current-turn discovery. Body positions are UTF-16 string offsets, matching JavaScript slicing.
 
 Query results are routing previews. Only exact reads create citation IDs. Final JSON must reference a current-turn read and an exact excerpt substring. This is structural citation verification, not a semantic proof that every claim follows from its source. The opt-in evaluation below checks representative semantics.
 
-Agents API state lives at OpenAI as well as the encrypted active application state in D1. Initial consent explicitly discloses third-party processing and US session storage. The application stores no voice recordings (`store: false`) and offers no conversation-history list. Explicit end, logout, DB/account change, inactivity or loss of authorization removes local transcript/content state and requests remote session deletion. Deletion does not imply immediate removal of all provider records. Active II credentials expire within one hour; users may authorize another connection afterward.
+The retained browser Agent stores Agents API state at OpenAI as well as encrypted active application state in D1. Its consent UI discloses third-party processing and US session storage. Native iOS text processing is disclosed in the privacy policy and runs when the user submits a question; iOS has no separate Ask AI consent screen. The server offers no conversation-history list. Explicit end, logout, DB/account change, inactivity or loss of authorization removes local transcript/content state and requests remote session deletion. Deletion does not imply immediate removal of all provider records. Active II credentials expire within one hour; users may authorize another connection afterward.
 
 ## Recovery and usage
 
@@ -46,7 +46,7 @@ The browser receives snapshots over a WebSocket and sends presence heartbeats. R
 
 Cancellation invalidates the request generation and deletes its agent session before another turn is accepted. The conversation can continue in a new agent session after cancellation. An ambiguous session creation leaves a cleanup record until the matching provider session can be found; absent results are not treated as proof of deletion. Operations should investigate `assistant_cleanup_pending` logs, including the supplied conversation ID, and configure log-based notification before enabling the service. Do not clear these records to silence an error without reconciling the provider state.
 
-Voice is WebRTC with server-owned client delegation and a sideband. Frontend data-channel commands are limited to closing the session. Only server-verified results are appended for speech. Transcripts are bounded; exceeding their budget stops voice while text remains available. A speech interruption alone does not cancel tools. Application cancellation suppresses old generations; UI playback is muted until the user restarts voice. A failed sideband reconnection stops only voice; the pending question still completes on screen. Voice time is reserved before creation and settled once using provider-reported seconds, including after conversation end. Cleanup records retain only IDs and reservation accounting metadata, never content. Unknown creation/close usage conservatively retains the reservation; settlement never changes another UTC day’s quota. Reflected audio is ignored and never persisted.
+Voice creation, price quotes, connection acknowledgment, speech delegation, browser audio capture, legacy provider close, settlement, refunds and expiry processing are removed. All `/voice` routes, including `/voice/stop`, return 404. Older native clients still receive `voice: "off"` snapshot metadata. Stored voice state and cleanup tasks are discarded locally without calling providers or changing canister balances. The Worker no longer uses `ASSISTANT_BILLING_KEY`. OpenAI remains configured for retained browser text Agent requests.
 
 Structured logs contain operation state, selected semantic route, separate routing/reranking duration, total Jev duration, usage and cleanup IDs, not questions, snippets, paths, probabilities, audio or credentials. Configure Cloudflare log access and retention before rollout. D1 migration 0001 manages the unpublished Assistant tables; Jev adds no D1 migration. Database IDs in Wrangler are unprovisioned placeholders; replace them and apply versioned D1 migrations before any authorized deployment.
 
@@ -59,7 +59,7 @@ qrun -- pnpm --dir workers/wiki-assistant test
 qrun -- pnpm --dir workers/wiki-assistant build
 ```
 
-Default tests have no paid API calls. They cover scope/DB isolation, source discovery, citations, limits, deduplication, uncertain submission, delayed results after termination, cleanup retry, authorization expiry and actual workerd authentication boundaries. Browser tests cover consent, account changes, citation revision checks and microphone cleanup.
+Default tests have no paid API calls. They cover scope/DB isolation, source discovery, citations, limits, deduplication, uncertain submission, delayed results after termination, cleanup retry, authorization expiry and actual workerd authentication boundaries. Browser tests cover consent, account changes, citation revision checks and text-only controls.
 
 After securely configuring the DeepSeek, OpenAI and TypeSafe keys, explicitly opt in to the Japanese-inclusive synthetic evaluation:
 
@@ -91,50 +91,25 @@ Before activation, separately verify on staging:
 
 1. Real II login and equal Web/assistant principals; private/public authorized DB reads and a denied user/DB pair.
 2. Questions in a representative staging Wiki with expected source pages, including permission revocation and changed etags.
-3. Actual microphone and speaker behavior in Chrome and Safari: startup, correction, interruption, reconnect, mute/cancel, remote close, denied microphone and concurrent tabs.
-4. Provider session deletion, duration/token accounting, quota boundaries and the kill switch with active text and voice work.
-5. Publication of the revised privacy policy and versioned TypeSafe/DeepSeek/OpenAI consent UI, plus operational notification setup.
+3. Retired voice routes return 404 and text requests continue to work.
+4. Provider session deletion, duration/token accounting, quota boundaries and the kill switch with text work.
+5. Publication of the revised privacy policy describing TypeSafe/DeepSeek/OpenAI processing, alignment of the retained browser consent UI, and operational notification setup.
 6. Confirmation that the TypeSafe account's API addendum permits production automated processing before changing `ASSISTANT_ENABLED` for production.
-7. The September 30, 2026 iOS typed Ask AI disclosure is published before any new text request, and each user accepts the updated Ask AI consent before using DeepSeek. This opt-in change takes effect on publication; keep `ASSISTANT_ENABLED=false` until the other activation checks pass.
+7. The September 30, 2026 iOS typed Ask AI disclosure is published before rollout. iOS processes a new question when the user submits it, without a separate consent screen. Posting the policy alone does not transmit existing conversations or Wiki content. Keep `ASSISTANT_ENABLED=false` until the other activation checks pass.
 
-API keys, real II staging authentication, the live 20-question evaluation, actual Chrome/Safari audio and deployments are intentionally not performed by offline tests. Keep the feature disabled until those checks pass. No fallback to another API/model is implemented.
+API keys, real II staging authentication, the live 20-question evaluation, deployments are intentionally not performed by offline tests. Keep the feature disabled until those checks pass. No fallback to another API/model is implemented.
 
 Official API contracts: [Agents configuration](https://developers.openai.com/api/docs/guides/agents-api/configuration), [function recovery](https://developers.openai.com/api/docs/guides/agents-api/tools/functions), [GPT-Live WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live), [client delegation](https://developers.openai.com/api/docs/guides/live-delegation), [server controls](https://developers.openai.com/api/docs/guides/voice-server-controls).
 
-## Native iOS preview and cycles billing
+## Retired voice billing compatibility
 
-Native requests use `/api/assistant/native/` and an Authorization Bearer header, including WebSocket upgrades. The direct ICRC-167 flow delegates to a Worker-generated key; it does not export the existing iOS key or use the Web MCP registration bridge. The configured Wiki canister is fixed per environment; signed targets are optional, but if present must permit that canister. The effective grant must be query-only. A signed canister read must succeed before activation; structural parser tests do not verify signatures on their own.
-
-`ASSISTANT_ENABLED` is the only feature switch. The iOS entry point is always present and reports server availability; the Web entry point remains disconnected. Access is controlled by the selected database's owner policy and the caller's read permission instead of a second invitation list. `ASSISTANT_BILLING_KEY` is a Worker secret containing an Ed25519 identity JSON for the dedicated voice charging authority; it is separate from II credentials, the existing billing administrator and the IAP grant authority.
-
-The billing administrator configures a strictly increasing `VoiceRate` using `configure_voice_rate`. Database owners set member permissions and UTC daily budgets using `set_voice_policy`. No configured rate or permission means no paid connection. Query-only user credentials never perform these updates. Native text is free within the existing daily limit and requires current database read permission. Voice additionally requires an enabled owner policy.
-
-Index migration 005 adds rates, policies and reservations plus voice metadata on the existing ledger. `reserve_voice` locks 60 seconds of credits atomically, extending cumulatively in 60-second steps. `settle_voice` bills confirmed cumulative seconds and releases unused credits on close. Records bind the DB, member, session and immutable rate; charging is computed in the canister. A session spanning midnight stays on its original UTC budget day. Unknown usage is held for at most 24 hours, then a bounded minute timer releases the unconfirmed balance and emits a content-free notification event. Operators must connect `voice_billing_expired` / `voice_billing_pending` events to operational alerts before rollout.
-
-The Worker schedules the funded deadline, and the iOS audio manager independently stops at the last acknowledged reservation deadline if server updates stop. Cleanup accounting survives content deletion. Provider tokens/seconds remain operational measurements; user charges use the server's connection clock and stop-request timestamp. Native billing starts when the app acknowledges WebRTC and session.started, using server receipt time. The microphone stays disabled until this acknowledgment succeeds; unacknowledged setup is stopped after 30 seconds and refunded. Known setup failure is not billed. Third-party WebRTC 153.0.0 is pinned in the iOS lockfile; it is not an OpenAI SDK.
-
-Release still requires real II and GPT-Live connectivity, semantic evaluation of 20 representative questions, physical-device locked/background audio, interruptions and routing, actual settlement, cleanup notifications, and App Store/IAP disclosure review. API provisioning is deferred. Nothing in the offline tests authorizes deployment or enables the feature.
-
-Apply canister index migration 005 before distributing this iOS build: its cycle-ledger decoder expects the new voice fields. No legacy reply shim is included.
-
-
-## Voice interaction revision (2026-09-18)
-
-The iOS voice button performs access preflight, versioned consent and connection in one flow. `initialize_voice_policy(database_id)` is an authenticated owner-only, insert-once operation: an absent owner policy becomes enabled with ten minutes of the current rate as its daily cycles budget. It never changes an existing disabled or zero-budget policy. `get_voice_access(database_id, principal)` returns policy, current rate, remaining UTC-day budget and database balance. Budgets are fixed cycles amounts; rate changes never raise them automatically.
-
-Voice settings live under Settings → Voice, with database and member selection. Consent is account/version scoped, and a new rate version requires confirmation. Transcript events are deduplicated by provider event ID and grouped into stable utterance IDs. Snapshots carry utterances to the existing account-scoped Ask AI history. Historical context is bounded to 20 messages of 4,000 characters and 12,000 UTF-8 JSON bytes in total, is untrusted, and cannot substitute for current Wiki retrieval. Audio recordings are never persisted.
-
-The app stops the microphone immediately, requests server stop, fetches final state and acknowledges history persistence before logout. Failed persistence keeps a protected account-scoped recovery copy and exposes retry. Ending voice does not delete Ask AI history.
-
-Rollout order: upgrade the Wiki canister with the two new methods, deploy this Worker, then install/distribute iOS. Conversation format 2 deliberately retires previous temporary active sessions through the existing cleanup path; it does not reinterpret or migrate their encrypted content. New sessions must be started after the Worker upgrade. No SQLite table migration is needed for the new policy methods. Existing Ask AI history format is unchanged. Verify actual microphone audio, final settlement and server cleanup on the selected device before distribution.
-
-Voice finalization treats HTTP stop success as acceptance, not completion. The connection owner serializes received transcript/lifecycle events and drains their persistence before completing the provider close handshake. A recovery invocation may claim an idle connection lease to finish cleanup. The iOS client waits up to 30 seconds for the persisted `voice: off` state, then saves history before logout and local recovery deletion. A separate protected ending marker preserves retry-only behavior across application restarts. Expired remote sessions retain the last received local history with an explicit incomplete-final-state warning. Answer caveats are included both on screen and in the existing history message text.
+All voice Candid methods, including `settle_voice`, `stop_voice` and `get_voice_reservation`, return `voice retired` without touching storage or balances. The voice runtime and reservation-expiry timer are removed. Existing schema migration 005 and historical ledger fields remain as stored data; they no longer have an execution or reconciliation path.
 
 ## iOS text answers with DeepSeek (2026-09-29)
 
-Native typed questions use Jev routing/reranking and DeepSeek Chat Completions (`deepseek-flash`, non-thinking mode). The Worker executes the existing read-only Wiki tools and validates every cited quote against current-turn evidence. Native voice delegations and browser Agent requests continue to use OpenAI. Configure the Worker secret `DEEPSEEK_API_KEY` alongside the existing secrets; it is never sent to iOS. The model name follows the [DeepSeek Chat Completions contract](https://api-docs.deepseek.com/api/create-chat-completion/).
+Native typed questions use Jev routing/reranking and DeepSeek Chat Completions (`deepseek-flash`, non-thinking mode). The Worker executes the existing read-only Wiki tools and validates every cited quote against current-turn evidence. The retained browser Agent requests use OpenAI; native voice delegation is removed. Configure the Worker secret `DEEPSEEK_API_KEY` alongside the existing secrets; it is never sent to iOS. The model name follows the [DeepSeek Chat Completions contract](https://api-docs.deepseek.com/api/create-chat-completion/).
 
-Native auth and conversation creation require consent version `2026-09-29`. Earlier native active sessions are ended through the existing cleanup path; the app requests fresh consent before reconnecting. Browser consent remains unchanged. Publish the revised provider disclosures before rollout, then deploy the Worker and distribute the updated iOS app. Existing activation gates still apply.
+Native auth and conversation creation retain the wire field `consent` with version `2026-09-29` to identify the current provider contract. The iOS app supplies this value automatically; it does not represent a separate user consent action. Earlier native active sessions are ended through the existing cleanup path before reconnecting. Browser consent remains unchanged. Publish the revised provider disclosures before rollout, then deploy the Worker and distribute the updated iOS app. Existing activation gates still apply.
 
 Text turn state, tool results and generated messages are checkpointed in encrypted D1 state. Each provider submission is marked before sending. Recovery resumes saved tool results or final answers, but an interrupted provider submission fails with `deepseek_request_interrupted` rather than being automatically repeated. The user can explicitly retry. Requests reject redirects, cap responses at 256 KiB, time out after at most 45 seconds per request within the existing 90-second turn budget, and allow at most 13 model rounds under the existing 12-tool/24,000-character retrieval limits. Follow-up context is bounded to six messages and 4,000 characters. Cancellation aborts active text fetches and invalidates late responses. No DeepSeek session resource is created or deleted; provider retention terms still apply.
 
