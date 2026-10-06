@@ -21,6 +21,7 @@ SwiftUI app and Share Extension scaffold for Kinic Wiki mobile capture.
 - Shows read-only database Manage/Info from the Browse database list, including logical size, cycles balance, suspended state, and billing thresholds. iOS App Store IAP can activate a pending DB or top up an owner-managed active DB. KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
 - Lets signed-in `Owner` and `Writer` members explicitly edit and save existing Markdown documents outside `/Sources`; drafts remain in memory only and optimistic saves preserve the original `etag`.
 - Adds a signed-in, database-scoped Ask AI tab backed by the Wiki Assistant Worker. Jev classifies each request as a database overview, selected-page summary, focused search, or ordinary conversation; focused searches use FTS candidates reranked by Jev, while database overviews inspect a bounded cross-section of root, `/Knowledge`, and `/Memory` documents.
+- Ask AI supports typed conversations. The iOS app does not capture audio or include voice settings.
 - Stores completed Ask AI conversation history on the device in separate namespaces for each authenticated principal. Active Worker conversations are encrypted and bounded for recovery, and only exact node reads can become citations. Jev or Agent failures do not fall back to the retired client-side three-query pipeline.
 - Lets signed-in users delete their Kinic account data from Settings. Sole-owned databases are deleted; shared-database membership, purchased access, and account-scoped local history are removed; Internet Identity and retained transaction records remain.
 - KINIC wallet purchase, controller management, stop/delete, and database deletion are not implemented in iOS.
@@ -35,15 +36,13 @@ Database changes go through the existing Browse draft and Ask AI conversation co
 
 New work items can contain a title without a body. Save closes the composer once the item is stored on the device; upload continues in the background, and unsent items remain under **On this device**. Unfinished new items, edits, and comments are stored locally per account and database and restored when the same editor is reopened. Source-prefilled drafts are restored when that source action is reopened. Explicit discard removes the draft. Restored edits keep their original revision for conflict detection. Lists filter before displaying the first 100 items, with **Show more items** for the remainder, so recent closed items cannot hide older open items.
 
-Debug UI tests use `KINIC_SCREENSHOT_MODE=navigation` for isolated, offline fixtures. `KINIC_NAV_STATE` accepts `ready`, `empty`, `offline`, `signed-out`, or `no-database`; `KINIC_LARGE_TEXT=1` and `KINIC_DARK_MODE=1` cover accessibility text and dark appearance. These fixtures are not available in Release builds. `HomeNavigationUITests` exercises navigation and saves named screenshots as XCTest attachments.
+Debug UI tests use `KINIC_SCREENSHOT_MODE=navigation` for isolated, offline fixtures. `KINIC_NAV_STATE` accepts `ready`, `empty`, `offline`, `signed-out`, `no-database`, or `comment-author`; `KINIC_LARGE_TEXT=1` and `KINIC_DARK_MODE=1` cover accessibility text and dark appearance. These fixtures are not available in Release builds. `HomeNavigationUITests` exercises navigation and saves named screenshots as XCTest attachments.
 
-## Work item research
+On launch, the app removes retired temporary voice recovery folders (`VoiceHistoryRecovery` and `VoicePreviewCache`). Text recovery uses `AssistantHistoryRecovery`; saved Ask AI conversation history remains separate. Cleanup is idempotent, reports failures, and retries before creating a new Assistant conversation.
 
-Open a work item and choose **Research with AI**. Review the request, then start research against the selected Wiki database. The existing Ask AI retrieval and answer service produces the response. Completed responses are saved as comments with the original request, source paths, excerpts, and links; insufficient evidence is explicitly labeled. The work item remains open until a person closes it.
+## Work item details
 
-Each research conversation is pinned to its account, database, and work item, and can be reopened for follow-up requests. Existing Ask AI history stays compatible. Results are placed in the local pending queue before network submission; a lost response can be retried from **Unsent changes** without duplicating the comment. Editing or closing the work item is never performed by the model. A deleted item does not receive an orphan result.
-
-This first version runs while the app is in the foreground. Backgrounding the app stops an unfinished request; sent requests remain in Ask AI history. It is not a persistent server job, and does not execute external actions or fetch arbitrary source URLs. It uses this branch's existing Ask AI path; it does not add a new Jev integration. Requests and retrieved Wiki excerpts use the existing Ask AI processing service, and saved results are visible to database members. No API key is added to the app.
+The original body and posted comments use separate cards with author and timestamp headers. Principal IDs are abbreviated; long-press the author to copy the full ID. A separate **New comment** composer appends a comment. The detail page has no **Research with AI** button or **Comments** heading. Use **Edit** to change the original title and body, and **Close** to change the item state.
 
 ## Required App Store / Apple settings
 

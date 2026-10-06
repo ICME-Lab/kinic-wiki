@@ -4,6 +4,10 @@ import SwiftUI
 
 @MainActor
 enum NavigationFixture {
+    static let researchAnswer = "Offline research fixture: review the sources and record the next steps."
+    static var researchResult: AskAIWorkerResult {
+        AskAIWorkerResult(kind: "grounded_answer", answer: researchAnswer, sources: [], trace: nil, insufficient: true)
+    }
     static func makeModel() -> AppModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "navigation-fixture")
         let auth = KinicAuthService(authenticateSession: { _ in .testing() }, restoreSession: { nil }, saveSession: { _ in }, clearSession: {})
@@ -48,9 +52,15 @@ enum NavigationFixture {
 }
 
 private struct NavigationFixtureVFS: WorkItemVFSProviding {
+    private let commentId = "11111111-1111-4111-8111-111111111111"
+    private var showsComment: Bool { ProcessInfo.processInfo.environment["KINIC_NAV_STATE"] == "comment-author" }
     private var titles: [String] { ["Plan the next research session", "Review notes from this week", "Share the reading list"] }
     func listChildren(databaseId: String, path: String, session: KinicIdentitySession) async throws -> [ChildNode] {
-        guard databaseId == "personal", path == WorkItemPaths.root else { return [] }
+        guard databaseId == "personal" else { return [] }
+        if showsComment, path == WorkItemPaths.commentsDirectory("fixture-0") {
+            return [ChildNode(path: WorkItemPaths.comment(itemId: "fixture-0", commentId: commentId), name: "\(commentId).md", kind: .file, updatedAt: 1_790_200_000_000, etag: "fixture", sizeBytes: nil, hasChildren: false, isVirtual: false)]
+        }
+        guard path == WorkItemPaths.root else { return [] }
         if ProcessInfo.processInfo.environment["KINIC_NAV_STATE"] == "offline" { throw URLError(.notConnectedToInternet) }
         if ProcessInfo.processInfo.environment["KINIC_NAV_STATE"] == "empty" { return [] }
         return titles.indices.map { index in
@@ -58,12 +68,16 @@ private struct NavigationFixtureVFS: WorkItemVFSProviding {
         }
     }
     func readNode(databaseId: String, path: String, session: KinicIdentitySession) async throws -> VFSNode? {
+        if showsComment, databaseId == "personal", path == WorkItemPaths.comment(itemId: "fixture-0", commentId: commentId) {
+            let metadata = try WorkItemDocument.encode(WorkItemDocument.CommentMetadata(version: 1, author: "eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae", createdAt: 1_790_200_000_000))
+            return VFSNode(path: path, kind: .file, content: "I found useful sources. Let's review them in the next session.", metadataJson: metadata, etag: "fixture", createdAt: 1_790_200_000_000, updatedAt: 1_790_200_000_000)
+        }
         guard let id = WorkItemPaths.itemId(fromPath: path), let index = Int(id.replacingOccurrences(of: "fixture-", with: "")), titles.indices.contains(index) else { return nil }
         let metadata: String
         if path.hasSuffix("item.md") {
             metadata = try WorkItemDocument.encode(WorkItemDocument.ItemMetadata(version: 1, captureId: id, title: titles[index], state: "open", createdBy: session.principal, createdAt: 1_790_200_000_000, source: nil))
         } else {
-            metadata = try WorkItemDocument.encode(WorkItemDocument.ListMetadata(version: 1, title: titles[index], state: "open", commentCount: 0, lastActivityAt: 1_790_200_000_000))
+            metadata = try WorkItemDocument.encode(WorkItemDocument.ListMetadata(version: 1, title: titles[index], state: "open", commentCount: showsComment && index == 0 ? 1 : 0, lastActivityAt: 1_790_200_000_000))
         }
         return VFSNode(path: path, kind: .file, content: "Gather sources and write down the next steps.", metadataJson: metadata, etag: "fixture", createdAt: 1_790_200_000_000, updatedAt: 1_790_200_000_000)
     }

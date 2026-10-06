@@ -8,8 +8,6 @@ struct WorkItemDetailView: View {
     @Bindable var model: WorkItemModel
     @Bindable var appModel: AppModel
     let itemId: String
-    let askAIModel: AskAIModel
-    @State private var isShowingResearch = false
 
     @State private var draftScope: WorkItemDraftScope?
     @State private var restoredDraft = false
@@ -48,7 +46,7 @@ struct WorkItemDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 switch loadState {
                 case .loading:
                     ProgressView()
@@ -62,14 +60,6 @@ struct WorkItemDetailView: View {
                     if let detail {
                         header(detail)
                         bodySection(detail)
-                        if !detail.isUnsupportedVersion, model.canWrite {
-                            Button("Research with AI", systemImage: "sparkle.magnifyingglass") {
-                                isShowingResearch = true
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isEditing || hasUnsavedInput || model.isSaving || model.isPostingComment)
-                            .accessibilityIdentifier("workItem.research")
-                        }
                         if let source = detail.item.source {
                             sourcePanel(source)
                         }
@@ -89,7 +79,24 @@ struct WorkItemDetailView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(KinicDesign.appBackground)
-        .navigationTitle(navigationTitle)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if focusedField != nil {
+                HStack {
+                    Button("Done") { focusedField = nil }
+                        .buttonStyle(.borderless)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("keyboard.done")
+                    Spacer()
+                    if focusedField == .comment {
+                        commentPostButton
+                    }
+                }
+                .padding(.horizontal, KinicDesign.screenPadding)
+                .padding(.vertical, 4)
+                .background(.bar)
+            }
+        }
+        .navigationTitle("Item")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .navigationBarBackButtonHidden(locksDatabase)
@@ -129,32 +136,13 @@ struct WorkItemDetailView: View {
         .onChange(of: model.conflict) { _, conflict in
             isShowingConflict = conflict != nil
         }
-        .sheet(isPresented: $isShowingResearch, onDismiss: {
-            Task { await model.loadComments(itemId) }
-        }) {
-            if let detail, let databaseId = model.databaseId {
-                WorkItemResearchView(appModel: appModel, workItems: model, assistant: askAIModel,
-                    detail: detail, context: WorkItemResearchContext(principal: appModel.principalText,
-                        databaseId: databaseId, itemId: itemId, itemEtag: detail.itemEtag))
-            }
-        }
         .sheet(isPresented: $isShowingConflict) {
             conflictSheet
         }
     }
 
-    private var navigationTitle: String {
-        guard let detail, !detail.isUnsupportedVersion else { return "Item" }
-        return detail.item.title.isEmpty ? "Item" : detail.item.title
-    }
-
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .keyboard) {
-            Spacer()
-            Button("Done") { focusedField = nil }
-                .accessibilityIdentifier("keyboard.done")
-        }
         if locksDatabase {
             ToolbarItem(placement: .topBarLeading) {
                 Button("Back", systemImage: "chevron.left") { discardIntent = .leave }
@@ -193,9 +181,7 @@ struct WorkItemDetailView: View {
 
     @ViewBuilder
     private func header(_ detail: WorkItemDetail) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(appModel.selectedDatabase?.displayTitle ?? appModel.selectedDatabaseId, systemImage: "externaldrive")
-                .font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
             if detail.isUnsupportedVersion {
                 Text("This item was written by a newer version of the app. The body is shown read-only.")
                     .font(.footnote)
@@ -208,15 +194,27 @@ struct WorkItemDetailView: View {
             } else {
                 Text(detail.item.title)
                     .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
             }
 
-            HStack(spacing: 10) {
-                Label(detail.item.state.displayName, systemImage: detail.item.state == .open ? "circle" : "checkmark.circle.fill")
-                Label("\(detail.commentCount)", systemImage: "bubble.left")
-                Text("Updated \(WorkItemListView.date(fromMilliseconds: detail.item.updatedAt).formatted(.relative(presentation: .named)))")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Label(appModel.selectedDatabase?.displayTitle ?? appModel.selectedDatabaseId, systemImage: "externaldrive")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Label(detail.item.state.displayName, systemImage: detail.item.state == .open ? "circle" : "checkmark.circle.fill")
+                        .lineLimit(1)
+                    Label("\(detail.commentCount)", systemImage: "bubble.left")
+                        .lineLimit(1)
+                    Text(Self.compactTime(detail.item.updatedAt))
+                        .lineLimit(1)
+                        .accessibilityLabel("Updated \(WorkItemListView.date(fromMilliseconds: detail.item.updatedAt).formatted(date: .abbreviated, time: .shortened))")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
 
             if !model.canWrite {
                 Text("Read-only access to this database.")
@@ -241,7 +239,12 @@ struct WorkItemDetailView: View {
                 }
                 .accessibilityLabel("Work item body")
         } else {
-            MarkdownContent(markdown: detail.item.body)
+            postedCard(
+                author: detail.item.createdBy,
+                timestamp: detail.item.createdAt,
+                markdown: detail.item.body,
+                identifier: "workItem.body"
+            )
         }
     }
 
@@ -296,58 +299,117 @@ struct WorkItemDetailView: View {
 
     @ViewBuilder
     private func commentsSection(_ detail: WorkItemDetail) -> some View {
-        KinicPanel(title: "Comments", systemImage: "bubble.left") {
-            VStack(alignment: .leading, spacing: 14) {
-                if model.isLoadingComments && model.comments.isEmpty {
-                    ProgressView()
-                } else if model.comments.isEmpty {
-                    Text("No comments yet.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(model.comments) { comment in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(Self.authorLabel(comment.author))
-                                    .font(.caption.weight(.semibold))
-                                Spacer()
-                                Text(WorkItemListView.date(fromMilliseconds: comment.createdAt).formatted(.relative(presentation: .named)))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            MarkdownContent(markdown: comment.body)
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                }
-
-                if detail.commentCount > model.comments.count {
-                    Text("\(detail.commentCount - model.comments.count) older comment(s) are not shown.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if model.canWrite && !detail.isUnsupportedVersion {
-                    TextField("Add a comment", text: $commentDraft, axis: .vertical)
-                        .focused($focusedField, equals: .comment)
-                        .lineLimit(1...6)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("New comment")
-
-                    Button {
-                        Task { await postComment() }
-                    } label: {
-                        Label(model.isPostingComment ? "Posting…" : "Post comment", systemImage: "paperplane")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(KinicDesign.hotPink)
-                    .disabled(
-                        commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || model.isPostingComment
-                    )
+        VStack(alignment: .leading, spacing: 12) {
+            if model.isLoadingComments && model.comments.isEmpty {
+                ProgressView()
+            } else {
+                ForEach(model.comments) { comment in
+                    commentCard(comment)
                 }
             }
+
+            if detail.commentCount > model.comments.count {
+                Text("\(detail.commentCount - model.comments.count) older comment(s) are not shown.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.canWrite && !detail.isUnsupportedVersion {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Text("New comment")
+                            .font(.headline)
+                            .lineLimit(1)
+                            .accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 0)
+                        if focusedField != .comment {
+                            commentPostButton
+                        }
+                    }
+                    TextField("Add a comment", text: $commentDraft, axis: .vertical)
+                        .focused($focusedField, equals: .comment)
+                        .lineLimit(4...10)
+                        .textFieldStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("New comment")
+                        .padding(12)
+                        .background(KinicDesign.controlBackground, in: RoundedRectangle(cornerRadius: KinicDesign.radius))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: KinicDesign.radius)
+                                .stroke(KinicDesign.hairlineGray, lineWidth: 1)
+                        }
+                }
+                .padding(12)
+                .background(KinicDesign.panelBackground, in: RoundedRectangle(cornerRadius: KinicDesign.radius))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workItem.commentComposer")
+            }
         }
+    }
+
+    private func commentCard(_ comment: WorkItemComment) -> some View {
+        postedCard(
+            author: comment.author,
+            timestamp: comment.createdAt,
+            markdown: comment.body,
+            identifier: "workItem.comment.\(comment.id)"
+        )
+    }
+
+    private func postedCard(author: String, timestamp: Int64, markdown: String, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                authorView(author)
+                Spacer(minLength: 0)
+                Text(Self.compactTime(timestamp))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel(WorkItemListView.date(fromMilliseconds: timestamp).formatted(date: .abbreviated, time: .shortened))
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(KinicDesign.panelBackground)
+            Divider()
+            MarkdownContent(markdown: markdown)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(KinicDesign.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+        .overlay {
+            RoundedRectangle(cornerRadius: KinicDesign.radius)
+                .stroke(KinicDesign.hairlineGray, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var commentPostButton: some View {
+        Button {
+            Task { await postComment() }
+        } label: {
+            Group {
+                if model.isPostingComment {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "paperplane.fill")
+                }
+            }
+            .frame(width: 20, height: 20)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.circle)
+        .controlSize(.large)
+        .tint(KinicDesign.actionPink)
+        .accessibilityLabel(model.isPostingComment ? "Posting comment" : "Post comment")
+        .accessibilityIdentifier("workItem.postComment")
+        .disabled(commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isPostingComment)
     }
 
     private var pendingPanel: some View {
@@ -526,7 +588,34 @@ struct WorkItemDetailView: View {
         persistDraft()
     }
 
-    private static func authorLabel(_ principal: String) -> String {
-        InternetIdentityPresentation(principal: principal).compactPrincipal ?? principal
+    @ViewBuilder
+    private func authorView(_ author: String) -> some View {
+        let identity = InternetIdentityPresentation(principal: author)
+        let label = Text(identity.compactPrincipal ?? "Unknown")
+            .font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .accessibilityLabel("Author: \(identity.principal ?? "Unknown")")
+        if let principal = identity.principal {
+            label
+                .contextMenu {
+                    Button("Copy Principal ID", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = principal
+                    }
+                }
+                .accessibilityAction(named: Text("Copy Principal ID")) {
+                    UIPasteboard.general.string = principal
+                }
+        } else {
+            label
+        }
+    }
+
+    private static func compactTime(_ milliseconds: Int64) -> String {
+        let elapsed = max(0, Date().timeIntervalSince(WorkItemListView.date(fromMilliseconds: milliseconds)))
+        for (seconds, suffix) in [(31_536_000.0, "y"), (2_592_000.0, "mo"), (604_800.0, "w"), (86_400.0, "d"), (3_600.0, "h"), (60.0, "m")] {
+            if elapsed >= seconds { return "\(Int(elapsed / seconds))\(suffix) ago" }
+        }
+        return "now"
     }
 }
