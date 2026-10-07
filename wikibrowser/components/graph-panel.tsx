@@ -190,11 +190,16 @@ function GraphCanvas({
         const showLabel = node.isCenter || isHovered || isNeighbor || (hovered === null && labelled.has(node.path));
         const label = shortName(displayPathForFolderIndex(node.path));
         return (
-          <WikiNavigationLink aria-label={label} href={hrefForPath(canisterId, databaseId, displayPathForFolderIndex(node.path))} key={node.path}>
+          <WikiNavigationLink
+            aria-label={label}
+            href={hrefForPath(canisterId, databaseId, displayPathForFolderIndex(node.path))}
+            key={node.path}
+            onFocus={() => setHovered(node.path)}
+            onBlur={() => setHovered(null)}
+          >
             <g
               className="cursor-pointer transition-opacity duration-base"
               opacity={dimmed ? 0.18 : 1}
-              onFocus={() => setHovered(node.path)}
               onMouseEnter={() => setHovered(node.path)}
             >
               <circle cx={node.x} cy={node.y} fill="transparent" r={node.r + 8} />
