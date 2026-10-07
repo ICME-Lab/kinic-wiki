@@ -31,7 +31,7 @@ export function AppHeader() {
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
   return (
-    <div className="px-6 pt-4">
+    <div className="px-6 pt-3">
       <section className="max-w-none">
         <AdminHeader
           title="Console"

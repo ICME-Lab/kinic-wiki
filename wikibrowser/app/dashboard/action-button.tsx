@@ -40,6 +40,6 @@ export function ActionButton({
 
 function buttonVariantClass(variant: "primary" | "secondary" | "danger", loading: boolean): string {
   if (variant === "danger") return loading ? "border-red-800 bg-red-800 text-white shadow-sm ring-2 ring-red-200" : "border-red-700 bg-red-700 text-white hover:bg-red-800";
-  if (variant === "primary") return loading ? "border-actionHover bg-actionHover text-white shadow-sm ring-2 ring-accentLine" : "border-action bg-action font-bold text-white hover:border-accent hover:bg-accent";
+  if (variant === "primary") return loading ? "border-actionHover bg-actionHover text-onAction shadow-sm ring-2 ring-accentLine" : "border-action bg-action font-bold text-onAction hover:border-actionHover hover:bg-actionHover";
   return loading ? "border-accent bg-accentSoft text-accentText shadow-sm ring-2 ring-accentLine" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
 }

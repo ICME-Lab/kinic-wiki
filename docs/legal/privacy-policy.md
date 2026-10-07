@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last Updated: September 30, 2026
+Last Updated: September 30, 2026  
 Effective Date: September 30, 2026
 
 ## 1. Who we are

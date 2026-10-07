@@ -234,7 +234,7 @@ export default function IOSGuidePage() {
               <p className="mt-1 text-sm leading-6 text-muted">Install KinicWiki, then return here when you are ready to configure sharing.</p>
             </div>
           </div>
-          <a className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href={APP_STORE_URL} rel="noopener noreferrer" target="_blank">
+          <a className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href={APP_STORE_URL} rel="noopener noreferrer" target="_blank">
             View on the App Store
             <ExternalLink aria-hidden size={16} />
           </a>

@@ -82,7 +82,7 @@ export function ExplorerTree({
   }, [canisterId, databaseId, childNodesCache, readIdentity, rootRequestKey]);
 
   return (
-    <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
+    <div className="min-h-0 flex-1 space-y-0.5 overflow-auto p-2">
       {sortedRootNodes.map((node) => (
         <TreeNode key={`${canisterId}:${databaseId}:${node.path}:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={node} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} sortOrder={sortOrder} onSelectedNode={onSelectedNode} />
       ))}
@@ -217,13 +217,13 @@ function TreeNode({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"}`}
+        className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] transition-colors ${selected ? "bg-accentSoft font-medium text-accentText" : "text-ink hover:bg-paper"}`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
         {canExpand ? <Toggle expanded={expanded} setExpanded={setExpanded} /> : <span className="w-[18px]" />}
         {directoryIcon(canExpand, expanded)}
         <WikiNavigationLink
-          className="min-w-0 flex-1 truncate no-underline"
+          className="min-w-0 flex-1 truncate text-inherit no-underline"
           href={hrefForPath(canisterId, databaseId, node.path)}
           aria-current={selected ? "page" : undefined}
         >
@@ -232,7 +232,7 @@ function TreeNode({
         {nodeKind === "file" && nodePath.endsWith(".md") && nodeIsPublished ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span aria-label="Published" className="inline-flex shrink-0 text-emerald-700">
+              <span aria-label="Published" className="inline-flex shrink-0 text-okText">
                 <Globe2 aria-hidden="true" size={14} />
               </span>
             </TooltipTrigger>
@@ -265,7 +265,7 @@ function errorCode(error: unknown): string | null {
 function Toggle({ expanded, setExpanded }: { expanded: boolean; setExpanded: (value: boolean) => void }) {
   return (
     <button
-      className="rounded-lg p-0.5 text-muted hover:bg-accentSoft hover:text-accentText"
+      className="rounded-md p-0.5 text-muted hover:bg-line/60 hover:text-ink"
       type="button"
       onClick={() => setExpanded(!expanded)}
       aria-label={expanded ? "Collapse directory" : "Expand directory"}
@@ -333,5 +333,5 @@ function TreeStatus({ depth, label }: { depth: number; label: string }) {
 
 function directoryIcon(isDirectory: boolean, expanded: boolean) {
   if (!isDirectory) return <FileText size={15} className="text-muted" />;
-  return expanded ? <FolderOpen size={15} className="text-accent" /> : <Folder size={15} className="text-muted" />;
+  return expanded ? <FolderOpen size={15} className="text-muted" /> : <Folder size={15} className="text-muted" />;
 }

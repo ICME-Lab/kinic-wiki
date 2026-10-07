@@ -9,6 +9,26 @@ import { useMemo } from "react";
 
 export type EditorSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
+const editorTheme = EditorView.theme({
+  "&": { color: "rgb(var(--ink))", backgroundColor: "rgb(var(--surface))" },
+  ".cm-content": { caretColor: "rgb(var(--ink))" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "rgb(var(--ink))" },
+  ".cm-gutters": {
+    color: "hsl(var(--muted))",
+    backgroundColor: "rgb(var(--paper))",
+    borderRightColor: "rgb(var(--line))"
+  },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "rgb(var(--line) / 0.35)" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgb(var(--accent-soft) / 0.28)"
+  },
+  ".cm-panels, .cm-tooltip": {
+    color: "rgb(var(--ink))",
+    backgroundColor: "rgb(var(--paper))",
+    borderColor: "rgb(var(--line))"
+  }
+});
+
 export function MarkdownEditor({
   content,
   disabled,
@@ -32,7 +52,7 @@ export function MarkdownEditor({
   onRevert: () => void;
   onSave: () => void;
 }) {
-  const extensions = useMemo(() => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping], []);
+  const extensions = useMemo(() => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping, editorTheme], []);
   const busy = saveState === "saving";
   const canSave = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
   const canRevert = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
@@ -41,7 +61,7 @@ export function MarkdownEditor({
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur">
         <button
           aria-busy={busy}
-          className="inline-flex items-center gap-1.5 rounded-2xl bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-2xl bg-action px-3 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
           disabled={!canSave}
           type="button"
           onClick={onSave}
@@ -80,6 +100,7 @@ export function MarkdownEditor({
           editable={!disabled}
           extensions={extensions}
           height="100%"
+          theme="none"
           value={content}
           onChange={onChange}
         />

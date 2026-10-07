@@ -99,14 +99,14 @@ function WalletConnectButton({
   onClick: () => void;
 }) {
   const classes = connected
-    ? "border-action bg-action text-white hover:border-accent hover:bg-accent"
-    : "border-line bg-white text-ink hover:border-accent hover:text-accent";
+    ? "border-action bg-action text-onAction hover:border-actionHover hover:bg-actionHover"
+    : "border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink";
   const primaryLabel = busy ? "Connecting..." : connectedLabel ?? label;
   const secondaryLabel = balanceLoading ? "Loading KINIC" : balanceLabel;
   return (
     <button
       aria-label={ariaLabel}
-      className={`group inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
+      className={`group inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
       disabled={disabled}
       title={title}
       type="button"
@@ -142,7 +142,7 @@ export function AuthControls({
   if (!principal) {
     return (
       <button
-        className="rounded-lg border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+        className="rounded-lg border border-action bg-action px-4 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
         disabled={!authReady}
         data-tid="login-button"
         type="button"
@@ -205,7 +205,7 @@ export function OfficialKinicWikiPanel() {
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href="#public-databases">
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover" href="#public-databases">
             <BookOpen aria-hidden size={15} />
             <span>Open</span>
           </Link>

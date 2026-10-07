@@ -60,6 +60,7 @@ export default defineConfig((ctx) => {
 					entrypoint: "src/server.ts",
 					observability: {
 						enabled: true,
+						issues: { enabled: true },
 					},
 					domains: [
 						"kinic.xyz",

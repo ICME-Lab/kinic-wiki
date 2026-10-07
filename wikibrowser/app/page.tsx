@@ -92,7 +92,7 @@ export default function HomePage() {
             <Link className={`inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold text-muted no-underline hover:bg-paper hover:text-accentText ${focusRing}`} href="/ios">
               iOS
             </Link>
-            <Link className={`inline-flex min-h-11 items-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href="/dashboard">
+            <Link className={`inline-flex min-h-11 items-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/dashboard">
               Open Dashboard
             </Link>
           </div>
@@ -100,7 +100,7 @@ export default function HomePage() {
       </header>
 
       <section className="relative isolate border-b border-line px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-20">
-        <div className="absolute left-1/2 top-0 -z-10 h-[420px] w-[720px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,129,190,0.16)_0%,rgba(255,255,255,0)_70%)]" aria-hidden="true" />
+        <div className="absolute left-1/2 top-0 -z-10 h-[420px] w-[720px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,129,190,0.16)_0%,transparent_70%)]" aria-hidden="true" />
         <div className="mx-auto max-w-[1180px]">
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.56fr)] lg:items-end">
             <div>
@@ -113,7 +113,7 @@ export default function HomePage() {
                 <code className="rounded bg-accentSoft px-1.5 py-0.5 text-sm font-semibold text-ink">/Knowledge</code>, and ask questions with the evidence attached.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Link className={`inline-flex min-h-12 items-center justify-center rounded-xl border border-action bg-action px-5 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href="/dashboard">
+                <Link className={`inline-flex min-h-12 items-center justify-center rounded-xl border border-action bg-action px-5 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/dashboard">
                   Open Dashboard
                 </Link>
                 <a className={`inline-flex min-h-12 items-center justify-center rounded-xl border border-line bg-white px-5 text-sm font-bold text-ink no-underline hover:border-accent hover:bg-accentSoft ${focusRing}`} href="#memory-flow">
@@ -160,7 +160,7 @@ export default function HomePage() {
 
           <div className="mt-10 grid gap-4 md:grid-cols-2">
             <SurfaceCard eyebrow="iPhone + iPad" title="KinicWiki for iOS" description="Save from Safari, browse your wiki, and ask database-scoped questions with cited notes." marker="IOS">
-              <a className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href={APP_STORE_URL} rel="noopener noreferrer" target="_blank">
+              <a className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href={APP_STORE_URL} rel="noopener noreferrer" target="_blank">
                 Get the iOS app
               </a>
               <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-bold text-ink no-underline hover:border-accent hover:bg-accentSoft ${focusRing}`} href="/docs/ios">
@@ -169,7 +169,7 @@ export default function HomePage() {
             </SurfaceCard>
 
             <SurfaceCard eyebrow="Browser capture" title="Wiki Clipper" description="Save selected ChatGPT and Claude conversations or the active page as inspectable evidence." marker="WEB">
-              <a className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href={CLIPPER_STORE_URL} rel="noopener noreferrer" target="_blank">
+              <a className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href={CLIPPER_STORE_URL} rel="noopener noreferrer" target="_blank">
                 Install Clipper
               </a>
               <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-bold text-ink no-underline hover:border-accent hover:bg-accentSoft ${focusRing}`} href="/docs/clipper">
@@ -178,13 +178,13 @@ export default function HomePage() {
             </SurfaceCard>
 
             <SurfaceCard eyebrow="Agent workflows" title="Kinic VFS CLI" description="Let agents and scripts search, cite, edit, and keep stored knowledge current." marker="CLI">
-              <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href="/docs/cli">
+              <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/docs/cli">
                 Install the CLI
               </Link>
             </SurfaceCard>
 
             <SurfaceCard eyebrow="Web management" title="Dashboard" description="Open the databases linked to your Internet Identity and manage access, cycles, and stored pages." marker="DB">
-              <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href="/dashboard">
+              <Link className={`inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/dashboard">
                 Open Dashboard
               </Link>
             </SurfaceCard>
@@ -216,7 +216,7 @@ export default function HomePage() {
             <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Your database is the center</p>
             <h2 className="mt-2 text-2xl font-semibold tracking-[-0.025em] text-ink">Open the memory you want to maintain.</h2>
           </div>
-          <Link className={`inline-flex min-h-12 shrink-0 items-center justify-center rounded-xl border border-action bg-action px-5 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${focusRing}`} href="/dashboard">
+          <Link className={`inline-flex min-h-12 shrink-0 items-center justify-center rounded-xl border border-action bg-action px-5 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/dashboard">
             Open Dashboard
           </Link>
         </div>
@@ -229,6 +229,8 @@ export default function HomePage() {
             <Link className={`text-muted underline-offset-4 hover:text-accent hover:underline ${focusRing}`} href="/docs">Docs</Link>
             <Link className={`text-muted underline-offset-4 hover:text-accent hover:underline ${focusRing}`} href="/ios">iOS App</Link>
             <Link className={`text-muted underline-offset-4 hover:text-accent hover:underline ${focusRing}`} href="/support">Support</Link>
+            {/* Metrics is a public read-only page, so it is reachable from the marketing footer rather than the console sidebar. */}
+            <Link className={`text-muted underline-offset-4 hover:text-accent hover:underline ${focusRing}`} href="/metrics">Metrics</Link>
             <Link className={`text-muted underline-offset-4 hover:text-accent hover:underline ${focusRing}`} href="/privacy-policy">Privacy Policy</Link>
           </div>
         </nav>
@@ -239,7 +241,7 @@ export default function HomePage() {
 
 function MemoryMap() {
   return (
-    <figure className="relative mt-14 overflow-hidden rounded-[1.75rem] border border-line bg-[#f8f8f8] p-4 shadow-[0_26px_80px_rgba(0,0,0,0.06)] sm:p-6 lg:mt-16 lg:p-8" aria-labelledby="memory-map-title">
+    <figure className="relative mt-14 overflow-hidden rounded-[1.75rem] border border-line bg-paper p-4 shadow-card sm:p-6 lg:mt-16 lg:p-8" aria-labelledby="memory-map-title">
       <div className="absolute -right-20 -top-24 size-64 rounded-full border border-accentLine bg-accentSoft" aria-hidden="true" />
       <figcaption className="relative flex flex-wrap items-center justify-between gap-3 border-b border-line pb-5">
         <div>
@@ -290,12 +292,12 @@ function MapConnector() {
 
 function MapNode({ badge, citation = false, eyebrow, path, text }: { badge?: string; citation?: boolean; eyebrow: string; path: string; text: string }) {
   return (
-    <div className={`min-h-[148px] rounded-2xl border bg-white p-5 text-ink ${citation ? "border-[#2d68ff]" : "border-accentLine"}`}>
+    <div className={`min-h-[148px] rounded-2xl border bg-white p-5 text-ink ${citation ? "border-kinicCyan" : "border-accentLine"}`}>
       <div className="flex items-center justify-between gap-3">
-        <span className={`font-mono text-[10px] font-semibold tracking-[0.14em] ${citation ? "text-[#2d68ff]" : "text-accentText"}`}>{eyebrow}</span>
+        <span className={`font-mono text-[10px] font-semibold tracking-[0.14em] ${citation ? "text-kinicCyan" : "text-accentText"}`}>{eyebrow}</span>
         {badge ? <span className="rounded-full border border-line bg-paper px-2 py-1 font-mono text-[9px] font-semibold text-muted">{badge}</span> : null}
       </div>
-      <code className={`mt-6 block text-base font-semibold ${citation ? "text-[#2d68ff]" : ""}`}>{path}</code>
+      <code className={`mt-6 block text-base font-semibold ${citation ? "text-kinicCyan" : ""}`}>{path}</code>
       <p className="mt-2 text-xs leading-5 text-muted">{text}</p>
     </div>
   );

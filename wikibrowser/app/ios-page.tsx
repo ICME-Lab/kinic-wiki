@@ -72,7 +72,7 @@ export default function IOSPage() {
             <Link className={`rounded-lg border border-line bg-white px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-accent hover:text-accent ${linkFocus}`} href="/docs/cli">
               CLI
             </Link>
-            <Link className={`rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent ${linkFocus}`} href="/dashboard">
+            <Link className={`rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${linkFocus}`} href="/dashboard">
               Dashboard
             </Link>
           </div>
@@ -97,7 +97,7 @@ export default function IOSPage() {
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <a
-                className={`inline-flex min-h-12 items-center gap-3 rounded-xl border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline transition-colors hover:border-accent hover:bg-accent ${linkFocus}`}
+                className={`inline-flex min-h-12 items-center gap-3 rounded-xl border border-action bg-action px-5 py-3 text-sm font-bold text-onAction no-underline transition-colors hover:border-actionHover hover:bg-actionHover ${linkFocus}`}
                 href={APP_STORE_URL}
                 rel="noreferrer noopener"
                 target="_blank"
@@ -211,7 +211,7 @@ export default function IOSPage() {
               <p className="mt-1 text-sm text-muted">KinicWiki: AI Memory for iPhone and iPad.</p>
             </div>
           </div>
-          <a className={`inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent ${linkFocus}`} href={APP_STORE_URL} rel="noreferrer noopener" target="_blank">
+          <a className={`inline-flex min-h-11 shrink-0 items-center justify-center rounded-xl border border-action bg-action px-5 py-3 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${linkFocus}`} href={APP_STORE_URL} rel="noreferrer noopener" target="_blank">
             View on the App Store
           </a>
         </div>

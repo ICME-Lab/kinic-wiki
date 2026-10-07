@@ -192,4 +192,4 @@ function formatBytes(bytes: number): string {
 
 const baseButtonClass = "inline-flex min-w-[92px] items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButtonClass = `${baseButtonClass} border-line bg-white text-ink hover:border-accent`;
-const primaryButtonClass = `${baseButtonClass} border-action bg-action text-white hover:border-accent hover:bg-accent`;
+const primaryButtonClass = `${baseButtonClass} border-action bg-action text-onAction hover:border-actionHover hover:bg-actionHover`;

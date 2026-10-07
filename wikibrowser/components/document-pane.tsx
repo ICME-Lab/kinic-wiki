@@ -58,7 +58,7 @@ export function DocumentHeader({
   }
   const hasStatusBadges = view === "edit";
   return (
-    <div className="border-b border-line bg-white px-2 py-3 sm:px-5">
+    <div className="chrome-material sticky top-0 z-10 border-b border-line px-2 py-2 sm:px-5">
       <div className="flex min-h-9 items-center gap-1 overflow-x-auto whitespace-nowrap sm:min-h-10 sm:gap-2 lg:justify-between lg:overflow-visible">
         <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
           <div className="hidden min-w-[88px] max-w-[34vw] shrink-0 sm:block sm:max-w-[52vw] lg:max-w-full">
@@ -68,13 +68,13 @@ export function DocumentHeader({
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           {actions}
           <MobileCopyPathButton onCopyPath={() => void copyText("Path", path)} />
-          <div className="flex shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:text-sm">
+          <div className="flex shrink-0 rounded-lg bg-line/50 p-0.5 text-xs font-medium">
             <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
             <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
             {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
           </div>
           {rawContent !== null ? (
-            <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10">
+            <div className="flex h-8 shrink-0 items-center text-xs">
               <button
                 aria-label="Copy raw"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink sm:size-8"
@@ -101,7 +101,7 @@ export function DocumentHeader({
 
 function MobileCopyPathButton({ onCopyPath }: { onCopyPath: () => void }) {
   return (
-    <div className="flex h-9 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a] sm:hidden">
+    <div className="flex h-8 shrink-0 items-center text-xs sm:hidden">
       <button
         aria-label="Copy path"
         className="inline-flex size-7 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
@@ -129,25 +129,25 @@ function DocumentHeaderPath({
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
     return (
-      <div className="flex h-9 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-2 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3">
+      <div className="flex h-8 w-fit min-w-0 max-w-full items-center px-1 text-[13px] font-medium text-ink">
         <span>/</span>
         <CopyPathButton onCopyPath={onCopyPath} />
       </div>
     );
   }
   return (
-    <nav className="flex h-9 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-2 font-mono text-xs shadow-[0_4px_10px_#14142b0a] sm:h-10 sm:px-3" aria-label="Current knowledge path">
+    <nav className="flex h-8 w-fit min-w-0 max-w-full items-center gap-0.5 overflow-x-auto px-1 text-[13px]" aria-label="Current knowledge path">
       {segments.map((segment, index) => {
         const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
         const last = index === segments.length - 1;
         return (
           <Fragment key={crumbPath}>
-            {index > 0 ? <span className="shrink-0 text-muted">/</span> : null}
+            {index > 0 ? <span className="shrink-0 text-midLine">/</span> : null}
             {last ? (
               <span className="max-w-[24rem] truncate font-medium text-ink">{segment}</span>
             ) : (
               <WikiNavigationLink
-                className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-white hover:text-ink"
+                className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-paper hover:text-ink"
                 href={hrefForPath(canisterId, databaseId, crumbPath)}
               >
                 {segment}
@@ -289,7 +289,7 @@ function AuthRequiredState({ authReady, onLogin }: { authReady: boolean; mode: "
         <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">Login required</h3>
         <p className="mt-3 text-sm leading-6 text-muted">This database is not public. Login with Internet Identity to read databases linked to your principal.</p>
         <button
-          className="mt-5 rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+          className="mt-5 rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
           disabled={!authReady}
           data-tid="login-button"
           type="button"
@@ -315,7 +315,7 @@ function DatabaseNotFoundState({ databaseId }: { databaseId: string }) {
         <p className="mt-3 text-sm leading-6 text-muted">No readable wiki database exists for this database ID.</p>
         <p className="mt-3 break-all font-mono text-xs text-muted">{databaseId}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
-          <WikiNavigationLink className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent" href="/dashboard">
+          <WikiNavigationLink className="rounded-2xl bg-action px-3 py-2 font-bold text-onAction no-underline hover:bg-actionHover" href="/dashboard">
             Open dashboard
           </WikiNavigationLink>
         </div>
@@ -341,7 +341,7 @@ function NotFoundState({
         <p className="mt-3 break-all font-mono text-xs text-muted">{path}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
           <WikiNavigationLink
-            className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
+            className="rounded-2xl bg-action px-3 py-2 font-bold text-onAction no-underline hover:bg-actionHover"
             href={hrefForPath(canisterId, databaseId, "/Knowledge")}
           >
             Open /Knowledge
@@ -466,7 +466,7 @@ function EditDocument({
           <p className="mt-3 text-sm leading-6 text-muted">Login with Internet Identity to save Markdown changes.</p>
           {onLogin ? (
             <button
-              className="mt-5 rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+              className="mt-5 rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
               disabled={!authReady}
               type="button"
               onClick={onLogin}
@@ -575,7 +575,7 @@ function RawContent({
           {showingFullFile ? <p className="mt-2 font-medium">Showing full file.</p> : null}
         </div>
       ) : null}
-      <pre className="whitespace-pre-wrap rounded-xl border border-line bg-[#f7f3ea] p-5 font-mono text-sm leading-6">
+      <pre className="whitespace-pre-wrap rounded-xl border border-line bg-paper p-5 font-mono text-sm leading-6 text-ink">
         {visibleContent}
       </pre>
       {isLargeContent && !showingFullFile ? (
@@ -613,7 +613,7 @@ function LargeContentState({
       </p>
       {reason ? <p className="mt-3 text-muted">{reason}</p> : null}
       <WikiNavigationLink
-        className="mt-5 inline-flex rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
+        className="mt-5 inline-flex rounded-2xl bg-action px-3 py-2 font-bold text-onAction no-underline hover:bg-actionHover"
         href={hrefForPath(canisterId, databaseId, nodePath, "raw")}
       >
         Open raw view
@@ -820,7 +820,7 @@ function ViewButton({ active, label, onClick }: { active: boolean; label: string
   return (
     <button
       type="button"
-      className={`rounded-xl px-2 py-1.5 sm:px-3 ${active ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
+      className={`rounded-md px-2.5 py-1 transition-colors sm:px-3 ${active ? "bg-white text-ink shadow-card" : "text-muted hover:text-ink"}`}
       onClick={onClick}
     >
       {label}
@@ -836,7 +836,7 @@ function EditorUnavailable({ title, message, actionHref, actionLabel }: { title:
         <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">{title}</h3>
         <p className="mt-3 text-sm leading-6 text-muted">{message}</p>
         {actionHref && actionLabel ? (
-          <WikiNavigationLink className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href={actionHref}>
+          <WikiNavigationLink className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-onAction no-underline hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover" href={actionHref}>
             {actionLabel}
           </WikiNavigationLink>
         ) : null}

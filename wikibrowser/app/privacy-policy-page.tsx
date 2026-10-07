@@ -30,7 +30,7 @@ export default function PrivacyPolicyPage() {
         <aside className="lg:sticky lg:top-8 lg:self-start">
           <details className="rounded-lg border border-line bg-paper p-4 lg:hidden">
             <summary className="cursor-pointer font-mono text-xs font-semibold uppercase tracking-[0.14em] text-accentText">
-              On this page · 11 sections
+              On this page · {policySections.length} sections
             </summary>
             <nav aria-label="Privacy Policy sections">
               <PolicySectionLinks columns />

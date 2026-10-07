@@ -150,7 +150,7 @@ export default function CanisterApiPage() {
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <Unplug aria-hidden className="text-accent" size={20} />
+                <Unplug aria-hidden className="text-accentText" size={20} />
                 <p className="text-sm font-semibold uppercase text-accentText">Canister API</p>
               </div>
               <h1 className="mt-3 text-2xl font-semibold text-ink">Call Kinic Wiki from ICP CLI</h1>
@@ -166,7 +166,7 @@ export default function CanisterApiPage() {
           </div>
         </AdminPanel>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid items-start gap-4 md:grid-cols-2">
           <CliGuideBlock icon={<Unplug aria-hidden size={18} />} title="1. Smoke Check" commands={healthCommands}>
             Confirm that ICP CLI can reach the Kinic Wiki canister on mainnet.
           </CliGuideBlock>
@@ -192,7 +192,7 @@ export default function CanisterApiPage() {
 
         <AdminPanel className="min-w-0" padding="lg">
           <div className="flex items-center gap-2">
-            <KeyRound aria-hidden className="text-accent" size={18} />
+            <KeyRound aria-hidden className="text-accentText" size={18} />
             <h2 className="text-lg font-semibold text-ink">Access Model</h2>
           </div>
           <ul className="mt-4 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
@@ -205,7 +205,7 @@ export default function CanisterApiPage() {
         <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
           <AdminPanel className="min-w-0" padding="lg">
             <div className="flex items-center gap-2">
-              <Database aria-hidden className="text-accent" size={18} />
+              <Database aria-hidden className="text-accentText" size={18} />
               <h2 className="text-lg font-semibold text-ink">Parameters</h2>
             </div>
             <dl className="mt-4 grid gap-3">
@@ -222,13 +222,13 @@ export default function CanisterApiPage() {
 
           <AdminPanel className="min-w-0" padding="lg">
             <div className="flex items-center gap-2">
-              <ShieldCheck aria-hidden className="text-accent" size={18} />
+              <ShieldCheck aria-hidden className="text-accentText" size={18} />
               <h2 className="text-lg font-semibold text-ink">Query Endpoints</h2>
             </div>
-            <dl className="mt-4 grid gap-3 md:grid-cols-2">
+            <dl className="mt-4 divide-y divide-line">
               {queryEndpoints.map((endpoint) => (
-                <div className="grid gap-1" key={endpoint.name}>
-                  <dt className="break-words font-mono text-sm font-semibold text-ink">{endpoint.name}</dt>
+                <div className="grid min-w-0 gap-1 py-2.5 first:pt-0 last:pb-0" key={endpoint.name}>
+                  <dt className="min-w-0 font-mono text-sm font-semibold text-ink [overflow-wrap:anywhere]">{endpoint.name}</dt>
                   <dd className="text-sm leading-5 text-muted">{endpoint.detail}</dd>
                 </div>
               ))}
@@ -238,18 +238,18 @@ export default function CanisterApiPage() {
 
         <AdminPanel className="min-w-0" padding="lg">
           <div className="flex items-center gap-2">
-            <PencilLine aria-hidden className="text-accent" size={18} />
+            <PencilLine aria-hidden className="text-accentText" size={18} />
             <h2 className="text-lg font-semibold text-ink">Write Endpoints</h2>
           </div>
-          <dl className="mt-4 grid gap-3 md:grid-cols-2">
+          <dl className="mt-4 divide-y divide-line">
             {writeEndpoints.map((endpoint) => (
-              <div className="grid gap-1" key={endpoint.name}>
-                <dt className="break-words font-mono text-sm font-semibold text-ink">{endpoint.name}</dt>
+              <div className="grid min-w-0 gap-1 py-2.5 first:pt-0 last:pb-0" key={endpoint.name}>
+                <dt className="min-w-0 font-mono text-sm font-semibold text-ink [overflow-wrap:anywhere]">{endpoint.name}</dt>
                 <dd className="text-sm leading-5 text-muted">{endpoint.detail}</dd>
               </div>
             ))}
           </dl>
-          <ul className="mt-4 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
+          <ul className="mt-4 grid gap-2 border-t border-line pt-4 text-sm leading-6 text-muted md:grid-cols-2">
             {writeRules.map((rule) => (
               <li key={rule}>{rule}</li>
             ))}
@@ -258,7 +258,7 @@ export default function CanisterApiPage() {
 
         <AdminPanel className="min-w-0" padding="lg">
           <div className="flex items-center gap-2">
-            <Braces aria-hidden className="text-accent" size={18} />
+            <Braces aria-hidden className="text-accentText" size={18} />
             <h2 className="text-lg font-semibold text-ink">SQL Rules</h2>
           </div>
           <ul className="mt-4 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
