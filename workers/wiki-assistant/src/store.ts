@@ -1,6 +1,7 @@
 import {
   encryptJson,
   decryptJson,
+  sha256,
   type EncryptedValueV1,
 } from "@kinic/ii-server/crypto";
 import type { Lease } from "./leases";
@@ -143,7 +144,9 @@ export class AssistantStore {
     }
     return { revision: row?.revision ?? 0, state };
   }
-  async historyPage(principal: string, c: NonNullable<UserState["conversation"]>, revision: number, cursor: number) {
+  async historyPage(principal: string, c: NonNullable<UserState["conversation"]>, revision: number, cursor: number, backingRevision = revision) {
+    if ((c.viewRevision ?? backingRevision) !== revision)
+      throw new AssistantError("stale_state", 409);
     const count = await this.db.prepare("SELECT COUNT(*) AS count FROM assistant_requests WHERE conversation_id=?")
       .bind(c.id).first<{ count: number }>();
     const messageCount = count?.count ?? 0;
@@ -165,10 +168,17 @@ export class AssistantStore {
     }
     // A concurrent commit can change counts, rows or utterances. Never return
     // content assembled from different revisions, including an ended session.
-    const current = await this.db.prepare("SELECT revision,conversation_id FROM assistant_users WHERE principal=?")
-      .bind(principal).first<{ revision: number; conversation_id: string | null }>();
-    if (current?.revision !== revision || current.conversation_id !== c.id)
+    const current = await this.db.prepare("SELECT revision,conversation_id,data,EXISTS(SELECT 1 FROM assistant_stops WHERE conversation_id=assistant_users.conversation_id AND voice_id='*') AS stopped FROM assistant_users WHERE principal=?")
+      .bind(principal).first<{ revision: number; conversation_id: string | null; data: string | null; stopped: number }>();
+    if (!current || current.conversation_id !== c.id || current.stopped)
       throw new AssistantError("stale_state", 409);
+    if (current.revision !== backingRevision) {
+      // Internal retrieval checkpoints preserve the public view revision.
+      // Recheck encrypted metadata after reading rows to reject real changes.
+      const latest = current.data ? await this.decode<NonNullable<UserState["conversation"]>>(current.data, principal + ":conversation") : null;
+      if (!latest || (latest.viewRevision ?? current.revision) !== revision)
+        throw new AssistantError("stale_state", 409);
+    }
     return boundedHistoryPage(revision, cursor, total, entries);
   }
   async save(
@@ -180,6 +190,18 @@ export class AssistantStore {
   ) {
     const c = state.conversation,
       commit = crypto.randomUUID();
+    if (c?.native) {
+      // Public snapshots/pages change together. Retrieval and recovery state
+      // still commits under the separate D1 revision and its fenced lease.
+      const fingerprint = await sha256(JSON.stringify([
+        c.id, c.databaseId, c.scope, c.generation, c.status, c.error,
+        c.messages, c.utterances,
+      ]));
+      if (fingerprint !== c.viewFingerprint) {
+        c.viewRevision = Math.max(c.viewRevision ?? revision, revision) + 1;
+        c.viewFingerprint = fingerprint;
+      }
+    }
     const previous = !c
       ? await this.db
           .prepare("SELECT auth_id FROM assistant_users WHERE principal=?")

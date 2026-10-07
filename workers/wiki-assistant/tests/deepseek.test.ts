@@ -11,10 +11,105 @@ function setup() {
   return {
     state: newDeepSeekTurn("test"), apiKey: "fake", scope: "database" as const, deadline: Date.now() + 90000,
     authorize: vi.fn(async () => {}), checkpoint: vi.fn(async () => {}),
-    execute: vi.fn(async () => '{"hits":[]}'), fetchImpl: vi.fn<typeof fetch>(),
+    execute: vi.fn(async (_name: string, _args: unknown) => '{"hits":[]}'), fetchImpl: vi.fn<typeof fetch>(),
   };
 }
 describe("DeepSeek text turns", () => {
+  it("recovers a received whitespace response once and retains usage without repeating retrieval", async () => {
+    const options = setup();
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: "   \n " }))
+      .mockImplementationOnce(async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.messages.at(-1).content).toContain("nonempty JSON object");
+        expect(options.state.requesting).toBe(true);
+        return answer();
+      });
+    expect(await runDeepSeekTurn(options)).toEqual(final);
+    expect(options.fetchImpl).toHaveBeenCalledTimes(2);
+    expect(options.execute).not.toHaveBeenCalled();
+    expect(options.state).toMatchObject({ whitespaceRecoveries: 1, inputTokens: 20, outputTokens: 6 });
+  });
+  it("does not retry a second whitespace response", async () => {
+    const options = setup();
+    options.fetchImpl.mockImplementation(async () => completion({ role: "assistant", content: " " }));
+    await expect(runDeepSeekTurn(options)).rejects.toThrow("deepseek_invalid_response");
+    expect(options.fetchImpl).toHaveBeenCalledTimes(2);
+  });
+  it("resumes a persisted recovery prompt without allowing another recovery", async () => {
+    const options = setup();
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: " " }));
+    let saved: typeof options.state | undefined;
+    options.checkpoint.mockImplementation(async () => {
+      if (options.state.whitespaceRecoveries && options.state.messages.at(-1)?.role === "user") {
+        saved = structuredClone(options.state);
+        throw new Error("restart");
+      }
+    });
+    await expect(runDeepSeekTurn(options)).rejects.toThrow("restart");
+    expect(saved).toBeDefined();
+    const restarted = { ...options, state: saved!, checkpoint: vi.fn(async () => {}), fetchImpl: vi.fn<typeof fetch>(async () => answer()) };
+    expect(await runDeepSeekTurn(restarted)).toEqual(final);
+    expect(restarted.fetchImpl).toHaveBeenCalledOnce();
+    expect(restarted.state.whitespaceRecoveries).toBe(1);
+  });
+  it("does not repeat an ambiguous recovery submission", async () => {
+    const options = setup();
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: " " }))
+      .mockRejectedValueOnce(new Error("connection_lost"));
+    await expect(runDeepSeekTurn(options)).rejects.toThrow("deepseek_request_failed");
+    expect(options.state.requesting).toBe(true);
+    await expect(runDeepSeekTurn(options)).rejects.toThrow("deepseek_request_interrupted");
+    expect(options.fetchImpl).toHaveBeenCalledTimes(2);
+  });
+  it("rechecks authorization before the recovery provider request", async () => {
+    const options = setup();
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: " " }));
+    options.authorize.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("access_revoked"));
+    await expect(runDeepSeekTurn({ ...options, checkActive: async () => {} })).rejects.toThrow("access_revoked");
+    expect(options.fetchImpl).toHaveBeenCalledOnce();
+  });
+  it("batches two adjacent body reads, preserves output order and saves one checkpoint", async () => {
+    const options = setup(), checkActive = vi.fn(async () => {});
+    const executeReadBatch = vi.fn(async () => ["first", "second"]);
+    const calls = ["one", "two"].map((id) => ({ id, type: "function", function: {
+      name: "wiki_read", arguments: JSON.stringify({ path: "/Knowledge/" + id, start: 0 }),
+    } }));
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: null, tool_calls: calls }, "tool_calls"))
+      .mockImplementationOnce(async (_url, init) => {
+        expect(JSON.parse(String(init?.body)).messages.slice(-2)).toEqual([
+          { role: "tool", tool_call_id: "one", content: "first" },
+          { role: "tool", tool_call_id: "two", content: "second" },
+        ]);
+        return answer();
+      });
+    await runDeepSeekTurn({ ...options, executeReadBatch, checkActive });
+    expect(executeReadBatch).toHaveBeenCalledExactlyOnceWith([
+      { path: "/Knowledge/one", start: 0 }, { path: "/Knowledge/two", start: 0 },
+    ]);
+    expect(options.execute).not.toHaveBeenCalled();
+    expect(options.checkpoint).toHaveBeenCalledTimes(5);
+    expect(options.authorize).toHaveBeenCalledTimes(2); // Before each provider request.
+    expect(checkActive).toHaveBeenCalled();
+  });
+  it("caps body batches at two and keeps non-read dependencies sequential", async () => {
+    const options = setup();
+    const executeReadBatch = vi.fn(async (args: unknown[]) => args.map(() => "read"));
+    const names = ["wiki_query", "wiki_read", "wiki_read", "wiki_read", "wiki_sources", "wiki_read"];
+    options.fetchImpl.mockResolvedValueOnce(completion({ role: "assistant", content: null,
+      tool_calls: names.map((name, index) => ({ id: String(index), type: "function", function: { name, arguments: "{}" } })),
+    }, "tool_calls")).mockResolvedValueOnce(answer());
+    await runDeepSeekTurn({ ...options, executeReadBatch });
+    expect(executeReadBatch).toHaveBeenCalledExactlyOnceWith([{}, {}]);
+    expect(options.execute.mock.calls.map(([name]) => name)).toEqual(["wiki_query", "wiki_read", "wiki_sources", "wiki_read"]);
+  });
+  it("requests a final answer without tools when the overview read budget is exhausted", async () => {
+    const options = setup();
+    options.fetchImpl.mockImplementation(async (_url, init) => {
+      expect(JSON.parse(String(init?.body)).tools).toBeUndefined();
+      return answer();
+    });
+    expect(await runDeepSeekTurn({ ...options, route: "database_overview", canUseTools: () => false })).toEqual(final);
+  });
   it("fixes the query scope to the conversation and excludes database inventory for a subtree", async () => {
     const options = setup();
     options.fetchImpl.mockImplementation(async (_url, init) => {
@@ -49,7 +144,7 @@ describe("DeepSeek text turns", () => {
       expect(_url).toBe("https://api.deepseek.com/chat/completions");
       expect(init?.redirect).toBe("manual");
       const body = JSON.parse(String(init?.body));
-      expect(body).toMatchObject({ model: "deepseek-flash", thinking: { type: "disabled" } });
+      expect(body).toMatchObject({ model: "deepseek-flash", thinking: { type: "disabled" }, response_format: { type: "json_object" } });
       expect(body.tools.map((t: { function: { name: string } }) => t.function.name)).toEqual(["wiki_query", "wiki_inventory", "wiki_read", "wiki_sources"]);
       return completion(toolMessage, "tool_calls");
     }).mockImplementationOnce(async (_url, init) => {

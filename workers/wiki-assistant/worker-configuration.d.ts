@@ -2,6 +2,7 @@
 // Generated from cloudflare.config.ts by pnpm cf-typegen.
 declare namespace Cloudflare {
 	interface Env {
+		"ASSISTANT_CONNECTION": DurableObjectNamespace;
 		"ASSISTANT_DB": D1Database;
 		"ASSISTANT_DERIVATION_ORIGIN": string;
 		"ASSISTANT_ENABLED": string;

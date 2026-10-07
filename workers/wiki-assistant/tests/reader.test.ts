@@ -96,6 +96,64 @@ export function fixtureActor(): ReadActor {
   };
 }
 describe("read tools and citations", () => {
+  it("reads two bodies concurrently but commits quotes in request order within the total budget", async () => {
+    const actor = fixtureActor(), state = emptyToolState();
+    const paths = ["/Knowledge/one", "/Knowledge/two"];
+    state.discoveredPaths.push(...paths);
+    const gates = new Map<string, (value: { Ok: [Node] }) => void>();
+    vi.mocked(actor.read_node).mockImplementation(async (_db, path) => new Promise(resolve => gates.set(path, resolve)));
+    const reader = new KinicReader(actor, "db", "database", state, 7500, 12, "", "selected_node_summary", false);
+    const task = reader.executeReadBatch(paths.map(path => ({ path, start: 0 })));
+    await vi.waitFor(() => expect(gates.size).toBe(2));
+    expect(state.evidence).toEqual([]);
+    for (const path of [...paths].reverse()) gates.get(path)!({ Ok: [{ path, content: "x".repeat(5000), etag: path, metadata_json: "{}", updated_at: 1n }] });
+    const outputs = (await task).map(output => JSON.parse(output));
+    expect(outputs.map(output => output.path)).toEqual(paths);
+    expect(outputs[1].excerpt.length).toBeLessThan(outputs[0].excerpt.length);
+    expect(state.characters).toBeLessThanOrEqual(7500);
+    expect(state.readPaths).toEqual(paths);
+    expect(state.evidence.map(citation => citation.etag)).toEqual(paths);
+    expect(actor.read_node).toHaveBeenCalledTimes(2);
+  });
+  it("reserves the remaining overview slot before starting a batch", async () => {
+    const actor = fixtureActor(), state = emptyToolState();
+    state.readPaths.push("a", "b", "c");
+    state.discoveredPaths.push("/Knowledge/decision.md", "/Knowledge/other.md");
+    const reader = new KinicReader(actor, "db", "database", state, 24000, 12, "", "database_overview", false);
+    const result = await reader.executeReadBatch([
+      { path: "/Knowledge/decision.md", start: 0 }, { path: "/Knowledge/other.md", start: 0 },
+    ]);
+    expect(JSON.parse(result[1]!)).toMatchObject({ error: "overview_read_limit" });
+    expect(actor.read_node).toHaveBeenCalledExactlyOnceWith("db", "/Knowledge/decision.md");
+    expect(state.readPaths).toHaveLength(4);
+  });
+  it("rejects large batches and unauthorized paths before any body request", async () => {
+    const actor = fixtureActor(), state = emptyToolState();
+    state.discoveredPaths.push("/Knowledge/decision.md");
+    const reader = new KinicReader(actor, "db", "database", state, 24000, 12, "", "selected_node_summary", false);
+    await expect(reader.executeReadBatch([{}, {}, {}])).rejects.toThrow("invalid_read_batch");
+    await expect(reader.executeReadBatch([{ path: "/Knowledge/decision.md", start: 0 }, { path: "/Secrets/private", start: 0 }])).rejects.toThrow("path_not_discovered");
+    expect(actor.read_node).not.toHaveBeenCalled();
+  });
+  it("awaits the other read on permission denial without returning its content", async () => {
+    const actor = fixtureActor(), state = emptyToolState();
+    const paths = ["/Knowledge/one", "/Knowledge/two"];
+    state.discoveredPaths.push(...paths);
+    let release!: () => void;
+    vi.mocked(actor.read_node).mockImplementation(async (_db, path) => {
+      if (path === paths[1]) return { Err: "private denial details" };
+      await new Promise<void>(resolve => { release = resolve; });
+      return { Ok: [{ path, content: "secret", etag: "v1", metadata_json: "{}", updated_at: 1n }] };
+    });
+    const reader = new KinicReader(actor, "db", "database", state, 24000, 12, "", "selected_node_summary", false);
+    const task = reader.executeReadBatch(paths.map(path => ({ path, start: 0 })));
+    const failure = expect(task).rejects.toThrow("wiki_read_denied");
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(state.evidence).toEqual([]);
+    release();
+    await failure;
+    expect(state.evidence).toEqual([]);
+  });
   it("checks access before the manifest and uses database-scoped manifest arguments", async () => {
     const actor = fixtureActor();
     await new KinicReader(
@@ -236,6 +294,7 @@ describe("read tools and citations", () => {
     ]);
     expect(JSON.stringify(result)).not.toContain("/Sources/raw.md");
     expect(state.inventoryObserved).toBe(3);
+    expect(actor.read_node).toHaveBeenCalledExactlyOnceWith("db-a", "/Knowledge");
     expect(state.discoveredPaths).toContain("/root.md");
   });
 
@@ -259,6 +318,24 @@ describe("read tools and citations", () => {
     ).execute("wiki_inventory", {}));
     expect(result.nodes.some((node: { path: string }) => node.path === "/Knowledge/b/overview.md")).toBe(true);
     expect(result.truncated).toBe(true);
+  });
+
+  it("bounds folder traversal without prefetching document bodies", async () => {
+    const actor = fixtureActor();
+    actor.list_nodes = vi.fn(async ({ prefix }) => ({
+      Ok: prefix === "/Knowledge"
+        ? Array.from({ length: 40 }, (_, i) => entry(`/Knowledge/folder-${i}`, 0n, "Folder"))
+        : prefix.startsWith("/Knowledge/folder-")
+          ? [entry(`${prefix}/document.md`, 1n)] : [],
+    }));
+    const state = emptyToolState();
+    const result = JSON.parse(await new KinicReader(actor, "db-a", "database", state, 24000, 12, "key", "database_overview")
+      .execute("wiki_inventory", {}));
+    expect(actor.list_nodes).toHaveBeenCalledTimes(17);
+    expect(actor.read_node).toHaveBeenCalledExactlyOnceWith("db-a", "/Knowledge");
+    expect(result.nodes.length).toBeGreaterThan(0);
+    expect(result.truncated).toBe(true);
+    expect(state.evidence).toEqual([]);
   });
 
   it("limits overview reads to four exact nodes", async () => {
@@ -288,9 +365,12 @@ describe("read tools and citations", () => {
     );
     for (let index = 0; index < 4; index++)
       await reader.execute("wiki_read", { path: "/root.md", start: 0 });
-    await expect(
-      reader.execute("wiki_read", { path: "/root.md", start: 0 }),
-    ).rejects.toThrow("overview_read_limit");
+    const readsBefore = vi.mocked(actor.read_node).mock.calls.length;
+    expect(JSON.parse(await reader.execute("wiki_read", { path: "/root.md", start: 0 })))
+      .toMatchObject({ error: "overview_read_limit" });
+    // The web preflight access check still runs; no document body is fetched.
+    expect(vi.mocked(actor.read_node).mock.calls.slice(readsBefore)).toEqual([["db-a", "/Knowledge"]]);
+    expect(state.readPaths).toHaveLength(4);
   });
   it.each([
     "/Skills/run.md",

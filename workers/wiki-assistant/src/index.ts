@@ -202,11 +202,14 @@ export default {
       headers.set("x-assistant-auth-id", authorization.authId);
       headers.set("x-assistant-principal", authorization.principal);
       url.pathname = "/api/assistant" + path;
+      const forwarded = new Request(new Request(url, request), { headers });
+      if (path === "/events")
+        return await env.ASSISTANT_CONNECTION.getByName(authorization.principal).fetch(forwarded);
       return await (
         await new AssistantUser(env, authorization.principal, (p) =>
           ctx.waitUntil(p),
         ).initialize(!["/conversation", "/history", "/active"].includes(path))
-      ).fetch(new Request(new Request(url, request), { headers }));
+      ).fetch(forwarded);
     } catch (error) {
       return failure(error);
     }
@@ -239,3 +242,4 @@ catch{status.textContent="Unable to connect. Return to the Wiki and try again."}
     },
   );
 }
+export { AssistantConnection } from "./connection";

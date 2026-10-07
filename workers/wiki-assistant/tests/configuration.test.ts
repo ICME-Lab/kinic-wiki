@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+// The real Durable Object export is exercised by connection.worker.test.ts.
+vi.mock("../src/connection", () => ({ AssistantConnection: class {} }));
 import { requireEnabled } from "../src/auth";
 import type { Env } from "../src/env";
 import worker from "../src/index";

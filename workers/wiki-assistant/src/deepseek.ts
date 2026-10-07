@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AssistantError, instructions, toolsForScope, type Scope } from "./contracts";
 import type { AskAiRoute } from "./routing";
+import { failureKind } from "./failure";
 
 const callSchema = z.object({
   id: z.string().min(1).max(128),
@@ -22,7 +23,9 @@ export type DeepSeekTurn = {
   rounds: number;
   inputTokens: number;
   outputTokens: number;
+  whitespaceRecoveries?: number;
 };
+const whitespaceRecoveryPrompt = "Your previous response contained only whitespace. Return a nonempty JSON object answering the original question using the Wiki evidence already provided. Required keys: answer, citations [{id,quote}], insufficient, contradictions, unverified. If evidence is insufficient, say so and set insufficient to true. Do not invent citation IDs or quotes.";
 export const newDeepSeekTurn = (input: string): DeepSeekTurn => ({
   messages: [{ role: "system", content: instructions }, { role: "user", content: input }],
   requesting: false, rounds: 0, inputTokens: 0, outputTokens: 0,
@@ -37,33 +40,60 @@ export async function runDeepSeekTurn(options: {
   route?: AskAiRoute;
   deadline: number;
   authorize: () => Promise<void>;
+  checkActive?: () => Promise<void>;
   checkpoint: () => Promise<void>;
   execute: (name: string, args: unknown) => Promise<string>;
+  executeReadBatch?: (args: unknown[]) => Promise<string[]>;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  canUseTools?: () => boolean;
 }): Promise<unknown> {
   const { state, authorize, checkpoint, execute } = options;
+  const checkActive = options.checkActive ?? authorize;
   if (!options.apiKey) throw new AssistantError("assistant_not_configured", 503);
   if (state.requesting) throw new AssistantError("deepseek_request_interrupted", 502);
   for (;;) {
-    await authorize();
+    await checkActive();
     if (Date.now() >= options.deadline) throw new AssistantError("turn_timeout", 502);
     const lastAssistant = [...state.messages].reverse().find((m) => m.role === "assistant") as AssistantMessage | undefined;
     if (lastAssistant) {
       const calls = lastAssistant.tool_calls ?? [];
       if (!calls.length) {
-        try { return JSON.parse(lastAssistant.content ?? ""); }
-        catch { throw new AssistantError("deepseek_invalid_response", 502); }
+        if (typeof lastAssistant.content === "string" && !lastAssistant.content.trim()) {
+          const repairPending = state.messages.at(-1)?.role === "user" &&
+            state.messages.at(-1)?.content === whitespaceRecoveryPrompt;
+          if (!repairPending) {
+            if ((state.whitespaceRecoveries ?? 0) >= 1)
+              throw new AssistantError("deepseek_invalid_response", 502);
+            state.whitespaceRecoveries = 1;
+            state.messages.push({ role: "user", content: whitespaceRecoveryPrompt });
+            await checkpoint();
+          }
+          // Only a fully received, parsed whitespace response reaches here.
+          // Persisted in-flight submissions still fail at the entry guard.
+        } else {
+          try { return JSON.parse(lastAssistant.content ?? ""); }
+          catch { throw new AssistantError("deepseek_invalid_response", 502); }
+        }
       }
-      for (const call of calls) {
-        if (state.messages.some((m) => m.role === "tool" && m.tool_call_id === call.id)) continue;
-        await authorize();
-        let args: unknown;
-        try { args = JSON.parse(call.function.arguments); }
-        catch { throw new AssistantError("deepseek_invalid_response", 502); }
-        const output = await execute(call.function.name, args);
-        await authorize();
-        state.messages.push({ role: "tool", tool_call_id: call.id, content: output });
+      const pending = calls.filter((call) => !state.messages.some((m) => m.role === "tool" && m.tool_call_id === call.id));
+      for (let index = 0; index < pending.length;) {
+        const group = [pending[index++]!];
+        // Preserve query/source dependencies; only adjacent body reads batch.
+        if (options.executeReadBatch && group[0]!.function.name === "wiki_read" &&
+            pending[index]?.function.name === "wiki_read") group.push(pending[index++]!);
+        await checkActive();
+        const args = group.map((call) => {
+          try { return JSON.parse(call.function.arguments) as unknown; }
+          catch { throw new AssistantError("deepseek_invalid_response", 502); }
+        });
+        const outputs = group.length > 1
+          ? await options.executeReadBatch!(args)
+          : [await execute(group[0]!.function.name, args[0])];
+        if (outputs.length !== group.length) throw new AssistantError("deepseek_invalid_response", 502);
+        await checkActive();
+        for (let i = 0; i < group.length; i++)
+          state.messages.push({ role: "tool", tool_call_id: group[i]!.id, content: outputs[i]! });
         await checkpoint();
       }
     }
@@ -72,9 +102,9 @@ export async function runDeepSeekTurn(options: {
     state.requesting = true;
     state.rounds++;
     await checkpoint();
-    await authorize();
+    await checkActive();
     const response = await requestCompletion(options, state.messages);
-    await authorize();
+    await checkActive();
     const priorIds = new Set(state.messages.flatMap((m) => m.role === "assistant" ? (m.tool_calls ?? []).map((c) => c.id) : []));
     for (const call of response.message.tool_calls ?? []) {
       if (priorIds.has(call.id)) throw new AssistantError("deepseek_invalid_response", 502);
@@ -89,13 +119,14 @@ export async function runDeepSeekTurn(options: {
 }
 
 async function requestCompletion(
-  options: { apiKey?: string; scope: Scope; route?: AskAiRoute; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch },
+  options: { apiKey?: string; scope: Scope; route?: AskAiRoute; deadline: number; signal?: AbortSignal; fetchImpl?: typeof fetch; canUseTools?: () => boolean },
   messages: ChatMessage[],
 ) {
   const remaining = options.deadline - Date.now();
   if (remaining <= 0) throw new AssistantError("turn_timeout", 502);
   const timeout = AbortSignal.timeout(Math.min(45000, remaining));
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+  let stage = "fetch";
   try {
     const response = await (options.fetchImpl ?? fetch)("https://api.deepseek.com/chat/completions", {
       method: "POST",
@@ -104,8 +135,8 @@ async function requestCompletion(
       headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "deepseek-flash", thinking: { type: "disabled" },
-        max_tokens: 4096, stream: false, messages,
-        ...(options.route === "conversation" ? {} : {
+        max_tokens: 4096, stream: false, messages, response_format: { type: "json_object" },
+        ...(options.route === "conversation" || options.canUseTools?.() === false ? {} : {
           tools: toolsForScope(options.scope).filter(({ name }) =>
             name === "wiki_query" ? !options.route || options.route === "focused_search"
               : name === "wiki_inventory" ? !options.route || options.route === "database_overview"
@@ -115,10 +146,12 @@ async function requestCompletion(
       }),
     });
     if (!response.ok) {
+      console.error(JSON.stringify({ event: "deepseek_failure", stage, status: response.status }));
       await response.body?.cancel();
       throw new AssistantError("deepseek_unavailable", 502);
     }
     const reader = response.body?.getReader();
+    stage = "read";
     if (!reader) throw new AssistantError("deepseek_invalid_response", 502);
     const decoder = new TextDecoder();
     let bytes = 0;
@@ -136,6 +169,7 @@ async function requestCompletion(
       await reader.cancel();
       reader.releaseLock();
     }
+    stage = "parse";
     const parsed = z.object({
       choices: z.array(z.object({
         finish_reason: z.enum(["stop", "tool_calls"]), message: messageSchema,
@@ -148,6 +182,9 @@ async function requestCompletion(
     return { message: choice.message, inputTokens: parsed.usage?.prompt_tokens ?? 0, outputTokens: parsed.usage?.completion_tokens ?? 0 };
   } catch (error) {
     if (error instanceof AssistantError) throw error;
+    console.error(JSON.stringify({ event: "deepseek_failure", stage, kind: failureKind(error) }));
+    if (error instanceof z.ZodError || error instanceof SyntaxError)
+      throw new AssistantError("deepseek_invalid_response", 502);
     throw new AssistantError(signal.aborted ? "deepseek_timeout" : "deepseek_request_failed", 502);
   }
 }

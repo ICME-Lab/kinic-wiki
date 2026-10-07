@@ -1,5 +1,5 @@
 // D1 SQL migrations are applied separately with cf d1 migrations --dir migrations.
-import { bindings, defineConfig, triggers } from "cf/config";
+import { bindings, defineConfig, exports, triggers } from "cf/config";
 
 export default defineConfig((ctx) => {
 	switch (ctx.mode) {
@@ -12,6 +12,7 @@ export default defineConfig((ctx) => {
 						"nodejs_compat",
 					],
 					entrypoint: "src/index.ts",
+					exports: { AssistantConnection: exports.durableObject({ storage: "sqlite" }) },
 					workersDev: false,
 					observability: {
 						enabled: true,
@@ -22,6 +23,7 @@ export default defineConfig((ctx) => {
 						}),
 					],
 					env: {
+						ASSISTANT_CONNECTION: bindings.durableObject({ worker: "kinic-wiki-assistant-staging", exportName: "AssistantConnection" }),
 						ASSISTANT_ENABLED: bindings.text("true"),
 						KINIC_WIKI_CANISTER_ID: bindings.text("3ryrw-kyaaa-aaaaf-qgxpq-cai"),
 						ASSISTANT_ORIGIN: bindings.text("https://kinic-wiki-browser-staging.hude.workers.dev"),
@@ -52,6 +54,7 @@ export default defineConfig((ctx) => {
 						"nodejs_compat",
 					],
 					entrypoint: "src/index.ts",
+					exports: { AssistantConnection: exports.durableObject({ storage: "sqlite" }) },
 					workersDev: false,
 					observability: {
 						enabled: true,
@@ -62,6 +65,7 @@ export default defineConfig((ctx) => {
 						}),
 					],
 					env: {
+						ASSISTANT_CONNECTION: bindings.durableObject({ worker: "kinic-wiki-assistant", exportName: "AssistantConnection" }),
 						ASSISTANT_ENABLED: bindings.text("true"),
 						KINIC_WIKI_CANISTER_ID: bindings.text("6emaw-iyaaa-aaaay-aacka-cai"),
 						ASSISTANT_ORIGIN: bindings.text("https://wiki.kinic.xyz"),

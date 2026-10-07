@@ -55,6 +55,11 @@ it("loads metadata without history and decrypts only requested revision-bound pa
   await user["save"]();
   await store.schedule(principal, id, metadata.revision, 456);
   expect((await store.db.prepare("SELECT next_attempt FROM assistant_users WHERE principal=?").bind(principal).first<{ next_attempt: number }>())?.next_attempt).not.toBe(456);
+  // Internal commits preserve the view and its pages, even after restart.
+  expect((await store.historyPage(principal, c, metadata.revision, 0)).revision).toBe(metadata.revision);
+  expect((await store.load(principal, false)).state.conversation!.viewRevision).toBe(metadata.revision);
+  user["state"].conversation!.messages[0].error = "turn_timeout";
+  await user["save"]();
   await expect(store.historyPage(principal, c, metadata.revision, 0)).rejects.toThrow("stale_state");
   await store.requestEnd(principal, c.authId, id, now);
   await expect(store.historyPage(principal, c, metadata.revision, 0)).rejects.toThrow("stale_state");
