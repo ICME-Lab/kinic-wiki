@@ -2,6 +2,16 @@ import Foundation
 import CryptoKit
 import Observation
 
+@MainActor
+protocol AssistantControlSocket: AnyObject {
+    func resume()
+    func send(_ message: URLSessionWebSocketTask.Message) async throws
+    func receive() async throws -> URLSessionWebSocketTask.Message
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+}
+
+extension URLSessionWebSocketTask: AssistantControlSocket {}
+
 /// A peer that stops sending is indistinguishable from a dead one unless the
 /// client asks for a reply, so the control channel echoes every heartbeat.
 enum AssistantLiveness {
@@ -44,7 +54,11 @@ final class AssistantConversationModel {
     let configuration: AppConfiguration
     @ObservationIgnored private let http: any AssistantHTTPProviding
     @ObservationIgnored private let authorization = AssistantNativeAuthorization()
-    @ObservationIgnored private var socket: URLSessionWebSocketTask?
+    @ObservationIgnored private var socket: (any AssistantControlSocket)?
+    @ObservationIgnored private let makeSocket: (URLRequest) -> any AssistantControlSocket
+    @ObservationIgnored private var snapshotRefresh: Task<Void, Never>?
+    @ObservationIgnored private var snapshotRefreshID: UUID?
+    @ObservationIgnored private var requestedRevision: Int?
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var heartbeat: Task<Void, Never>?
     @ObservationIgnored private var liveness: Task<Void, Never>?
@@ -66,9 +80,15 @@ final class AssistantConversationModel {
     @ObservationIgnored private var boundDatabaseId: String?
     @ObservationIgnored private var commands: [String: (attempt: UUID, continuation: CheckedContinuation<Data, Error>)] = [:]
     init(configuration: AppConfiguration, http: (any AssistantHTTPProviding)? = nil,
-         applicationSupportDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]) {
+         applicationSupportDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0],
+         makeSocket: @escaping (URLRequest) -> any AssistantControlSocket = { request in
+             let socket = URLSession.shared.webSocketTask(with: request)
+             socket.maximumMessageSize = 1_000_000
+             return socket
+         }) {
         self.configuration = configuration
         self.http = http ?? AssistantHTTPClient(configuration: configuration)
+        self.makeSocket = makeSocket
         self.applicationSupportDirectory = applicationSupportDirectory
         do {
             try AssistantConversationCache.discardRetiredVoiceRecovery(in: applicationSupportDirectory)
@@ -116,21 +136,41 @@ final class AssistantConversationModel {
         commands.removeAll()
         for item in pending { item.continuation.resume(throwing: URLError(.networkConnectionLost)) }
     }
-    private func command(_ action: String, body: [String: Any] = [:], requestId: String = UUID().uuidString.lowercased()) async throws -> Data {
+    private func command(_ action: String, body: [String: Any] = [:], requestId: String = UUID().uuidString.lowercased(), retryQuestion: Bool = true) async throws -> Data {
         guard let socket, let snapshot else { throw URLError(.notConnectedToInternet) }
+        let generation = epoch
         let packet = try JSONSerialization.data(withJSONObject: ["type": "command", "action": action,
             "payload": body, "requestId": requestId, "generation": snapshot.generation])
-        return try await withCheckedThrowingContinuation { continuation in
-            let attempt = UUID()
-            commands[requestId] = (attempt, continuation)
-            Task { [weak self] in
-                do { try await socket.send(.string(String(decoding: packet, as: UTF8.self))) }
-                catch { if self?.commands[requestId]?.attempt == attempt { self?.commands.removeValue(forKey: requestId)?.continuation.resume(throwing: error) } }
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                let attempt = UUID()
+                commands[requestId] = (attempt, continuation)
+                Task { [weak self] in
+                    do { try await socket.send(.string(String(decoding: packet, as: UTF8.self))) }
+                    catch { if self?.commands[requestId]?.attempt == attempt { self?.commands.removeValue(forKey: requestId)?.continuation.resume(throwing: error) } }
+                }
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(95))
+                    if self?.commands[requestId]?.attempt == attempt { self?.commands.removeValue(forKey: requestId)?.continuation.resume(throwing: URLError(.timedOut)) }
+                }
             }
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(95))
-                if self?.commands[requestId]?.attempt == attempt { self?.commands.removeValue(forKey: requestId)?.continuation.resume(throwing: URLError(.timedOut)) }
+        } catch let failure as URLError where retryQuestion && action == "questions" &&
+            [.networkConnectionLost, .timedOut, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(failure.code) {
+            try Task.checkCancellation()
+            guard epoch == generation, self.snapshot?.id == snapshot.id, !background else {
+                throw CancellationError()
             }
+            // HTTP questions are intentionally rejected by the server. Reconnect
+            // the control channel and reuse both IDs so an accepted turn is deduplicated.
+            controlReady = false
+            socket.cancel(with: .goingAway, reason: nil)
+            try await waitForControl()
+            try Task.checkCancellation()
+            guard epoch == generation, self.snapshot?.id == snapshot.id, !background else {
+                throw CancellationError()
+            }
+            return try await command(action, body: body, requestId: requestId, retryQuestion: false)
         }
     }
     private func receiveCommand(_ value: [String: Any]) throws -> Bool {
@@ -329,6 +369,7 @@ final class AssistantConversationModel {
         let request = revoke ? (try? http.request("logout", method: "POST")) : nil
         epoch += 1
         eventTask?.cancel(); heartbeat?.cancel(); liveness?.cancel()
+        stopSnapshotRefresh()
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         controlReady = false
@@ -349,6 +390,7 @@ final class AssistantConversationModel {
             rejectCommands()
             disconnectedAt = disconnectedAt ?? Date()
             eventTask?.cancel(); heartbeat?.cancel(); liveness?.cancel()
+            stopSnapshotRefresh()
             socket?.cancel(with: .goingAway, reason: nil)
             socket = nil
             controlReady = false
@@ -369,9 +411,50 @@ final class AssistantConversationModel {
         if let code = next.error { error = AssistantHTTPError(status: 400, code: code).localizedDescription }
         else { error = nil; failureCode = nil }
     }
+    private func stopSnapshotRefresh() {
+        snapshotRefresh?.cancel()
+        snapshotRefresh = nil
+        snapshotRefreshID = nil
+        requestedRevision = nil
+    }
+    private func requestSnapshotRefresh(_ current: AssistantSnapshot, revision: Int, generation: Int) {
+        requestedRevision = max(requestedRevision ?? -1, revision)
+        guard snapshotRefresh == nil else { return }
+        let id = UUID()
+        snapshotRefreshID = id
+        snapshotRefresh = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if snapshotRefreshID == id {
+                    snapshotRefresh = nil
+                    snapshotRefreshID = nil
+                    requestedRevision = nil
+                }
+            }
+            while !Task.isCancelled, epoch == generation, snapshot?.id == current.id,
+                  let target = requestedRevision, target > (snapshot?.revision ?? -1) {
+                do {
+                    _ = try await refreshSnapshot(current)
+                } catch is CancellationError { return }
+                catch let failure as AssistantHTTPError where failure.terminal {
+                    guard epoch == generation, !Task.isCancelled, !endingRequested else { return }
+                    end(); report(failure)
+                    return
+                } catch {
+                    // History contention or an HTTP interruption does not imply
+                    // a dead control socket. Keep receiving replies while retrying.
+                }
+                if (requestedRevision ?? -1) > (snapshot?.revision ?? -1) {
+                    do { try await Task.sleep(for: .seconds(3)) }
+                    catch { return }
+                }
+            }
+        }
+    }
     private func listen(generation: Int) {
         controlReady = false
         eventTask?.cancel()
+        stopSnapshotRefresh()
         eventTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled, epoch == generation, let current = snapshot {
@@ -385,8 +468,7 @@ final class AssistantConversationModel {
                     var request = try http.request("events", conversation: current.id)
                     var url = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
                     url.scheme = "wss"; request.url = url.url
-                    let ws = URLSession.shared.webSocketTask(with: request)
-                    ws.maximumMessageSize = 1_000_000
+                    let ws = makeSocket(request)
                     socket = ws; ws.resume()
                     lastReceivedAt = Date()
                     heartbeat?.cancel()
@@ -424,11 +506,13 @@ final class AssistantConversationModel {
                             receiveEndNotification()
                             return
                         }
-                        guard let revision = value["revision"] as? Int else { throw URLError(.cannotParseResponse) }
-                        if revision > (snapshot?.revision ?? -1) {
-                            let state = try await http.snapshot(conversation: current.id)
-                            guard epoch == generation, !Task.isCancelled else { return }
-                            try apply(state, database: current.databaseId)
+                        guard value["type"] as? String == "snapshot" else { continue }
+                        let metadata = try JSONDecoder().decode(AssistantSnapshot.self, from: data)
+                        guard metadata.id == current.id, metadata.databaseId == current.databaseId else {
+                            throw URLError(.cannotParseResponse)
+                        }
+                        if metadata.revision > (snapshot?.revision ?? -1) {
+                            requestSnapshotRefresh(current, revision: metadata.revision, generation: generation)
                         }
                         controlReady = true
                         disconnectedAt = nil; reconnecting = false
@@ -441,6 +525,7 @@ final class AssistantConversationModel {
                         return
                     }
                     controlReady = false
+                    stopSnapshotRefresh()
                     rejectCommands()
                     heartbeat?.cancel(); liveness?.cancel(); socket?.cancel(with: .goingAway, reason: nil); socket = nil
                     disconnectedAt = disconnectedAt ?? Date(); reconnecting = true

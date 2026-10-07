@@ -5,6 +5,161 @@ import XCTest
 
 @MainActor
 final class AssistantNativeAuthorizationTests: XCTestCase {
+    func testSlowHistoryDoesNotBlockQuestionAcknowledgement() async throws {
+        let http = AssistantHTTPStub(), socket = AssistantSocketStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http, makeSocket: { _ in socket })
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot), gate = AssistantSnapshotGate()
+        var reads = 0
+        var completed: AssistantSnapshot?
+        http.onSnapshot = {
+            reads += 1
+            if reads == 2 { await gate.wait(); return original.withRevision(2) }
+            return completed ?? original
+        }
+        defer { gate.release(); model.end(revoke: false) }
+        socket.push(try original.controlMessage())
+        model.sceneChanged(active: true)
+        await waitUntil { model.controlReady }
+        socket.push(try original.withRevision(2).controlMessage())
+        await waitUntil { gate.entered }
+        socket.onSend = { message in
+            guard case let .string(text) = message,
+                  let value = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  value["action"] as? String == "questions",
+                  let requestID = value["requestId"] as? String else { return }
+            completed = try original.answering(requestID: requestID, revision: 3)
+            socket.push(.string("{\"type\":\"command.result\",\"requestId\":\"\(requestID)\",\"status\":202,\"body\":{}}"))
+        }
+        var answerReceived = false
+        let question = Task {
+            let answer = try await model.askText("Summarize this Wiki")
+            answerReceived = answer.answer != nil
+        }
+        await waitUntil { answerReceived }
+        XCTAssertTrue(answerReceived, "The answer must arrive before the blocked history read is released")
+        XCTAssertTrue(model.controlReady)
+        XCTAssertEqual(socket.cancellations, 0)
+        gate.release()
+        try await question.value
+        XCTAssertFalse(http.dataCalls.contains { $0.path == "questions" }, "The socket acknowledgement must have been consumed")
+    }
+
+    func testLostQuestionReplyResendsSameRequestIDOnReconnectedSocket() async throws {
+        let http = AssistantHTTPStub(), first = AssistantSocketStub(), second = AssistantSocketStub()
+        var socketCount = 0
+        let model = AssistantConversationModel(configuration: .preview, http: http, makeSocket: { _ in
+            socketCount += 1
+            return socketCount == 1 ? first : second
+        })
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        var completed: AssistantSnapshot?, sentID: String?
+        http.onSnapshot = { completed ?? original }
+        // Match the production entrypoint: HTTP question submission is forbidden.
+        http.onData = { _ in throw AssistantHTTPError(status: 405, code: "control_connection_required") }
+        first.onSend = { message in
+            guard case let .string(text) = message,
+                  let value = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  value["action"] as? String == "questions" else { return }
+            sentID = value["requestId"] as? String
+            first.cancel(with: .goingAway, reason: nil)
+        }
+        second.onSend = { message in
+            guard case let .string(text) = message,
+                  let value = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  value["action"] as? String == "questions",
+                  let requestID = value["requestId"] as? String else { return }
+            XCTAssertEqual(requestID, sentID)
+            let payload = try XCTUnwrap(value["payload"] as? [String: Any])
+            XCTAssertEqual(payload["requestId"] as? String, sentID)
+            completed = try original.answering(requestID: requestID, revision: 3)
+            second.push(.string("{\"type\":\"command.result\",\"requestId\":\"\(requestID)\",\"status\":202,\"body\":{}}"))
+        }
+        defer { model.end(revoke: false) }
+        first.push(try original.controlMessage())
+        second.push(try original.controlMessage())
+        model.sceneChanged(active: true)
+        await waitUntil { model.controlReady }
+        let answer = try await model.askText("Summarize this Wiki")
+        XCTAssertEqual(answer.requestId, sentID)
+        XCTAssertNotNil(answer.answer)
+        XCTAssertEqual(socketCount, 2)
+        XCTAssertFalse(http.dataCalls.contains { $0.path == "questions" })
+    }
+
+    func testTerminalHistoryFailureStillEndsTheConversation() async throws {
+        let http = AssistantHTTPStub(), socket = AssistantSocketStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http, makeSocket: { _ in socket })
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        var reads = 0
+        http.onSnapshot = {
+            reads += 1
+            if reads > 1 { throw AssistantHTTPError(status: 401, code: "authentication_required") }
+            return original
+        }
+        defer { model.end(revoke: false) }
+        socket.push(try original.controlMessage())
+        model.sceneChanged(active: true)
+        await waitUntil { model.controlReady }
+        socket.push(try original.withRevision(2).controlMessage())
+        await waitUntil { model.snapshot == nil }
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(model.controlReady)
+        XCTAssertEqual(model.failureCode, "authentication_required")
+    }
+
+    func testStaleHistoryRetriesWithoutClosingTheSocket() async throws {
+        let http = AssistantHTTPStub(), socket = AssistantSocketStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http, makeSocket: { _ in socket })
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        var reads = 0
+        http.onSnapshot = {
+            reads += 1
+            if reads == 2 { throw AssistantHTTPError(status: 409, code: "stale_state") }
+            return reads == 1 ? original : original.withRevision(2)
+        }
+        defer { model.end(revoke: false) }
+        socket.push(try original.controlMessage())
+        model.sceneChanged(active: true)
+        await waitUntil { model.controlReady }
+        for _ in 0..<20 { socket.push(try original.withRevision(2).controlMessage()) }
+        await waitUntil(timeout: 5) { model.snapshot?.revision == 2 }
+        XCTAssertTrue(model.controlReady)
+        XCTAssertEqual(socket.cancellations, 0)
+        XCTAssertEqual(reads, 3, "Revision notifications must coalesce into one retried history load")
+    }
+
+    func testLostReplyDoesNotResubmitAfterDatabaseChanges() async throws {
+        let http = AssistantHTTPStub(), socket = AssistantSocketStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http, makeSocket: { _ in socket })
+        model.loadScreenshotFixture()
+        let original = try XCTUnwrap(model.snapshot)
+        http.onSnapshot = { original }
+        socket.onSend = { _ in model.contextChanged(databaseId: "other", principal: "owner") }
+        defer { model.end(revoke: false) }
+        socket.push(try original.controlMessage())
+        model.sceneChanged(active: true)
+        await waitUntil { model.controlReady }
+        do {
+            _ = try await model.askText("Summarize this Wiki")
+            XCTFail("A question must not be retried in another context")
+        } catch is CancellationError {
+        }
+        XCTAssertNil(model.snapshot)
+        XCTAssertFalse(http.dataCalls.contains { $0.path == "questions" })
+    }
+
+    private func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) async {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while !condition(), ProcessInfo.processInfo.systemUptime < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(condition(), "Timed out waiting for the test event")
+    }
+
     func testStopCancelsUnsentQuestionWithoutCancellingItsTask() async throws {
         let http = AssistantHTTPStub()
         let model = AssistantConversationModel(configuration: .preview, http: http)
@@ -379,6 +534,7 @@ private final class AssistantHTTPStub: AssistantHTTPProviding {
     var onData: ((String) async throws -> Data)?
     var onSnapshot: (() async throws -> AssistantSnapshot)?
     var sentPaths: [String] = []
+    var dataCalls: [(path: String, conversation: String?, body: [String: Any]?)] = []
     func setToken(_ token: String) throws { hasToken = true }
     func clearToken() { hasToken = false }
     func request(_ path: String, conversation: String?, method: String, body: [String: Any]?) throws -> URLRequest {
@@ -389,7 +545,8 @@ private final class AssistantHTTPStub: AssistantHTTPProviding {
         return Data()
     }
     func data(_ path: String, conversation: String?, method: String, body: [String: Any]?) async throws -> Data {
-        try await onData?(path) ?? Data()
+        dataCalls.append((path, conversation, body))
+        return try await onData?(path) ?? Data()
     }
     func snapshot(conversation: String, metadata: Data?) async throws -> AssistantSnapshot {
         try await onSnapshot!()
@@ -408,11 +565,50 @@ private final class AssistantSnapshotGate {
 }
 
 private extension AssistantSnapshot {
+    func controlMessage() throws -> URLSessionWebSocketTask.Message {
+        var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
+        value["type"] = "snapshot"
+        return .data(try JSONSerialization.data(withJSONObject: value))
+    }
+    func answering(requestID: String, revision: Int) throws -> Self {
+        var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
+        value["revision"] = revision
+        value["messages"] = [["requestId": requestID, "question": "Summarize this Wiki", "voice": false,
+                              "answer": ["answer": "A recovered answer", "citations": [], "insufficient": false,
+                                         "contradictions": [], "unverified": []]]]
+        return try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: value))
+    }
     func withRevision(_ revision: Int) -> Self {
         Self(revision: revision, id: id, databaseId: databaseId, scope: scope,
              status: status, error: error, generation: generation, reconnectGraceMs: reconnectGraceMs,
              messages: messages, utterances: utterances, voice: voice, voiceDeadline: voiceDeadline,
              voiceId: voiceId, progress: progress)
+    }
+}
+
+@MainActor
+private final class AssistantSocketStub: AssistantControlSocket {
+    var onSend: ((URLSessionWebSocketTask.Message) async throws -> Void)?
+    private var messages: [URLSessionWebSocketTask.Message] = []
+    private var receiver: CheckedContinuation<URLSessionWebSocketTask.Message, Error>?
+    private var closed = false
+    private(set) var cancellations = 0
+    func resume() {}
+    func send(_ message: URLSessionWebSocketTask.Message) async throws { try await onSend?(message) }
+    func receive() async throws -> URLSessionWebSocketTask.Message {
+        if closed { throw URLError(.networkConnectionLost) }
+        if !messages.isEmpty { return messages.removeFirst() }
+        return try await withCheckedThrowingContinuation { receiver = $0 }
+    }
+    func push(_ message: URLSessionWebSocketTask.Message) {
+        if let receiver { self.receiver = nil; receiver.resume(returning: message) }
+        else { messages.append(message) }
+    }
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        cancellations += 1
+        closed = true
+        receiver?.resume(throwing: URLError(.networkConnectionLost))
+        receiver = nil
     }
 }
 
