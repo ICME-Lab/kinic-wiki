@@ -120,15 +120,18 @@ final class HomeNavigationUITests: XCTestCase {
     @MainActor func testCommentAuthorCompactAndCopyMenu() {
         let app = launch(state: "comment-author", dark: true)
         app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
-        let author = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Author: eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae")).firstMatch
-        XCTAssertTrue(author.waitForExistence(timeout: 5))
         let posted = app.otherElements["workItem.comment.11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(posted.exists)
+        XCTAssertTrue(posted.waitForExistence(timeout: 5))
+        let author = posted.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Author: eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae")).firstMatch
+        XCTAssertTrue(author.waitForExistence(timeout: 5))
         XCTAssertEqual(posted.textFields.count, 0)
         XCTAssertTrue(app.staticTexts["New comment"].exists)
         for _ in 0..<4 where !author.isHittable { app.swipeUp() }
+        let hittable = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: author)
+        wait(for: [hittable], timeout: 5)
         capture(app, "comment-author-compact")
-        author.press(forDuration: 1)
+        // Give the context-menu recognizer enough hold time on busy CI simulators.
+        author.press(forDuration: 2)
         XCTAssertTrue(app.buttons["Copy Principal ID"].waitForExistence(timeout: 5))
         capture(app, "comment-author-copy-menu")
     }
