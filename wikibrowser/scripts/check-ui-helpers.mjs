@@ -500,7 +500,8 @@ for (const surface of ["#ffffff", "#f8f8f8", "#fae7f0"]) {
 assert.match(globalsCss, /--action: 15 15 18;/);
 assert.match(globalsCss, /--paper: 248 248 248;/);
 assert.match(globalsCss, /\.dark \{[\s\S]*?--canvas: 17 17 19;/);
-assert.match(globalsCss, /@media \(prefers-color-scheme: dark\)[\s\S]*?--surface: 32 32 36;/);
+// Light-only: the OS dark preference must not switch the theme.
+assert.doesNotMatch(globalsCss, /prefers-color-scheme: dark/);
 assert.match(tailwindConfig, /paper: "rgb\(var\(--paper\)/);
 assert.match(tailwindConfig, /action: "rgb\(var\(--action\)/);
 assert.doesNotMatch(tailwindConfig, /#1f6feb|#7c3aed|#6d28d9|#f6f1e8|#fffdf8|#ded7cb/);

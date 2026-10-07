@@ -105,7 +105,7 @@ export default function HomePage() {
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.56fr)] lg:items-end">
             <div>
               <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">AI memory with visible sources</p>
-              <h1 className="mt-4 max-w-[800px] text-5xl font-semibold leading-[0.98] tracking-[-0.055em] text-ink sm:text-7xl">AI memory that keeps its sources.</h1>
+              <h1 className="mt-4 max-w-[800px] text-5xl font-semibold leading-[1.05] tracking-[-0.032em] text-ink sm:text-7xl">AI memory that keeps its sources.</h1>
             </div>
             <div className="lg:pb-1">
               <p className="max-w-[520px] text-base leading-7 text-muted sm:text-lg sm:leading-8">
@@ -131,7 +131,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1180px]">
           <div className="max-w-[720px]">
             <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">One continuous memory</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">Capture the context. Maintain the knowledge. Check the answer.</h2>
+            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.022em] text-ink sm:text-4xl">Capture the context. Maintain the knowledge. Check the answer.</h2>
           </div>
           <ol className="mt-10 grid overflow-hidden rounded-2xl border border-line bg-white lg:grid-cols-3">
             {memoryStages.map((stage, index) => (
@@ -140,7 +140,7 @@ export default function HomePage() {
                   <span className="font-mono text-xs font-semibold text-accentText">{stage.number} · {stage.label.toUpperCase()}</span>
                   <code className="rounded-lg border border-accentLine bg-accentSoft px-2.5 py-1 text-[11px] font-semibold text-ink">{stage.path}</code>
                 </div>
-                <h3 className="mt-7 text-xl font-semibold tracking-[-0.025em] text-ink">{stage.title}</h3>
+                <h3 className="mt-7 text-xl font-semibold tracking-[-0.015em] text-ink">{stage.title}</h3>
                 <p className="mt-3 text-sm leading-6 text-muted">{stage.text}</p>
               </li>
             ))}
@@ -153,7 +153,7 @@ export default function HomePage() {
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div className="max-w-[700px]">
               <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Choose your surface</p>
-              <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">One database, four ways to use it.</h2>
+              <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.022em] text-ink sm:text-4xl">One database, four ways to use it.</h2>
             </div>
             <p className="max-w-[400px] text-sm leading-6 text-muted">Start with the tool that fits the context. Each one returns to the same Kinic Wiki memory.</p>
           </div>
@@ -196,7 +196,7 @@ export default function HomePage() {
         <div className="mx-auto grid max-w-[1180px] gap-10 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)] lg:items-start">
           <div>
             <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Built to stay inspectable</p>
-            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-4xl">Memory is useful when you can correct it.</h2>
+            <h2 className="mt-3 text-3xl font-semibold leading-tight tracking-[-0.022em] text-ink sm:text-4xl">Memory is useful when you can correct it.</h2>
             <p className="mt-5 max-w-[490px] text-base leading-7 text-muted">Kinic Wiki keeps storage, evidence, and answers as separate things with visible relationships between them.</p>
           </div>
           <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-white">
@@ -214,7 +214,7 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-[1180px] flex-col gap-6 rounded-2xl border border-line bg-paper px-6 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div>
             <p className="font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">Your database is the center</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.025em] text-ink">Open the memory you want to maintain.</h2>
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.015em] text-ink">Open the memory you want to maintain.</h2>
           </div>
           <Link className={`inline-flex min-h-12 shrink-0 items-center justify-center rounded-xl border border-action bg-action px-5 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover ${focusRing}`} href="/dashboard">
             Open Dashboard
@@ -309,7 +309,7 @@ function SurfaceCard({ children, description, eyebrow, marker, title }: { childr
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-accentText">{eyebrow}</p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-ink">{title}</h3>
+          <h3 className="mt-2 text-2xl font-semibold tracking-[-0.018em] text-ink">{title}</h3>
         </div>
         <span className="grid size-12 shrink-0 place-items-center rounded-xl border border-line bg-white font-mono text-[10px] font-bold text-ink group-hover:border-accentLine group-hover:text-accentText" aria-hidden="true">{marker}</span>
       </div>

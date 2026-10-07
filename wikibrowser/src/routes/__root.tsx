@@ -1,6 +1,7 @@
 import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toast";
+import { CommandPalette } from "@/components/command-palette";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@/app/globals.css";
 
@@ -31,6 +32,7 @@ function RootDocument() {
         <TooltipProvider delayDuration={120}>
           <div className="flex min-h-screen flex-col"><Outlet /></div>
           <Toaster />
+          <CommandPalette />
         </TooltipProvider>
         <HydrationSignal />
         <Scripts />

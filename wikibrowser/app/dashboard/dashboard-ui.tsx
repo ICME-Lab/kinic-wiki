@@ -333,7 +333,7 @@ export function MarketListingsPanel(props: {
           <h3 className="text-lg font-semibold text-ink">Marketplace</h3>
           <p className="mt-1 text-sm leading-6 text-muted">DB owner can sell paid reader access.</p>
         </div>
-        <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent" href="/marketplace">
+        <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-ink no-underline hover:border-midLine hover:bg-paper" href="/marketplace">
           Marketplace
         </Link>
       </div>
@@ -825,7 +825,7 @@ function Field({ label, value }: { label: string; value: string }) {
 
 function SummaryActionLink({ ariaLabel, external = false, href, icon, label }: { ariaLabel?: string; external?: boolean; href: string; icon: ReactNode; label: string }) {
   const className =
-    "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+    "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-ink no-underline hover:border-midLine hover:bg-paper";
   if (external) {
     return (
       <a aria-label={ariaLabel} className={className} href={href} rel="noreferrer" target="_blank">

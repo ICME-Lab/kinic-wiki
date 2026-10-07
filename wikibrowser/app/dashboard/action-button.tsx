@@ -27,7 +27,7 @@ export function ActionButton({
   variant: "primary" | "secondary" | "danger";
 }) {
   const baseClass =
-    "inline-flex min-w-[96px] items-center justify-center gap-2 rounded-2xl border text-sm transition duration-300 ease-out hover:-translate-y-[3px] disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
+    "inline-flex min-w-[96px] items-center justify-center gap-2 rounded-xl border text-sm transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
   const sizeClass = size === "compact" ? "px-3 py-1.5" : "px-3 py-2";
   const variantClass = buttonVariantClass(variant, loading);
   return (
@@ -41,5 +41,5 @@ export function ActionButton({
 function buttonVariantClass(variant: "primary" | "secondary" | "danger", loading: boolean): string {
   if (variant === "danger") return loading ? "border-red-800 bg-red-800 text-white shadow-sm ring-2 ring-red-200" : "border-red-700 bg-red-700 text-white hover:bg-red-800";
   if (variant === "primary") return loading ? "border-actionHover bg-actionHover text-onAction shadow-sm ring-2 ring-accentLine" : "border-action bg-action font-bold text-onAction hover:border-actionHover hover:bg-actionHover";
-  return loading ? "border-accent bg-accentSoft text-accentText shadow-sm ring-2 ring-accentLine" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+  return loading ? "border-midLine bg-paper text-ink ring-2 ring-line" : "border-line bg-white text-ink hover:border-midLine hover:bg-paper";
 }

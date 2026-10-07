@@ -286,7 +286,7 @@ function AuthRequiredState({ authReady, onLogin }: { authReady: boolean; mode: "
     <div className="flex h-full items-center justify-center">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Private database</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">Login required</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em] text-ink">Login required</h3>
         <p className="mt-3 text-sm leading-6 text-muted">This database is not public. Login with Internet Identity to read databases linked to your principal.</p>
         <button
           className="mt-5 rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
@@ -311,7 +311,7 @@ function DatabaseNotFoundState({ databaseId }: { databaseId: string }) {
     <div className="flex h-full items-center justify-center p-6">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Database not found</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">Database not found</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em] text-ink">Database not found</h3>
         <p className="mt-3 text-sm leading-6 text-muted">No readable wiki database exists for this database ID.</p>
         <p className="mt-3 break-all font-mono text-xs text-muted">{databaseId}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
@@ -337,7 +337,7 @@ function NotFoundState({
     <div className="flex h-full items-center justify-center p-6">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Not found</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No knowledge node at this path</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em] text-ink">No knowledge node at this path</h3>
         <p className="mt-3 break-all font-mono text-xs text-muted">{path}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
           <WikiNavigationLink
@@ -462,7 +462,7 @@ function EditDocument({
       <div className="flex h-full items-center justify-center p-6">
         <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Edit access</p>
-          <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">Login required</h3>
+          <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em] text-ink">Login required</h3>
           <p className="mt-3 text-sm leading-6 text-muted">Login with Internet Identity to save Markdown changes.</p>
           {onLogin ? (
             <button
@@ -607,7 +607,7 @@ function LargeContentState({
   return (
     <div className="mx-auto max-w-2xl rounded-2xl border border-line bg-paper p-6 text-sm">
       <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Large file</p>
-      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em]">Preview disabled</h3>
+      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em]">Preview disabled</h3>
       <p className="mt-3 text-muted">
         This node is {contentBytes.toLocaleString()} bytes. Markdown preview is disabled to keep the browser responsive.
       </p>
@@ -771,7 +771,7 @@ function DirectoryChildrenCard({
   return (
     <div className="rounded-2xl border border-line bg-paper p-4 sm:p-5">
       <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Directory</p>
-      <h3 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Children</h3>
+      <h3 className="mt-2 text-2xl font-semibold tracking-[-0.018em]">Children</h3>
       <div className="mt-5 grid gap-2">
         {childrenState.loading ? <p className="text-sm text-muted">Loading children...</p> : null}
         {!childrenState.loading && children?.length === 0 ? <p className="text-sm text-muted">No children.</p> : null}
@@ -833,7 +833,7 @@ function EditorUnavailable({ title, message, actionHref, actionLabel }: { title:
     <div className="flex h-full items-center justify-center p-6">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Edit unavailable</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">{title}</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.018em] text-ink">{title}</h3>
         <p className="mt-3 text-sm leading-6 text-muted">{message}</p>
         {actionHref && actionLabel ? (
           <WikiNavigationLink className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-onAction no-underline hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover" href={actionHref}>

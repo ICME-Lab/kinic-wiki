@@ -91,7 +91,7 @@ export default function IOSPage() {
               </div>
             </div>
             <p className="mt-8 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-accentText">The Share Extension</p>
-            <h1 className="mt-3 max-w-[700px] text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-ink sm:text-6xl">Save what matters, straight to your AI memory.</h1>
+            <h1 className="mt-3 max-w-[700px] text-4xl font-semibold leading-[1.06] tracking-[-0.03em] text-ink sm:text-6xl">Save what matters, straight to your AI memory.</h1>
             <p className="mt-6 max-w-[610px] text-lg leading-8 text-muted">
               Share a page from Safari or a post from X, choose a Kinic Wiki database, and keep an inspectable source without leaving what you are reading.
             </p>

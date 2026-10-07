@@ -112,7 +112,7 @@ export default function IOSGuidePage() {
                   <p className="mt-1 text-sm text-muted">iPhone + iPad</p>
                 </div>
               </div>
-              <h1 className="mt-6 max-w-[680px] text-3xl font-semibold leading-[1.08] tracking-[-0.04em] text-ink sm:text-5xl">Set up Save to KinicWiki.</h1>
+              <h1 className="mt-6 max-w-[680px] text-3xl font-semibold leading-[1.08] tracking-[-0.028em] text-ink sm:text-5xl">Set up Save to KinicWiki.</h1>
               <p className="mt-5 max-w-[650px] text-base leading-7 text-muted">
                 Prepare a writable database, share one Safari or X URL, understand the result, and recover anything that needs another try.
               </p>
