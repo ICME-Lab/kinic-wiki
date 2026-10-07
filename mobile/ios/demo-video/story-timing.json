@@ -1,0 +1,26 @@
+{
+  "fps": 30,
+  "frames": 585,
+  "events": [
+    {
+      "frame": 56,
+      "hz": 620,
+      "length": 0.09
+    },
+    {
+      "frame": 161,
+      "hz": 880,
+      "length": 0.13
+    },
+    {
+      "frame": 314,
+      "hz": 1050,
+      "length": 0.13
+    },
+    {
+      "frame": 492,
+      "hz": 760,
+      "length": 0.12
+    }
+  ]
+}

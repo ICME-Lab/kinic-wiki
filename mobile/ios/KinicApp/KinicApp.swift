@@ -35,12 +35,13 @@ struct KinicApp: App {
 #if DEBUG
         if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "navigation" {
             HomeView(model: model, workItemModel: NavigationFixture.makeWorkItemModel(model))
+                .onOpenURL { url in model.handleOpenURL(url) }
                 .environment(\.dynamicTypeSize, ProcessInfo.processInfo.environment["KINIC_LARGE_TEXT"] == "1" ? .accessibility3 : .large)
                 .preferredColorScheme(ProcessInfo.processInfo.environment["KINIC_DARK_MODE"] == "1" ? .dark : .light)
         } else if ProcessInfo.processInfo.environment["KINIC_SCREENSHOT_MODE"] == "ask-ai" {
             AskAIScreenshotPreview()
                 .tint(KinicDesign.hotPink)
-                .preferredColorScheme(.light)
+                .preferredColorScheme(ProcessInfo.processInfo.environment["KINIC_DARK_MODE"] == "1" ? .dark : .light)
         } else {
             liveView
         }

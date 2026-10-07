@@ -41,6 +41,7 @@ struct AskAIScreenshotPreview: View {
                         ToolbarItem(placement: .topBarLeading) {
                             Text("Personal Memory")
                                 .font(.headline)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                         ToolbarItemGroup(placement: .topBarTrailing) {
                             Button("History", systemImage: "clock.arrow.circlepath") {}
