@@ -321,6 +321,44 @@ describe("conversation lifecycle", () => {
     expect(h.user["revision"]).toBe(revision);
     expect(mocks.authorize).toHaveBeenCalled();
   });
+  it("keeps history pages valid while the provider is running between checkpoints", async () => {
+    const h = await harness(true);
+    let release!: (value: unknown) => void;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    mocks.deepseek.mockImplementation(() => {
+      started();
+      return new Promise(resolve => { release = resolve; });
+    });
+    await h.call("/questions", question());
+    await running;
+    const revision = h.user["revision"];
+    await h.user.tick();
+    await h.user.tick();
+    expect(h.user["revision"]).toBe(revision);
+    expect(h.user["state"].conversation!.pending).not.toBeNull();
+    release({ answer: "No evidence", citations: [], insufficient: true, contradictions: [], unverified: [] });
+    await h.drain();
+    expect(h.user["state"].conversation!.messages[0].answer?.answer).toBe("No evidence");
+  });
+  it("acknowledges a question before broadcasting history changes to a sequential iOS receiver", async () => {
+    const h = await harness(true);
+    let release!: (value: unknown) => void;
+    mocks.deepseek.mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const send = vi.fn();
+    const socket = { send, close: vi.fn() } as unknown as WebSocket;
+    h.user["sockets"] = [socket];
+    const c = h.user["state"].conversation!, input = question(), requestId = input.requestId;
+    await h.user["controlMessage"](socket, c, JSON.stringify({
+      type: "command", action: "questions", payload: input, requestId, generation: c.generation,
+    }));
+    expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({ type: "command.result", requestId, status: 202 });
+    expect(JSON.parse(send.mock.calls[1][0])).toMatchObject({ type: "snapshot", status: "working" });
+    // Allow the background runner to enter its mocked provider call.
+    while (!release) await Promise.resolve();
+    release({ answer: "No evidence", citations: [], insufficient: true, contradictions: [], unverified: [] });
+    await h.drain();
+  });
   it.each(["scope_not_allowed", "tool_not_allowed"])("keeps a native conversation after model input error %s", async (code) => {
     const h = await harness(true);
     const c = h.user["state"].conversation!;
@@ -355,6 +393,16 @@ describe("conversation lifecycle", () => {
     await h.call("/questions", question());
     await h.drain();
     expect(mocks.deepseek.mock.calls[1][0].state.messages[1].content).toContain("Hello");
+  });
+  it("ignores extra model explanation keys while retaining required answer validation", async () => {
+    const h = await harness(true);
+    mocks.deepseek.mockResolvedValue({ answer: "No evidence", citations: [], insufficient: true,
+      contradictions: [], unverified: [], insufficient_note: "extra model explanation" });
+    await h.call("/questions", question());
+    await h.drain();
+    const answer = h.user["state"].conversation!.messages[0].answer;
+    expect(answer?.answer).toBe("No evidence");
+    expect(answer).not.toHaveProperty("insufficient_note");
   });
 
   it("aborts cancelled native requests and never publishes a late answer", async () => {
@@ -595,10 +643,19 @@ describe("conversation lifecycle", () => {
     const h = await harness();
     await h.call("/questions", question());
     await h.drain();
-    mocks.authorize.mockRejectedValue(new Error("permission revoked"));
+    mocks.authorize.mockRejectedValue(new AssistantError("wiki_read_denied", 403));
     await h.fireAlarm();
     expect((await h.call("/conversation")).status).toBe(410);
     expect(mocks.remove).toHaveBeenCalled();
+  });
+  it("preserves a conversation after a transient authorization failure and retries", async () => {
+    const h = await harness();
+    mocks.authorize.mockRejectedValueOnce(new Error("Network connection lost"));
+    await h.fireAlarm();
+    expect((await h.call("/conversation")).status).toBe(200);
+    expect(mocks.remove).not.toHaveBeenCalled();
+    await h.fireAlarm();
+    expect((await h.call("/conversation")).status).toBe(200);
   });
 });
 

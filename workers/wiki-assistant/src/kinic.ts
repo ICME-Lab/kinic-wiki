@@ -2,6 +2,7 @@ import {
   readNodeRaw,
   type ReadActor,
   type WikiNodeEntry,
+  type WikiReadNode,
 } from "@kinic/ii-server/read";
 import { JevError, rerankWithJev } from "@kinic/jev-reranker";
 export {
@@ -18,6 +19,12 @@ import {
   type Scope,
 } from "./contracts";
 import type { AskAiRoute } from "./routing";
+
+const readInputSchema = z.object({
+  path: z.string(), start: z.number().int().nonnegative().max(10000000),
+}).strict();
+type ReadInput = z.infer<typeof readInputSchema>;
+const overviewReadLimit = JSON.stringify({ error: "overview_read_limit", instruction: "Summarize the four nodes already read; do not request more reads." });
 
 type Result<T> = { Ok: T } | { Err: string };
 type Manifest = {
@@ -131,6 +138,7 @@ export class KinicReader {
       }));
   }
   async execute(name: string, args: unknown): Promise<string> {
+    if (name === "wiki_read") return (await this.executeReadBatch([args]))[0]!;
     if (++this.state.calls > this.maxCalls)
       throw new AssistantError("tool_limit");
     if (this.authorizeBeforeTools) await this.authorize();
@@ -233,7 +241,9 @@ export class KinicReader {
       const visited = new Set<string>();
       const documentsByPath = new Map<string, WikiNodeEntry>();
       let treeTruncated = root.length === limit;
-      const maxFolders = 32;
+      // Leave room for provider calls, cited reads and access checks within
+      // the Free plan's 50 external subrequests for a single question.
+      const maxFolders = 16;
       while (pending.length && visited.size < maxFolders) {
         const batch = pending.splice(0, Math.min(4, maxFolders - visited.size));
         const results = await Promise.all(batch.map((prefix) =>
@@ -275,18 +285,12 @@ export class KinicReader {
         ...memoryDocuments,
       ];
       const representative = selectRepresentativeEntries(documents, 20);
-      const nodes = await Promise.all(
-        representative.map(async (entry) => {
-          const node = unwrap(
-            await readNodeRaw(this.actor, this.databaseId, entry.path),
-          )[0];
-          return {
-            path: entry.path,
-            updatedAt: entry.updated_at.toString(),
-            preview: node?.content.slice(0, 160) ?? "",
-          };
-        }),
-      );
+      // Inventory discovers paths. Fetch content only through wiki_read,
+      // where it becomes bounded, verifiable citation evidence.
+      const nodes = representative.map((entry) => ({
+        path: entry.path,
+        updatedAt: entry.updated_at.toString(),
+      }));
       this.state.discoveredPaths.push(
         ...nodes
           .map(({ path }) => path)
@@ -304,66 +308,6 @@ export class KinicReader {
         nodes,
       });
     }
-    if (name === "wiki_read") {
-      if (this.route === "database_overview" && this.state.readPaths.length >= 4)
-        throw new AssistantError("overview_read_limit");
-      const input = z
-        .object({
-          path: z.string(),
-          start: z.number().int().nonnegative().max(10000000),
-        })
-        .strict()
-        .parse(args);
-      if (
-        this.route &&
-        !this.state.discoveredPaths.includes(input.path) &&
-        !this.state.sources.includes(input.path)
-      )
-        throw new AssistantError("path_not_discovered", 403);
-      this.path(input.path);
-      const node = unwrap(
-        await readNodeRaw(this.actor, this.databaseId, input.path),
-      )[0];
-      if (!node || node.path !== input.path)
-        throw new AssistantError("node_not_found", 404);
-      const remaining = Math.max(
-        0,
-        this.maxCharacters - this.state.characters - 1500,
-      );
-      const excerpt = node.content.slice(
-        input.start,
-        input.start + Math.min(4000, remaining),
-      );
-      if (!excerpt) throw new AssistantError("empty_excerpt_or_budget");
-      const citation: Citation = {
-        id: crypto.randomUUID(),
-        databaseId: this.databaseId,
-        path: node.path,
-        excerpt,
-        start: input.start,
-        end: input.start + excerpt.length,
-        etag: node.etag,
-        retrievedAt: new Date().toISOString(),
-      };
-      const sourceRefs =
-        this.route === "focused_search" && !node.path.startsWith("/Sources/")
-          ? await this.sourceRefs(node.path)
-          : [];
-      const output = this.bounded({
-        ...citation,
-        totalCharacters: node.content.length,
-        metadata: node.metadata_json.slice(0, 400),
-        sourceRefs,
-      });
-      this.state.evidence.push(citation);
-      this.state.readPaths.push(input.path);
-      this.state.sources.push(
-        ...sourceRefs
-          .map((ref) => ref.path)
-          .filter((path) => !this.state.sources.includes(path)),
-      );
-      return output;
-    }
     if (name === "wiki_sources") {
       const input = z.object({ path: z.string() }).strict().parse(args);
       this.path(input.path);
@@ -375,6 +319,73 @@ export class KinicReader {
       return output;
     }
     throw new AssistantError("unknown_tool", 403);
+  }
+
+  async executeReadBatch(args: unknown[], options: { skipEmpty?: boolean } = {}): Promise<string[]> {
+    // Small batches cap concurrent decoded IC responses and CPU/memory pressure.
+    if (!args.length || args.length > 2) throw new AssistantError("invalid_read_batch", 400);
+    const inputs: (ReadInput | null)[] = [];
+    let reserved = 0;
+    for (const value of args) {
+      if (++this.state.calls > this.maxCalls) throw new AssistantError("tool_limit");
+      if (this.authorizeBeforeTools) await this.authorize();
+      if (this.route === "conversation") throw new AssistantError("tool_not_allowed", 400);
+      if (this.route === "database_overview" && this.state.readPaths.length + reserved >= 4) {
+        inputs.push(null);
+        continue;
+      }
+      const input = readInputSchema.parse(value);
+      if (this.route && !this.state.discoveredPaths.includes(input.path) && !this.state.sources.includes(input.path))
+        throw new AssistantError("path_not_discovered", 403);
+      this.path(input.path);
+      inputs.push(input);
+      reserved++;
+    }
+    // Await every read even on denial; no background reads or shared-state writes.
+    const fetched = await Promise.allSettled(inputs.map(async (input) => {
+      if (!input) return null;
+      const node = unwrap(await readNodeRaw(this.actor, this.databaseId, input.path))[0];
+      if (!node || node.path !== input.path) throw new AssistantError("node_not_found", 404);
+      const sourceRefs = this.route === "focused_search" && !node.path.startsWith("/Sources/")
+        ? await this.sourceRefs(node.path) : [];
+      return { input, node, sourceRefs };
+    }));
+    const outputs: string[] = [];
+    const rejected = fetched.find(result => result.status === "rejected");
+    if (rejected?.status === "rejected") throw rejected.reason;
+    for (const result of fetched) {
+      if (result.status === "rejected") throw result.reason;
+      if (!result.value) { outputs.push(overviewReadLimit); continue; }
+      // Seeding may encounter empty representative documents. They supply no
+      // evidence, but must not discard the other successful reads in this batch.
+      if (options.skipEmpty && result.value.node.content.length === 0) {
+        outputs.push(JSON.stringify({ path: result.value.node.path, error: "empty_document" }));
+        continue;
+      }
+      outputs.push(this.commitRead(result.value));
+    }
+    return outputs;
+  }
+  private commitRead({ input, node, sourceRefs }: {
+    input: ReadInput; node: WikiReadNode;
+    sourceRefs: { path: string; etag: string | null; updatedAt: string | null }[];
+  }): string {
+    // Serialize budget/evidence commits after parallel I/O. Each excerpt uses
+    // the remaining budget after the preceding result, never a stale estimate.
+    const remaining = Math.max(0, this.maxCharacters - this.state.characters - 1500);
+    const excerpt = node.content.slice(input.start, input.start + Math.min(4000, remaining));
+    if (!excerpt) throw new AssistantError("empty_excerpt_or_budget");
+    const citation: Citation = {
+      id: crypto.randomUUID(), databaseId: this.databaseId, path: node.path,
+      excerpt, start: input.start, end: input.start + excerpt.length,
+      etag: node.etag, retrievedAt: new Date().toISOString(),
+    };
+    const output = this.bounded({ ...citation, totalCharacters: node.content.length,
+      metadata: node.metadata_json.slice(0, 400), sourceRefs });
+    this.state.evidence.push(citation);
+    this.state.readPaths.push(input.path);
+    this.state.sources.push(...sourceRefs.map((ref) => ref.path).filter((path) => !this.state.sources.includes(path)));
+    return output;
   }
 }
 

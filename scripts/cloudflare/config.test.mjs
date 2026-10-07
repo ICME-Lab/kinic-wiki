@@ -31,7 +31,20 @@ for (const [project, mode, fixture, filename] of targets) {
     let legacy = parse(readFileSync(resolve(root, fixture), "utf8"));
     if (fixture === "wrangler.jsonc" && mode === "staging") legacy = { ...legacy, ...legacy.env.staging };
     const native = await loadWorkerConfig(root, mode, filename);
-    for (const field of fields) assert.deepEqual(normalized(field, native[field], native.name), normalized(field, legacy[field], legacy.name), field);
+    for (const field of fields) {
+      // The migration fixture predates the native assistant connection added
+      // after migration. Require that exact new binding in both modes while
+      // continuing to compare every other resource against the fixture.
+      const expected = project === "workers/wiki-assistant" && field === "durable_objects"
+        ? { bindings: [{ name: "ASSISTANT_CONNECTION", class_name: "AssistantConnection" }] }
+        : legacy[field];
+      assert.deepEqual(normalized(field, native[field], native.name), normalized(field, expected, legacy.name), field);
+    }
+    if (project === "workers/wiki-assistant") {
+      const { worker } = await loadConfig(root, mode);
+      assert.equal(worker.exports.AssistantConnection.storage, "sqlite");
+      assert.deepEqual(Object.keys(worker.exports), ["AssistantConnection"]);
+    }
     if (legacy.migrations) {
       const { worker } = await loadConfig(root, mode);
       const retired = new Set(); const live = new Set();

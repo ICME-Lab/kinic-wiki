@@ -1,5 +1,6 @@
 import { sha256 } from "@kinic/ii-server/crypto";
 import { AssistantAuth } from "./auth";
+import { failureKind } from "./failure";
 import { AssistantStore } from "./store";
 import { Leases, type Lease, RENEW_MS } from "./leases";
 import { z } from "zod";
@@ -90,6 +91,8 @@ export class AssistantUser {
   private timer: ReturnType<typeof setInterval> | undefined;
   private loadedMessages = true;
   private nextStatePoll = 0;
+  private controlResponses = 0;
+  private broadcastDeferred = false;
   constructor(
     private readonly env: Env,
     private readonly principal: string,
@@ -218,7 +221,7 @@ export class AssistantUser {
   }
   private snapshot(c: Conversation) {
     return {
-      revision: this.revision,
+      revision: c.viewRevision ?? this.revision,
       id: c.id,
       databaseId: c.databaseId,
       scope: c.scope,
@@ -236,7 +239,7 @@ export class AssistantUser {
     };
   }
   private historyPage(c: Conversation, revision: number, cursor: number) {
-    if (revision !== this.revision) throw new AssistantError("stale_state", 409);
+    if (revision !== (c.viewRevision ?? this.revision)) throw new AssistantError("stale_state", 409);
     const entries: HistoryEntry[] = [
       ...c.messages.map((value) => ({ kind: "message" as const, value })),
       ...c.utterances.map(({ id, role, text }) => ({
@@ -247,6 +250,10 @@ export class AssistantUser {
   }
 
   private broadcast(): void {
+    if (this.controlResponses) {
+      this.broadcastDeferred = true;
+      return;
+    }
     const c = this.state.conversation;
     const payload = JSON.stringify(
       c ? { type: "snapshot", ...this.snapshot(c) } : { type: "ended" },
@@ -362,10 +369,10 @@ export class AssistantUser {
         const cursorValue = url.searchParams.get("cursor") ?? "0";
         if (!Number.isSafeInteger(revision) || !/^\d+$/.test(cursorValue))
           throw new AssistantError("invalid_cursor", 400);
-        if (revision !== this.revision) throw new AssistantError("stale_state", 409);
+        if (revision !== (c.viewRevision ?? this.revision)) throw new AssistantError("stale_state", 409);
         return json(this.loadedMessages
           ? this.historyPage(c, revision, Number(cursorValue))
-          : await this.store.historyPage(this.principal, c, revision, Number(cursorValue)));
+          : await this.store.historyPage(this.principal, c, revision, Number(cursorValue), this.revision));
       }
       if (path === "/questions" && request.method === "POST") {
         await this.enqueue(
@@ -518,6 +525,8 @@ export class AssistantUser {
       await this.publishTurn(context, result);
     } catch (error) {
       const c = startedConversation;
+      console.error(JSON.stringify({ event: "assistant_turn_failure", kind: failureKind(error),
+        code: error instanceof AssistantError ? error.code : "turn_failed" }));
       if (!c || !startedPending || !(await this.valid(c, startedPending)))
         return;
       if (c && error instanceof AssistantError) {
@@ -809,7 +818,6 @@ export class AssistantUser {
     if (recovery && c && (await this.leases.active("connection", c.id))) return;
     if (c) {
       try {
-        requireEnabled(this.env);
         const now = Date.now();
         if (
           now - c.activity >= this.limits().idleMs ||
@@ -818,14 +826,29 @@ export class AssistantUser {
           await this.endOwned(c.authId, c.id);
           return;
         }
+        requireEnabled(this.env);
         if (c.pending && now - c.pending.started >= this.limits().turnMs) {
           c.error = "turn_timeout";
           await this.cancel(c);
         }
+        if (this.pumping) {
+          // The active turn persists its own checkpoints. Re-saving unchanged
+          // history every second invalidates revision-bound iOS page requests.
+          this.nextWake = now + 5_000;
+          await this.store.schedule(this.principal, c.id, this.revision, this.nextWake);
+          return;
+        }
         await (await this.reader(c)).authorize();
         if (this.state.conversation !== c) return;
-      } catch {
-        await this.endOwned(c.authId, c.id);
+      } catch (error) {
+        console.error(JSON.stringify({ event: "assistant_authorization_failure", kind: failureKind(error),
+          code: error instanceof AssistantError ? error.code : "authorization_unavailable" }));
+        if (error instanceof AssistantError && (error.status === 401 || error.status === 403 || error.code === "assistant_disabled")) {
+          await this.endOwned(c.authId, c.id);
+        } else {
+          this.nextWake = Date.now() + 5_000;
+          await this.store.schedule(this.principal, c.id, this.revision, this.nextWake);
+        }
         return;
       }
       if (c.pending) await this.pump();
@@ -874,6 +897,7 @@ export class AssistantUser {
     pair[1].addEventListener("message", (event) =>
       this.background(this.controlMessage(pair[1], c, event.data).catch((error) => {
         console.error(JSON.stringify({ event: "assistant_control_failure",
+          kind: failureKind(error),
           code: error instanceof AssistantError ? error.code : "connection_failed" }));
         pair[1].close(1011, "Reconnect required");
         close();
@@ -987,6 +1011,7 @@ export class AssistantUser {
       }
     }
     let requestId = "";
+    let deferringBroadcast = false;
     try {
       if (typeof message !== "string" || message.length > 65536)
         throw new AssistantError("invalid_command", 400);
@@ -1035,6 +1060,11 @@ export class AssistantUser {
         c.messages.some((m) => m.requestId === command.payload.requestId);
       if (command.generation !== c.generation && !duplicate)
         throw new AssistantError("stale_state", 409);
+      // iOS consumes messages sequentially and loads history for snapshots.
+      // A snapshot before this reply can strand the accepted command behind
+      // a failing history read and turn it into a networkConnectionLost error.
+      this.controlResponses++;
+      deferringBroadcast = true;
       const response = await this.fetch(
         new Request(
           "https://assistant/api/assistant/" +
@@ -1058,7 +1088,7 @@ export class AssistantUser {
       const result = {
         status: response.status,
         body:
-          response.ok ? { revision: this.revision } : responseBody,
+          response.ok ? { revision: c.viewRevision ?? this.revision } : responseBody,
       };
       await this.store.commandResult(c.id, requestId, result);
       ws.send(JSON.stringify({ type: "command.result", requestId, ...result }));
@@ -1072,6 +1102,14 @@ export class AssistantUser {
           body: await response.json(),
         }),
       );
+    } finally {
+      if (deferringBroadcast) {
+        this.controlResponses--;
+        if (!this.controlResponses && this.broadcastDeferred) {
+          this.broadcastDeferred = false;
+          this.broadcast();
+        }
+      }
     }
   }
 }

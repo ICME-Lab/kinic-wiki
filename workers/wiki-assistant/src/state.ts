@@ -29,6 +29,9 @@ export type Conversation = {
   format: 3;
   native?: boolean;
   nativeTextProvider?: "deepseek";
+  // Native-visible state version; independent from D1 checkpoint revisions.
+  viewRevision?: number;
+  viewFingerprint?: string;
   selectedPath?: string;
   history: { role: "user" | "assistant"; text: string }[];
   utterances: { id: string; voiceId: string; events: string[]; end: number; role: "user" | "assistant"; text: string }[];
