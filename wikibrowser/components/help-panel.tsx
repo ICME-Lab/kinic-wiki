@@ -11,7 +11,7 @@ export function HelpPanel() {
       <article className="mx-auto flex max-w-4xl flex-col gap-4">
         <header className="border-b border-line pb-4">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Help</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.04em] text-ink">Wiki browser help</h2>
+          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.018em] text-ink">Wiki browser help</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
             Use the browser to read, search, inspect, and edit Markdown notes stored in the selected database.
           </p>

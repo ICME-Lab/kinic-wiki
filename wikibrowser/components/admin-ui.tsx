@@ -9,18 +9,18 @@ type AdminNoticeTone = "info" | "success" | "warning" | "error";
 
 export function AdminPanel({ children, padding = "md", className = "", ariaLabel }: { children: ReactNode; padding?: "none" | "sm" | "md" | "lg"; className?: string; ariaLabel?: string }) {
   const paddingClass = padding === "none" ? "" : padding === "sm" ? "p-3" : padding === "lg" ? "p-5" : "p-4";
-  return <section aria-label={ariaLabel} className={`rounded-lg border border-line bg-paper shadow-sm ${paddingClass} ${className}`.trim()}>{children}</section>;
+  return <section aria-label={ariaLabel} className={`rounded-lg border border-line bg-paper shadow-card ${paddingClass} ${className}`.trim()}>{children}</section>;
 }
 
 export function AdminNotice({ tone, message }: { tone: AdminNoticeTone; message: string }) {
   const Icon = tone === "success" ? CheckCircle2 : tone === "info" ? Info : CircleAlert;
   const toneClass =
     tone === "success"
-      ? "border-green-200 bg-green-50 text-green-900"
+      ? "border-okLine bg-okSoft text-okText"
       : tone === "error"
-        ? "border-red-200 bg-red-50 text-red-900"
+        ? "border-dangerLine bg-dangerSoft text-dangerText"
         : tone === "warning"
-          ? "border-amber-200 bg-amber-50 text-amber-950"
+          ? "border-warnLine bg-warnSoft text-warnText"
           : "border-infoLine bg-infoSoft text-ink";
   return (
     <div className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${toneClass}`}>
@@ -46,7 +46,7 @@ export function AdminIconButton({ children, label, onClick, title }: { children:
   return (
     <button
       aria-label={label}
-      className="inline-flex size-10 items-center justify-center rounded-lg border border-line bg-white text-muted shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accentText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+      className="inline-flex size-10 items-center justify-center rounded-lg border border-line bg-white text-muted shadow-card hover:border-midLine hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
       title={title ?? label}
       type="button"
       onClick={onClick}
@@ -57,10 +57,11 @@ export function AdminIconButton({ children, label, onClick, title }: { children:
 }
 
 export function AdminField({ label, value, breakAll = false, mono = false }: { label: string; value: ReactNode; breakAll?: boolean; mono?: boolean }) {
+  // `break-all` split short phrases mid-word ("ca lls"); `anywhere` wraps only when a token cannot fit.
   return (
-    <div className="grid gap-1">
+    <div className="grid min-w-0 gap-1">
       <span className="text-xs font-semibold uppercase text-muted">{label}</span>
-      <span className={`${breakAll ? "break-all" : "break-words"} ${mono ? "font-mono text-sm" : "text-sm"} text-ink`}>{value}</span>
+      <span className={`min-w-0 ${breakAll ? "[overflow-wrap:anywhere]" : "break-words"} ${mono ? "font-mono text-sm" : "text-sm"} text-ink`}>{value}</span>
     </div>
   );
 }

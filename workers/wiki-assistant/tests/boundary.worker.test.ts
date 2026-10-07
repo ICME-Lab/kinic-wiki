@@ -4,7 +4,7 @@ import { AssistantStore } from "../src/store";
 import { AssistantUser } from "../src/user";
 import { Leases } from "../src/leases";
 import { sweep } from "../src/reaper";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 const bindings = env as Env;
 beforeAll(async () => {
@@ -16,6 +16,50 @@ beforeAll(async () => {
   );
 });
 const origin = "https://wiki.kinic.xyz";
+it("loads metadata without history and decrypts only requested revision-bound pages", async () => {
+  const principal = crypto.randomUUID();
+  const store = new AssistantStore(bindings);
+  const user = await new AssistantUser(bindings, principal).initialize();
+  const now = Date.now(), id = crypto.randomUUID();
+  user["state"].conversation = {
+    id, authId: "page-owner", principal, databaseId: "db", scope: "database",
+    native: true, nativeTextProvider: "deepseek", format: 3,
+    sessionId: null, generation: 0, pending: null, activity: now, seen: now,
+    status: "ready", error: null, transcripts: [], history: [], delegations: [], deferred: null,
+    utterances: [{ id: "legacy", role: "user", text: "last item", voiceId: "retired", events: [], end: 0 }],
+    messages: Array.from({ length: 23 }, (_, index) => ({
+      requestId: crypto.randomUUID(), question: "question " + index,
+      voice: false, answer: null, error: null, kind: null, trace: null,
+    })),
+  };
+  await user["save"]();
+  const decode = vi.spyOn(store, "decode");
+  const metadata = await store.load(principal, false);
+  expect(metadata.state.conversation!.messages).toEqual([]);
+  expect(decode).toHaveBeenCalledTimes(1);
+  decode.mockClear();
+  const c = metadata.state.conversation!;
+  const page = await store.historyPage(principal, c, metadata.revision, 10);
+  expect(decode).toHaveBeenCalledTimes(10);
+  expect(page.messages.map((item) => item.question)).toEqual(Array.from({ length: 10 }, (_, i) => "question " + (i + 10)));
+  expect(page.nextCursor).toBe("20");
+  const last = await store.historyPage(principal, c, metadata.revision, 20);
+  expect(last.messages).toHaveLength(3);
+  expect(last.utterances).toEqual([{ id: "legacy", role: "user", text: "last item" }]);
+  expect(last.nextCursor).toBeNull();
+  await store.touch(principal, id);
+  expect((await store.load(principal, false)).revision).toBe(metadata.revision);
+  await store.schedule(principal, id, metadata.revision, 123);
+  expect((await store.db.prepare("SELECT next_attempt FROM assistant_users WHERE principal=?").bind(principal).first<{ next_attempt: number }>())?.next_attempt).toBe(123);
+  await expect(store.historyPage(principal, c, metadata.revision, 25)).rejects.toThrow("invalid_cursor");
+  await user["save"]();
+  await store.schedule(principal, id, metadata.revision, 456);
+  expect((await store.db.prepare("SELECT next_attempt FROM assistant_users WHERE principal=?").bind(principal).first<{ next_attempt: number }>())?.next_attempt).not.toBe(456);
+  await expect(store.historyPage(principal, c, metadata.revision, 0)).rejects.toThrow("stale_state");
+  await store.requestEnd(principal, c.authId, id, now);
+  await expect(store.historyPage(principal, c, metadata.revision, 0)).rejects.toThrow("stale_state");
+  decode.mockRestore();
+});
 describe("assistant HTTP and D1 authentication boundary", () => {
   it.each(["/voice", "/voice/quote", "/voice/connected", "/voice/stop"])(
     "returns 404 for retired native voice route %s before authentication or configuration",

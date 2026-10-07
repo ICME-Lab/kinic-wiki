@@ -28,9 +28,13 @@ extension AssistantHTTPProviding {
 final class AssistantHTTPClient: AssistantHTTPProviding {
     let baseURL: URL
     private var token: String?
+    private var cachedHistory: AssistantSnapshot?
+    private var credentialGeneration = 0
+    private let urlSession: URLSession
     var hasToken: Bool { token != nil }
     private let keychainService: String
-    init(configuration: AppConfiguration) {
+    init(configuration: AppConfiguration, urlSession: URLSession = .shared) {
+        self.urlSession = urlSession
         baseURL = configuration.authOrigin.appending(path: "api/assistant/native")
         // Keep the existing Keychain service so sign-out also removes tokens from older builds.
         keychainService = "xyz.kinic.voice-preview.\(configuration.canisterId)"
@@ -54,6 +58,8 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
     }
     func clearToken() {
         token = nil
+        credentialGeneration += 1
+        cachedHistory = nil
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrService: keychainService, kSecAttrAccount: "bearer"] as CFDictionary)
     }
     func request(_ path: String, conversation: String? = nil, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
@@ -72,7 +78,7 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
         try await send(request(path, conversation: conversation, method: method, body: body))
     }
     func send(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await urlSession.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200..<300).contains(response.statusCode) else {
             let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -82,14 +88,23 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
         return data
     }
     func snapshot(conversation: String, metadata initialMetadata: Data? = nil) async throws -> AssistantSnapshot {
+        let generation = credentialGeneration
         var initial = initialMetadata
         for _ in 0..<3 {
             let metadata: Data
             if let initial { metadata = initial }
             else { metadata = try await data("conversation", conversation: conversation) }
             initial = nil
+            guard generation == credentialGeneration else { throw CancellationError() }
             let state = try JSONDecoder().decode(AssistantSnapshot.self, from: metadata)
             guard state.id == conversation else { throw URLError(.cannotParseResponse) }
+            // Metadata is still authenticated and authorized on every read.
+            // A stable revision means its already fetched history is unchanged.
+            if let cachedHistory, cachedHistory.id == state.id,
+               cachedHistory.databaseId == state.databaseId,
+               cachedHistory.revision == state.revision {
+                return state.withHistory(messages: cachedHistory.messages, utterances: cachedHistory.utterances)
+            }
             var messages: [AssistantMessage] = []
             var utterances: [AssistantUtterance] = []
             var cursor: String? = "0"
@@ -103,13 +118,18 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
                     components.queryItems = query
                     request.url = components.url
                     let pageData = try await send(request)
+                    guard generation == credentialGeneration else { throw CancellationError() }
                     let page = try JSONDecoder().decode(AssistantHistoryPage.self, from: pageData)
                     guard page.revision == state.revision else { throw AssistantHTTPError(status: 409, code: "stale_state") }
                     messages.append(contentsOf: page.messages)
                     utterances.append(contentsOf: page.utterances)
                     cursor = page.nextCursor
                 }
-                return state.withHistory(messages: messages, utterances: utterances)
+                let result = state.withHistory(messages: messages, utterances: utterances)
+                if cachedHistory?.id != result.id || (cachedHistory?.revision ?? -1) <= result.revision {
+                    cachedHistory = result
+                }
+                return result
             } catch let error as AssistantHTTPError where error.status == 409 && error.code == "stale_state" {
                 continue
             }

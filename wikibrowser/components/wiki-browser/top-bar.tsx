@@ -12,7 +12,7 @@ import { xShareDatabaseHref } from "@/lib/share-links";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 
 
-const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
+const HEADER_ICON_LINK_CLASS = "inline-flex h-9 min-w-9 items-center justify-center gap-1.5 rounded-xl border px-2.5 text-sm font-medium no-underline transition-colors";
 
 export function TopBar({
   canisterId,
@@ -94,10 +94,10 @@ export function TopBar({
   }
 
   return (
-    <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
+    <header className="chrome-material sticky top-0 z-30 grid min-h-[56px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line px-3 py-2 lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <WikiNavigationLink
-          className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
+          className="inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm font-semibold leading-tight text-ink no-underline transition-colors hover:bg-paper"
           href="/dashboard"
           aria-label="Back to database dashboard"
         >
@@ -110,7 +110,7 @@ export function TopBar({
           </label>
           <select
             id="database-switcher"
-            className="h-10 w-[132px] rounded-2xl border border-line bg-white px-3 py-2 font-mono text-xs text-ink shadow-[0_4px_10px_#14142b0a] outline-none focus:border-accent sm:w-[180px]"
+            className="h-9 w-[132px] rounded-xl border border-line bg-white px-2.5 text-sm font-medium text-ink outline-none focus:border-midLine sm:w-[180px]"
             value={databaseId}
             onChange={switchDatabase}
             aria-label="Switch database"
@@ -126,23 +126,23 @@ export function TopBar({
       <div className="col-span-2 min-w-0 lg:col-span-1 lg:col-start-2 lg:row-start-1">
         <HeaderSearch canisterId={canisterId} databaseId={databaseId} query={query} searchKind={searchKind} canLeaveDirtyEdit={canLeaveDirtyEdit} />
       </div>
-      <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:justify-end">
+      <div className="col-span-2 flex min-w-0 flex-wrap items-center gap-1 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:justify-end lg:flex-nowrap">
         {visibleError ? <span className="hidden max-w-[220px] truncate text-xs text-red-700 md:inline">{visibleError}</span> : null}
         {publicReadable ? (
           <a
             aria-label={`Share ${currentDatabaseName} on X`}
-            className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
+            className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink`}
             href={xShareDatabaseHref({ databaseId, databaseTitle: currentDatabaseName })}
             rel="noreferrer"
             target="_blank"
             title="Share on X"
           >
             <Share2 aria-hidden size={18} />
-            <span className="hidden sm:inline">Share</span>
+            <span className="sr-only xl:not-sr-only">Share</span>
           </a>
         ) : null}
         <button
-          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${mobileSidebarOpen ? "border-transparent bg-paper text-ink" : "border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink"}`}
           type="button"
           data-tid="mobile-sidebar-toggle"
           aria-expanded={mobileSidebarOpen}
@@ -155,7 +155,7 @@ export function TopBar({
           <span className="sr-only sm:not-sr-only">Panel</span>
         </button>
         <WikiNavigationLink
-          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-transparent bg-paper text-ink" : "border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink"}`}
           href={graphHref}
           aria-label="Graph"
           title={isGraphPage ? "Close graph" : "Graph"}
@@ -164,23 +164,23 @@ export function TopBar({
           <span className="sr-only sm:not-sr-only">Graph</span>
         </WikiNavigationLink>
         <WikiNavigationLink
-          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink`}
           data-tid="header-manage-link"
           href={`/dashboard/project/${encodeURIComponent(databaseId)}`}
           aria-label="Manage database settings"
           title="Manage database settings"
         >
           <Settings aria-hidden size={18} />
-          <span className="sr-only sm:not-sr-only">Manage</span>
+          <span className="sr-only xl:not-sr-only">Manage</span>
         </WikiNavigationLink>
         <DatabaseCyclesBadge cycles={cycles} database={currentDatabase} />
         {principal ? (
-          <Button className="ml-auto rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white lg:ml-0" variant="outline" type="button" onClick={onLogout}>
+          <Button className="ml-auto rounded-2xl border-transparent bg-transparent text-muted hover:bg-paper hover:text-ink lg:ml-0" variant="outline" type="button" onClick={onLogout}>
             Logout
           </Button>
         ) : (
           <Button
-            className="ml-auto rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60 lg:ml-0"
+            className="ml-auto h-9 rounded-xl border border-action bg-action px-3.5 text-sm font-semibold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60 lg:ml-1"
             data-tid="header-login-button"
             disabled={!authReady}
             type="button"
@@ -201,11 +201,11 @@ function DatabaseCyclesBadge({ cycles, database }: { cycles: ReturnType<typeof d
   const content = (
     <>
       <Wallet aria-hidden size={15} />
-      <span className="hidden text-xs font-semibold sm:inline">{cycles.label}</span>
+      <span className="hidden text-xs font-semibold 2xl:inline">{cycles.label}</span>
       <span className="font-mono text-xs">{formatCycles(cycles.balanceCycles)}</span>
     </>
   );
-  const className = `hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${databaseCyclesToneClass(cycles.state)}`;
+  const className = `hidden h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm md:flex ${databaseCyclesToneClass(cycles.state)}`;
   if (!database) {
     return (
       <span className={className} title={title} aria-label={title}>
@@ -221,10 +221,10 @@ function DatabaseCyclesBadge({ cycles, database }: { cycles: ReturnType<typeof d
 }
 
 function databaseCyclesToneClass(state: ReturnType<typeof databaseCyclesView>["state"]): string {
-  if (state === "active") return "border-infoLine bg-infoSoft text-infoText";
-  if (state === "low-balance") return "border-yellow-200 bg-yellow-50 text-yellow-800";
-  if (state === "suspended") return "border-red-200 bg-red-50 text-red-700";
-  return "border-line bg-white text-muted";
+  if (state === "active") return "border-line bg-transparent text-muted hover:text-ink";
+  if (state === "low-balance") return "border-warnLine bg-warnSoft text-warnText";
+  if (state === "suspended") return "border-dangerLine bg-dangerSoft text-dangerText";
+  return "border-line bg-transparent text-muted";
 }
 
 export function mergeDatabaseSummaries(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseSummary[] {
@@ -298,8 +298,8 @@ function HeaderSearch({
 
   return (
     <search aria-label="Search this database">
-      <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-[20px] border border-line bg-white px-2 py-1.5 text-sm shadow-[0_4px_10px_#14142b0a] sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
-        <div className="flex shrink-0 rounded-2xl border border-line bg-paper p-1 text-xs">
+      <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-xl border border-transparent bg-paper px-1.5 py-1 text-sm transition-colors focus-within:border-line focus-within:bg-white sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
+        <div className="flex shrink-0 rounded-lg bg-line/50 p-0.5 text-xs">
           <SearchKindButton active={kind === "path"} label="Path" onClick={() => setDraft({ key: draftKey, text, kind: "path" })} />
           <SearchKindButton active={kind === "full"} label="Full text" onClick={() => setDraft({ key: draftKey, text, kind: "full" })} />
         </div>
@@ -311,7 +311,7 @@ function HeaderSearch({
           placeholder="Search wiki"
           aria-label="Search wiki"
         />
-        <Button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
+        <Button className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-lg bg-action px-2.5 text-xs font-semibold text-onAction hover:bg-actionHover" type="submit">
           <Search size={15} aria-hidden />
           <span className="sr-only sm:not-sr-only">Search</span>
         </Button>
@@ -325,7 +325,7 @@ function SearchKindButton({ active, label, onClick }: { active: boolean; label: 
     <button
       type="button"
       aria-pressed={active}
-      className={`rounded-xl px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
+      className={`rounded-md px-2 py-0.5 ${active ? "bg-white text-ink shadow-card" : "text-muted hover:text-ink"}`}
       onClick={onClick}
     >
       {label}

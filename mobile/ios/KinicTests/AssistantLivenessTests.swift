@@ -4,6 +4,10 @@ import XCTest
 /// The watchdog exists because a half-open socket never throws; only the
 /// absence of received messages over time reveals that the peer is gone.
 final class AssistantLivenessTests: XCTestCase {
+    func testControlWaitCoversCrashedServerLeaseAndReconnectSetup() {
+        XCTAssertGreaterThanOrEqual(AssistantLiveness.controlWaitSeconds, 45 + 10)
+        XCTAssertGreaterThanOrEqual(AssistantLiveness.fallbackPollSeconds, 5)
+    }
     func testSnapshotRevisionRejectsLateCommandState() {
         XCTAssertTrue(AssistantSnapshotOrdering.shouldApply(currentRevision: 7, incomingRevision: 8))
         XCTAssertFalse(AssistantSnapshotOrdering.shouldApply(currentRevision: 8, incomingRevision: 8))

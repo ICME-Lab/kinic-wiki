@@ -63,7 +63,7 @@ export function PublicNodeDocument({ data }: { data: PublicNodePageData }) {
             <span>Kinic Wiki</span>
           </Link>
           <Link
-            className="whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            className="whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-onAction no-underline hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
             href="/dashboard"
           >
             Start using Kinic Wiki
@@ -91,7 +91,7 @@ export function PublicNodeDocument({ data }: { data: PublicNodePageData }) {
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted">Turn sources into durable, linked knowledge that agents can search, cite, and maintain.</p>
           </div>
           <Link
-            className="mt-5 inline-flex shrink-0 whitespace-nowrap rounded-lg border border-action bg-action px-4 py-2.5 text-sm font-semibold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 sm:mt-0"
+            className="mt-5 inline-flex shrink-0 whitespace-nowrap rounded-lg border border-action bg-action px-4 py-2.5 text-sm font-semibold text-onAction no-underline hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 sm:mt-0"
             href="/dashboard"
           >
             Start using Kinic Wiki

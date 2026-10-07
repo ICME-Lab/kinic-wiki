@@ -80,7 +80,7 @@ export default function ClipperPage() {
                 Kinic Wiki Clipper is a Chrome extension that saves selected ChatGPT and Claude conversations or the active web page into a writable Kinic Wiki database. Raw captures stay under <code>/Sources</code> so you can inspect their origin before turning them into maintained knowledge.
               </p>
               <a
-                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                 href={CLIPPER_STORE_URL}
                 rel="noopener noreferrer"
                 target="_blank"
@@ -185,7 +185,7 @@ export default function ClipperPage() {
                 <AdminNotice tone="info" message="Clipper cannot save when its Internet Identity session is signed out, no destination database is selected, your principal does not have writer access, or the database does not have enough write cycles." />
               </div>
             </div>
-            <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/dashboard">
+            <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 text-sm font-bold text-onAction no-underline hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/dashboard">
               <LayoutDashboard aria-hidden size={17} />
               Open Dashboard
             </Link>

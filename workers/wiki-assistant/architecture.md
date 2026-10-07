@@ -68,6 +68,31 @@ only. Messages, citations and utterances are fetched in revision-bound pages of 
 most ten items and 512,000 encoded bytes. A revision change during pagination makes
 the client restart the read, so content from different commits is never combined.
 
+Metadata reads update presence without rewriting encrypted messages or advancing
+the revision. History requests decrypt only the requested page and recheck the
+persisted revision after assembly. An idle wake updates scheduling with a revision
+condition, so it cannot overwrite the next attempt of a concurrent question.
+iOS reuses history for an unchanged authenticated revision, receives socket updates,
+and checks HTTP at most once every five seconds while awaiting an answer. Its
+control wait is 60 seconds to cover a crashed connection's 45-second lease.
+
+Each Wiki read uses a separate identity-bound agent. Native iOS Ask AI explicitly
+sets `verifyQuerySignatures: false`, including the initial delegation acceptance
+query. Its authenticated requests remain signed, the replica validates delegation
+and caller access, and the server checks that an accepted principal matches the
+expected account. Native Ask AI trusts the fixed `https://icp0.io` HTTPS gateway for
+response integrity instead of checking returned node signatures and timestamps.
+The shared actor's default and retained Web path keep response verification enabled.
+Their bounded five-minute cache stores only certificate-verified public subnet
+keys; identities, private content and in-flight promises are never shared.
+
+Native tool execution relies on each actual canister query's access enforcement
+rather than a redundant preflight read. Stored history/metadata reads, heartbeat,
+turn start and answer publication still perform an access check. No Paid-only CPU
+limit is configured. The native policy removes certificate verification overhead,
+but Free-plan suitability must be confirmed from deployed CPU telemetry; local
+CPU timings do not prove the enforced production limit.
+
 ## Crash recovery and cleanup
 
 Provider creation intent precedes the API call; returned provider IDs are recorded

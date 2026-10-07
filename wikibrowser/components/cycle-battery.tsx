@@ -1,24 +1,36 @@
 "use client";
 
-import { cycleTone, formatCycles, formatRawCycles, type CycleTone } from "@/lib/cycles";
+// Where: database headers in the console.
+// What: one cycles indicator that follows the same billing state as the rest of the dashboard.
+// Why: a fixed threshold made the battery red while the billing config still reported "Active".
 
-export function CycleBattery({ cyclesBalance }: { cyclesBalance: string | null }) {
-  const cycles = parseCyclesBalance(cyclesBalance);
-  const tone = cycleTone(cycles);
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
+import { cycleTone, formatCycles, formatRawCycles } from "@/lib/cycles";
+import { databaseCyclesView, type DatabaseCycleState } from "@/lib/cycles-state";
+import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
+
+export function CycleBattery({
+  config = null,
+  cyclesBalance,
+  database = null
+}: {
+  config?: CyclesBillingConfig | null;
+  cyclesBalance: string | null;
+  database?: DatabaseSummary | null;
+}) {
+  const view = database ? databaseCyclesView(database, config) : null;
+  const cycles = view ? view.balanceCycles : parseCyclesBalance(cyclesBalance);
+  const tone = view ? toneForState(view.state) : cycleToneFallback(cycleTone(cycles));
   const label = cycles === null ? "--" : formatCycles(cycles);
-  const title = titleForCycles(cycles);
+  const title = titleFor({ cycles, reason: view?.reason ?? null, state: view?.state ?? null });
   return (
-    <div
-      className={`hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${toneClass(tone)}`}
+    <StatusPill
+      className="h-[38px] px-3"
+      dot
+      label={<span className="font-mono text-xs">{label}</span>}
       title={title}
-      aria-label={title}
-    >
-      <span className="relative h-4 w-8 rounded-[4px] border border-current p-[2px]">
-        <span className={`block h-full rounded-[2px] ${fillClass(tone)}`} style={{ width: fillWidth(tone) }} />
-        <span className="absolute -right-[4px] top-1/2 h-2 w-[3px] -translate-y-1/2 rounded-r-sm bg-current" />
-      </span>
-      <span className="font-mono text-xs">{label}</span>
-    </div>
+      tone={tone}
+    />
   );
 }
 
@@ -31,30 +43,33 @@ function parseCyclesBalance(value: string | null): bigint | null {
   }
 }
 
-function titleForCycles(cycles: bigint | null): string {
-  if (cycles !== null) {
-    return `${formatRawCycles(cycles)} database cycles available`;
-  }
-  return "Database cycle balance unavailable";
+function titleFor({ cycles, reason, state }: { cycles: bigint | null; reason: string | null; state: DatabaseCycleState | null }): string {
+  const stateLabel =
+    state === "active"
+      ? "Active"
+      : state === "low-balance"
+        ? "Low balance"
+        : state === "suspended"
+          ? "Suspended"
+          : state === "unknown"
+            ? "State unknown"
+            : null;
+  const balanceLabel = cycles !== null ? `${formatRawCycles(cycles)} database cycles available` : "Database cycle balance unavailable";
+  if (stateLabel && reason) return `${stateLabel} · ${balanceLabel}. ${reason}`;
+  if (stateLabel) return `${stateLabel} · ${balanceLabel}`;
+  return balanceLabel;
 }
 
-function toneClass(tone: CycleTone): string {
-  if (tone === "blue") return "border-infoLine bg-infoSoft text-infoText";
-  if (tone === "amber") return "border-yellow-200 bg-yellow-50 text-yellow-800";
-  if (tone === "red") return "border-red-200 bg-red-50 text-red-700";
-  return "border-line bg-white text-muted";
+function toneForState(state: DatabaseCycleState): StatusTone {
+  if (state === "active") return "positive";
+  if (state === "low-balance") return "warn";
+  if (state === "suspended") return "danger";
+  return "neutral";
 }
 
-function fillClass(tone: CycleTone): string {
-  if (tone === "blue") return "bg-kinicCyan";
-  if (tone === "amber") return "bg-yellow-500";
-  if (tone === "red") return "bg-red-500";
-  return "bg-muted";
-}
-
-function fillWidth(tone: CycleTone): string {
-  if (tone === "blue") return "100%";
-  if (tone === "amber") return "55%";
-  if (tone === "red") return "18%";
-  return "0%";
+function cycleToneFallback(tone: "blue" | "amber" | "red" | "gray"): StatusTone {
+  if (tone === "blue") return "info";
+  if (tone === "amber") return "warn";
+  if (tone === "red") return "danger";
+  return "neutral";
 }

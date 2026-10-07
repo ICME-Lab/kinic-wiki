@@ -1,12 +1,14 @@
 "use client";
 
 import { AppLink as Link } from "@/components/app-link";
-import { ArrowDownAZ, Clock3, Search, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowDownAZ, Clock3, Search, Sparkles, Store, TrendingUp } from "lucide-react";
 import { useAppNavigate, useAppPathname, useAppSearchParams } from "@/lib/app-router";
 import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminPanel } from "@/components/admin-ui";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
@@ -113,35 +115,92 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
   return (
     <div className="min-w-0 text-ink">
       <section className="flex flex-col gap-5">
+        <header className="min-w-0">
+          <h1 className="text-2xl font-semibold text-ink">Marketplace</h1>
+          <p className="mt-1 text-sm leading-6 text-muted">Buy access to curated Kinic Wiki databases with KINIC.</p>
+        </header>
+
         <MarketplaceFilterBar
           max={max}
+          loadedCount={listings.length}
           query={query}
+          resultCount={filtered.length}
           sort={sort}
           onMaxChange={updateMax}
           onReplaceParams={replaceParams}
           onSearch={runSearch}
         />
 
-        {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+        {error ? <p className="rounded-lg border border-dangerLine bg-dangerSoft px-3 py-2 text-sm text-dangerText">{error}</p> : null}
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((view) => (
-            <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
-              <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
-              <div className="grid gap-1">
-                <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.name}</h2>
-                <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
-              </div>
-              <div className="mt-auto flex items-center justify-between gap-3 text-sm">
-                <span className="font-mono font-semibold">{formatTokenAmountFromE8s(view.listing.priceE8s)}</span>
-                <span className="text-muted">{view.listing.purchaseCount} sold</span>
-              </div>
-              </AdminPanel>
-            </Link>
-          ))}
-        </section>
+        {state === "loading" && listings.length === 0 ? <MarketplaceListingsSkeleton /> : null}
 
-        {state !== "loading" && !filtered.length && cursor ? <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">Load more may reveal additional matches.</p> : null}
+        {filtered.length > 0 ? (
+          <section className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {filtered.map((view) => (
+              <Link className="no-underline" href={marketListingPath(view.listing.listingId)} key={view.listing.listingId}>
+                <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
+                <div className="grid gap-1">
+                  <h2 className="line-clamp-2 text-base font-semibold">{view.databaseMetadata.name}</h2>
+                  <p className="line-clamp-3 text-sm text-muted">{view.databaseMetadata.description}</p>
+                </div>
+                <div className="mt-auto flex items-center justify-between gap-3 text-sm">
+                  <span className="font-mono font-semibold">{formatTokenAmountFromE8s(view.listing.priceE8s)}</span>
+                  <span className="text-muted">{view.listing.purchaseCount} sold</span>
+                </div>
+                </AdminPanel>
+              </Link>
+            ))}
+          </section>
+        ) : null}
+
+        {/* An empty marketplace used to render nothing at all, which read as a broken page. */}
+        {!error && state !== "loading" && filtered.length === 0 ? (
+          listings.length === 0 ? (
+            <AdminPanel padding="none">
+              <EmptyState
+                description="Databases listed here are sold for KINIC and open straight into the Wiki browser. Be the first seller."
+                icon={<Store aria-hidden size={20} />}
+                title="No databases are for sale yet"
+                action={
+                  <Link
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-onAction no-underline hover:bg-actionHover"
+                    href="/dashboard"
+                  >
+                    Sell a database
+                  </Link>
+                }
+                secondaryAction={
+                  <Link
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink no-underline hover:border-midLine"
+                    href="/docs"
+                  >
+                    How listings work
+                  </Link>
+                }
+              />
+            </AdminPanel>
+          ) : (
+            <AdminPanel padding="none">
+              <EmptyState
+                description="Clear the filters to see every loaded listing."
+                icon={<Search aria-hidden size={20} />}
+                title="No loaded listing matches these filters"
+                action={
+                  <button
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:border-midLine"
+                    type="button"
+                    onClick={() => replaceParams({ q: null, sort: null, max: null })}
+                  >
+                    Clear filters
+                  </button>
+                }
+              />
+            </AdminPanel>
+          )
+        ) : null}
+
+        {state !== "loading" && !filtered.length && cursor ? <p className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-muted">Load more may reveal additional matches.</p> : null}
 
         {cursor ? (
           <button
@@ -159,15 +218,19 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
 }
 
 function MarketplaceFilterBar({
+  loadedCount,
   max,
   query,
+  resultCount,
   sort,
   onMaxChange,
   onReplaceParams,
   onSearch
 }: {
+  loadedCount: number;
   max: string;
   query: string;
+  resultCount: number;
   sort: MarketSort;
   onMaxChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onReplaceParams: (next: Record<string, string | null>) => void;
@@ -184,7 +247,9 @@ function MarketplaceFilterBar({
         <label className="sr-only" htmlFor="market-max-price">Max price</label>
         <Input id="market-max-price" className="h-10 rounded-lg bg-white font-mono text-xs lg:w-36" inputMode="decimal" placeholder="0.5 KINIC" value={max} onChange={onMaxChange} />
       </form>
-      <p className="text-xs text-muted">Filters and sorting apply to loaded listings only.</p>
+      <p className="text-xs text-muted">
+        {loadedCount > 0 ? `${resultCount} of ${loadedCount} loaded listings` : "Sorted and filtered on the client."}
+      </p>
 
       <div className="flex flex-wrap gap-2">
         {QUICK_FILTERS.map((filter) => {
@@ -231,6 +296,22 @@ function MarketplaceFilterBar({
 }
 
 type MarketSort = "recent" | "popular" | "price_low";
+
+function MarketplaceListingsSkeleton() {
+  return (
+    <section aria-busy="true" aria-live="polite" className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <span className="sr-only">Loading marketplace listings</span>
+      {[0, 1, 2].map((index) => (
+        <div className="grid min-h-48 gap-3 rounded-lg border border-line bg-white p-4" key={index}>
+          <Skeleton className="h-5 w-3/4 rounded-md" />
+          <Skeleton className="h-4 w-full rounded-md" />
+          <Skeleton className="h-4 w-2/3 rounded-md" />
+          <Skeleton className="mt-auto h-5 w-24 rounded-md" />
+        </div>
+      ))}
+    </section>
+  );
+}
 
 function parseMarketSort(value: string | null): MarketSort {
   if (value === "popular" || value === "price_low") return value;

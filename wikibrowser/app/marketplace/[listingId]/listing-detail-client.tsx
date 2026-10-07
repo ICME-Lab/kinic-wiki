@@ -9,6 +9,8 @@ import { useAppSession } from "@/app/app-session-provider";
 import { connectedWalletPrincipal } from "@/app/app-session-provider";
 import { balanceCanFund, KinicFundingSourceSelector, useFundingSourceChoice } from "@/app/kinic-funding-source-selector";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { requiredKinicBalanceE8s } from "@/lib/cycles";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { purchaseMarketAccessWithFundingSource, type KinicFundingSource } from "@/lib/kinic-wallet";
@@ -80,7 +82,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       setDetail(nextListing);
       setState("idle");
     } catch (cause) {
-      setMessage(errorMessage(cause));
+      setMessage(listingErrorMessage(cause));
       setState("error");
     }
   }, [canisterId, listingId]);
@@ -271,7 +273,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                 />
                 <div className="grid gap-3">
                   <button
-                    className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
+                    className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-onAction hover:bg-actionHover disabled:opacity-60"
                     disabled={
                       !principal ||
                       !selectedSourceAvailable ||
@@ -318,15 +320,58 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
           </>
         ) : null}
 
-        {state === "loading" ? <AdminNotice tone="info" message="Loading" /> : null}
-        {message ? <Notice tone={state === "error" || purchaseState === "error" ? "error" : "success"} text={message} /> : null}
+        {state === "loading" ? <ListingDetailSkeleton /> : null}
+        {/* A missing listing used to print the raw canister error into a red banner. */}
+        {state === "error" && !detail ? (
+          <AdminPanel padding="none">
+            <EmptyState
+              description={message ?? "This listing is no longer available."}
+              icon={<ShoppingCart aria-hidden size={20} />}
+              title="Listing unavailable"
+              action={
+                <Link
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-onAction no-underline hover:bg-actionHover"
+                  href="/marketplace"
+                >
+                  Back to Marketplace
+                </Link>
+              }
+            />
+          </AdminPanel>
+        ) : null}
+        {message && !(state === "error" && !detail) ? (
+          <Notice tone={state === "error" || purchaseState === "error" ? "error" : "success"} text={message} />
+        ) : null}
       </section>
     </div>
   );
 }
 
-function TabButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+function listingErrorMessage(cause: unknown): string {
+  const raw = errorMessage(cause);
+  if (/listing not found|not found/i.test(raw)) {
+    return "This listing is no longer available. It may have been withdrawn by the seller.";
+  }
+  return raw;
+}
+
+function ListingDetailSkeleton() {
   return (
+    <section aria-busy="true" aria-live="polite" className="grid gap-4">
+      <span className="sr-only">Loading listing</span>
+      <div className="grid gap-3">
+        <Skeleton className="h-7 w-64 rounded-md" />
+        <Skeleton className="h-4 w-full max-w-xl rounded-md" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <Skeleton className="h-72 rounded-lg" />
+        <Skeleton className="h-72 rounded-lg" />
+      </div>
+    </section>
+  );
+}
+
+function TabButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {  return (
     <button
       className={`inline-flex min-h-10 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${
         active ? "border-action text-ink" : "border-transparent text-muted hover:text-ink"

@@ -120,15 +120,18 @@ final class HomeNavigationUITests: XCTestCase {
     @MainActor func testCommentAuthorCompactAndCopyMenu() {
         let app = launch(state: "comment-author", dark: true)
         app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Plan the next research session")).firstMatch.tap()
-        let author = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Author: eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae")).firstMatch
-        XCTAssertTrue(author.waitForExistence(timeout: 5))
         let posted = app.otherElements["workItem.comment.11111111-1111-4111-8111-111111111111"]
-        XCTAssertTrue(posted.exists)
+        XCTAssertTrue(posted.waitForExistence(timeout: 5))
+        let author = posted.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Author: eyluy-bu6z2-q5dwg-4sved-2jenz-2r54a-t65kq-y6cz3-kkdrx-ta472-gae")).firstMatch
+        XCTAssertTrue(author.waitForExistence(timeout: 5))
         XCTAssertEqual(posted.textFields.count, 0)
         XCTAssertTrue(app.staticTexts["New comment"].exists)
         for _ in 0..<4 where !author.isHittable { app.swipeUp() }
+        let hittable = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: author)
+        wait(for: [hittable], timeout: 5)
         capture(app, "comment-author-compact")
-        author.press(forDuration: 1)
+        // Give the context-menu recognizer enough hold time on busy CI simulators.
+        author.press(forDuration: 2)
         XCTAssertTrue(app.buttons["Copy Principal ID"].waitForExistence(timeout: 5))
         capture(app, "comment-author-copy-menu")
     }
@@ -207,6 +210,259 @@ final class HomeNavigationUITests: XCTestCase {
 
 
 extension HomeNavigationUITests {
+    @MainActor func testCaptureSharedItemsAndWidgetDemo() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        let app = launch(state: "demo", dark: true)
+        XCTAssertTrue(app.staticTexts["Plan the next research session"].waitForExistence(timeout: 10))
+        print("DEMO_SCENE:home")
+        capture(app, "demo-home")
+        Thread.sleep(forTimeInterval: 2)
+        if ProcessInfo.processInfo.environment["KINIC_DEMO_WIDGET_ONLY"] != "1" {
+        print("DEMO_SCENE:create")
+        app.buttons["home.newItem"].tap()
+        let title = app.textFields["Work item title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.tap(); title.typeText("Ship the next idea")
+        let body = app.textViews["Work item body"]
+        body.tap(); body.typeText("Review the sources and sketch a first prototype.")
+        if app.buttons["Done"].isHittable { app.buttons["Done"].tap() }
+        capture(app, "demo-create")
+        app.buttons["Save"].firstMatch.tap()
+        let row = app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Ship the next idea")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 12))
+        Thread.sleep(forTimeInterval: 2)
+        print("DEMO_SCENE:comment")
+        row.tap()
+        let comment = app.textFields["New comment"]
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        comment.tap(); comment.typeText("Notes reviewed. Ready to build.")
+        app.buttons["keyboard.done"].tap()
+        app.buttons["workItem.postComment"].tap()
+        XCTAssertTrue(app.staticTexts["Notes reviewed. Ready to build."].waitForExistence(timeout: 10))
+        capture(app, "demo-comment")
+        Thread.sleep(forTimeInterval: 2)
+        print("DEMO_SCENE:close")
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.buttons["Reopen"].waitForExistence(timeout: 10))
+        capture(app, "demo-closed")
+        Thread.sleep(forTimeInterval: 2)
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["Closed"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        capture(app, "demo-closed-list")
+        Thread.sleep(forTimeInterval: 2)
+        }
+        print("DEMO_SCENE:widget-setup")
+        XCUIDevice.shared.press(.home)
+        XCUIDevice.shared.press(.home)
+        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let icon = board.icons["KinicWiki"]
+        XCTAssertTrue(icon.waitForExistence(timeout: 10))
+        for _ in 0..<3 where !icon.isHittable { board.swipeLeft() }
+        icon.press(forDuration: 1.2)
+        let edit = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit Home Screen", "ホーム画面を編集"])).firstMatch
+        if edit.waitForExistence(timeout: 4) { edit.tap() }
+        let editMenu = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit", "編集"])).firstMatch
+        if editMenu.waitForExistence(timeout: 3) { editMenu.tap() }
+        let add = board.buttons.matching(NSPredicate(format: "label IN %@", ["Add Widget", "Add Widgets", "ウィジェットを追加", "追加"])).firstMatch
+        if add.waitForExistence(timeout: 3) { add.tap() }
+        else if board.buttons["Add"].exists { board.buttons["Add"].tap() }
+        print("DEMO_WIDGET_TREE:" + board.debugDescription)
+        let search = board.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap(); search.typeText("Kinic")
+        let result = board.cells.matching(NSPredicate(format: "label CONTAINS[c] %@", "KinicWiki")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5)); result.tap()
+        let addWidget = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        XCTAssertTrue(addWidget.waitForExistence(timeout: 5)); addWidget.tap()
+        let done = board.buttons.matching(NSPredicate(format: "label IN %@", ["Done", "完了"])).firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        Thread.sleep(forTimeInterval: 5)
+        print("DEMO_SCENE:widget")
+        capture(board, "demo-widget")
+        print("DEMO_WIDGET_FINAL:" + board.debugDescription)
+        Thread.sleep(forTimeInterval: 5)
+        print("DEMO_SCENE:end")
+    }
+
+    @MainActor func testFinishWidgetDemoCapture() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let add = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
+        let done = board.buttons.matching(NSPredicate(format: "label IN %@", ["Done", "完了"])).firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        Thread.sleep(forTimeInterval: 12)
+        capture(board, "demo-widget")
+        print("DEMO_WIDGET_FINAL:" + board.debugDescription)
+    }
+
+    @MainActor func testCaptureWidgetEntryDemo() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        try testCaptureSharedItemsAndWidgetDemo()
+        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        print("DEMO_SCENE:widget-entry")
+        capture(board, "demo-widget-entry-before")
+        print("DEMO_ENTRY_TREE:" + board.debugDescription)
+        let item = board.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Plan the next research session")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 2)
+        print("DEMO_SCENE:widget-tap")
+        item.tap()
+        let app = XCUIApplication()
+        XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Plan the next research session"].exists)
+        capture(app, "demo-widget-entry-after")
+        print("DEMO_SCENE:widget-opened")
+        Thread.sleep(forTimeInterval: 4)
+    }
+
+    @MainActor func testCaptureFinalComposerCards() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        let app = launch(state: "demo-final", dark: true)
+        app.buttons["home.newItem"].tap()
+        let title = app.textFields["Work item title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        app.swipeUp()
+        capture(app, "final-compose-clean-empty")
+        title.tap(); title.typeText("Write launch notes")
+        let body = app.textViews["Work item body"]
+        body.tap(); body.typeText("Ship shared work, one step at a time.")
+        app.swipeUp()
+        capture(app, "final-compose-clean-filled")
+    }
+
+    @MainActor func testCaptureSingleItemStoryDemo() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        let app = launch(state: "demo-story", dark: true)
+        XCTAssertTrue(app.staticTexts["Plan the next release"].waitForExistence(timeout: 10))
+        capture(app, "story-home")
+        app.buttons["home.newItem"].tap()
+        let title = app.textFields["Work item title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        capture(app, "story-create-empty")
+        title.tap(); title.typeText("Write launch notes")
+        let body = app.textViews["Work item body"]
+        body.tap(); body.typeText("Ship shared work, one step at a time.")
+        capture(app, "story-create-filled")
+        app.buttons["Save"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Write launch notes"].waitForExistence(timeout: 10))
+        capture(app, "story-created")
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Write launch notes")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Can you review these launch notes?"].waitForExistence(timeout: 10))
+        capture(app, "story-discussion-before")
+        let comment = app.textFields["New comment"]
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        if !comment.isHittable { app.swipeUp() }
+        comment.tap(); comment.typeText("Reviewed. Ready to ship.")
+        app.buttons["keyboard.done"].tap()
+        capture(app, "story-reply-filled")
+        app.buttons["workItem.postComment"].tap()
+        XCTAssertTrue(app.staticTexts["Reviewed. Ready to ship."].waitForExistence(timeout: 10))
+        capture(app, "story-discussion-after")
+        XCUIDevice.shared.press(.home); XCUIDevice.shared.press(.home)
+        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let icon = board.icons["KinicWiki"]
+        // A fresh task Simulator installs this app on the second Home page.
+        // Querying isHittable for an off-page SpringBoard icon throws on iOS 27.
+        board.swipeLeft()
+        XCTAssertTrue(icon.waitForExistence(timeout: 5))
+        icon.press(forDuration: 1.2)
+        let edit = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit Home Screen", "ホーム画面を編集"])).firstMatch
+        if edit.waitForExistence(timeout: 4) { edit.tap() }
+        let menu = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit", "編集"])).firstMatch
+        if menu.waitForExistence(timeout: 3) { menu.tap() }
+        let add = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        if add.waitForExistence(timeout: 3) { add.tap() }
+        let search = board.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("Kinic")
+        let result = board.cells.matching(NSPredicate(format: "label CONTAINS[c] %@", "KinicWiki")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5)); result.tap()
+        let addWidget = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        XCTAssertTrue(addWidget.waitForExistence(timeout: 5)); addWidget.tap()
+        let done = board.buttons.matching(NSPredicate(format: "label IN %@", ["Done", "完了"])).firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        let item = board.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Write launch notes")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 15))
+        capture(board, "story-widget")
+        item.tap()
+        XCTAssertTrue(app.staticTexts["Ship shared work, one step at a time."].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(app.staticTexts["Reviewed. Ready to ship."].exists)
+        XCTAssertTrue(app.staticTexts["Can you review these launch notes?"].exists)
+        capture(app, "story-widget-opened")
+    }
+
+    @MainActor func testCaptureFinalSharedDemo() throws {
+        guard ProcessInfo.processInfo.environment["KINIC_DEMO_CAPTURE"] == "1" else { throw XCTSkip("Opt-in product demo capture") }
+        let app = launch(state: "demo-final", dark: true)
+        XCTAssertTrue(app.staticTexts["Review launch copy"].waitForExistence(timeout: 10))
+        capture(app, "final-home")
+        app.buttons["home.newItem"].tap()
+        let title = app.textFields["Work item title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        capture(app, "final-create-empty")
+        title.tap(); title.typeText("Write launch notes")
+        let body = app.textViews["Work item body"]
+        body.tap(); body.typeText("Ship shared work, one step at a time.")
+        capture(app, "final-create-filled")
+        app.buttons["Save"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Write launch notes"].waitForExistence(timeout: 10))
+        capture(app, "final-created")
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Review launch copy")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["The draft is ready. Can you review it?"].waitForExistence(timeout: 10))
+        capture(app, "final-discussion-before")
+        let comment = app.textFields["New comment"]
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        if !comment.isHittable { app.swipeUp() }
+        comment.tap(); comment.typeText("Reviewed. Ready to ship.")
+        app.buttons["keyboard.done"].tap()
+        capture(app, "final-reply-filled")
+        app.buttons["workItem.postComment"].tap()
+        XCTAssertTrue(app.staticTexts["Reviewed. Ready to ship."].waitForExistence(timeout: 10))
+        capture(app, "final-discussion-after")
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.buttons["Reopen"].waitForExistence(timeout: 10))
+        capture(app, "final-closed-detail")
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["Closed"].tap()
+        XCTAssertTrue(app.staticTexts["Review launch copy"].waitForExistence(timeout: 5))
+        capture(app, "final-closed-list")
+        app.buttons["Open"].tap()
+        app.buttons.containing(NSPredicate(format: "label BEGINSWITH %@", "Write launch notes")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Ship shared work, one step at a time."].waitForExistence(timeout: 5))
+        capture(app, "final-next-item")
+        XCUIDevice.shared.press(.home); XCUIDevice.shared.press(.home)
+        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let icon = board.icons["KinicWiki"]
+        // A fresh task Simulator installs this app on the second Home page.
+        // Querying isHittable for an off-page SpringBoard icon throws on iOS 27.
+        board.swipeLeft()
+        XCTAssertTrue(icon.waitForExistence(timeout: 5))
+        icon.press(forDuration: 1.2)
+        let edit = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit Home Screen", "ホーム画面を編集"])).firstMatch
+        if edit.waitForExistence(timeout: 4) { edit.tap() }
+        let menu = board.buttons.matching(NSPredicate(format: "label IN %@", ["Edit", "編集"])).firstMatch
+        if menu.waitForExistence(timeout: 3) { menu.tap() }
+        let add = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        if add.waitForExistence(timeout: 3) { add.tap() }
+        let search = board.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("Kinic")
+        let result = board.cells.matching(NSPredicate(format: "label CONTAINS[c] %@", "KinicWiki")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5)); result.tap()
+        let addWidget = board.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@ OR label CONTAINS %@", "Add Widget", "ウィジェットを追加")).firstMatch
+        XCTAssertTrue(addWidget.waitForExistence(timeout: 5)); addWidget.tap()
+        let done = board.buttons.matching(NSPredicate(format: "label IN %@", ["Done", "完了"])).firstMatch
+        if done.waitForExistence(timeout: 5) { done.tap() }
+        let item = board.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Write launch notes")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 15))
+        capture(board, "final-widget")
+        item.tap()
+        XCTAssertTrue(app.staticTexts["Ship shared work, one step at a time."].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.state, .runningForeground)
+        capture(app, "final-widget-opened")
+    }
+
     @MainActor func testDraftRestoresAfterRelaunchAndExplicitDiscardRemovesIt() {
         let app = launch(draftStore: UUID().uuidString)
         app.buttons["home.newItem"].tap()

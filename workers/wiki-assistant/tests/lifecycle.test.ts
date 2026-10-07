@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   remove: vi.fn(),
   authorize: vi.fn(),
+  readActor: vi.fn(),
   read: vi.fn(),
   discardIntent: vi.fn(),
   route: vi.fn(),
@@ -64,7 +65,7 @@ vi.mock("@kinic/ii-server/internet-identity", () => ({
   restoreKinicIdentity: () => ({}),
 }));
 vi.mock("../src/kinic", () => ({
-  createReadActor: () => ({}),
+  createReadActor: mocks.readActor,
   emptyToolState: () => ({
     calls: 0,
     characters: 0,
@@ -182,6 +183,7 @@ vi.mock("../src/store", () => ({
     async command() { return { fresh: true, response: null }; }
     async commandResult() {}
     async touch() {}
+    async schedule() {}
     async canSend() {
       return true;
     }
@@ -253,6 +255,7 @@ async function harness(native = false) {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.readActor.mockReturnValue({});
   mocks.authorize.mockResolvedValue(undefined);
   mocks.create.mockResolvedValue({ id: "session-1" });
   mocks.items.mockResolvedValue([]);
@@ -274,6 +277,50 @@ const question = () => ({
   scope: "/Knowledge",
 });
 describe("conversation lifecycle", () => {
+  it("reads control state without rewriting messages or advancing its revision", async () => {
+    const h = await harness(true);
+    const revision = h.user["revision"];
+    const c = h.user["state"].conversation!;
+    const save = vi.spyOn(h.user, "save" as never);
+    for (let i = 0; i < 3; i++) {
+      expect((await h.call("/conversation")).status).toBe(200);
+      expect((await h.call("/active")).status).toBe(200);
+    }
+    expect(h.user["revision"]).toBe(revision);
+    expect(h.user["state"].conversation).toBe(c);
+    expect(save).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("selects the response-verification policy for native=%s without dropping authorization", async (native) => {
+    const h = await harness(native);
+    mocks.readActor.mockClear();
+    mocks.authorize.mockClear();
+    expect((await h.call("/conversation")).status).toBe(200);
+    expect(mocks.readActor).toHaveBeenCalledWith(undefined, {}, { verifyQuerySignatures: !native });
+    expect(mocks.authorize).toHaveBeenCalled();
+  });
+  it("returns a structured 409 when the old control connection lease is still active", async () => {
+    const h = await harness(true);
+    vi.spyOn(h.user["leases"], "claim").mockResolvedValueOnce(null);
+    const response = await h.user.fetch(new Request(
+      "https://assistant/api/assistant/events?conversationId=" + h.id, {
+        headers: { upgrade: "websocket", "x-assistant-auth-id": "auth", "x-assistant-principal": "owner" },
+      },
+    ));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "connection_already_active" });
+  });
+  it("prevents a partial reader from replacing persisted conversation history", async () => {
+    const h = await harness(true);
+    h.user["loadedMessages"] = false;
+    await expect(h.user["save"]()).rejects.toThrow("partial_state_write");
+  });
+  it("keeps history revisions stable during idle maintenance", async () => {
+    const h = await harness(true);
+    const revision = h.user["revision"];
+    await h.user.tick();
+    expect(h.user["revision"]).toBe(revision);
+    expect(mocks.authorize).toHaveBeenCalled();
+  });
   it.each(["scope_not_allowed", "tool_not_allowed"])("keeps a native conversation after model input error %s", async (code) => {
     const h = await harness(true);
     const c = h.user["state"].conversation!;

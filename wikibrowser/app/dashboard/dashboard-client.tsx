@@ -461,7 +461,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     <AdminContent>
         <DatabaseDetailHeader
           title={database?.metadata.name ?? "Database access"}
-          actions={<CycleBattery cyclesBalance={database?.cyclesBalance ?? null} />}
+          actions={<CycleBattery config={cyclesConfig} cyclesBalance={database?.cyclesBalance ?? null} database={database} />}
         />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}

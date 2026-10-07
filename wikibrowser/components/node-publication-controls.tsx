@@ -209,5 +209,5 @@ const inactiveButtonClass = "inline-flex items-center gap-1.5 rounded-xl px-2 py
 const iconButtonClass = "inline-flex size-7 items-center justify-center rounded-xl text-muted hover:bg-accentSoft hover:text-accentText disabled:opacity-50 sm:size-8";
 const modalButtonClass = "inline-flex min-w-[96px] items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60";
 const cancelButtonClass = `${modalButtonClass} border-line bg-white text-ink hover:border-accent`;
-const confirmButtonClass = `${modalButtonClass} border-action bg-action font-bold text-white hover:border-accent hover:bg-accent`;
+const confirmButtonClass = `${modalButtonClass} border-action bg-action font-bold text-onAction hover:border-actionHover hover:bg-actionHover`;
 const dangerConfirmButtonClass = `${modalButtonClass} border-red-700 bg-red-700 font-bold text-white hover:bg-red-800`;

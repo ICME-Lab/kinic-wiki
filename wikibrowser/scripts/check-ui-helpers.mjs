@@ -102,7 +102,7 @@ assert.match(wikiBrowserSource, /aria-label="Back to database dashboard"/);
 assert.match(wikiBrowserSource, /lg:grid-cols-\[auto_minmax\(280px,720px\)_auto\]/);
 assert.match(wikiBrowserSource, /lg:col-start-2 lg:row-start-1/);
 assert.match(wikiBrowserSource, /lg:col-start-3 lg:row-start-1 lg:justify-end/);
-assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline"/);
+assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 min-w-9 items-center justify-center gap-1\.5 rounded-xl border px-2\.5 text-sm font-medium no-underline transition-colors"/);
 assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
 assert.match(wikiBrowserSource, /hrefForCanonicalDatabaseRoute\(pathname, searchParams\.toString\(\)\)/);
 assert.match(wikiBrowserSource, /navigate\(canonicalRouteHref, \{ guard: false, replace: true \}\)/);
@@ -416,8 +416,8 @@ assert.match(explorerTreeSource, /isDatabaseNotFoundErrorCode\(code\) \? null : 
 assert.match(explorerTreeSource, /rootDatabaseNotFound \? \[\] : rootNodeData/);
 assert.match(vfsClientSource, /classifyCanisterError\(message\)/);
 assert.match(documentPaneSource, /Current knowledge path/);
-assert.match(documentPaneSource, /h-9 w-fit min-w-0 max-w-full/);
-assert.match(documentPaneSource, /sm:h-10/);
+// Breadcrumb stays a compact, fixed-height row so the sticky toolbar never grows.
+assert.match(documentPaneSource, /h-8 w-fit min-w-0 max-w-full/);
 assert.match(documentPaneSource, /hrefForPath\(canisterId, databaseId, crumbPath/);
 assert.match(documentPaneSource, /label="Edit"/);
 assert.match(documentPaneSource, /MobileCopyPathButton/);
@@ -481,8 +481,11 @@ assert.match(globalsCss, /prefers-reduced-motion/);
 assert.match(globalsCss, /\.markdown-body img \{/);
 assert.match(globalsCss, /max-width: 100%;/);
 assert.match(globalsCss, /height: auto;/);
-const readableAccent = tailwindConfig.match(/accent: "(#[a-f0-9]{6})"/i)?.[1];
-assert.ok(readableAccent, "Accent token must be a hex color");
+// Brand tokens now live in app/globals.css so light and dark share one definition.
+const accentToken = globalsCss.match(/--brand-accent: (\d+) (\d+) (\d+);/);
+assert.ok(accentToken, "Brand accent token must be defined in globals.css");
+const toHex = (channels) => `#${channels.map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
+const readableAccent = toHex(accentToken.slice(1, 4));
 const luminance = (hex) => {
   const channels = hex.slice(1).match(/../g).map((part) => {
     const value = parseInt(part, 16) / 255;
@@ -494,8 +497,13 @@ for (const surface of ["#ffffff", "#f8f8f8", "#fae7f0"]) {
   const values = [luminance(readableAccent), luminance(surface)].sort((a, b) => a - b);
   assert.ok((values[1] + 0.05) / (values[0] + 0.05) >= 4.5, `Accent text must meet AA on ${surface}`);
 }
-assert.match(tailwindConfig, /action: "#000000"/);
-assert.match(tailwindConfig, /paper: "#f8f8f8"/);
+assert.match(globalsCss, /--action: 15 15 18;/);
+assert.match(globalsCss, /--paper: 248 248 248;/);
+assert.match(globalsCss, /\.dark \{[\s\S]*?--canvas: 17 17 19;/);
+// Light-only: the OS dark preference must not switch the theme.
+assert.doesNotMatch(globalsCss, /prefers-color-scheme: dark/);
+assert.match(tailwindConfig, /paper: "rgb\(var\(--paper\)/);
+assert.match(tailwindConfig, /action: "rgb\(var\(--action\)/);
 assert.doesNotMatch(tailwindConfig, /#1f6feb|#7c3aed|#6d28d9|#f6f1e8|#fffdf8|#ded7cb/);
 assert.doesNotMatch(globalsCss, /#1f6feb|#7c3aed|#6d28d9|#f6f1e8|#efe7d8|#ded7cb/);
 

@@ -204,7 +204,7 @@ export function QueryPanel({
             value={input}
             onChange={(event) => setInput(event.target.value)}
           />
-          <button className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-action bg-action px-3 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:opacity-60" disabled={busy || !input.trim()} type="submit" title="Run query">
+          <button className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-action bg-action px-3 text-sm font-bold text-onAction hover:border-actionHover hover:bg-actionHover disabled:opacity-60" disabled={busy || !input.trim()} type="submit" title="Run query">
             <ShieldCheck size={15} />
             <span>Run</span>
           </button>
@@ -242,7 +242,7 @@ function ActionPreview({ action, busy, onConfirm }: { action: QueryAction; busy:
         </div>
       </div>
       {onConfirm ? (
-        <button className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-action bg-action px-3 text-xs font-bold text-white hover:border-accent hover:bg-accent disabled:opacity-60" disabled={busy} type="button" onClick={onConfirm}>
+        <button className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-action bg-action px-3 text-xs font-bold text-onAction hover:border-actionHover hover:bg-actionHover disabled:opacity-60" disabled={busy} type="button" onClick={onConfirm}>
           <Link2 size={13} />
           {busy ? "Queueing..." : "Confirm queue"}
         </button>

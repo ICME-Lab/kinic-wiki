@@ -7,6 +7,7 @@ import type { Lease } from "./leases";
 import type { Env } from "./env";
 import { AssistantError } from "./contracts";
 import type { UserState } from "./user";
+import { boundedHistoryPage, type HistoryEntry } from "./history-page";
 export type UserRecord = { revision: number; state: UserState };
 export class AssistantStore {
   constructor(readonly env: Env) {}
@@ -87,7 +88,7 @@ export class AssistantStore {
       .bind(id)
       .run();
   }
-  async load(principal: string): Promise<UserRecord> {
+  async load(principal: string, includeMessages = true): Promise<UserRecord> {
     const row = await this.db
       .prepare("SELECT * FROM assistant_users WHERE principal=?")
       .bind(principal)
@@ -112,19 +113,21 @@ export class AssistantStore {
       );
       if (state.conversation) {
         state.conversation.seen = Math.max(state.conversation.seen, row.seen);
-        const messages = await this.db
-          .prepare(
-            "SELECT request_id,data FROM assistant_requests WHERE conversation_id=? ORDER BY rowid",
-          )
-          .bind(state.conversation.id)
-          .all<{ request_id: string; data: string }>();
-        state.conversation.messages = await Promise.all(
-          messages.results.map((r) =>
-            this.decode<
-              NonNullable<UserState["conversation"]>["messages"][number]
-            >(r.data, state.conversation!.id + ":" + r.request_id),
-          ),
-        );
+        if (includeMessages) {
+          const messages = await this.db
+            .prepare(
+              "SELECT request_id,data FROM assistant_requests WHERE conversation_id=? ORDER BY rowid",
+            )
+            .bind(state.conversation.id)
+            .all<{ request_id: string; data: string }>();
+          state.conversation.messages = await Promise.all(
+            messages.results.map((r) =>
+              this.decode<
+                NonNullable<UserState["conversation"]>["messages"][number]
+              >(r.data, state.conversation!.id + ":" + r.request_id),
+            ),
+          );
+        }
       }
     }
     const cleanup = await this.db
@@ -139,6 +142,34 @@ export class AssistantStore {
       state.endRequested = (await this.db.prepare("SELECT MIN(stopped_at) AS stopped_at FROM assistant_stops WHERE conversation_id=? AND voice_id='*'").bind(state.conversation.id).first<{ stopped_at: number | null }>())?.stopped_at ?? undefined;
     }
     return { revision: row?.revision ?? 0, state };
+  }
+  async historyPage(principal: string, c: NonNullable<UserState["conversation"]>, revision: number, cursor: number) {
+    const count = await this.db.prepare("SELECT COUNT(*) AS count FROM assistant_requests WHERE conversation_id=?")
+      .bind(c.id).first<{ count: number }>();
+    const messageCount = count?.count ?? 0;
+    const total = messageCount + c.utterances.length;
+    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > total)
+      throw new AssistantError("invalid_cursor", 400);
+    const rows = cursor < messageCount
+      ? (await this.db.prepare("SELECT request_id,data FROM assistant_requests WHERE conversation_id=? ORDER BY rowid LIMIT 10 OFFSET ?")
+          .bind(c.id, cursor).all<{ request_id: string; data: string }>()).results
+      : [];
+    const entries: HistoryEntry[] = await Promise.all(rows.map(async (row) => ({
+      kind: "message" as const,
+      value: await this.decode<NonNullable<UserState["conversation"]>["messages"][number]>(row.data, c.id + ":" + row.request_id),
+    })));
+    const utteranceOffset = Math.max(0, cursor - messageCount);
+    if (cursor + rows.length >= messageCount) {
+      entries.push(...c.utterances.slice(utteranceOffset, utteranceOffset + 10 - entries.length)
+        .map(({ id, role, text }) => ({ kind: "utterance" as const, value: { id, role, text } })));
+    }
+    // A concurrent commit can change counts, rows or utterances. Never return
+    // content assembled from different revisions, including an ended session.
+    const current = await this.db.prepare("SELECT revision,conversation_id FROM assistant_users WHERE principal=?")
+      .bind(principal).first<{ revision: number; conversation_id: string | null }>();
+    if (current?.revision !== revision || current.conversation_id !== c.id)
+      throw new AssistantError("stale_state", 409);
+    return boundedHistoryPage(revision, cursor, total, entries);
   }
   async save(
     principal: string,
@@ -275,6 +306,10 @@ export class AssistantStore {
       )
       .bind(Date.now(), principal, id)
       .run();
+  }
+  async schedule(principal: string, id: string, revision: number, next: number) {
+    await this.db.prepare("UPDATE assistant_users SET next_attempt=? WHERE principal=? AND conversation_id=? AND revision=?")
+      .bind(next, principal, id, revision).run();
   }
   async intent(
     id: string,

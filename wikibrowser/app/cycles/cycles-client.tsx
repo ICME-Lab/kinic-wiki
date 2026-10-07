@@ -220,8 +220,12 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
 
   return (
     <AdminContent>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 text-ink">
-        <AdminPanel className="grid gap-3 bg-white" padding="md">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 text-ink">
+        <header className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-[-0.02em] text-ink">Top up cycles</h1>
+          <p className="mt-1 text-sm leading-6 text-muted">Pay with KINIC to keep a database writable. Cycles are credited to the database you choose.</p>
+        </header>
+        <AdminPanel className="grid gap-4 bg-white" padding="md">
           <label className="grid gap-2">
             <span className="text-xs font-semibold uppercase text-muted">Database</span>
             <select
@@ -238,8 +242,6 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
               ))}
             </select>
           </label>
-          <Field label="Database" value={databaseId || "-"} />
-          <Field label="Canister" value={canisterId || "-"} />
           <label className="grid gap-2">
             <span className="text-xs font-semibold uppercase text-muted">KINIC amount</span>
             <input
@@ -249,15 +251,22 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
             />
-            {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
+            {amountError ? <span className="text-xs text-dangerText">{amountError}</span> : null}
           </label>
+          {/* Identifiers are for verification, not decision-making, so they stay one click away. */}
+          <details className="group text-sm">
+            <summary className="cursor-pointer list-none text-xs font-medium text-muted hover:text-ink">Show identifiers</summary>
+            <div className="mt-3 grid gap-3">
+              <Field label="Database" value={databaseId || "-"} />
+              <Field label="Canister" value={canisterId || "-"} />
+            </div>
+          </details>
         </AdminPanel>
 
         {!principal ? (
           <div className="grid gap-3">
-            <Notice tone="info" text="Login with Internet Identity to select a database." />
             <button
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
               data-tid="cycles-login-button"
               disabled={!authReady || authLoading || status === "running"}
               type="button"
@@ -306,9 +315,11 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
           />
         ) : null}
 
+        {/* Visitors with no funding source get one primary action (Sign in), not a dead purchase button. */}
+        {principal || wallet ? (
         <div className="grid gap-3">
           <button
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
             disabled={purchaseDisabled}
             type="button"
             onClick={() => void purchase()}
@@ -317,6 +328,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             <span>{purchaseButtonLabel(selectedProvider, status)}</span>
           </button>
         </div>
+        ) : null}
 
         {error ? <Notice tone="error" text={error} /> : null}
         {selectedBalanceError ? <Notice tone="error" text={selectedBalanceError} /> : null}

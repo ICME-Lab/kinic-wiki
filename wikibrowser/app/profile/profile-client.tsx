@@ -39,6 +39,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferStatus, setTransferStatus] = useState<TransferStatus>("idle");
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false);
   const amountTouched = transferAmount.trim().length > 0;
   const parsedTransferAmount = useMemo(() => parseKinicAmountE8sInput(transferAmount), [transferAmount]);
   const recipientError = recipientPrincipal.trim() && !isValidPrincipal(recipientPrincipal) ? "Recipient principal is invalid" : null;
@@ -104,6 +105,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       });
       setTransferMessage(`Transfer complete. Ledger block ${blockIndex}.`);
       setTransferStatus("success");
+      setConfirmingTransfer(false);
     } catch (cause) {
       setTransferMessage(errorMessage(cause));
       setTransferStatus("error");
@@ -140,12 +142,12 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
             <div className="grid gap-3">
               <AdminNotice tone="info" message="Login with Internet Identity to view your principal." />
               <button
-                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-white hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-onAction hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!authReady || authLoading}
                 type="button"
                 onClick={() => void login()}
               >
-                Internet Identity
+                Sign in with Internet Identity
               </button>
             </div>
           ) : (
@@ -189,13 +191,57 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
                   {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
                 </label>
                 <button
-                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-white hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={transferDisabled}
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-onAction hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={transferDisabled || confirmingTransfer}
                   type="button"
-                  onClick={() => void sendKinic()}
+                  onClick={() => {
+                    setConfirmingTransfer(true);
+                    setTransferMessage(null);
+                  }}
                 >
                   {transferStatus === "running" ? "Sending..." : "Send KINIC"}
                 </button>
+
+                {/* A ledger transfer cannot be reversed, so the amount is confirmed before it is signed. */}
+                {confirmingTransfer ? (
+                  <div className="grid gap-3 rounded-lg border border-line bg-paper p-3">
+                    <div className="grid gap-2">
+                      <h3 className="text-sm font-semibold text-ink">Confirm transfer</h3>
+                      <dl className="grid gap-1 text-sm">
+                        <ConfirmRow label="To" mono value={recipientPrincipal.trim()} />
+                        <ConfirmRow label="Amount" value={`${transferAmount.trim()} KINIC`} />
+                        <ConfirmRow label="Ledger fee" value={`${formatKinicInputFromE8s(KINIC_LEDGER_FEE_E8S)} KINIC`} />
+                        <ConfirmRow
+                          label="Total debited"
+                          value={
+                            typeof parsedTransferAmount === "bigint"
+                              ? `${formatKinicInputFromE8s(parsedTransferAmount + KINIC_LEDGER_FEE_E8S)} KINIC`
+                              : "-"
+                          }
+                        />
+                      </dl>
+                      <p className="text-xs leading-5 text-muted">Ledger transfers are final and cannot be cancelled or reversed.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-onAction hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={transferStatus === "running"}
+                        type="button"
+                        onClick={() => void sendKinic()}
+                      >
+                        {transferStatus === "running" ? "Sending..." : "Confirm and send"}
+                      </button>
+                      <button
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:border-midLine disabled:opacity-60"
+                        disabled={transferStatus === "running"}
+                        type="button"
+                        onClick={() => setConfirmingTransfer(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {transferMessage ? <AdminNotice tone={transferStatus === "success" ? "success" : "error"} message={transferMessage} /> : null}
               </section>
 
@@ -294,6 +340,15 @@ function ProfileStat({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border border-line bg-paper p-3">
       <p className="text-xs font-semibold uppercase text-muted">{label}</p>
       <p className="mt-2 font-mono text-2xl font-semibold text-ink">{value}</p>
+    </div>
+  );
+}
+
+function ConfirmRow({ label, mono = false, value }: { label: string; mono?: boolean; value: string }) {
+  return (
+    <div className="grid gap-0.5 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-baseline sm:gap-3">
+      <dt className="text-xs uppercase text-muted">{label}</dt>
+      <dd className={`min-w-0 text-ink ${mono ? "font-mono text-xs [overflow-wrap:anywhere]" : "text-sm"}`}>{value}</dd>
     </div>
   );
 }

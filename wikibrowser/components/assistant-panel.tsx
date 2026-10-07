@@ -507,7 +507,7 @@ function Conversation({
           <button
             type="button"
             disabled={!principal || !available || !consent || busy}
-            className="rounded-lg bg-ink px-4 py-2 font-semibold text-white disabled:opacity-40"
+            className="rounded-lg bg-ink px-4 py-2 font-semibold text-onAction disabled:opacity-40"
             onClick={() => void (authorized ? start() : authorize())}
           >
             {busy
@@ -614,7 +614,7 @@ function Conversation({
               type="submit"
               aria-label="Send question"
               disabled={busy || !question.trim() || snapshot.status !== "ready"}
-              className="rounded-lg bg-ink p-3 text-white disabled:opacity-40"
+              className="rounded-lg bg-ink p-3 text-onAction disabled:opacity-40"
             >
               <Send size={18} />
             </button>

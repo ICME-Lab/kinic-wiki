@@ -64,7 +64,8 @@ final class AskAIModel {
             knowledgeProvider: appModel,
             client: AskAIClient(endpoint: appModel.configuration.askAIURL),
             store: AskAIConversationStore.live(scope: historyScope),
-            historyScope: historyScope
+            historyScope: historyScope,
+            generationTimeout: .seconds(180)
         )
         deleteAssistantRecovery = { [weak appModel] id in
             guard let appModel else { return }
@@ -1146,7 +1147,7 @@ final class AskAIModel {
                 return event
             }
         }
-        errorMessage = "Kinic AI did not finish within 120 seconds. Try again."
+        errorMessage = "Kinic AI did not finish in time. Try again."
         persistCurrentConversation()
         finishGeneration(requestID: requestID)
     }

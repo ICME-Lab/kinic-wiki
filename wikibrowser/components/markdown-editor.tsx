@@ -2,12 +2,55 @@
 
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
+import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { Save, RotateCcw } from "lucide-react";
 import { useMemo } from "react";
 
 export type EditorSaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+// Preserve CodeMirror's token categories while following the app's CSS theme,
+// including OS theme changes that do not remount the editor.
+const syntaxColors: Record<string, string> = {
+  "#404740": "hsl(var(--muted))",
+  "#708": "rgb(var(--accent-text))",
+  "#219": "rgb(var(--accent-text))",
+  "#164": "rgb(var(--ok-text))",
+  "#a11": "rgb(var(--danger-text))",
+  "#e40": "rgb(var(--warn-text))",
+  "#00f": "rgb(var(--info-text))",
+  "#30a": "rgb(var(--accent-text))",
+  "#085": "rgb(var(--ok-text))",
+  "#167": "rgb(var(--info-text))",
+  "#256": "rgb(var(--info-text))",
+  "#00c": "rgb(var(--info-text))",
+  "#940": "rgb(var(--warn-text))",
+  "#f00": "rgb(var(--danger-text))"
+};
+const editorHighlightStyle = HighlightStyle.define(defaultHighlightStyle.specs.map((rule) => (
+  rule.color ? { ...rule, color: syntaxColors[rule.color] ?? "rgb(var(--ink))" } : rule
+)));
+
+const editorTheme = EditorView.theme({
+  "&": { color: "rgb(var(--ink))", backgroundColor: "rgb(var(--surface))" },
+  ".cm-content": { caretColor: "rgb(var(--ink))" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "rgb(var(--ink))" },
+  ".cm-gutters": {
+    color: "hsl(var(--muted))",
+    backgroundColor: "rgb(var(--paper))",
+    borderRightColor: "rgb(var(--line))"
+  },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "rgb(var(--line) / 0.35)" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgb(var(--accent-soft) / 0.28)"
+  },
+  ".cm-panels, .cm-tooltip": {
+    color: "rgb(var(--ink))",
+    backgroundColor: "rgb(var(--paper))",
+    borderColor: "rgb(var(--line))"
+  }
+});
 
 export function MarkdownEditor({
   content,
@@ -32,7 +75,7 @@ export function MarkdownEditor({
   onRevert: () => void;
   onSave: () => void;
 }) {
-  const extensions = useMemo(() => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping], []);
+  const extensions = useMemo(() => [markdown({ base: markdownLanguage, codeLanguages: languages }), EditorView.lineWrapping, editorTheme, syntaxHighlighting(editorHighlightStyle)], []);
   const busy = saveState === "saving";
   const canSave = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
   const canRevert = (saveState === "dirty" || saveState === "error") && !disabled && !busy;
@@ -41,7 +84,7 @@ export function MarkdownEditor({
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur">
         <button
           aria-busy={busy}
-          className="inline-flex items-center gap-1.5 rounded-2xl bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-2xl bg-action px-3 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:bg-actionHover disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
           disabled={!canSave}
           type="button"
           onClick={onSave}
@@ -80,6 +123,7 @@ export function MarkdownEditor({
           editable={!disabled}
           extensions={extensions}
           height="100%"
+          theme="none"
           value={content}
           onChange={onChange}
         />

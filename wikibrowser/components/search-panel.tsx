@@ -127,7 +127,7 @@ export function SearchPanel({
       <div className="mx-auto flex max-w-4xl flex-col gap-3">
         <div className="border-b border-line pb-4">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">{eyebrow}</p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.04em]">{title}</h2>
+          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.018em]">{title}</h2>
         </div>
         <SearchControls
           customPrefixDraft={customPrefixDraft}

@@ -55,7 +55,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       <div className="grid flex-1 grid-cols-1 bg-canvas text-ink lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="hidden border-r border-line bg-paper lg:block">{sidebar}</aside>
         <div className="min-w-0">
-          <div className="flex items-center gap-2 px-4 pt-4 lg:hidden">
+          <div className="flex items-center gap-2 px-4 pt-2 lg:hidden">
             <Sheet>
               <SheetTrigger asChild>
                 <button className="grid h-10 w-10 place-items-center rounded-lg border border-line bg-white text-ink shadow-sm hover:border-accent hover:text-accentText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" type="button" aria-label="Open admin navigation">
@@ -164,13 +164,15 @@ function AdminAccountControls() {
       <div className="px-3 text-xs font-semibold uppercase text-muted">Account</div>
       {!principal ? (
         <button
-          className="mx-3 min-h-10 rounded-lg border border-action bg-action px-3 text-sm font-bold text-white hover:border-accent hover:bg-white hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Sign in with Internet Identity"
+          className="mx-3 min-h-9 rounded-xl border border-action bg-action px-3 text-sm font-semibold text-onAction hover:border-actionHover hover:bg-actionHover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
           disabled={!authReady || authControlsLocked}
           data-tid="login-button"
+          title="Sign in with Internet Identity"
           type="button"
           onClick={() => void login()}
         >
-          Sign in with Internet Identity
+          Sign in
         </button>
       ) : (
         <div className="mx-3 flex min-h-10 items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm">

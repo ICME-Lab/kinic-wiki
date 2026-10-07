@@ -117,7 +117,7 @@ function OperationsPanel({ skill, authenticated, writable, action, handlers }: {
               <option value="fail">fail</option>
             </select>
             <input className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none" placeholder="Agent" value={action.runAgent} onChange={(event) => handlers.setRunAgent(event.target.value)} />
-            <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-50" disabled={!authenticated || !writable || action.busy || !action.runTask.trim()} type="button" onClick={handlers.recordRun}>
+            <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:translate-y-0 disabled:opacity-50" disabled={!authenticated || !writable || action.busy || !action.runTask.trim()} type="button" onClick={handlers.recordRun}>
               <PlayCircle aria-hidden size={15} />
               Record
             </button>

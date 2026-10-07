@@ -202,10 +202,10 @@ export default {
       headers.set("x-assistant-auth-id", authorization.authId);
       headers.set("x-assistant-principal", authorization.principal);
       url.pathname = "/api/assistant" + path;
-      return (
+      return await (
         await new AssistantUser(env, authorization.principal, (p) =>
           ctx.waitUntil(p),
-        ).initialize()
+        ).initialize(!["/conversation", "/history", "/active"].includes(path))
       ).fetch(new Request(new Request(url, request), { headers }));
     } catch (error) {
       return failure(error);

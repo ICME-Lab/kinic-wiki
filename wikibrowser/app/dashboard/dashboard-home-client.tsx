@@ -39,6 +39,7 @@ export function DashboardHomeClient() {
     identityLedgerBalance,
     identityLedgerBalanceError,
     identityLedgerBalanceLoading,
+    login,
     principal,
     refreshIdentityLedgerBalanceFor,
     refreshIdentityLedgerBalance,
@@ -301,10 +302,15 @@ export function DashboardHomeClient() {
   }, [fundingSuccessMessage, fundingToastKey, router]);
   const createDatabaseAction = (
     <button
-      className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-      disabled={creating || createUnavailable}
+      className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-onAction hover:border-actionHover hover:bg-actionHover disabled:cursor-not-allowed disabled:opacity-60"
+      // Signed out, the label promises a connection, so the button must perform it instead of sitting disabled.
+      disabled={principal ? creating || createUnavailable : !authReady}
       type="button"
       onClick={() => {
+        if (!principal) {
+          void login();
+          return;
+        }
         fundingChoice.reset();
         setCreateDialogOpen(true);
       }}

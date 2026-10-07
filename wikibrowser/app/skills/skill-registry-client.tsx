@@ -229,7 +229,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                   Logout
                 </button>
               ) : (
-                <button className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
+                <button className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-onAction hover:-translate-y-[3px] hover:border-actionHover hover:bg-actionHover disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
                   Login
                 </button>
               )}

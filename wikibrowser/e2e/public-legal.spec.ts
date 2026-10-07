@@ -37,7 +37,8 @@ test("renders the privacy policy from its legal source", async ({ page }) => {
   const policy = page.getByRole("article");
   await expect(policy).toContainText("Last Updated: September 30, 2026");
   await expect(policy).toContainText("Effective Date: September 30, 2026");
-  await expect(policy).toContainText("only for users who accept the updated Ask AI consent before submitting a new question");
+  await expect(policy).toContainText("occurs when users submit a new question");
+  await expect(policy).toContainText("The iOS app does not show a separate Ask AI consent screen");
   await expect(policy).toContainText("TypeSafe does not offer Zero Data Retention");
   await expect(policy).toContainText("Source Capture generation");
   await expectSectionLinksToResolve(page, "Privacy Policy sections");

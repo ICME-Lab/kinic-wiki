@@ -794,7 +794,7 @@ function WikiBrowserContent() {
 
   return (
     <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
-      <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-action focus:px-4 focus:py-3 focus:text-white" href="#wiki-document">
+      <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-action focus:px-4 focus:py-3 focus:text-onAction" href="#wiki-document">
         Skip to content
       </a>
       <TopBar
@@ -824,11 +824,11 @@ function WikiBrowserContent() {
         onMobileSidebarToggle={() => setMobileSidebarOpen((open) => !open)}
         canLeaveDirtyEdit={canLeaveDirtyEdit}
       />
-      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[256px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)_272px]"}`}>
+      <section className={`grid min-h-0 grid-cols-1 gap-3 pb-3 sm:p-3 lg:flex-1 lg:gap-0 lg:p-0 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[256px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)_300px]"}`}>
         <aside
           id="wiki-mobile-sidebar"
           data-tid="wiki-explorer-panel"
-          className={`${mobileSidebarOpen ? "order-1 flex" : "hidden"} min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:order-1 lg:flex lg:overflow-hidden`}
+          className={`${mobileSidebarOpen ? "order-1 flex" : "hidden"} mx-3 mt-3 min-h-0 flex-col rounded-2xl border border-line bg-paper sm:m-0 lg:order-1 lg:flex lg:overflow-hidden lg:rounded-none lg:border-0 lg:border-r`}
         >
           <PanelHeader
             icon={<GitBranch size={15} />}
@@ -932,7 +932,7 @@ function WikiBrowserContent() {
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
         </aside>
-        <section id="wiki-document" tabIndex={-1} aria-label="Wiki content" data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
+        <section id="wiki-document" tabIndex={-1} aria-label="Wiki content" data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col bg-canvas sm:rounded-2xl sm:border sm:border-line lg:order-2 lg:overflow-hidden lg:rounded-none lg:border-0`}>
           {isHelpPage ? (
             <HelpPanel />
           ) : isGraphPage ? (
@@ -989,7 +989,7 @@ function WikiBrowserContent() {
           )}
         </section>
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
-          <details className="order-3 min-w-0 overflow-hidden rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">
+          <details className="order-3 mx-3 min-w-0 overflow-hidden rounded-2xl border border-line bg-paper sm:mx-0 lg:hidden">
             <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">Details</summary>
             <Inspector
               canisterId={canisterId}
@@ -1007,8 +1007,8 @@ function WikiBrowserContent() {
           </details>
         ) : null}
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
-          <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:flex lg:overflow-hidden">
-            <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
+          <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col border-l border-line bg-paper lg:flex lg:overflow-hidden">
+            <PanelHeader icon={<PanelRight size={15} />} title="Inspector" />
             <Inspector
               canisterId={canisterId}
               databaseId={databaseId}
@@ -1091,13 +1091,13 @@ function ModeTabs({
   tab: ModeTab;
 }) {
   return (
-    <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-[11px]">
+    <nav className="border-b border-line px-3 py-2" aria-label="Left sidebar mode">
+      <div className="grid grid-cols-3 gap-0.5 rounded-lg bg-line/50 p-0.5 text-center text-xs font-medium">
         {SIDEBAR_TABS.map((value) => (
           <WikiNavigationLink
             key={value}
             href={hrefForPath(canisterId, databaseId, selectedPath, undefined, value)}
-            className={`rounded-xl px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-white hover:text-accentText"}`}
+            className={`rounded-md px-1.5 py-1 capitalize no-underline transition-colors ${tab === value ? "bg-white text-ink shadow-card" : "text-muted hover:text-ink"}`}
           >
             {tabLabel(value)}
           </WikiNavigationLink>

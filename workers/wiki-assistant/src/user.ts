@@ -36,6 +36,7 @@ import { runAgentTurn, agentTurnFailure } from "./agent-turn";
 import type { TurnContext, TurnResult } from "./turn-context";
 
 import type { Question, Pending, Conversation, UserState } from "./state";
+import { boundedHistoryPage, type HistoryEntry } from "./history-page";
 export type { UserState } from "./state";
 
 const day = () => new Date().toISOString().slice(0, 10);
@@ -87,6 +88,8 @@ export class AssistantUser {
   private connectionRenewal: ReturnType<typeof setInterval> | undefined;
   private saveChain: Promise<void> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private loadedMessages = true;
+  private nextStatePoll = 0;
   constructor(
     private readonly env: Env,
     private readonly principal: string,
@@ -98,8 +101,9 @@ export class AssistantUser {
     this.store = new AssistantStore(env);
     this.leases = new Leases(env.ASSISTANT_DB);
   }
-  async initialize() {
-    const loaded = await this.store.load(this.principal);
+  async initialize(includeMessages = true) {
+    this.loadedMessages = includeMessages;
+    const loaded = await this.store.load(this.principal, includeMessages);
     this.state = loaded.state;
     this.revision = loaded.revision;
     this.state.cleanup = this.state.cleanup.filter((task) => !task.liveId && !task.voiceUsage);
@@ -127,6 +131,9 @@ export class AssistantUser {
     return this;
   }
   private async save(): Promise<void> {
+    // Partial metadata/history readers must never replace persisted messages.
+    if (!this.loadedMessages && this.state.conversation)
+      throw new AssistantError("partial_state_write", 500);
     const next = this.saveChain
       .catch(() => {})
       .then(async () => {
@@ -194,7 +201,9 @@ export class AssistantUser {
   ): Promise<KinicReader> {
     const identity = await this.identity(c);
     return new KinicReader(
-      createReadActor(this.env.KINIC_WIKI_CANISTER_ID, identity),
+      createReadActor(this.env.KINIC_WIKI_CANISTER_ID, identity, {
+        verifyQuerySignatures: !c.native,
+      }),
       c.databaseId,
       c.scope,
       tools,
@@ -202,6 +211,9 @@ export class AssistantUser {
       this.limits().calls,
       this.env.TYPESAFE_API_KEY!,
       route,
+      // Each native tool's actual canister read enforces current DB access.
+      // Metadata/history, heartbeat and answer publication still authorize().
+      !c.native,
     );
   }
   private snapshot(c: Conversation) {
@@ -225,48 +237,15 @@ export class AssistantUser {
   }
   private historyPage(c: Conversation, revision: number, cursor: number) {
     if (revision !== this.revision) throw new AssistantError("stale_state", 409);
-    const entries = [
+    const entries: HistoryEntry[] = [
       ...c.messages.map((value) => ({ kind: "message" as const, value })),
       ...c.utterances.map(({ id, role, text }) => ({
-        kind: "utterance" as const,
-        value: { id, role, text },
+        kind: "utterance" as const, value: { id, role, text },
       })),
     ];
-    if (cursor < 0 || cursor > entries.length)
-      throw new AssistantError("invalid_cursor", 400);
-    const items: (typeof entries)[number][] = [];
-    let index = cursor;
-    while (index < entries.length && items.length < 10) {
-      const candidate = [...items, entries[index]];
-      const payload = {
-        revision,
-        messages: candidate
-          .filter((item) => item.kind === "message")
-          .map((item) => item.value),
-        utterances: candidate
-          .filter((item) => item.kind === "utterance")
-          .map((item) => item.value),
-        nextCursor: index + 1 < entries.length ? String(index + 1) : null,
-      };
-      if (new TextEncoder().encode(JSON.stringify(payload)).length > 512000) {
-        if (items.length === 0)
-          throw new AssistantError("history_item_too_large", 500);
-        break;
-      }
-      items.push(entries[index]);
-      index++;
-    }
-    return {
-      revision,
-      messages: items
-        .filter((item) => item.kind === "message")
-        .map((item) => item.value),
-      utterances: items
-        .filter((item) => item.kind === "utterance")
-        .map((item) => item.value),
-      nextCursor: index < entries.length ? String(index) : null,
-    };
+    return boundedHistoryPage(revision, cursor, entries.length, entries.slice(cursor, cursor + 10));
   }
+
   private broadcast(): void {
     const c = this.state.conversation;
     const payload = JSON.stringify(
@@ -351,7 +330,7 @@ export class AssistantUser {
       ) {
         await (await this.reader(c)).authorize();
         c.seen = Date.now();
-        await this.save();
+        await this.store.touch(this.principal, c.id);
         return json(this.snapshot(c));
       }
       const id = new URL(request.url).searchParams.get("conversationId");
@@ -371,10 +350,10 @@ export class AssistantUser {
       ) {
         if (this.sockets.length >= 2)
           throw new AssistantError("connection_limit", 429);
-        return this.openControl(c);
+        return await this.openControl(c);
       }
       if (path === "/conversation" && request.method === "GET") {
-        await this.save();
+        await this.store.touch(this.principal, c.id);
         return json(this.snapshot(c));
       }
       if (path === "/history" && request.method === "GET") {
@@ -383,7 +362,10 @@ export class AssistantUser {
         const cursorValue = url.searchParams.get("cursor") ?? "0";
         if (!Number.isSafeInteger(revision) || !/^\d+$/.test(cursorValue))
           throw new AssistantError("invalid_cursor", 400);
-        return json(this.historyPage(c, revision, Number(cursorValue)));
+        if (revision !== this.revision) throw new AssistantError("stale_state", 409);
+        return json(this.loadedMessages
+          ? this.historyPage(c, revision, Number(cursorValue))
+          : await this.store.historyPage(this.principal, c, revision, Number(cursorValue)));
       }
       if (path === "/questions" && request.method === "POST") {
         await this.enqueue(
@@ -860,6 +842,11 @@ export class AssistantUser {
         .run();
       this.state.questions = 0;
       this.state.day = day();
+    } else if (this.state.conversation && !this.state.conversation.pending && !this.state.cleanup.length) {
+      // Idle maintenance changes no answer or control state. Updating its wake
+      // time must not re-encrypt all messages or invalidate history revisions.
+      this.nextWake = this.wakeDeadline();
+      await this.store.schedule(this.principal, this.state.conversation.id, this.revision, this.nextWake);
     } else await this.save();
   }
   private async openControl(c: Conversation): Promise<Response> {
@@ -870,9 +857,13 @@ export class AssistantUser {
       () =>
         this.background(
           this.leases.renew(lease).then((ok) => {
-            if (!ok)
-              for (const socket of this.sockets)
-                socket.close(1008, "Connection lease expired");
+            if (!ok) {
+              pair[1].close(1008, "Connection lease expired");
+              close();
+            }
+          }).catch(() => {
+            pair[1].close(1011, "Reconnect required");
+            close();
           }),
         ),
       RENEW_MS,
@@ -881,7 +872,12 @@ export class AssistantUser {
     pair[1].accept();
     this.sockets.push(pair[1]);
     pair[1].addEventListener("message", (event) =>
-      this.background(this.controlMessage(pair[1], c, event.data)),
+      this.background(this.controlMessage(pair[1], c, event.data).catch((error) => {
+        console.error(JSON.stringify({ event: "assistant_control_failure",
+          code: error instanceof AssistantError ? error.code : "connection_failed" }));
+        pair[1].close(1011, "Reconnect required");
+        close();
+      })),
     );
     let closed = false;
     const close = () => {
@@ -931,6 +927,11 @@ export class AssistantUser {
         !(await this.leases.renew(lease))
       )
         throw new Error("lease_lost");
+      if (Date.now() < this.nextStatePoll) {
+        if (Date.now() >= this.nextWake) await this.tick();
+        return;
+      }
+      this.nextStatePoll = Date.now() + 5_000;
       const expectedRevision = this.revision;
       const current = await this.store.db
         .prepare("SELECT revision FROM assistant_users WHERE principal=?")

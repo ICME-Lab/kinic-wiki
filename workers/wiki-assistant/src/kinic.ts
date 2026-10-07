@@ -67,6 +67,7 @@ export class KinicReader {
     readonly maxCalls = 12,
     readonly typesafeApiKey = "",
     readonly route?: AskAiRoute,
+    readonly authorizeBeforeTools = true,
   ) {}
   async authorize(): Promise<void> {
     unwrap(
@@ -132,7 +133,7 @@ export class KinicReader {
   async execute(name: string, args: unknown): Promise<string> {
     if (++this.state.calls > this.maxCalls)
       throw new AssistantError("tool_limit");
-    await this.authorize();
+    if (this.authorizeBeforeTools) await this.authorize();
     if (this.route === "conversation")
       throw new AssistantError("tool_not_allowed", 400);
     if (name === "wiki_query") {
