@@ -7,6 +7,10 @@ import Observation
 enum AssistantLiveness {
     static let heartbeatSeconds = 10
     static let timeoutSeconds = 30
+    // A crashed Worker can leave its 45-second lease behind. Allow recovery
+    // plus HTTP/socket setup before rejecting a question that has not been sent.
+    static let controlWaitSeconds = 60
+    static let fallbackPollSeconds: TimeInterval = 5
 
     static func shouldReconnect(lastReceivedAt: Date?, now: Date) -> Bool {
         guard let lastReceivedAt else { return false }
@@ -46,6 +50,10 @@ final class AssistantConversationModel {
     @ObservationIgnored private var liveness: Task<Void, Never>?
     @ObservationIgnored private var lastReceivedAt: Date?
     @ObservationIgnored private var epoch = 0
+    private enum QuestionSubmission: Equatable {
+        case waiting(String), cancelled(String), submitted(String)
+    }
+    @ObservationIgnored private var questionSubmission: QuestionSubmission?
     @ObservationIgnored private var disconnectedAt: Date?
     @ObservationIgnored private var background = false
     @ObservationIgnored private let applicationSupportDirectory: URL
@@ -184,11 +192,15 @@ final class AssistantConversationModel {
         self.error = error is URLError ? "Could not communicate with the server. Check your network and retry." : error.localizedDescription
     }
     func clearError() { error = nil; failureCode = nil }
-    func waitForControl() async throws {
+    func waitForControl(questionID: String? = nil) async throws {
         let generation = epoch
-        for _ in 0..<100 {
+        let deadline = ProcessInfo.processInfo.systemUptime + Double(AssistantLiveness.controlWaitSeconds)
+        while ProcessInfo.processInfo.systemUptime < deadline {
             try Task.checkCancellation()
             guard epoch == generation, snapshot != nil else { throw CancellationError() }
+            if let questionID, questionSubmission != .waiting(questionID) {
+                throw CancellationError()
+            }
             if controlReady { return }
             try await Task.sleep(for: .milliseconds(100))
         }
@@ -204,11 +216,23 @@ final class AssistantConversationModel {
         let requestID = UUID().uuidString.lowercased()
         let generation = epoch
         busy = true
-        defer { if epoch == generation { busy = false } }
+        questionSubmission = .waiting(requestID)
+        defer {
+            if epoch == generation {
+                busy = false
+                questionSubmission = nil
+            }
+        }
         // Conversation creation starts the socket listener asynchronously. Wait
         // for its first snapshot before sending, including during reconnection.
-        try await waitForControl()
-        guard epoch == generation else { throw CancellationError() }
+        try await waitForControl(questionID: requestID)
+        try Task.checkCancellation()
+        guard epoch == generation, questionSubmission == .waiting(requestID) else {
+            throw CancellationError()
+        }
+        // Once sending can start, cancellation must be confirmed remotely even
+        // if the connection subsequently drops and controlReady becomes false.
+        questionSubmission = .submitted(requestID)
         _ = try await command(
             "questions",
             body: [
@@ -220,10 +244,20 @@ final class AssistantConversationModel {
             requestId: requestID
         )
         let deadline = ProcessInfo.processInfo.systemUptime + 95
+        var nextPoll: TimeInterval = 0
         while ProcessInfo.processInfo.systemUptime < deadline {
             try Task.checkCancellation()
             guard epoch == generation else { throw CancellationError() }
-            let next = try await refreshSnapshot(snapshot)
+            // Socket revisions normally deliver the completed answer. HTTP is
+            // a bounded fallback for lost notifications, not a 500ms full-history poll.
+            if ProcessInfo.processInfo.systemUptime >= nextPoll {
+                do { _ = try await refreshSnapshot(snapshot) }
+                catch let failure as AssistantHTTPError where failure.terminal { throw failure }
+                catch is CancellationError { throw CancellationError() }
+                catch { /* Preserve the request ID while the socket recovers. */ }
+                nextPoll = ProcessInfo.processInfo.systemUptime + AssistantLiveness.fallbackPollSeconds
+            }
+            guard let next = self.snapshot, epoch == generation else { throw CancellationError() }
             if let message = next.messages.first(where: { $0.requestId == requestID }) {
                 if let code = message.error {
                     throw AssistantHTTPError(status: 503, code: code)
@@ -235,6 +269,11 @@ final class AssistantConversationModel {
         throw URLError(.timedOut)
     }
     func cancelQuestionAndWait() async throws {
+        if case let .waiting(requestID) = questionSubmission {
+            questionSubmission = .cancelled(requestID)
+            return
+        }
+        if case .cancelled = questionSubmission { return }
         guard let snapshot else { return }
         let generation = epoch
         _ = try await command("cancel")
@@ -299,6 +338,7 @@ final class AssistantConversationModel {
         snapshot = nil
         endingRequested = false
         busy = false; reconnecting = false
+        questionSubmission = nil
         disconnectedAt = nil
         http.clearToken()
         if let request { Task { [http] in _ = try? await http.send(request) } }
@@ -327,6 +367,7 @@ final class AssistantConversationModel {
         snapshot = next
         if let boundPrincipal { try cache(for: boundPrincipal).save(principal: boundPrincipal, snapshot: next, conversationID: historyConversationID, databaseTitle: historyDatabaseTitle) }
         if let code = next.error { error = AssistantHTTPError(status: 400, code: code).localizedDescription }
+        else { error = nil; failureCode = nil }
     }
     private func listen(generation: Int) {
         controlReady = false

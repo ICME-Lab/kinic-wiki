@@ -40,7 +40,7 @@ Create your first database at no cost. An initial usage grant is included so you
 
 wiki, knowledge, capture, links, notes, Internet Computer
 
-## What's New in 1.0.5
+## What's New in 1.0.6
 
 - Create and manage shared work items from Home and the share sheet.
 - View open work items with the new Home Screen widget.

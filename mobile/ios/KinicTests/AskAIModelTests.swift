@@ -57,6 +57,48 @@ struct AskAIModelTests {
     }
 
     @Test
+    func stoppingWhileControlConnectsCancelsUnsentQuestion() async throws {
+        let conversation = AssistantConversationModel(configuration: .preview)
+        conversation.loadScreenshotFixture()
+        let conversationID = conversation.snapshot?.id
+        let provider = AskAIKnowledgeProviderStub(sources: [])
+        provider.usesWorkerAskAI = true
+        provider.onWorkerAnswer = { question in
+            _ = try await conversation.askText(question)
+            Issue.record("A stopped question must not produce an answer")
+            throw AskAIKnowledgeError.workerUnavailable
+        }
+        provider.onCancelWorker = { try await conversation.cancelQuestionAndWait() }
+        let model = AskAIModel(
+            knowledgeProvider: provider,
+            client: AskAICompletionStub(responses: []),
+            store: AskAIStoreStub()
+        )
+        await model.load()
+        // Repeat on the same conversation to catch stale cancellation state.
+        for question in ["First question", "Second question"] {
+            model.draft = question
+            model.send()
+            for _ in 0..<100 where !conversation.busy {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(conversation.busy)
+            #expect(!conversation.controlReady)
+            model.cancelGeneration() // The Stop button's actual entry point.
+            try await waitUntilFinished(model)
+            for _ in 0..<100 where conversation.busy {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(!conversation.busy)
+            #expect(model.messages.last?.text == "Generation stopped.")
+            #expect(model.errorMessage == nil)
+            #expect(!model.isSynchronizingWorker)
+            #expect(conversation.snapshot?.id == conversationID)
+        }
+        #expect(provider.cancelWorkerCallCount == 2)
+    }
+
+    @Test
     func stoppingWorkerGenerationWaitsForRemoteCancellation() async throws {
         let provider = AskAIKnowledgeProviderStub(sources: [])
         provider.usesWorkerAskAI = true
@@ -1707,6 +1749,8 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
     var cancelWorkerError: Error?
     var endWorkerError: Error?
     var onEndWorker: (() async -> Void)?
+    var onWorkerAnswer: ((String) async throws -> AskAIWorkerResult)?
+    var onCancelWorker: (() async throws -> Void)?
     var nextDatabaseSelectionDisposition: BrowseDatabaseSelectionDisposition?
     let sources: [AskAIContextSource]
     let candidateCount: Int
@@ -1768,6 +1812,7 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
         question: String,
         history: [AskAIMessage]
     ) async throws -> AskAIWorkerResult {
+        if let onWorkerAnswer { return try await onWorkerAnswer(question) }
         if let workerDelay {
             try await Task.sleep(for: workerDelay)
         }
@@ -1777,6 +1822,7 @@ private final class AskAIKnowledgeProviderStub: AskAIKnowledgeProviding {
 
     func cancelAskAIWorkerTurn() async throws {
         cancelWorkerCallCount += 1
+        try await onCancelWorker?()
         if let cancelWorkerError { throw cancelWorkerError }
     }
 

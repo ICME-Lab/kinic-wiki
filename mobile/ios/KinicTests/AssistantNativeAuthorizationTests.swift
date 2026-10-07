@@ -5,6 +5,29 @@ import XCTest
 
 @MainActor
 final class AssistantNativeAuthorizationTests: XCTestCase {
+    func testStopCancelsUnsentQuestionWithoutCancellingItsTask() async throws {
+        let http = AssistantHTTPStub()
+        let model = AssistantConversationModel(configuration: .preview, http: http)
+        model.loadScreenshotFixture()
+        let conversationID = model.snapshot?.id
+        let task = Task { try await model.askText("Summarize this Wiki") }
+        for _ in 0..<100 where !model.busy {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(model.busy)
+        try await model.cancelQuestionAndWait()
+        try await model.cancelQuestionAndWait()
+        do {
+            _ = try await task.value
+            XCTFail("A stopped question must not be sent after reconnection")
+        } catch is CancellationError {
+        }
+        XCTAssertFalse(model.busy)
+        XCTAssertFalse(task.isCancelled)
+        XCTAssertEqual(model.snapshot?.id, conversationID)
+        XCTAssertTrue(http.sentPaths.isEmpty)
+    }
+
     func testAskTextWaitsForControlAndCanBeCancelled() async {
         let model = AssistantConversationModel(configuration: .preview)
         model.loadScreenshotFixture()
@@ -139,6 +162,67 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
         http.onSnapshot = { newer }
         _ = try await model.refreshSnapshot(original)
         XCTAssertEqual(model.snapshot?.revision, newer.revision)
+    }
+
+    func testHistoryCacheStillChecksAuthorizationAndReloadsOnRevisionChange() async throws {
+        let stub = AssistantHistoryTransport()
+        AssistantHistoryURLProtocol.transport = stub
+        defer { AssistantHistoryURLProtocol.transport = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AssistantHistoryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = AssistantHTTPClient(configuration: historyTestConfiguration(), urlSession: session)
+        defer { client.clearToken() }
+        let first = try await client.snapshot(conversation: "conversation")
+        let cached = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(first.messages.first?.question, "Question 1")
+        XCTAssertEqual(cached.messages.first?.question, "Question 1")
+        XCTAssertEqual(stub.counts.metadata, 2)
+        XCTAssertEqual(stub.counts.history, 1)
+
+        stub.update(revision: 2)
+        let newer = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(newer.messages.first?.question, "Question 2")
+        XCTAssertEqual(stub.counts.history, 2)
+        stub.update(status: 401)
+        do {
+            _ = try await client.snapshot(conversation: "conversation")
+            XCTFail("Cached history must never hide authentication failure")
+        } catch let error as AssistantHTTPError { XCTAssertEqual(error.status, 401) }
+        XCTAssertEqual(stub.counts.history, 2)
+        stub.update(status: 200)
+        client.clearToken()
+        _ = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(stub.counts.history, 3)
+    }
+
+    func testHistoryRetriesAConcurrentRevisionInsteadOfCombiningPages() async throws {
+        let stub = AssistantHistoryTransport()
+        stub.update(staleOnce: true)
+        AssistantHistoryURLProtocol.transport = stub
+        defer { AssistantHistoryURLProtocol.transport = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AssistantHistoryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = AssistantHTTPClient(configuration: historyTestConfiguration(), urlSession: session)
+        defer { client.clearToken() }
+        let value = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(value.revision, 2)
+        XCTAssertEqual(value.messages.map(\.question), ["Question 2"])
+        XCTAssertEqual(stub.counts.metadata, 2)
+        XCTAssertEqual(stub.counts.history, 2)
+    }
+
+    private func historyTestConfiguration() -> AppConfiguration {
+        let c = AppConfiguration.preview
+        return AppConfiguration(canisterId: "test-" + UUID().uuidString,
+            apiBaseURL: c.apiBaseURL, identityProvider: c.identityProvider,
+            derivationOrigin: c.derivationOrigin, authOrigin: URL(string: "https://example.invalid")!,
+            paymentBaseURL: c.paymentBaseURL, callbackDomain: c.callbackDomain,
+            appGroupId: nil, keychainAccessGroup: nil, iapProductIds: [],
+            askAIURL: c.askAIURL, deploymentEnvironment: c.deploymentEnvironment)
     }
 
     private func identity(configuration: AppConfiguration = .preview) throws -> KinicIdentitySession {
@@ -330,4 +414,58 @@ private extension AssistantSnapshot {
              messages: messages, utterances: utterances, voice: voice, voiceDeadline: voiceDeadline,
              voiceId: voiceId, progress: progress)
     }
+}
+
+private final class AssistantHistoryTransport: @unchecked Sendable {
+    private let lock = NSLock()
+    private var revision = 1
+    private var status = 200
+    private var staleOnce = false
+    private var metadataCount = 0
+    private var historyCount = 0
+    var counts: (metadata: Int, history: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (metadataCount, historyCount)
+    }
+    func update(revision: Int? = nil, status: Int? = nil, staleOnce: Bool? = nil) {
+        lock.lock(); defer { lock.unlock() }
+        if let revision { self.revision = revision }
+        if let status { self.status = status }
+        if let staleOnce { self.staleOnce = staleOnce }
+    }
+    func response(for request: URLRequest) throws -> (Int, Data) {
+        lock.lock(); defer { lock.unlock() }
+        if request.url!.lastPathComponent == "conversation" {
+            metadataCount += 1
+            if status != 200 { return (status, Data(#"{"error":"authentication_required"}"#.utf8)) }
+            return (200, Data("""
+            {"revision":\(revision),"id":"conversation","databaseId":"db","scope":"database","status":"ready","generation":1,"reconnectGraceMs":120000,"voice":"off"}
+            """.utf8))
+        }
+        historyCount += 1
+        if staleOnce {
+            staleOnce = false
+            revision += 1
+            return (409, Data(#"{"error":"stale_state"}"#.utf8))
+        }
+        return (200, Data("""
+        {"revision":\(revision),"messages":[{"voice":false,"requestId":"request","question":"Question \(revision)"}],"utterances":[],"nextCursor":null}
+        """.utf8))
+    }
+}
+
+private final class AssistantHistoryURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var transport: AssistantHistoryTransport?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            guard let transport = Self.transport else { throw URLError(.unknown) }
+            let (status, data) = try transport.response(for: request)
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+    override func stopLoading() {}
 }
