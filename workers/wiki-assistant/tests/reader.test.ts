@@ -472,6 +472,27 @@ describe("read tools and citations", () => {
     ).rejects.toThrow("wiki_read_denied");
     expect(actor.source_evidence).not.toHaveBeenCalled();
   });
+  it("uses the native tool's actual read for access enforcement without a redundant preflight", async () => {
+    const actor = fixtureActor();
+    const reader = new KinicReader(actor, "db-a", "/Knowledge", emptyToolState(), 24000, 12, "", undefined, false);
+    await reader.execute("wiki_read", { path: "/Knowledge/decision.md", start: 0 });
+    expect(actor.read_node).toHaveBeenCalledTimes(1);
+    expect(actor.read_node).toHaveBeenCalledWith("db-a", "/Knowledge/decision.md");
+    actor.source_evidence = vi.fn(async () => ({ Err: "revoked private path" }));
+    await expect(reader.execute("wiki_sources", { path: "/Knowledge/decision.md" })).rejects.toThrow("wiki_read_denied");
+    expect(actor.read_node).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a denied native read before creating evidence or querying source references", async () => {
+    const actor = fixtureActor();
+    actor.read_node = vi.fn(async () => ({ Err: "private denial detail" }));
+    const state = emptyToolState();
+    const reader = new KinicReader(actor, "db-a", "/Knowledge", state, 24000, 12, "", "focused_search", false);
+    state.discoveredPaths.push("/Knowledge/decision.md");
+    await expect(reader.execute("wiki_read", { path: "/Knowledge/decision.md", start: 0 })).rejects.toThrow("wiki_read_denied");
+    expect(actor.read_node).toHaveBeenCalledTimes(1);
+    expect(actor.source_evidence).not.toHaveBeenCalled();
+    expect(state.evidence).toEqual([]);
+  });
   it("enforces call and total serialized context budgets", async () => {
     const actor = fixtureActor();
     await expect(

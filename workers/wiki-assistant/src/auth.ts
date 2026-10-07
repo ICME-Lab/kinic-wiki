@@ -169,6 +169,9 @@ export class AssistantAuth {
     const result = await createReadActor(
       this.env.KINIC_WIKI_CANISTER_ID,
       minted.identity,
+      // Keep the authenticated query: the replica validates delegation and DB
+      // access. Native Ask AI trusts the fixed HTTPS gateway for its response.
+      { verifyQuerySignatures: false },
     ).read_node(record.native.databaseId, "/Knowledge");
     if ("Err" in result)
       throw new AssistantError("database_access_denied", 403);

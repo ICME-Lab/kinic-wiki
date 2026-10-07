@@ -1,4 +1,5 @@
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
+import { verifiedNodeKeys } from "./verified-node-key-store.js";
 type Result<T> = { Ok: T } | { Err: string };
 export type WikiReadNode = {
   path: string;
@@ -185,9 +186,16 @@ export const readIdlFactory: Parameters<typeof Actor.createActor>[0] = ({
 export function createReadActor(
   canisterId: string,
   identity: Identity,
+  options: { verifyQuerySignatures?: boolean } = {},
 ): ReadActor {
   return Actor.createActor<ReadActor>(readIdlFactory, {
-    agent: HttpAgent.createSync({ host: "https://icp0.io", identity }),
+    agent: HttpAgent.createSync({
+      host: "https://icp0.io", identity,
+      // Request signing and canister-side caller authorization are independent
+      // from response verification. Opting out trusts this fixed HTTPS gateway.
+      verifyQuerySignatures: options.verifyQuerySignatures ?? true,
+      subnetNodeKeyExpirableStore: verifiedNodeKeys,
+    }),
     canisterId,
   });
 }
