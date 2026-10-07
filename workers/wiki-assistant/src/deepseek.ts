@@ -24,8 +24,13 @@ export type DeepSeekTurn = {
   inputTokens: number;
   outputTokens: number;
   whitespaceRecoveries?: number;
+  finalRepairs?: number;
+  providerDurationMs?: number;
+  retrievalDurationMs?: number;
+  authorizationDurationMs?: number;
 };
 const whitespaceRecoveryPrompt = "Your previous response contained only whitespace. Return a nonempty JSON object answering the original question using the Wiki evidence already provided. Required keys: answer, citations [{id,quote}], insufficient, contradictions, unverified. If evidence is insufficient, say so and set insufficient to true. Do not invent citation IDs or quotes.";
+const finalRepairPrompt = "Your fully received answer did not satisfy the required JSON structure. Return a corrected JSON object with ALL required keys: answer (string), citations (array of {id,quote}), insufficient (boolean), contradictions (array of strings), unverified (array of strings). Use only the evidence already provided and quote its excerpts exactly. Do not invent facts, IDs or quotes. Do not omit insufficient; set it to true when the evidence cannot answer the question.";
 export const newDeepSeekTurn = (input: string): DeepSeekTurn => ({
   messages: [{ role: "system", content: instructions }, { role: "user", content: input }],
   requesting: false, rounds: 0, inputTokens: 0, outputTokens: 0,
@@ -44,9 +49,13 @@ export async function runDeepSeekTurn(options: {
   checkpoint: () => Promise<void>;
   execute: (name: string, args: unknown) => Promise<string>;
   executeReadBatch?: (args: unknown[]) => Promise<string[]>;
+  // Pure planning hook: checkpoint synthetic calls before any speculative I/O.
+  prefetchReads?: (messages: ChatMessage[]) => { path: string; start: number }[];
+  executePrefetchBatch?: (args: unknown[]) => Promise<string[]>;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   canUseTools?: () => boolean;
+  validateFinal?: (value: unknown) => void;
 }): Promise<unknown> {
   const { state, authorize, checkpoint, execute } = options;
   const checkActive = options.checkActive ?? authorize;
@@ -72,8 +81,20 @@ export async function runDeepSeekTurn(options: {
           // Only a fully received, parsed whitespace response reaches here.
           // Persisted in-flight submissions still fail at the entry guard.
         } else {
-          try { return JSON.parse(lastAssistant.content ?? ""); }
-          catch { throw new AssistantError("deepseek_invalid_response", 502); }
+          const repairPending = state.messages.at(-1)?.role === "user" && state.messages.at(-1)?.content === finalRepairPrompt;
+          if (!repairPending) {
+            try {
+              const value: unknown = JSON.parse(lastAssistant.content ?? "");
+              options.validateFinal?.(value);
+              return value;
+            } catch (error) {
+              if (!options.validateFinal || !(error instanceof SyntaxError || error instanceof z.ZodError) || (state.finalRepairs ?? 0) >= 1)
+                throw new AssistantError("deepseek_invalid_response", 502);
+              state.finalRepairs = 1;
+              state.messages.push({ role: "user", content: finalRepairPrompt });
+              await checkpoint();
+            }
+          }
         }
       }
       const pending = calls.filter((call) => !state.messages.some((m) => m.role === "tool" && m.tool_call_id === call.id));
@@ -87,23 +108,49 @@ export async function runDeepSeekTurn(options: {
           try { return JSON.parse(call.function.arguments) as unknown; }
           catch { throw new AssistantError("deepseek_invalid_response", 502); }
         });
-        const outputs = group.length > 1
-          ? await options.executeReadBatch!(args)
-          : [await execute(group[0]!.function.name, args[0])];
+        const started = Date.now();
+        const outputs = await (async () => {
+          try {
+            if (group.every(call => call.id.startsWith("prefetch-read-")) && options.executePrefetchBatch)
+              return await options.executePrefetchBatch(args);
+            return group.length > 1
+              ? await options.executeReadBatch!(args)
+              : [await execute(group[0]!.function.name, args[0])];
+          } finally {
+            state.retrievalDurationMs = (state.retrievalDurationMs ?? 0) + Date.now() - started;
+          }
+        })();
         if (outputs.length !== group.length) throw new AssistantError("deepseek_invalid_response", 502);
         await checkActive();
         for (let i = 0; i < group.length; i++)
           state.messages.push({ role: "tool", tool_call_id: group[i]!.id, content: outputs[i]! });
         await checkpoint();
       }
+      const reads = options.prefetchReads?.(state.messages) ?? [];
+      if (reads.length) {
+        state.messages.push({ role: "assistant", content: null, tool_calls: reads.map(args => ({
+          id: `prefetch-read-${crypto.randomUUID()}`, type: "function",
+          function: { name: "wiki_read", arguments: JSON.stringify(args) },
+        })) });
+        await checkpoint();
+        continue;
+      }
     }
     if (state.rounds >= 13) throw new AssistantError("tool_limit", 502);
-    await authorize();
+    const authorizationStarted = Date.now();
+    try { await authorize(); }
+    finally { state.authorizationDurationMs = (state.authorizationDurationMs ?? 0) + Date.now() - authorizationStarted; }
     state.requesting = true;
     state.rounds++;
     await checkpoint();
     await checkActive();
-    const response = await requestCompletion(options, state.messages);
+    const started = Date.now();
+    const response = await (async () => {
+      try { return await requestCompletion({ ...options,
+        canUseTools: state.messages.at(-1)?.content === finalRepairPrompt ? () => false : options.canUseTools,
+      }, state.messages); }
+      finally { state.providerDurationMs = (state.providerDurationMs ?? 0) + Date.now() - started; }
+    })();
     await checkActive();
     const priorIds = new Set(state.messages.flatMap((m) => m.role === "assistant" ? (m.tool_calls ?? []).map((c) => c.id) : []));
     for (const call of response.message.tool_calls ?? []) {

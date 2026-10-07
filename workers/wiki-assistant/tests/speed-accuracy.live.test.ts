@@ -67,6 +67,9 @@ it("compares sequential and seeded retrieval with real Wiki and DeepSeek", async
     ?? inventory.nodes[0].path;
   const reference = await call(["read-node", "--path", selectedPath]);
   const cases = [
+    { id: "overview-exact", route: "database_overview" as const, question: "このdbについて教えて" },
+    { id: "overview-short", route: "database_overview" as const, question: "何が入ってるDB？" },
+    { id: "overview-english", route: "database_overview" as const, question: "What is this database about? Summarize its contents with sources." },
     { id: "overview-1", route: "database_overview" as const, question: "このDBの内容を教えて。主な資料の分野と用途を根拠付きで説明して。" },
     { id: "overview-2", route: "database_overview" as const, question: "このDBの内容を教えて。主な資料の分野と用途を根拠付きで説明して。" },
     { id: "selected", route: "selected_node_summary" as const, question: "選択した文書の重要なポイントを、具体例を含めて要約して。" },
@@ -75,7 +78,16 @@ it("compares sequential and seeded retrieval with real Wiki and DeepSeek", async
       question: "選択した文書を要約して。Requestを使うコード例の注意点も説明して。" },
     { id: "focused", route: "focused_search" as const, question: "このDB内のHonoドキュメントを検索して、app.requestによるHTTPハンドラーのテスト方法を教えて。引用元も示して。" },
     { id: "unknown", route: "focused_search" as const, question: "このDB内の資料を検索して、Honoプロジェクトの2027年度売上高を金額と通貨付きで教えて。資料にない場合は明示して。" },
+    { id: "focused-cors", route: "focused_search" as const, question: "このDBのHono資料を検索して、CORSミドルウェアで許可するoriginとHTTPメソッドを指定する方法を、コード例と引用付きで教えて。" },
+    { id: "focused-runtime", route: "focused_search" as const, question: "このDBの資料に基づいて、HonoをCloudflare WorkersとNode.jsで動かすときの違いを比較して。資料で確認できない点は明示して。" },
+    { id: "greeting", route: "conversation" as const, question: "こんにちは！" },
+    { id: "translation", route: "conversation" as const, question: "次の文章を英訳して：明日、会議の資料を送ります。" },
+    { id: "ambiguous", route: null, question: "これどう？" },
   ].filter(item => !process.env.ASKAI_ACCURACY_CASES || process.env.ASKAI_ACCURACY_CASES.split(",").includes(item.id));
+  const optimizedOnly = process.env.ASKAI_ACCURACY_MODE === "optimized";
+  const mainBaseline = process.env.ASKAI_ACCURACY_BASELINE === "main";
+  if (mainBaseline && cases.some(item => item.route !== "focused_search"))
+    throw new Error("The main baseline comparison currently supports focused-search cases only");
   if (captureOnly) {
     const candidates = [];
     for (const entry of inventory.nodes) {
@@ -102,14 +114,15 @@ it("compares sequential and seeded retrieval with real Wiki and DeepSeek", async
     return response;
   });
   try {
-    for (const [index, item] of cases.entries()) for (const mode of index % 2 ? ["optimized", "legacy"] : ["legacy", "optimized"]) {
+    for (const [index, item] of cases.entries()) for (const mode of optimizedOnly ? ["optimized"] : index % 2 ? ["optimized", "legacy"] : ["legacy", "optimized"]) {
       providerResponses = [];
       const requestId = crypto.randomUUID(), now = Date.now();
       const subject = item.route === "selected_node_summary" ? { kind: "node" as const, path: item.path ?? selectedPath }
         : { kind: "database" as const };
       const routed = await routeAskAiIntent({ question: item.question, subject, apiKey: process.env.TYPESAFE_API_KEY! });
       if (!routed.route) {
-        rows.push({ caseId: item.id, mode, elapsedMs: Date.now() - now, error: "jev_clarification_required" });
+        rows.push({ caseId: item.id, mode, elapsedMs: Date.now() - now,
+          ...(item.route === null ? { status: "clarification_required" } : { error: "jev_clarification_required" }) });
         console.log(JSON.stringify({ caseId: item.id, mode, status: "clarification_required" }));
         continue;
       }
@@ -121,32 +134,68 @@ it("compares sequential and seeded retrieval with real Wiki and DeepSeek", async
       const conversation = { format: 3, native: true, nativeTextProvider: "deepseek", id: "local-live", authId: "local",
         principal: "anonymous", databaseId, scope: "database", sessionId: null, generation: 1, pending, activity: now, seen: now,
         status: "working", error: null, messages: [], history: [], utterances: [], transcripts: [], delegations: [], deferred: null } as Conversation;
-      const reader = new KinicReader(actor, databaseId, "database", pending.tools, 24000, 12, process.env.TYPESAFE_API_KEY!, route, mode === "legacy");
+      const reader = new KinicReader(actor, databaseId, "database", pending.tools, 24000, 12, process.env.TYPESAFE_API_KEY!, route, mode === "legacy" && !mainBaseline);
       const context: TurnContext = { conversation, pending, route, subject, valid: async () => true,
         reader: async () => reader, checkpoint: async () => {} };
       const options = { apiKey: process.env.DEEPSEEK_API_KEY, deadline: now + 90000, signal: AbortSignal.timeout(90000) };
+      let generatedAnswer: unknown;
       try {
-        let answer, rounds, inputTokens, outputTokens;
+        let answer, rounds, inputTokens, outputTokens, providerDurationMs, retrievalDurationMs;
         if (mode === "optimized") {
           const result = await runTextTurn(context, options);
           answer = result.answer; rounds = pending.deepseek!.rounds;
           inputTokens = result.inputTokens; outputTokens = result.outputTokens;
+          providerDurationMs = result.providerDurationMs; retrievalDurationMs = result.retrievalDurationMs;
         } else {
           const state = newDeepSeekTurn(inputText(requestId, item.question, "database", undefined, [], route, subject));
           const raw = await runDeepSeekTurn({ ...options, state, scope: "database", route,
-            authorize: () => reader.authorize(), checkpoint: async () => {}, execute: (name, args) => reader.execute(name, args) });
-          answer = validateAnswer(answerSchema.strip().parse(raw), pending.tools.evidence, true);
+            authorize: () => reader.authorize(), checkpoint: async () => {}, execute: (name, args) => reader.execute(name, args),
+            executeReadBatch: mainBaseline ? args => reader.executeReadBatch(args) : undefined });
+          answer = validateAnswer(answerSchema.strip().parse(raw), pending.tools.evidence, route !== "conversation");
           rounds = state.rounds; inputTokens = state.inputTokens; outputTokens = state.outputTokens;
+          providerDurationMs = state.providerDurationMs; retrievalDurationMs = state.retrievalDurationMs;
         }
         const row = { caseId: item.id, mode, route, expectedRoute: item.route, elapsedMs: Date.now() - now, rounds, inputTokens, outputTokens,
+          baseline: mainBaseline ? "main-a965fcff-focused-runner-with-shared-reader" : "legacy", providerDurationMs, retrievalDurationMs,
           jevRouteDurationMs: routed.durationMs, jevRerankDurationMs: pending.tools.jevRerankDurationMs,
           reads: pending.tools.readPaths, evidence: pending.tools.evidence, answer, providerResponses };
+        generatedAnswer = answer;
+        if (mode === "optimized" && item.id === "unknown") expect(answer.insufficient).toBe(true);
+        if (mode === "optimized" && item.id === "focused") {
+          expect(answer.insufficient).toBe(false);
+          expect(answer.answer).toContain("app.request");
+          expect(answer.citations.some(citation => citation.path.includes("testing-request-and-response"))).toBe(true);
+        }
+        if (mode === "optimized" && item.route !== null) expect(route).toBe(item.route);
+        if (mode === "optimized" && item.route === "database_overview") {
+          expect(answer.insufficient).toBe(false);
+          expect(answer.answer).toMatch(/Hono/i);
+          expect(answer.citations.length).toBeGreaterThan(0);
+          expect(pending.tools.readPaths.length).toBeLessThanOrEqual(4);
+        }
+        if (mode === "optimized" && item.route === "conversation") {
+          expect(pending.tools.calls).toBe(0);
+          expect(answer.citations).toHaveLength(0);
+        }
+        if (mode === "optimized" && item.id === "translation") {
+          expect(answer.insufficient).toBe(false);
+          expect(answer.answer).toMatch(/\btomorrow\b/i);
+          expect(answer.answer).toMatch(/\bmeeting\b/i);
+        }
+        if (mode === "optimized" && item.id === "overview-english") {
+          // Coarse language guard; manual review still checks meaning and facts.
+          const opening = answer.answer.trim().split("\n")[0]!;
+          const latin = opening.match(/\p{Script=Latin}/gu)?.length ?? 0;
+          const han = opening.match(/\p{Script=Han}/gu)?.length ?? 0;
+          expect(latin).toBeGreaterThan(han);
+        }
         rows.push(row);
         console.log(JSON.stringify({ caseId: item.id, mode, route, elapsedMs: row.elapsedMs, rounds,
           citations: answer.citations.length, insufficient: answer.insufficient, status: "completed" }));
       } catch (error) {
-        rows.push({ caseId: item.id, mode, elapsedMs: Date.now() - now, error: error instanceof Error ? error.message : "failed",
-          providerResponses, state: pending.deepseek });
+        rows.push({ caseId: item.id, mode, route, expectedRoute: item.route, elapsedMs: Date.now() - now, error: error instanceof Error ? error.message : "failed",
+          answer: generatedAnswer, reads: pending.tools.readPaths, characters: pending.tools.characters,
+          calls: pending.tools.calls, providerResponses, state: pending.deepseek });
         console.log(JSON.stringify({ caseId: item.id, mode, status: "failed" }));
       }
     }
@@ -154,6 +203,6 @@ it("compares sequential and seeded retrieval with real Wiki and DeepSeek", async
     await writeFile(process.env.ASKAI_ACCURACY_OUTPUT, JSON.stringify({ databaseId, canisterId, inventory,
       selectedReference: { path: selectedPath, etag: reference.etag, content: reference.content }, cases, rows }, null, 2), { mode: 0o600 });
   }
-  expect(rows).toHaveLength(cases.length * 2);
+  expect(rows).toHaveLength(cases.length * (optimizedOnly ? 1 : 2));
   expect(rows.every(row => !(row as { error?: string }).error)).toBe(true);
 }, 800000);

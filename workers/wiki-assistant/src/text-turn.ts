@@ -4,6 +4,7 @@ import { newDeepSeekTurn, runDeepSeekTurn } from "./deepseek";
 import { conversationHistory } from "./conversation-history";
 import { inputText } from "./turn-input";
 import { seedTextContext } from "./seed-text-context";
+import { prefetchSearchReads } from "./prefetch-search";
 import type { TurnContext, TurnFailure, TurnResult } from "./turn-context";
 
 // No OpenAI session, voice transport, or provider cleanup is involved here.
@@ -24,8 +25,12 @@ export async function runTextTurn(context: TurnContext, options: {
     conversationHistory(c, p.input.requestId), route, subject,
   ));
   p.stage = "running";
-  if (fresh) await seedTextContext({ route, subject, requestId: p.input.requestId,
-    state: p.deepseek, reader, checkActive });
+  if (fresh) {
+    const started = Date.now();
+    try { await seedTextContext({ route, subject, requestId: p.input.requestId,
+      state: p.deepseek, reader, checkActive }); }
+    finally { p.deepseek.retrievalDurationMs = (p.deepseek.retrievalDurationMs ?? 0) + Date.now() - started; }
+  }
   const seededOverview = route === "database_overview" &&
     p.deepseek.messages.some((message) => message.role === "tool" && message.tool_call_id.startsWith("seed-read-"));
   const value = await runDeepSeekTurn({
@@ -33,6 +38,7 @@ export async function runTextTurn(context: TurnContext, options: {
     route,
     scope: c.scope,
     state: p.deepseek,
+    validateFinal: value => { answerSchema.strip().parse(value); },
     canUseTools: () => route !== "database_overview" || (!seededOverview && p.tools.readPaths.length < 4),
     authorize: async () => {
       await checkActive();
@@ -45,6 +51,8 @@ export async function runTextTurn(context: TurnContext, options: {
     checkpoint: context.checkpoint,
     execute: (name, args) => reader.execute(name, args),
     executeReadBatch: (args) => reader.executeReadBatch(args),
+    prefetchReads: route === "focused_search" ? messages => prefetchSearchReads(messages, reader) : undefined,
+    executePrefetchBatch: args => reader.executeReadBatch(args, { skipEmpty: true }),
   });
   return {
     // Models occasionally add explanatory keys such as insufficient_note.
@@ -53,6 +61,10 @@ export async function runTextTurn(context: TurnContext, options: {
     answer: validateAnswer(answerSchema.strip().parse(value), p.tools.evidence, route !== "conversation"),
     inputTokens: p.deepseek.inputTokens,
     outputTokens: p.deepseek.outputTokens,
+    providerDurationMs: p.deepseek.providerDurationMs,
+    retrievalDurationMs: p.deepseek.retrievalDurationMs,
+    authorizationDurationMs: p.deepseek.authorizationDurationMs,
+    providerRounds: p.deepseek.rounds,
   };
 }
 

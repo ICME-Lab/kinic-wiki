@@ -356,9 +356,9 @@ export class KinicReader {
     for (const result of fetched) {
       if (result.status === "rejected") throw result.reason;
       if (!result.value) { outputs.push(overviewReadLimit); continue; }
-      // Seeding may encounter empty representative documents. They supply no
+      // Seeding and focused search may encounter empty documents. They supply no
       // evidence, but must not discard the other successful reads in this batch.
-      if (options.skipEmpty && result.value.node.content.length === 0) {
+      if ((options.skipEmpty || this.route === "focused_search") && result.value.node.content.length === 0) {
         outputs.push(JSON.stringify({ path: result.value.node.path, error: "empty_document" }));
         continue;
       }
