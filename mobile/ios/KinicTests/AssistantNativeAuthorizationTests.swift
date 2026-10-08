@@ -380,6 +380,49 @@ final class AssistantNativeAuthorizationTests: XCTestCase {
             askAIURL: c.askAIURL, deploymentEnvironment: c.deploymentEnvironment)
     }
 
+    func testCombinedSnapshotAvoidsAHistoryRequestAndStillChecksAuthorization() async throws {
+        let stub = AssistantHistoryTransport()
+        stub.update(combined: true)
+        AssistantHistoryURLProtocol.transport = stub
+        defer { AssistantHistoryURLProtocol.transport = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AssistantHistoryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = AssistantHTTPClient(configuration: historyTestConfiguration(), urlSession: session)
+        defer { client.clearToken() }
+        let first = try await client.snapshot(conversation: "conversation")
+        let cached = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(first.messages.first?.question, "Question 1")
+        XCTAssertEqual(cached.messages.first?.question, "Question 1")
+        stub.update(revision: 2)
+        let newer = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(newer.messages.first?.question, "Question 2")
+        XCTAssertEqual(stub.counts.metadata, 3)
+        XCTAssertEqual(stub.counts.history, 0)
+        stub.update(status: 403)
+        do { _ = try await client.snapshot(conversation: "conversation"); XCTFail("Access must be checked") }
+        catch let error as AssistantHTTPError { XCTAssertEqual(error.status, 403) }
+    }
+
+    func testCombinedSnapshotContinuesPagingAndRetriesStaleMetadata() async throws {
+        let stub = AssistantHistoryTransport()
+        stub.update(staleOnce: true, combined: true, paginated: true)
+        AssistantHistoryURLProtocol.transport = stub
+        defer { AssistantHistoryURLProtocol.transport = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AssistantHistoryURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = AssistantHTTPClient(configuration: historyTestConfiguration(), urlSession: session)
+        defer { client.clearToken() }
+        let value = try await client.snapshot(conversation: "conversation")
+        XCTAssertEqual(value.revision, 2)
+        XCTAssertEqual(value.messages.map(\.question), ["Question 2", "Later question"])
+        XCTAssertEqual(stub.counts.metadata, 2)
+        XCTAssertEqual(stub.counts.history, 1)
+    }
+
     private func identity(configuration: AppConfiguration = .preview) throws -> KinicIdentitySession {
         let session = try ICAuthSession.delegating(
             ed25519PrivateKey: Data(repeating: 7, count: 32),
@@ -617,28 +660,51 @@ private final class AssistantHistoryTransport: @unchecked Sendable {
     private var revision = 1
     private var status = 200
     private var staleOnce = false
+    private var combined = false
+    private var paginated = false
     private var metadataCount = 0
     private var historyCount = 0
     var counts: (metadata: Int, history: Int) {
         lock.lock(); defer { lock.unlock() }
         return (metadataCount, historyCount)
     }
-    func update(revision: Int? = nil, status: Int? = nil, staleOnce: Bool? = nil) {
+    func update(revision: Int? = nil, status: Int? = nil, staleOnce: Bool? = nil, combined: Bool? = nil, paginated: Bool? = nil) {
         lock.lock(); defer { lock.unlock() }
         if let revision { self.revision = revision }
         if let status { self.status = status }
         if let staleOnce { self.staleOnce = staleOnce }
+        if let combined { self.combined = combined }
+        if let paginated { self.paginated = paginated }
     }
     func response(for request: URLRequest) throws -> (Int, Data) {
         lock.lock(); defer { lock.unlock() }
         if request.url!.lastPathComponent == "conversation" {
             metadataCount += 1
             if status != 200 { return (status, Data(#"{"error":"authentication_required"}"#.utf8)) }
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if combined && staleOnce {
+                staleOnce = false
+                revision += 1
+                return (409, Data(#"{"error":"stale_state"}"#.utf8))
+            }
+            let include = combined && query.contains { $0.name == "includeHistory" && $0.value == "1" } &&
+                !query.contains { $0.name == "knownRevision" && $0.value == String(revision) }
+            let cursor = paginated ? "\"1\"" : "null"
+            let embedded = include ? """
+            ,"historyPage":{"revision":\(revision),"messages":[{"voice":false,"requestId":"request","question":"Question \(revision)"}],"utterances":[],"nextCursor":\(cursor)}
+            """ : ""
             return (200, Data("""
-            {"revision":\(revision),"id":"conversation","databaseId":"db","scope":"database","status":"ready","generation":1,"reconnectGraceMs":120000,"voice":"off"}
+            {"revision":\(revision),"id":"conversation","databaseId":"db","scope":"database","status":"ready","generation":1,"reconnectGraceMs":120000,"voice":"off"\(embedded)}
             """.utf8))
         }
         historyCount += 1
+        if paginated {
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            guard query.contains(where: { $0.name == "cursor" && $0.value == "1" }) else { throw URLError(.badURL) }
+            return (200, Data("""
+            {"revision":\(revision),"messages":[{"voice":false,"requestId":"later","question":"Later question"}],"utterances":[],"nextCursor":null}
+            """.utf8))
+        }
         if staleOnce {
             staleOnce = false
             revision += 1

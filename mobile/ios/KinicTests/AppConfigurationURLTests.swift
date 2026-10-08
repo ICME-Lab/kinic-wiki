@@ -8,6 +8,12 @@ import Testing
 
 struct AppConfigurationURLTests {
     @Test
+    func nativeAuthenticationRequestsThirtyDays() throws {
+        let configuration = try AppConfiguration.preview.makeICClientConfiguration()
+        #expect(configuration.delegationTTLNanoseconds == 2_592_000_000_000_000)
+    }
+
+    @Test
     func deploymentEnvironmentParsesSandbox() {
         #expect(AppConfiguration.deploymentEnvironment(from: "sandbox") == .sandbox)
         #expect(AppConfiguration.deploymentEnvironment(from: "production") == .production)

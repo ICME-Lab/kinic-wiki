@@ -277,6 +277,24 @@ const question = () => ({
   scope: "/Knowledge",
 });
 describe("conversation lifecycle", () => {
+  it("embeds a bounded first history page only when requested and still authorizes cached revisions", async () => {
+    const h = await harness(true);
+    const c = h.user["state"].conversation!;
+    c.messages = Array.from({ length: 12 }, (_, index) => ({ voice: false, requestId: `r${index}`,
+      question: `Question ${index}`, answer: null, error: null, kind: null, trace: null }));
+    const plain = await (await h.call("/conversation")).json();
+    expect(plain).not.toHaveProperty("historyPage");
+    const combined = await (await h.call("/conversation", undefined, h.id + "&includeHistory=1")).json() as {
+      revision: number; historyPage: { revision: number; messages: unknown[]; nextCursor: string };
+    };
+    expect(combined.historyPage.revision).toBe(combined.revision);
+    expect(combined.historyPage.messages).toHaveLength(10);
+    expect(combined.historyPage.nextCursor).toBe("10");
+    const known = h.id + "&includeHistory=1&knownRevision=" + combined.revision;
+    expect(await (await h.call("/conversation", undefined, known)).json()).not.toHaveProperty("historyPage");
+    mocks.authorize.mockRejectedValueOnce(new AssistantError("wiki_read_denied", 403));
+    expect((await h.call("/conversation", undefined, known)).status).toBe(403);
+  });
   it("reads control state without rewriting messages or advancing its revision", async () => {
     const h = await harness(true);
     const revision = h.user["revision"];

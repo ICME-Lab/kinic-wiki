@@ -88,12 +88,27 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
         return data
     }
     func snapshot(conversation: String, metadata initialMetadata: Data? = nil) async throws -> AssistantSnapshot {
+        struct EmbeddedHistory: Decodable { let historyPage: AssistantHistoryPage? }
         let generation = credentialGeneration
         var initial = initialMetadata
         for _ in 0..<3 {
             let metadata: Data
             if let initial { metadata = initial }
-            else { metadata = try await data("conversation", conversation: conversation) }
+            else {
+                var request = try request("conversation", conversation: conversation)
+                var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+                var query = components.queryItems ?? []
+                query.append(URLQueryItem(name: "includeHistory", value: "1"))
+                if let cachedHistory, cachedHistory.id == conversation {
+                    query.append(URLQueryItem(name: "knownRevision", value: String(cachedHistory.revision)))
+                }
+                components.queryItems = query
+                request.url = components.url
+                do { metadata = try await send(request) }
+                catch let error as AssistantHTTPError where error.status == 409 && error.code == "stale_state" {
+                    continue
+                }
+            }
             initial = nil
             guard generation == credentialGeneration else { throw CancellationError() }
             let state = try JSONDecoder().decode(AssistantSnapshot.self, from: metadata)
@@ -109,6 +124,14 @@ final class AssistantHTTPClient: AssistantHTTPProviding {
             var utterances: [AssistantUtterance] = []
             var cursor: String? = "0"
             do {
+                // New servers can return the first bounded page with metadata.
+                // Older servers and WebSocket metadata retain paged HTTP reads.
+                if let page = try JSONDecoder().decode(EmbeddedHistory.self, from: metadata).historyPage {
+                    guard page.revision == state.revision else { throw AssistantHTTPError(status: 409, code: "stale_state") }
+                    messages = page.messages
+                    utterances = page.utterances
+                    cursor = page.nextCursor
+                }
                 while let currentCursor = cursor {
                     var request = try request("history", conversation: conversation)
                     var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!

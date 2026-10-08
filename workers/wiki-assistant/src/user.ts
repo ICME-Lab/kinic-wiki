@@ -361,7 +361,15 @@ export class AssistantUser {
       }
       if (path === "/conversation" && request.method === "GET") {
         await this.store.touch(this.principal, c.id);
-        return json(this.snapshot(c));
+        const snapshot = this.snapshot(c);
+        const query = new URL(request.url).searchParams;
+        if (query.get("includeHistory") === "1" && query.get("knownRevision") !== String(snapshot.revision)) {
+          const historyPage = this.loadedMessages
+            ? this.historyPage(c, snapshot.revision, 0)
+            : await this.store.historyPage(this.principal, c, snapshot.revision, 0, this.revision);
+          return json({ ...snapshot, historyPage });
+        }
+        return json(snapshot);
       }
       if (path === "/history" && request.method === "GET") {
         const url = new URL(request.url);
@@ -653,6 +661,10 @@ export class AssistantUser {
         jevRerankDurationMs: p.tools.jevRerankDurationMs,
         inputTokens,
         outputTokens,
+        providerDurationMs: result.providerDurationMs,
+        retrievalDurationMs: result.retrievalDurationMs,
+        authorizationDurationMs: result.authorizationDurationMs,
+        providerRounds: result.providerRounds,
       }),
     );
   }

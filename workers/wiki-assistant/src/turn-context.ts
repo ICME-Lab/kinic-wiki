@@ -7,6 +7,10 @@ export type TurnResult = {
   answer: Answer;
   inputTokens?: number;
   outputTokens?: number;
+  providerDurationMs?: number;
+  retrievalDurationMs?: number;
+  authorizationDurationMs?: number;
+  providerRounds?: number;
 };
 
 // Shared lifecycle operations; provider runners do not own leases, publication,

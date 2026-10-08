@@ -47,6 +47,24 @@ it("loads metadata without history and decrypts only requested revision-bound pa
   expect(last.messages).toHaveLength(3);
   expect(last.utterances).toEqual([{ id: "legacy", role: "user", text: "last item" }]);
   expect(last.nextCursor).toBeNull();
+  const partial = await new AssistantUser(bindings, principal).initialize(false);
+  const authorize = vi.fn(async () => {});
+  const access = partial as unknown as { reader: () => Promise<{ authorize: () => Promise<void> }> };
+  const reader = vi.spyOn(access, "reader").mockResolvedValue({ authorize });
+  try {
+    const response = await partial.fetch(new Request(
+      `https://assistant/api/assistant/conversation?conversationId=${id}&includeHistory=1`,
+      { headers: { "x-assistant-principal": principal, "x-assistant-auth-id": "page-owner" } },
+    ));
+    expect(response.status).toBe(200);
+    const combined = await response.json() as { revision: number; historyPage: { revision: number; messages: { question: string }[]; nextCursor: string } };
+    expect(combined.revision).toBe(metadata.revision);
+    expect(combined.historyPage.revision).toBe(combined.revision);
+    expect(combined.historyPage.messages.map(item => item.question)).toEqual(Array.from({ length: 10 }, (_, i) => "question " + i));
+    expect(combined.historyPage.nextCursor).toBe("10");
+    expect(partial["state"].conversation!.messages).toEqual([]);
+    expect(authorize).toHaveBeenCalledOnce();
+  } finally { reader.mockRestore(); }
   await store.touch(principal, id);
   expect((await store.load(principal, false)).revision).toBe(metadata.revision);
   await store.schedule(principal, id, metadata.revision, 123);
