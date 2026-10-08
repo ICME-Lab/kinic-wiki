@@ -10,6 +10,48 @@ import Testing
 
 struct KinicAuthSessionStoreTests {
     @Test
+    func thirtyDaySessionKeepsSignedExpirationAfterRestore() throws {
+        try assertSessionLifetimeSurvivesRestore(expectedSeconds: 30 * 24 * 60 * 60)
+    }
+
+    @Test
+    func existingEightHourSessionIsNotExtendedByNewConfiguration() throws {
+        try assertSessionLifetimeSurvivesRestore(
+            options: ICAuthenticationOptions(maxTimeToLiveNanoseconds: 28_800_000_000_000),
+            expectedSeconds: 8 * 60 * 60
+        )
+    }
+
+    private func assertSessionLifetimeSurvivesRestore(
+        options: ICAuthenticationOptions = .default,
+        expectedSeconds: TimeInterval
+    ) throws {
+        let configuration = AppConfiguration.preview
+        let nativeSession = try ICAuthSession.delegating(
+            ed25519PrivateKey: Data(repeating: 7, count: 32),
+            configuration: configuration.makeICClientConfiguration(),
+            options: options
+        )
+        // CI uses an unsigned Simulator app, which cannot access the Keychain.
+        // Keep the real signed delegation and replace only the storage backend.
+        var storedSession: ICAuthSession?
+        let store = KinicAuthSessionStore(
+            service: "test.auth-lifetime",
+            accessGroup: nil,
+            loadStoredSession: { storedSession },
+            saveStoredSession: { storedSession = $0 },
+            clearStoredSession: { storedSession = nil }
+        )
+        try store.save(KinicIdentitySession(nativeSession: nativeSession))
+        let restoredIdentity = try store.restore()
+        let restored = try #require(restoredIdentity).requireNativeSession()
+        #expect(restored == nativeSession)
+        let expiration = try #require(restored.delegation.delegations.map(\.delegation.expiration).min())
+        let lifetime = TimeInterval(expiration) / 1_000_000_000 - restored.requestedAt.timeIntervalSince1970
+        #expect(abs(lifetime - expectedSeconds) < 0.001)
+    }
+
+    @Test
     func baseQueryIncludesKeychainAccessGroup() {
         let configuration = AppConfiguration(
             canisterId: "6emaw-iyaaa-aaaay-aacka-cai",

@@ -33,6 +33,7 @@ struct AppConfiguration: Equatable, Sendable {
             internetIdentityURL: identityProvider,
             derivationOrigin: derivationOrigin,
             trustRoot: .mainnet,
+            delegationTTLNanoseconds: 30 * 24 * 60 * 60 * 1_000_000_000,
             network: .default
         )
     }
