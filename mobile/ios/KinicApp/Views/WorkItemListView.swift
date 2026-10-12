@@ -42,6 +42,7 @@ struct WorkItemListView: View {
     let askAIModel: AskAIModel
     let openSearchResult: (String) -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var filter: WorkItemFilter = .open
     @State private var isShowingComposer = false
     @State private var composerDraft: WorkItemComposeRequest?
@@ -110,48 +111,98 @@ struct WorkItemListView: View {
         }) { localWorkView }
     }
 
-    private var setupSurface: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if !appModel.isSignedIn { SessionPanel(model: appModel) }
-                DatabasePanel(model: appModel)
-                if let message = appModel.statusMessage { StatusPanel(message: message) }
-            }.padding(KinicDesign.screenPadding)
-        }.background(KinicDesign.appBackground)
+    @ViewBuilder private var setupSurface: some View {
+        if !appModel.isSignedIn {
+            ScrollView {
+                SessionPanel(model: appModel)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .background { KinicAurora().ignoresSafeArea() }
+        } else {
+            ScrollView {
+                VStack(spacing: 16) {
+                    DatabasePanel(model: appModel)
+                    if let message = appModel.statusMessage { StatusPanel(message: message) }
+                }.padding(KinicDesign.screenPadding)
+            }.background(KinicDesign.appBackground)
+        }
+    }
+
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: .now) {
+        case 5..<12: "Good morning"
+        case 12..<18: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+
+    private var openCount: Int { model.entries.filter { $0.state == .open }.count }
+
+    private var heroHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()).uppercased())
+                .font(.caption.weight(.semibold))
+                .tracking(1.2)
+                .foregroundStyle(KinicDesign.bodyGray)
+            Text(greeting)
+                .font(.system(.largeTitle, weight: .bold))
+            if model.phase == .ready {
+                Text(openCount == 0 ? "Nothing open. A clear mind." : openCount == 1 ? "1 open item waiting for you." : "\(openCount) open items waiting for you.")
+                    .font(.subheadline)
+                    .foregroundStyle(KinicDesign.bodyGray)
+                    .contentTransition(.numericText())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private var listSurface: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                heroHeader
+                    .padding(.top, 20)
+                    .padding(.bottom, 20)
                 primaryActions
-                    .padding(.top, 16)
-                    .padding(.bottom, 14)
+                    .padding(.bottom, 16)
 
                 if !model.canWrite {
                     Label(appModel.selectedDatabase?.status == .pending ? "This database needs credits before it can be used." : "Read-only access to this database.", systemImage: "lock")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KinicDesign.bodyGray)
                         .padding(.bottom, 12)
                 }
                 recentCaptures
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 28)
 
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center, spacing: 10) {
                     Text("Work items").font(.title2.weight(.bold))
-                    Spacer()
                     if model.phase == .ready {
                         Text("\(filteredEntries.count)")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(KinicDesign.hotPink)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(KinicDesign.hotPink.opacity(0.12), in: Capsule())
+                            .contentTransition(.numericText())
                     }
+                    Spacer()
                     Button("Search work items", systemImage: "magnifyingglass") {
                         isShowingSearch = true
                     }
                     .labelStyle(.iconOnly)
+                    .font(.body.weight(.semibold))
+                    .frame(width: 40, height: 40)
+                    .background(KinicDesign.cardBackground, in: Circle())
                     .frame(minWidth: 44, minHeight: 44)
                     .accessibilityIdentifier("home.search")
                 }
                 .padding(.bottom, 8)
+                .id(Self.workItemsHeaderID)
                 .anchorPreference(key: WorkItemSearchAnchorKey.self, value: .bounds) { $0 }
 
                 if localWorkCount > 0 {
@@ -168,22 +219,24 @@ struct WorkItemListView: View {
                 } else if model.isShowingCachedItems {
                     Label("Showing saved items · Updates unavailable", systemImage: "clock")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KinicDesign.bodyGray)
                         .padding(.bottom, 8)
                 }
                 Picker("Filter", selection: $filter) {
                     ForEach(WorkItemFilter.allCases) { option in Text(option.displayName).tag(option) }
                 }
                 .pickerStyle(.segmented)
-                .padding(.bottom, 8)
+                .padding(.bottom, 14)
                 itemsContent
+                    .animation(reduceMotion ? nil : KinicDesign.spring, value: filter)
                 }
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, KinicDesign.screenPadding)
-                .padding(.bottom, 24)
+                .padding(.horizontal, KinicDesign.screenPadding + 4)
+                .padding(.bottom, 32)
         }
-        .background(KinicDesign.appBackground)
+        .background { KinicCanvas() }
+        .sensoryFeedback(.selection, trigger: filter)
         .overlayPreferenceValue(WorkItemSearchAnchorKey.self) { anchor in
             GeometryReader { geometry in
                 if isShowingSearch, let anchor {
@@ -202,14 +255,24 @@ struct WorkItemListView: View {
         .navigationDestination(for: String.self) { itemId in
             WorkItemDetailView(model: model, appModel: appModel, itemId: itemId)
         }
+        // The richer header pushes "Work items" down; lift it to the top so results stay above the keyboard.
+        .onChange(of: isShowingSearch) { _, showing in
+            guard showing else { return }
+            withAnimation(reduceMotion ? nil : KinicDesign.spring) {
+                proxy.scrollTo(Self.workItemsHeaderID, anchor: .top)
+            }
+        }
+        }
     }
+
+    private static let workItemsHeaderID = "home.workItemsHeader"
 
     private var primaryActions: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 8) { actionButtons }
+                VStack(alignment: .leading, spacing: 12) { actionButtons }
             } else {
-                HStack(spacing: 8) { actionButtons }
+                HStack(spacing: 12) { actionButtons }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -217,30 +280,56 @@ struct WorkItemListView: View {
 
     @ViewBuilder private var actionButtons: some View {
         Button(action: newItem) {
-            Label("New item", systemImage: "plus")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 16)
-                .frame(minHeight: 44)
-                .foregroundStyle(.white)
-                .background(KinicDesign.actionPink, in: RoundedRectangle(cornerRadius: 12))
+            actionTile(title: "New item", subtitle: "Note, task, or idea", symbol: "plus", prominent: true)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KinicPressableStyle())
         .disabled(!model.canWrite)
         .opacity(model.canWrite ? 1 : 0.45)
+        .accessibilityLabel("New item")
         .accessibilityIdentifier("home.newItem")
 
         Button { isShowingIngest = true } label: {
-            Label("Save URL", systemImage: "link")
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 16)
-                .frame(minHeight: 44)
-                .foregroundStyle(KinicDesign.hotPink)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            actionTile(title: "Save URL", subtitle: "Turn a link into a page", symbol: "link", prominent: false)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KinicPressableStyle())
         .disabled(!model.canWrite)
         .opacity(model.canWrite ? 1 : 0.45)
+        .accessibilityLabel("Save URL")
         .accessibilityIdentifier("home.saveURL")
+    }
+
+    /// A tall tile: icon chip on top, title and hint at the bottom, like a Control Center module.
+    @ViewBuilder
+    private func actionTile(title: String, subtitle: String, symbol: String, prominent: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: KinicDesign.cardRadius, style: .continuous)
+        let tile = VStack(alignment: .leading, spacing: 0) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(prominent ? Color.white : KinicDesign.hotPink)
+                .frame(width: 38, height: 38)
+                .background(prominent ? AnyShapeStyle(.white.opacity(0.22)) : AnyShapeStyle(KinicDesign.hotPink.opacity(0.12)), in: Circle())
+            Spacer(minLength: 18)
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(prominent ? Color.white : Color.primary)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(prominent ? Color.white.opacity(0.8) : KinicDesign.bodyGray)
+                .lineLimit(1)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
+        .contentShape(shape)
+
+        if prominent {
+            tile
+                .background {
+                    shape.fill(KinicDesign.auroraGradient)
+                        .overlay { shape.fill(RadialGradient(colors: [.white.opacity(0.28), .clear], center: .topLeading, startRadius: 0, endRadius: 160)) }
+                }
+        } else {
+            tile.kinicCard()
+        }
     }
 
     private var recentCaptures: some View {
@@ -268,28 +357,47 @@ struct WorkItemListView: View {
                     .accessibilityLabel("Capture history")
             }
             if let latest = captureSummary.recent.first {
-                Text("\(latest.item.status.displayTitle) · \(latest.item.url)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 20)
+                HStack(spacing: 10) {
+                    CaptureStatusDot(status: latest.item.status)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(latest.item.status.displayTitle)
+                            .font(.caption.weight(.semibold))
+                        Text(Self.displayHost(latest.item.url))
+                            .font(.caption)
+                            .foregroundStyle(KinicDesign.bodyGray)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.leading, 2)
+                .padding(.bottom, 4)
+                .accessibilityElement(children: .combine)
             } else {
                 Text(appModel.isLoadingSourceCaptureHistory ? "Loading history…" : "No captures yet")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 20)
+                    .foregroundStyle(KinicDesign.bodyGray)
+                    .padding(.leading, 2)
+                    .padding(.bottom, 4)
             }
             if capturesExpanded {
                 Divider().padding(.vertical, 8)
                 ForEach(captureSummary.recent) { record in captureRow(record) }
                 if captureSummary.recent.isEmpty {
-                    Text("Save a URL to build your Wiki.").font(.caption).foregroundStyle(.secondary)
+                    Text("Save a URL to build your Wiki.").font(.caption).foregroundStyle(KinicDesign.bodyGray)
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .kinicCard()
+        .animation(reduceMotion ? nil : KinicDesign.spring, value: capturesExpanded)
+    }
+
+    /// Shows a link as "example.com/research-notes" — the scheme is noise.
+    static func displayHost(_ url: String) -> String {
+        guard let components = URLComponents(string: url), let host = components.host else { return url }
+        let host2 = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        let path = components.path == "/" ? "" : components.path
+        return host2 + path
     }
 
     private func captureRow(_ record: SourceCaptureHistoryRecord) -> some View {
@@ -301,22 +409,28 @@ struct WorkItemListView: View {
     }
 
     private var itemsContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             if visibleEntries.isEmpty { emptyItems }
             ForEach(visibleEntries) { entry in
                 NavigationLink(value: entry.id) {
-                    HStack(spacing: 12) {
+                    HStack(alignment: .top, spacing: 14) {
+                        WorkItemStateMark(isClosed: entry.state == .closed)
+                            .padding(.top, 10)
                         WorkItemRow(entry: entry)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(.tertiary)
+                            .padding(.top, 12)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .kinicCard(radius: 18)
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .buttonStyle(.plain)
-                Divider()
+                .buttonStyle(KinicPressableStyle(scale: 0.98))
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if visibleEntries.count < filteredEntries.count {
                 Button("Show more items") { visibleLimit += 100 }
@@ -324,7 +438,7 @@ struct WorkItemListView: View {
             }
             listFooter
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KinicDesign.bodyGray)
                 .padding(.top, 10)
         }
     }
@@ -345,24 +459,38 @@ struct WorkItemListView: View {
                 DisclosureGroup("Technical details") {
                     Text(details)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KinicDesign.bodyGray)
                         .textSelection(.enabled)
                 }
                 .font(.caption)
                 .tint(.secondary)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KinicDesign.bodyGray)
                 .padding(.top, 8)
             }
         default:
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(spacing: 14) {
+                KinicAuroraOrb(size: 56)
+                    .padding(.top, 8)
                 Text(filter == .closed ? "No closed items" : filter == .open && !model.entries.isEmpty ? "All caught up" : "Your work starts here")
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                 Text(filter == .closed ? "Items you close will appear here." : "Keep notes, tasks, and source links together in this database.")
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline)
+                    .foregroundStyle(KinicDesign.bodyGray)
+                    .multilineTextAlignment(.center)
                 if filter != .closed && model.canWrite {
-                    Button("Create an item", systemImage: "plus", action: newItem).frame(minHeight: 44)
+                    Button("Create an item", systemImage: "plus", action: newItem)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 18)
+                        .frame(minHeight: 44)
+                        .foregroundStyle(KinicDesign.hotPink)
+                        .background(KinicDesign.hotPink.opacity(0.12), in: Capsule())
+                        .buttonStyle(KinicPressableStyle())
                 }
-            }.padding(.vertical, 8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+            .padding(.horizontal, 20)
+            .kinicCard()
         }
     }
 
@@ -399,9 +527,9 @@ struct WorkItemListView: View {
     private func localCaptureRow(_ capture: WorkItemCaptureRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(capture.provisionalTitle.isEmpty ? capture.rawText : capture.provisionalTitle).font(.headline).lineLimit(2)
-            Label("Saved on this device only", systemImage: "iphone").font(.caption).foregroundStyle(.secondary)
+            Label("Saved on this device only", systemImage: "iphone").font(.caption).foregroundStyle(KinicDesign.bodyGray)
             Text(capture.databaseId.map { id in appModel.browseListDatabases.first { $0.databaseId == id }?.displayTitle ?? id } ?? "No database chosen")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(KinicDesign.bodyGray)
             HStack {
                 if capture.databaseId == nil {
                     Menu("Choose destination") {
@@ -440,7 +568,7 @@ struct WorkItemListView: View {
                             .font(.subheadline.weight(.semibold))
                         Text(mutation.itemId)
                             .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(KinicDesign.bodyGray)
                             .lineLimit(1)
                     }
                     Spacer()
@@ -497,6 +625,60 @@ struct WorkItemListView: View {
     }
 }
 
+/// Open items show a hollow ring; closed items fill with the brand gradient and a check.
+private struct WorkItemStateMark: View {
+    let isClosed: Bool
+
+    var body: some View {
+        ZStack {
+            if isClosed {
+                Circle().fill(KinicDesign.auroraGradient)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(.white)
+            } else {
+                Circle().strokeBorder(KinicDesign.hotPink.opacity(0.55), lineWidth: 2)
+            }
+        }
+        .frame(width: 20, height: 20)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A capture's pipeline state, at a glance. In-flight captures pulse softly.
+struct CaptureStatusDot: View {
+    let status: SourceCaptureHistoryStatus
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    private var color: Color {
+        switch status {
+        case .completed: KinicDesign.successGreen
+        case .failed: KinicDesign.errorRed
+        default: KinicDesign.hotPink
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            if status.isProcessing && !reduceMotion {
+                Circle()
+                    .fill(color.opacity(0.35))
+                    .scaleEffect(pulsing ? 2.2 : 1)
+                    .opacity(pulsing ? 0 : 1)
+            }
+            Circle().fill(color)
+        }
+        .frame(width: 8, height: 8)
+        .frame(width: 20, height: 20)
+        .onAppear {
+            guard status.isProcessing else { return }
+            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { pulsing = true }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 private struct WorkItemRow: View {
     let entry: WorkItemListEntry
 
@@ -512,18 +694,19 @@ private struct WorkItemRow: View {
                 VStack(alignment: .leading, spacing: 4) { metadataContents }
             }
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(KinicDesign.bodyGray)
         }
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
+        // The leading state ring shows open/closed visually; VoiceOver still hears it.
+        .accessibilityValue(entry.state.displayName)
     }
 
     private var metadata: some View {
-        HStack(spacing: 10) { metadataContents }
+        HStack(spacing: 12) { metadataContents }
     }
 
     @ViewBuilder private var metadataContents: some View {
-        Label(entry.state.displayName, systemImage: entry.state == .open ? "circle" : "checkmark.circle.fill")
         Label("\(entry.commentCount)", systemImage: "bubble.left")
         Text(WorkItemListView.date(fromMilliseconds: entry.updatedAt).formatted(.relative(presentation: .named)))
     }
@@ -543,20 +726,20 @@ private struct WorkItemSearchRow: View {
             if let snippet = result.snippet, !snippet.isEmpty {
                 Text(snippet)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KinicDesign.bodyGray)
                     .lineLimit(3)
             }
 
             if let state = result.state {
                 Label(state.displayName, systemImage: state == .open ? "circle" : "checkmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KinicDesign.bodyGray)
             }
 
             if result.matchedCommentCount > 0 {
                 Label("\(result.matchedCommentCount) matching comment(s)", systemImage: "bubble.left")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KinicDesign.bodyGray)
             }
         }
         .padding(.vertical, 2)
@@ -574,7 +757,7 @@ private struct WorkItemSearchOverlay: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                Image(systemName: "magnifyingglass").foregroundStyle(KinicDesign.bodyGray)
                 TextField("Search work items", text: $model.searchQuery)
                     .focused($isSearchFocused)
                     .submitLabel(.search)
@@ -596,12 +779,12 @@ private struct WorkItemSearchOverlay: View {
                         .padding(.horizontal, 16)
                 case .empty:
                     Text("No work items found")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KinicDesign.bodyGray)
                         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
                         .padding(.horizontal, 16)
                 case .failed(let message):
                     Text(message)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KinicDesign.bodyGray)
                         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
                         .padding(.horizontal, 16)
                 case .results:
@@ -621,7 +804,7 @@ private struct WorkItemSearchOverlay: View {
                             if model.searchSnapshot.isCapped {
                                 Text("Narrow the search to find older items.")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(KinicDesign.bodyGray)
                                     .padding(16)
                             }
                         }
@@ -630,9 +813,9 @@ private struct WorkItemSearchOverlay: View {
                 }
             }
         }
-        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color(uiColor: .separator).opacity(0.3)))
-        .shadow(color: .black.opacity(0.15), radius: 18, y: 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 30, y: 14)
         .task { model.clearSearch(); isSearchFocused = true }
         .task(id: model.searchQuery) {
             let query = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)

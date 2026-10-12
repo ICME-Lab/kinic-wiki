@@ -6,25 +6,38 @@ import SwiftUI
 
 struct AskAIPromptSuggestion: View {
     let title: String
+    var systemImage: String = "sparkles"
     @Bindable var model: AskAIModel
 
     var body: some View {
         Button {
             model.draft = title
         } label: {
-            HStack {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(KinicDesign.hotPink)
+                    .frame(width: 34, height: 34)
+                    .background(KinicDesign.hotPink.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityHidden(true)
                 Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
                 Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            .padding(16)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KinicDesign.panelBackground)
-            .clipShape(RoundedRectangle(cornerRadius: KinicDesign.radius))
+            .kinicCard(radius: 18)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KinicPressableStyle(scale: 0.98))
+        .sensoryFeedback(.selection, trigger: model.draft == title) { _, new in new }
+        .accessibilityLabel(title)
         .accessibilityHint("Copies this question into the message field")
     }
 }

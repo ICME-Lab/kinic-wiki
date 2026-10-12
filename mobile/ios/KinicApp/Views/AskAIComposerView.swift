@@ -6,48 +6,66 @@ import SwiftUI
 
 struct AskAIComposerView: View {
     @Bindable var model: AskAIModel
+    @FocusState private var isFocused: Bool
+
+    private var isNearLimit: Bool { model.remainingQuestionCharacters < 200 }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
+        VStack(spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message Kinic AI", text: $model.draft, axis: .vertical)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .focused($isFocused)
+                    .padding(.leading, 18)
+                    .padding(.vertical, 13)
 
-                if model.isGenerating {
-                    Button("Stop generating", systemImage: "stop.circle.fill", action: model.cancelGeneration)
-                        .labelStyle(.iconOnly)
-                        .font(.title2)
-                        .foregroundStyle(KinicDesign.hotPink)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .disabled(model.isSynchronizingWorker)
-                } else {
-                    Button("Send", systemImage: "arrow.up.circle.fill", action: model.send)
-                        .labelStyle(.iconOnly)
-                        .font(.title2)
-                        .foregroundStyle(model.canSend ? KinicDesign.hotPink : .secondary)
-                        .frame(minWidth: 44, minHeight: 44)
-                        .disabled(!model.canSend)
+                Group {
+                    if model.isGenerating {
+                        Button("Stop generating", systemImage: "stop.fill", action: model.cancelGeneration)
+                            .disabled(model.isSynchronizingWorker)
+                            .foregroundStyle(KinicDesign.primaryButtonForeground)
+                            .background(KinicDesign.primaryButtonBackground.opacity(0.85), in: Circle())
+                    } else {
+                        Button("Send", systemImage: "arrow.up", action: model.send)
+                            .disabled(!model.canSend)
+                            .foregroundStyle(model.canSend ? Color.white : KinicDesign.bodyGray)
+                            .background {
+                                Circle().fill(model.canSend ? AnyShapeStyle(KinicDesign.auroraGradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
+                            }
+                    }
                 }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 16, weight: .bold))
+                .frame(width: 36, height: 36)
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.trailing, 2)
+                .padding(.bottom, 1)
+                .animation(KinicDesign.spring, value: model.canSend)
+                .animation(KinicDesign.spring, value: model.isGenerating)
+                .sensoryFeedback(.impact(weight: .light), trigger: model.isGenerating) { _, new in new }
             }
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: KinicDesign.largeRadius))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(isFocused ? AnyShapeStyle(KinicDesign.auroraGradient) : AnyShapeStyle(Color.primary.opacity(0.08)), lineWidth: isFocused ? 1.2 : 0.5)
+            }
+            .shadow(color: Color(red: 0.078, green: 0.078, blue: 0.169).opacity(0.04), radius: 10, y: 4)
+            .animation(.easeOut(duration: 0.2), value: isFocused)
 
-            Text(
-                "\(model.draft.count) / \(AskAIModel.maximumQuestionCharacters) characters"
-            )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Text("\(model.draft.count) / \(AskAIModel.maximumQuestionCharacters) characters")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(isNearLimit ? KinicDesign.hotPink : .secondary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .accessibilityLabel(
-                    "\(model.remainingQuestionCharacters) characters remaining"
-                )
+                .padding(.trailing, 10)
+                .accessibilityLabel("\(model.remainingQuestionCharacters) characters remaining")
         }
         .padding(.horizontal, KinicDesign.screenPadding)
         .padding(.top, 8)
         .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
+        .background {
+            LinearGradient(colors: [Color(uiColor: .systemBackground).opacity(0), Color(uiColor: .systemBackground).opacity(0.9)], startPoint: .top, endPoint: .center)
+                .ignoresSafeArea()
+        }
     }
 }
