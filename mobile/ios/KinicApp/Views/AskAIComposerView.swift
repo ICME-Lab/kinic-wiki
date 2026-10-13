@@ -22,23 +22,32 @@ struct AskAIComposerView: View {
 
                 Group {
                     if model.isGenerating {
-                        Button("Stop generating", systemImage: "stop.fill", action: model.cancelGeneration)
-                            .disabled(model.isSynchronizingWorker)
-                            .foregroundStyle(KinicDesign.primaryButtonForeground)
-                            .background(KinicDesign.primaryButtonBackground.opacity(0.85), in: Circle())
+                        Button(action: model.cancelGeneration) {
+                            Label("Stop generating", systemImage: "stop.fill")
+                                .foregroundStyle(KinicDesign.primaryButtonForeground)
+                                .frame(width: 36, height: 36)
+                                .background(KinicDesign.primaryButtonBackground.opacity(0.85), in: Circle())
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(model.isSynchronizingWorker)
                     } else {
-                        Button("Send", systemImage: "arrow.up", action: model.send)
-                            .disabled(!model.canSend)
-                            .foregroundStyle(model.canSend ? Color.white : KinicDesign.bodyGray)
-                            .background {
-                                Circle().fill(model.canSend ? AnyShapeStyle(KinicDesign.auroraGradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
-                            }
+                        Button(action: model.send) {
+                            Label("Send", systemImage: "arrow.up")
+                                .foregroundStyle(model.canSend ? Color.white : KinicDesign.bodyGray)
+                                .frame(width: 36, height: 36)
+                                .background {
+                                    Circle().fill(model.canSend ? AnyShapeStyle(KinicDesign.auroraGradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
+                                }
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .disabled(!model.canSend)
                     }
                 }
                 .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
                 .font(.system(size: 16, weight: .bold))
-                .frame(width: 36, height: 36)
-                .frame(minWidth: 44, minHeight: 44)
                 .padding(.trailing, 2)
                 .padding(.bottom, 1)
                 .animation(KinicDesign.spring, value: model.canSend)
