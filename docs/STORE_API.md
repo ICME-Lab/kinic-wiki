@@ -139,6 +139,14 @@ The browser Query panel `sql:` action and CLI `query-sql` command both call this
 The method only runs against the specified wiki DB. Reader, public reader, and marketplace-entitled callers can only issue the restricted JSON `SELECT` below against `fs_nodes` or `fs_links`.
 It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables.
 
+SQLite's authorizer checks the resolved reads throughout statement preparation and execution.
+Only `main.fs_nodes` and `main.fs_links` are permitted; internal tables, attached databases,
+writes, administration, and unknown operations are denied. The native and Wasm adapters use
+one policy and unregister it on all exits. Since SQLite omits the database name for an
+unqualified read with no referenced columns, installation first verifies a main-only
+connection; attached or temporary schemas fail closed. Lexical checks retain the existing
+SELECT grammar and budgets, but are not the table authorization boundary.
+
 SQL constraints:
 
 - The SQL must be one restricted `SELECT` statement, at most 4096 bytes.
@@ -149,7 +157,7 @@ SQL constraints:
 - `;`, comments, joins, compound selects, subqueries, grouping/window clauses, mutating/admin tokens, and large generated/aggregate values are rejected.
 - The query must return exactly one selected column, and each value must be non-null valid JSON object TEXT.
 - The request `limit` is also clamped to the canister query limit.
-- Each JSON row is capped at 64 KiB, and the total JSON rows response is capped at 256 KiB.
+- Each JSON row is capped at 256 KiB, and the total JSON rows response is capped at 1 MiB.
 
 Example:
 

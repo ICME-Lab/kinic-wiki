@@ -631,3 +631,250 @@ pub fn params_from_i64s(values: &[i64]) -> impl Params + '_ {
 pub fn params_from_i64s(values: &[i64]) -> Vec<&dyn ToSql> {
     values.iter().map(|value| value as &dyn ToSql).collect()
 }
+
+// SQLite reports database=None for an unqualified table read that references
+// no columns. Permit that form only on a verified main-only connection: temp
+// shadows and attached databases would make resolution ambiguous.
+fn require_main_database(conn: &Connection) -> Result<()> {
+    let mut statement = conn.prepare("PRAGMA database_list")?;
+    let names = query_map(&mut statement, params![], |row| row_get::<String>(row, 1))?;
+    if names.iter().any(|name| name != "main") {
+        return Err(invalid_query());
+    }
+    Ok(())
+}
+
+// Authorization follows SQLite's resolved operations, not SQL text tokens.
+#[derive(Clone, Copy)]
+struct ReadPolicy {
+    tables: &'static [&'static str],
+}
+impl ReadPolicy {
+    fn permits(
+        &self,
+        action: i32,
+        arg1: Option<&str>,
+        arg2: Option<&str>,
+        database: Option<&str>,
+    ) -> bool {
+        match action {
+            21 => true, // SQLITE_SELECT
+            20 => {
+                (database == Some("main") || (database.is_none() && arg2 == Some("")))
+                    && arg1.is_some_and(|table| {
+                        self.tables
+                            .iter()
+                            .any(|allowed| table.eq_ignore_ascii_case(allowed))
+                    })
+            }
+            31 => arg2.is_some_and(|function| !function.eq_ignore_ascii_case("load_extension")),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct ReadAuthorizerGuard<'connection> {
+    conn: &'connection Connection,
+}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn install_read_authorizer<'connection>(
+    conn: &'connection Connection,
+    tables: &'static [&'static str],
+) -> Result<ReadAuthorizerGuard<'connection>> {
+    require_main_database(conn)?;
+    use rusqlite::hooks::{AuthAction, Authorization};
+    let policy = ReadPolicy { tables };
+    conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| {
+        let (action, arg1, arg2) = match ctx.action {
+            AuthAction::Select => (21, None, None),
+            AuthAction::Read {
+                table_name,
+                column_name,
+            } => (20, Some(table_name), Some(column_name)),
+            AuthAction::Function { function_name } => (31, None, Some(function_name)),
+            _ => (0, None, None),
+        };
+        if policy.permits(action, arg1, arg2, ctx.database_name) {
+            Authorization::Allow
+        } else {
+            Authorization::Deny
+        }
+    }));
+    Ok(ReadAuthorizerGuard { conn })
+}
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ReadAuthorizerGuard<'_> {
+    fn drop(&mut self) {
+        self.conn.authorizer(
+            None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>,
+        );
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    fn sqlite3_set_authorizer(
+        db: *mut Sqlite3,
+        callback: Option<
+            unsafe extern "C" fn(
+                *mut c_void,
+                c_int,
+                *const std::ffi::c_char,
+                *const std::ffi::c_char,
+                *const std::ffi::c_char,
+                *const std::ffi::c_char,
+            ) -> c_int,
+        >,
+        state: *mut c_void,
+    ) -> c_int;
+}
+#[cfg(target_arch = "wasm32")]
+pub struct ReadAuthorizerGuard<'connection> {
+    raw: *mut Sqlite3,
+    _conn: &'connection Connection,
+    _policy: Box<ReadPolicy>,
+}
+#[cfg(target_arch = "wasm32")]
+pub fn install_read_authorizer<'connection>(
+    conn: &'connection Connection,
+    tables: &'static [&'static str],
+) -> Result<ReadAuthorizerGuard<'connection>> {
+    require_main_database(conn)?;
+    unsafe extern "C" fn authorize(
+        state: *mut c_void,
+        action: c_int,
+        arg1: *const std::ffi::c_char,
+        arg2: *const std::ffi::c_char,
+        database: *const std::ffi::c_char,
+        _accessor: *const std::ffi::c_char,
+    ) -> c_int {
+        // SAFETY: SQLite supplies NUL-terminated arguments valid during this call;
+        // the guard owns the boxed policy until after callback removal.
+        unsafe fn text<'a>(value: *const std::ffi::c_char) -> Option<&'a str> {
+            if value.is_null() {
+                None
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(value) }.to_str().ok()
+            }
+        }
+        let policy = unsafe { &*state.cast::<ReadPolicy>() };
+        let permitted = policy.permits(
+            action,
+            unsafe { text(arg1) },
+            unsafe { text(arg2) },
+            unsafe { text(database) },
+        );
+        if permitted { 0 } else { 1 } // SQLITE_OK / SQLITE_DENY
+    }
+    let raw = conn.raw().cast::<Sqlite3>();
+    let mut policy = Box::new(ReadPolicy { tables });
+    // SAFETY: conn owns raw and the guard retains policy for the callback lifetime.
+    let code = unsafe {
+        sqlite3_set_authorizer(
+            raw,
+            Some(authorize),
+            policy.as_mut() as *mut ReadPolicy as *mut c_void,
+        )
+    };
+    if code != 0 {
+        return Err(Error::Sqlite(
+            code,
+            "could not install SQL read authorizer".into(),
+        ));
+    }
+    Ok(ReadAuthorizerGuard {
+        raw,
+        _conn: conn,
+        _policy: policy,
+    })
+}
+#[cfg(target_arch = "wasm32")]
+impl Drop for ReadAuthorizerGuard<'_> {
+    fn drop(&mut self) {
+        // SAFETY: unregister before releasing the policy; conn remains borrowed.
+        unsafe {
+            sqlite3_set_authorizer(self.raw, None, std::ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod read_authorizer_tests {
+    use super::*;
+    #[test]
+    fn resolved_tables_and_operations_are_checked_and_guard_is_cleared() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE fs_nodes(id INTEGER); INSERT INTO fs_nodes VALUES(1); CREATE TABLE secret(id INTEGER); INSERT INTO secret VALUES(7);").unwrap();
+        for sql in ["SELECT id FROM secret", "SELECT id FROM fs_nodes"] {
+            conn.prepare_cached(sql)
+                .unwrap()
+                .query_row([], |row| row.get::<_, i64>(0))
+                .unwrap();
+        }
+        {
+            let _guard = install_read_authorizer(&conn, &["fs_nodes", "fs_links"]).unwrap();
+            for sql in [
+                "SELECT id FROM secret",
+                "SELECT id FROM 'secret' fs_nodes",
+                "SELECT id IN secret FROM fs_nodes",
+                "SELECT json_object('x', 1) FROM secret",
+                "DELETE FROM fs_nodes",
+                "PRAGMA database_list",
+            ] {
+                assert!(conn.prepare(sql).is_err(), "allowed {sql}");
+            }
+            assert!(
+                conn.prepare_cached("SELECT id FROM secret")
+                    .and_then(|mut statement| statement.query_row([], |row| row.get::<_, i64>(0)))
+                    .is_err()
+            );
+            assert_eq!(
+                conn.prepare_cached("SELECT id FROM fs_nodes")
+                    .unwrap()
+                    .query_row([], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+            let constant: String = conn
+                .query_row("SELECT json_object('x', 1) FROM fs_nodes", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(constant, "{\"x\":1}");
+            let value: String = conn
+                .prepare("SELECT json_object('id', id) FROM fs_nodes")
+                .unwrap()
+                .query_row([], |row| row.get(0))
+                .unwrap();
+            assert_eq!(value, "{\"id\":1}");
+        }
+        assert_eq!(
+            conn.query_row("SELECT id FROM secret", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        conn.execute("INSERT INTO fs_nodes VALUES(2)", []).unwrap();
+    }
+    #[test]
+    fn ambiguous_connections_fail_closed() {
+        for setup in [
+            "ATTACH ':memory:' AS other",
+            "CREATE TEMP TABLE fs_nodes(id INTEGER)",
+        ] {
+            let conn = Connection::open_in_memory().unwrap();
+            conn.execute_batch(setup).unwrap();
+            assert!(install_read_authorizer(&conn, &["fs_nodes"]).is_err());
+        }
+    }
+    #[test]
+    fn policy_fails_closed_for_unknown_actions_and_missing_arguments() {
+        let policy = ReadPolicy {
+            tables: &["fs_nodes"],
+        };
+        assert!(!policy.permits(999, None, None, None));
+        assert!(!policy.permits(20, Some("fs_nodes"), None, None));
+        assert!(!policy.permits(31, None, None, None));
+        assert!(!policy.permits(31, None, Some("load_extension"), None));
+    }
+}

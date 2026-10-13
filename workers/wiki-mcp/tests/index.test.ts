@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   memoryManifest: vi.fn(),
   mutateNodesBatch: vi.fn(),
   queryContext: vi.fn(),
-  queryDatabaseSqlJson: vi.fn(),
+  createNodeReader: vi.fn(),
   readNode: vi.fn(),
   resolveCanisterId: vi.fn(),
   searchNodes: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("../src/vfs.js", () => ({
   memoryManifest: mocks.memoryManifest,
   mutateNodesBatch: mocks.mutateNodesBatch,
   queryContext: mocks.queryContext,
-  queryDatabaseSqlJson: mocks.queryDatabaseSqlJson,
+  createNodeReader: mocks.createNodeReader,
   readNode: mocks.readNode,
   resolveCanisterId: mocks.resolveCanisterId,
   searchNodes: mocks.searchNodes,
@@ -127,6 +127,7 @@ describe("wiki mcp worker", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.resolveCanisterId.mockReturnValue("canister-a");
+    mocks.createNodeReader.mockImplementation(async (runtimeEnv: RuntimeEnv) => (databaseId: string, path: string) => mocks.readNode(runtimeEnv, databaseId, path));
     mocks.writeNodes.mockResolvedValue([
       {
         node: { path: "/Memory/facts.md", kind: "file", updatedAt: "2", etag: "etag-2" },
@@ -194,14 +195,11 @@ describe("wiki mcp worker", () => {
         hasChildren: true
       }
     ]);
-    mocks.readNode.mockResolvedValue({
-      path: "/Knowledge/index.md",
-      kind: "file",
-      content: "Agent memory body",
-      createdAt: "1",
-      updatedAt: "2",
-      etag: "etag-1",
-      metadataJson: "{}"
+    mocks.readNode.mockImplementation(async (_env: RuntimeEnv, _databaseId: string, path: string) => {
+      if (path === "/Knowledge/missing.md") return null;
+      const letter = path === "/Knowledge/a.md" ? "A" : path === "/Knowledge/b.md" ? "B" : null;
+      return { path, kind: "file", content: letter ? `Body ${letter}` : "Agent memory body",
+        createdAt: "1", updatedAt: "2", etag: letter ? `etag-${letter.toLowerCase()}` : "etag-1", metadataJson: "{}" };
     });
     mocks.memoryManifest.mockResolvedValue({
       apiVersion: "kinic-stores-v1",
@@ -264,30 +262,7 @@ describe("wiki mcp worker", () => {
         }
       ]
     }));
-    mocks.queryDatabaseSqlJson.mockResolvedValue({
-      rows: [
-        JSON.stringify({
-          path: "/Knowledge/b.md",
-          kind: "file",
-          content_hex: Buffer.from("Body B").toString("hex"),
-          created_at: 11,
-          updated_at: 12,
-          etag: "etag-b",
-          metadata_json: "{}"
-        }),
-        JSON.stringify({
-          path: "/Knowledge/a.md",
-          kind: "file",
-          content_hex: Buffer.from("Body A").toString("hex"),
-          created_at: 9,
-          updated_at: 10,
-          etag: "etag-a",
-          metadata_json: "{}"
-        })
-      ],
-      rowCount: 2,
-      limit: 3
-    });
+
   });
 
   it("serves health", async () => {
@@ -1071,7 +1046,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.readNode).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
   });
 
-  it("reads known paths with one restricted SQL query", async () => {
+  it("reads known paths through a shared reader", async () => {
     await expect(
       readPaths(env, { database_id: "db_alpha", paths: ["/Knowledge/a.md", "/Knowledge/b.md", "/Knowledge/missing.md"] })
     ).resolves.toMatchObject({
@@ -1109,95 +1084,38 @@ describe("wiki mcp worker", () => {
         parse_error_count: 0
       }
     });
-    expect(mocks.queryDatabaseSqlJson).toHaveBeenCalledTimes(1);
-    const sql = mocks.queryDatabaseSqlJson.mock.calls[0][2];
-    expect(sql).toContain("'content_hex', hex(substr(CAST(content AS BLOB), 1, 40000))");
-    expect(sql).toContain("'content_truncated', length(CAST(content AS BLOB)) > 40000");
-    expect(sql).toContain("FROM fs_nodes WHERE path IN ('/Knowledge/a.md','/Knowledge/b.md','/Knowledge/missing.md') LIMIT 3");
+    expect(mocks.createNodeReader).toHaveBeenCalledTimes(1);
+    expect(mocks.readNode).toHaveBeenCalledTimes(3);
   });
 
   it.each([
-    "/Knowledge/routing--420aa69ea5d3.md",
-    "/Knowledge/update;join-select.md",
-    "/Knowledge/owner's-notes.md",
-    "/Knowledge/comment/*marker.md",
-    "/Knowledge/日本語.md"
-  ])("preserves literal paths and duplicate references in SQL batches: %s", async (path) => {
-    mocks.queryDatabaseSqlJson.mockResolvedValue({
-      rows: [JSON.stringify({
-        path, kind: "file", content_hex: Buffer.from("Literal path body").toString("hex"), etag: "etag-literal",
-        created_at: 1, updated_at: 2, metadata_json: "{}", content_truncated: false
-      })],
-      rowCount: 1,
-      limit: 2
-    });
+    "/Knowledge/routing--420aa69ea5d3.md", "/Knowledge/update;join-select.md",
+    "/Knowledge/owner's-notes.md", "/Knowledge/comment/*marker.md", "/Knowledge/日本語.md"
+  ])("preserves unusual paths and duplicate references: %s", async (path) => {
+    mocks.readNode.mockImplementation(async (_env: RuntimeEnv, _db: string, requested: string) => requested === path ? {
+      path, kind: "file", content: "Literal path body", etag: "etag-literal", createdAt: "1", updatedAt: "2", metadataJson: "{}"
+    } : null);
     const missing = "/Knowledge/missing.md";
-    const result = await readPaths(env, { database_id: "db_alpha", paths: [path, missing, path] });
-    if (!("results" in result)) throw new Error("Expected successful batch response");
-    expect(result.results).toMatchObject([
-      { text: "Literal path body", metadata: { path, etag: "etag-literal" } },
-      { path: missing, is_error: true, error: "node not found" },
-      { text: "Literal path body", metadata: { path, etag: "etag-literal" } }
+    const batch = await readPaths(env, { database_id: "db_alpha", paths: [path, missing, path] });
+    if (!("results" in batch)) throw new Error("Expected paths");
+    expect(batch.results).toMatchObject([
+      { text: "Literal path body", metadata: { path } }, { path: missing, is_error: true }, { text: "Literal path body", metadata: { path } }
     ]);
-    expect(result.metadata).toMatchObject({ requested_paths: 3, unique_paths: 2, batch_error: null });
-    const expectedSql = `WHERE path IN ('${path.replaceAll("'", "''")}','${missing}') LIMIT 2`;
-    expect(mocks.queryDatabaseSqlJson.mock.calls[0][2]).toContain(expectedSql);
-
-    const ids = [path, missing, path].map((nodePath) => encodeSearchResultId({
-      version: 1, canister_id: "canister-a", database_id: "db_alpha", path: nodePath
-    }));
+    expect(batch.metadata).toMatchObject({ requested_paths: 3, unique_paths: 2, row_count: 1, batch_error: null });
+    expect(mocks.readNode).toHaveBeenCalledTimes(2);
+    const ids = [path, missing, path].map((nodePath) => encodeSearchResultId({ version: 1, canister_id: "canister-a", database_id: "db_alpha", path: nodePath }));
     const fetched = await fetchManySearchResults(env, { ids });
-    expect(fetched.results).toMatchObject([
-      { id: ids[0], text: "Literal path body", metadata: { path } },
-      { id: ids[1], is_error: true, error: "node not found" },
-      { id: ids[2], text: "Literal path body", metadata: { path } }
-    ]);
-    expect(mocks.queryDatabaseSqlJson).toHaveBeenCalledTimes(2);
-    expect(mocks.queryDatabaseSqlJson.mock.calls[1][2]).toContain(expectedSql);
-    expect(mocks.readNode).not.toHaveBeenCalled();
+    expect(fetched.results).toMatchObject([{ id: ids[0], text: "Literal path body" }, { id: ids[1], is_error: true }, { id: ids[2], text: "Literal path body" }]);
+    expect(mocks.readNode).toHaveBeenCalledTimes(4);
   });
 
-  it("decodes batch text after NUL without marking complete text as truncated", async () => {
-    const path = "/Knowledge/nul.md";
-    const content = "prefix\0suffix";
-    mocks.queryDatabaseSqlJson.mockResolvedValue({
-      rows: [JSON.stringify({
-        path, kind: "file", content_hex: Buffer.from(content).toString("hex"),
-        content_truncated: false, etag: "etag-nul", created_at: 1, updated_at: 2, metadata_json: "{}"
-      })], rowCount: 1, limit: 2
-    });
-    const result = await readPaths(env, { database_id: "db_alpha", paths: [path, "/Knowledge/missing.md"] });
-    if (!("results" in result)) throw new Error("Expected successful batch response");
-    expect(result.results[0]).toMatchObject({ text: content, metadata: { truncated: false } });
-    expect(result.results[1]).toMatchObject({ is_error: true, error: "node not found" });
-  });
-
-  it("drops an incomplete UTF-8 tail and marks the batch text truncated", async () => {
-    const path = "/Knowledge/emoji.md";
-    const bytes = Buffer.from(`x${"😀".repeat(10_000)}`).subarray(0, 40_000);
-    mocks.queryDatabaseSqlJson.mockResolvedValue({
-      rows: [JSON.stringify({
-        path, kind: "file", content_hex: bytes.toString("hex"),
-        content_truncated: true, etag: "etag-emoji", created_at: 1, updated_at: 2, metadata_json: "{}"
-      })], rowCount: 1, limit: 2
-    });
-    const result = await readPaths(env, { database_id: "db_alpha", paths: [path, "/Knowledge/missing.md"] });
-    if (!("results" in result)) throw new Error("Expected successful batch response");
-    expect(result.results[0]).toMatchObject({ text: `x${"😀".repeat(9_999)}`, metadata: { truncated: true } });
-  });
-
-  it("treats malformed hex content as a row parsing error", async () => {
-    const path = "/Knowledge/malformed.md";
-    mocks.queryDatabaseSqlJson.mockResolvedValue({
-      rows: [JSON.stringify({
-        path, kind: "file", content_hex: "GG", content_truncated: false,
-        etag: "etag", created_at: 1, updated_at: 2, metadata_json: "{}"
-      })], rowCount: 1, limit: 2
-    });
-    const result = await readPaths(env, { database_id: "db_alpha", paths: [path, "/Knowledge/missing.md"] });
-    if (!("results" in result)) throw new Error("Expected successful batch response");
-    expect(result.metadata.parse_error_count).toBe(1);
-    expect(result.results[0]).toMatchObject({ is_error: true });
+  it.each(["prefix\0suffix", "\uFEFFdocument text", "日本語😀", "x" + "😀".repeat(100)])("keeps complete text identical for single and batch reads: %s", async (content) => {
+    const path = "/Knowledge/content.md";
+    mocks.readNode.mockResolvedValue({ path, kind: "file", content, etag: "etag", createdAt: "1", updatedAt: "2", metadataJson: "{}" });
+    const single = await readPath(env, { database_id: "db_alpha", path });
+    const batch = await readPaths(env, { database_id: "db_alpha", paths: [path, path] });
+    expect(single).toMatchObject({ text: content, metadata: { truncated: false } });
+    expect(batch).toMatchObject({ results: [{ text: content, metadata: { truncated: false } }, { text: content }] });
   });
 
   it("clips single reads at a full Unicode character", async () => {
@@ -1322,7 +1240,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.readNode).toHaveBeenCalledWith(env, "db_alpha", "/Knowledge/index.md");
   });
 
-  it("fetches multiple valid result ids with one restricted SQL query", async () => {
+  it("fetches multiple valid result ids through the shared reader", async () => {
     const firstId = encodeSearchResultId({
       version: 1,
       canister_id: "canister-a",
@@ -1352,73 +1270,41 @@ describe("wiki mcp worker", () => {
         }
       ]
     });
-    expect(mocks.queryDatabaseSqlJson).toHaveBeenCalledTimes(1);
-    expect(mocks.readNode).not.toHaveBeenCalled();
+    expect(mocks.createNodeReader).toHaveBeenCalledTimes(1);
+    expect(mocks.readNode).toHaveBeenCalledTimes(2);
   });
 
-  it("scales SQL batch content limits by requested path count", async () => {
-    const paths = Array.from({ length: 10 }, (_, index) => `/Knowledge/${index}.md`);
-
-    await readPaths(env, { database_id: "db_alpha", paths });
-
-    const sql = mocks.queryDatabaseSqlJson.mock.calls[0][2];
-    expect(sql).toContain("'content_hex', hex(substr(CAST(content AS BLOB), 1, 22000))");
-    expect(sql).toContain("'content_truncated', length(CAST(content AS BLOB)) > 22000");
+  it("reads ten long paths without a SQL request budget", async () => {
+    const paths = Array.from({ length: 10 }, (_, index) => `/Knowledge/${"x".repeat(390)}-${index}.md`);
+    const result = await readPaths(env, { database_id: "db_alpha", paths });
+    expect(result).toMatchObject({ metadata: { row_count: 10, batch_error: null } });
+    expect(mocks.readNode).toHaveBeenCalledTimes(10);
   });
 
-  it("returns item-level read_paths errors when the SQL batch fails", async () => {
-    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 1048576 bytes"));
-
-    await expect(readPaths(env, { database_id: "db_alpha", paths: ["/Knowledge/a.md", "/Knowledge/b.md"] })).resolves.toMatchObject({
-      results: [
-        {
-          path: "/Knowledge/a.md",
-          error: "batch read failed: response JSON exceeds 1048576 bytes",
-          is_error: true
-        },
-        {
-          path: "/Knowledge/b.md",
-          error: "batch read failed: response JSON exceeds 1048576 bytes",
-          is_error: true
-        }
-      ],
-      metadata: {
-        batch_error: "batch read failed: response JSON exceeds 1048576 bytes"
-      }
+  it("limits concurrency to four across all databases and retains input order", async () => {
+    let active = 0;
+    let peak = 0;
+    mocks.readNode.mockImplementation(async (_env: RuntimeEnv, db: string, path: string) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return { path, kind: "file", content: db, etag: "etag", createdAt: "1", updatedAt: "2", metadataJson: "{}" };
     });
-    expect(mocks.readNode).not.toHaveBeenCalled();
+    const ids = Array.from({ length: 10 }, (_, index) => encodeSearchResultId({ version: 1, canister_id: "canister-a", database_id: `db_${index}`, path: "/same.md" }));
+    const result = await fetchManySearchResults(env, { ids });
+    expect(peak).toBe(4);
+    expect(mocks.readNode).toHaveBeenCalledTimes(10);
+    expect(result.results.map((item) => item?.text)).toEqual(ids.map((_, index) => `db_${index}`));
   });
 
-  it("returns item-level fetch_many errors when the SQL batch fails", async () => {
-    mocks.queryDatabaseSqlJson.mockRejectedValueOnce(new Error("response JSON exceeds 1048576 bytes"));
-    const firstId = encodeSearchResultId({
-      version: 1,
-      canister_id: "canister-a",
-      database_id: "db_alpha",
-      path: "/Knowledge/a.md"
-    });
-    const secondId = encodeSearchResultId({
-      version: 1,
-      canister_id: "canister-a",
-      database_id: "db_alpha",
-      path: "/Knowledge/b.md"
-    });
-
-    await expect(fetchManySearchResults(env, { ids: [firstId, secondId] })).resolves.toEqual({
-      results: [
-        {
-          id: firstId,
-          error: "batch read failed: response JSON exceeds 1048576 bytes",
-          is_error: true
-        },
-        {
-          id: secondId,
-          error: "batch read failed: response JSON exceeds 1048576 bytes",
-          is_error: true
-        }
-      ]
-    });
-    expect(mocks.readNode).not.toHaveBeenCalled();
+  it("isolates failed reads within a database", async () => {
+    mocks.readNode.mockRejectedValueOnce(new Error("network connection failed"));
+    const batch = await readPaths(env, { database_id: "db_alpha", paths: ["/Knowledge/a.md", "/Knowledge/b.md"] });
+    expect(batch).toMatchObject({ results: [{ path: "/Knowledge/a.md", error: "read failed: network connection failed", is_error: true }, { text: "Body B" }], metadata: { row_count: 1, parse_error_count: 0, batch_error: null } });
+    mocks.readNode.mockRejectedValueOnce(new Error("database forbidden"));
+    const ids = ["a", "b"].map((name) => encodeSearchResultId({ version: 1, canister_id: "canister-a", database_id: "db_alpha", path: `/Knowledge/${name}.md` }));
+    expect(await fetchManySearchResults(env, { ids })).toMatchObject({ results: [{ id: ids[0], error: "fetch failed: database forbidden", is_error: true }, { id: ids[1], text: "Body B" }] });
   });
 
   it.each([

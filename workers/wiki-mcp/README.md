@@ -4,6 +4,20 @@ Remote MCP Workers for Kinic Wiki recall. The public production Worker remains a
 
 Canonical documentation: `../../docs/mcp.md`.
 
+`read_paths` and `fetch_many` share `read_node` retrieval: at most ten inputs and
+four concurrent queries across the entire request, including multiple databases.
+Duplicate database/path pairs are read once and restored in input order. An authenticated
+actor is reused only within that request. Missing nodes, denied reads, and transport failures
+are item errors; no automatic retries are added. Each page has its own etag and concurrent
+reads do not promise a common snapshot. The MCP Worker no longer uses the SQL API.
+
+Content budgets are 40,000 UTF-16 units per page and 100,000 across pages, with safe
+Unicode boundaries. Both MCP representations use the same shortened body and report
+truncation. The complete tool result is limited to 256,000 serialized UTF-8 bytes.
+Metadata is preserved; an oversized item becomes an error, with earlier metadata
+admitted first. Single reads and context return a size error if metadata alone cannot fit.
+A final size check also bounds other tools and errors.
+
 ## Endpoints
 
 - Public search: `https://wiki-mcp.kinic.xyz/mcp`

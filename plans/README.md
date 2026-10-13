@@ -11,7 +11,7 @@ when done.
 |---|---|---|---|---|---|
 | [001](./001-parallelize-wiki-generation.md) | Parallelize production wiki generation on the standard Queue Worker | P1 | L | — | BLOCKED (external review requires explicit code-export approval) |
 | [002](./002-ios-shared-work-items.md) | iOS: DB-scoped shared WorkItems (VFS documents + App Group SQLite) | P1 | XL | — | IN PROGRESS (Phase 1–3 implemented; Phase 3 unit-verified, device verification pending) |
-| [003](./003-wiki-batch-read-sql-validation.md) | Fix quoted-path SQL validation for Wiki batch reads | P1 | M | — | IN PROGRESS (local fixes verified; staging and production release pending) |
+| [003](./003-wiki-batch-read-sql-validation.md) | Simplify Wiki retrieval and enforce SQL / MCP response boundaries | P1 | M | — | DONE (local implementation and verification; deployment excluded) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED
 (with one-line rationale — finding fixed independently or approach abandoned)

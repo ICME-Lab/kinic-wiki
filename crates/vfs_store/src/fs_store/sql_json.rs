@@ -13,6 +13,8 @@ impl FsStore {
                 SQL_JSON_PROGRESS_OP_INTERVAL,
                 SQL_JSON_PROGRESS_CALLBACK_BUDGET,
             );
+            let _authorizer = crate::sqlite::install_read_authorizer(conn, &["fs_nodes", "fs_links"])
+                .map_err(map_sql_json_execution_error)?;
             let mut json_object_stmt = conn
                 .prepare(
                     "SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END",
