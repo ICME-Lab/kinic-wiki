@@ -131,24 +131,14 @@ struct WorkItemListView: View {
         }
     }
 
-    private var greeting: String {
-        switch Calendar.current.component(.hour, from: .now) {
-        case 5..<12: "Good morning"
-        case 12..<18: "Good afternoon"
-        default: "Good evening"
-        }
-    }
-
     private var openCount: Int { model.entries.filter { $0.state == .open }.count }
 
     private var heroHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()).uppercased())
+            Text(Date.now.formatted(.dateTime.month(.wide).day()).uppercased())
                 .font(.caption.weight(.semibold))
                 .tracking(1.2)
                 .foregroundStyle(KinicDesign.bodyGray)
-            Text(greeting)
-                .font(.system(.largeTitle, weight: .bold))
             if model.phase == .ready {
                 Text(openCount == 0 ? "Nothing open. A clear mind." : openCount == 1 ? "1 open item waiting for you." : "\(openCount) open items waiting for you.")
                     .font(.subheadline)
