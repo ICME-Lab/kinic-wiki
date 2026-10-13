@@ -236,7 +236,7 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
     connectState: string,
     cookie: string,
     now: number
-  ): Promise<{ sessionId: string; registrationPublicKey: string; redirectUri: string } | null> {
+  ): Promise<{ sessionId: string; registrationPublicKey: string; redirectUri: string; scope: string } | null> {
     const connectStateHash = await sha256(connectState);
     const cookieHash = await sha256(cookie);
     const record = await this.ctx.storage.get<AuthStateRecordV5>(RECORD_KEY);
@@ -252,7 +252,8 @@ export class McpAuthStateV5 extends DurableObject<RuntimeEnv> {
     return {
       sessionId: record.sessionId,
       registrationPublicKey: record.registrationPublicKey,
-      redirectUri: record.redirectUri
+      redirectUri: record.redirectUri,
+      scope: record.scope
     };
   }
 

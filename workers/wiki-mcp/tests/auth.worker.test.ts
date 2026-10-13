@@ -15,6 +15,12 @@ import {
   type McpAuthStateV5,
   type OAuthClientRecordV2
 } from "../src/auth/state.js";
+import {
+  PAGE_STYLE,
+  PAGE_STYLE_HASH,
+  localeFromAcceptLanguage,
+  localeFromUiLocales
+} from "../src/auth/pages.js";
 
 const origin = "https://wiki-mcp-staging.kinic.xyz";
 const resource = `${origin}/mcp`;
@@ -25,6 +31,26 @@ const encryptedValue = {
   iv: "AAAAAAAAAAAAAAAA",
   ciphertext: "AA"
 };
+
+describe("authorization pages", () => {
+  it("matches the CSP style hash", async () => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(PAGE_STYLE));
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+    expect(PAGE_STYLE_HASH).toBe(`sha256-${base64}`);
+  });
+
+  it("resolves supported locales from ui_locales and Accept-Language", () => {
+    expect(localeFromUiLocales("ja-JP")).toBe("ja");
+    expect(localeFromUiLocales("fr-FR en-US ja")).toBe("en");
+    expect(localeFromUiLocales("fr")).toBeNull();
+    expect(localeFromUiLocales(null)).toBeNull();
+    expect(localeFromAcceptLanguage("ja,en-US;q=0.9")).toBe("ja");
+    expect(localeFromAcceptLanguage("fr;q=1, en;q=0.5, ja;q=0.8")).toBe("ja");
+    expect(localeFromAcceptLanguage("ja;q=0, en")).toBe("en");
+    expect(localeFromAcceptLanguage("de")).toBeNull();
+    expect(localeFromAcceptLanguage(null)).toBeNull();
+  });
+});
 
 describe("staging OAuth discovery and registration", () => {
   it("publishes RFC 9728 and RFC 8414 metadata", async () => {
@@ -96,6 +122,9 @@ describe("staging OAuth discovery and registration", () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toContain(`style-src '${PAGE_STYLE_HASH}'`);
+    expect(html).toContain(`<style>${PAGE_STYLE}</style>`);
+    expect(html).toContain("Completing secure connection");
     expect(html).toContain("temporarily_unavailable");
     expect(html).toContain("registration_rejected");
     expect(html).not.toContain("raw principal");
@@ -247,6 +276,13 @@ describe("staging OAuth discovery and registration", () => {
     const authorizationHtml = await started.text();
     expect(authorizationHtml).toContain("Continue with Internet Identity");
     expect(authorizationHtml).toContain("OpenAI reviewer sign in");
+    expect(authorizationHtml).toContain(`<style>${PAGE_STYLE}</style>`);
+    expect(authorizationHtml).toContain('<html lang="en">');
+    expect(authorizationHtml).toContain("Read your wiki content.");
+    expect(authorizationHtml).not.toContain("<details open");
+    expect(started.headers.getSetCookie()).toContain(
+      "__Host-kinic-mcp-locale=en; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
+    );
     expect(started.headers.get("set-cookie")).toContain("HttpOnly");
     expect(started.headers.get("set-cookie")).toContain("SameSite=Lax");
     const iiStarted = await fetchWorker(`${origin}/oauth/connect/internet-identity`, {
@@ -298,7 +334,7 @@ describe("staging OAuth discovery and registration", () => {
     authorizeUrl.searchParams.set("redirect_uri", redirectUri);
     const started = await fetchWorker(authorizeUrl.toString(), { redirect: "manual" });
     const platformRelay = redirectUri.startsWith("https://chat") ? " https://platform.openai.com" : "";
-    const expectedPolicy = `default-src 'none'; form-action 'self' https://id.ai ${new URL(redirectUri).origin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`;
+    const expectedPolicy = `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; form-action 'self' https://id.ai ${new URL(redirectUri).origin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`;
     expect(started.headers.get("content-security-policy")).toBe(expectedPolicy);
     const html = await started.text();
     const cookie = cookieFrom(started);
@@ -320,7 +356,10 @@ describe("staging OAuth discovery and registration", () => {
     });
     expect(rejected.status).toBe(401);
     expect(rejected.headers.get("content-security-policy")).toBe(expectedPolicy);
-    expect(await rejected.text()).toContain("Sign-in failed.");
+    const rejectedHtml = await rejected.text();
+    expect(rejectedHtml).toContain("Sign-in failed.");
+    expect(rejectedHtml).toContain('<details open lang="en">');
+    expect(rejectedHtml).toContain("Read and edit your wiki content.");
 
     const accepted = await fetchWorker(`${origin}/oauth/connect/reviewer`, {
       method: "POST",
@@ -383,6 +422,8 @@ describe("staging OAuth discovery and registration", () => {
       body
     });
     expect(missingCookie.status).toBe(400);
+    expect(missingCookie.headers.get("content-type")).toContain("text/html");
+    expect(await missingCookie.text()).toContain("This sign-in link has expired or was already used.");
 
     let response: Response | undefined;
     for (let attempt = 0; attempt < 11; attempt += 1) {
@@ -398,6 +439,69 @@ describe("staging OAuth discovery and registration", () => {
     }
     expect(response?.status).toBe(429);
     expect(response?.headers.get("retry-after")).toBe("60");
+    expect(response?.headers.get("content-type")).toContain("text/html");
+    expect(await response?.text()).toContain("Too many sign-in attempts.");
+  });
+
+  it("uses the browser language for a new authorization despite a previous locale cookie", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const started = await fetchWorker(await authorizationUrl(clientId, "u".repeat(43)), {
+      headers: { "accept-language": "ja-JP,en;q=0.5", cookie: "__Host-kinic-mcp-locale=en" }
+    });
+    expect(started.status).toBe(200);
+    expect(await started.text()).toContain('<html lang="ja">');
+    expect(started.headers.getSetCookie()).toContain(
+      "__Host-kinic-mcp-locale=ja; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400"
+    );
+  });
+
+  it("localizes the authorization flow from ui_locales and keeps the reviewer form in English", async () => {
+    const registered = await register(["https://chatgpt.com/connector/oauth/callback"]);
+    const { client_id: clientId } = await registered.json<{ client_id: string }>();
+    const url = new URL(await authorizationUrl(clientId, "j".repeat(43)));
+    url.searchParams.set("ui_locales", "ja-JP");
+    const started = await fetchWorker(url.toString(), { headers: { "accept-language": "en-US" } });
+    const html = await started.text();
+    expect(html).toContain('<html lang="ja">');
+    expect(html).toContain("Internet Identity で続ける");
+    expect(html).toContain("Wiki の内容の読み取りと編集");
+    expect(html).toContain('<details lang="en"><summary>OpenAI reviewer sign in</summary>');
+    const localeCookie = started.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-kinic-mcp-locale="));
+    expect(localeCookie).toMatch(/^__Host-kinic-mcp-locale=ja;/u);
+
+    // Model browser cookie expiry just after the connection's ten-minute deadline.
+    const elapsedSeconds = 601;
+    const remainingCookies = started.headers.getSetCookie()
+      .filter((cookie) => Number(/Max-Age=(\d+)/u.exec(cookie)?.[1] ?? 0) > elapsedSeconds)
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+    expect(remainingCookies).toContain("__Host-kinic-mcp-locale=ja");
+    expect(remainingCookies).not.toContain("__Host-kinic-mcp-connect=");
+
+    const expired = await fetchWorker(`${origin}/oauth/connect/internet-identity`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: remainingCookies,
+        "accept-language": "en-US"
+      },
+      body: new URLSearchParams({ connect_state: connectStateFrom(html) }).toString()
+    });
+    expect(expired.status).toBe(400);
+    expect(expired.headers.get("content-security-policy")).toBe(
+      `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`
+    );
+    const expiredHtml = await expired.text();
+    expect(expiredHtml).toContain('<html lang="ja">');
+    expect(expiredHtml).toContain("接続できませんでした");
+    expect(expiredHtml).toContain("このサインインの有効期限が切れたか、すでに使用されています。");
+
+    const callback = await fetchWorker(`${origin}/mcp/connect`, {
+      headers: { cookie: localeCookie!.split(";", 1)[0] }
+    });
+    expect(await callback.text()).toContain("安全な接続を完了しています");
   });
 });
 

@@ -22,6 +22,19 @@ import {
 } from "@kinic/ii-server/internet-identity";
 import { restoreReviewServiceIdentity } from "./review-identity.js";
 import {
+  authorizationChoicePage,
+  connectCallbackPage,
+  connectErrorPage,
+  localeCookie,
+  localeFromAcceptLanguage,
+  localeFromUiLocales,
+  LOCALE_COOKIE_NAME,
+  PAGE_STYLE_HASH,
+  parseLocaleCookie,
+  type ConnectErrorKind,
+  type PageLocale
+} from "./pages.js";
+import {
   OAUTH_CLIENT_IDLE_TTL_MS,
   sessionKeyContext,
   type AuthorizationSessionInput,
@@ -135,7 +148,7 @@ export async function handleAuthRoute(request: Request, env: RuntimeEnv): Promis
     return completeReviewConnect(request, env);
   }
   if (url.pathname === CALLBACK_PATH && request.method === "GET") {
-    return connectPage();
+    return connectPage(request);
   }
   if (url.pathname === CALLBACK_PATH && request.method === "POST") {
     return completeConnect(request, env);
@@ -410,18 +423,26 @@ async function authorize(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!created) {
     return oauthJsonError("server_error", 500);
   }
-  return new Response(authorizationChoicePage(connectState, reviewLoginEnabled(env)), {
-    headers: {
-      ...authorizationPageHeaders(redirectUri),
-      "set-cookie": `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`
-    }
-  });
+  const locale = localeFromUiLocales(url.searchParams.get("ui_locales")) ??
+    localeFromAcceptLanguage(request.headers.get("accept-language")) ?? requestLocale(request);
+  const headers = new Headers(authorizationPageHeaders(redirectUri));
+  headers.append("set-cookie", `${COOKIE_NAME}=${cookieValue}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+  headers.append("set-cookie", localeCookie(locale));
+  return new Response(
+    authorizationChoicePage({
+      connectState,
+      locale,
+      writeRequested: scopeIncludesWrite(scope),
+      reviewEnabled: reviewLoginEnabled(env)
+    }),
+    { headers }
+  );
 }
 
 async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): Promise<Response> {
   const input = await pendingConnectInput(request, env);
   if (!input) {
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const origin = requiredOauthOrigin(env);
   const iiUrl = new URL("/mcp", INTERNET_IDENTITY_ORIGIN);
@@ -439,7 +460,7 @@ async function startInternetIdentityConnect(request: Request, env: RuntimeEnv): 
 
 async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!reviewLoginEnabled(env) || !reviewLoginConfigured(env)) {
-    return oauthJsonError("temporarily_unavailable", 503);
+    return connectErrorResponse(request, "unavailable", 503);
   }
   let rateLimitAllowed: boolean;
   try {
@@ -448,14 +469,10 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
       key: `review-login:${clientAddress}`
     })).success;
   } catch {
-    return oauthJsonError("temporarily_unavailable", 503);
+    return connectErrorResponse(request, "unavailable", 503);
   }
   if (!rateLimitAllowed) {
-    return json(
-      { error: "temporarily_unavailable" },
-      429,
-      { "cache-control": "no-store", "retry-after": "60" }
-    );
+    return connectErrorResponse(request, "rateLimited", 429, { "retry-after": "60" });
   }
 
   const form = await limitedForm(request);
@@ -464,30 +481,36 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   const password = form?.get("password") ?? null;
   const cookieValue = readCookie(request.headers.get("cookie"), COOKIE_NAME);
   if (!connectState || !username || !password || !cookieValue) {
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const sessionId = cookieValue.split(".", 1)[0];
   if (!sessionId || !/^[A-Za-z0-9_-]+$/u.test(sessionId)) {
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const stub = authNamespace(env).getByName(sessionName(sessionId));
   const pending = await stub.inspectPendingConnect(connectState, cookieValue, Date.now());
   if (!pending || pending.sessionId !== sessionId) {
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const [usernameMatches, passwordMatches] = await Promise.all([
     secretEquals(env.MCP_REVIEW_USERNAME_HASH!.trim(), username),
     secretEquals(env.MCP_REVIEW_PASSWORD_HASH!.trim(), password)
   ]);
   if (!usernameMatches || !passwordMatches) {
-    return new Response(authorizationChoicePage(connectState, true, "Sign-in failed."), {
-      status: 401,
-      headers: authorizationPageHeaders(pending.redirectUri)
-    });
+    return new Response(
+      authorizationChoicePage({
+        connectState,
+        locale: requestLocale(request),
+        writeRequested: scopeIncludesWrite(pending.scope),
+        reviewEnabled: true,
+        reviewError: "Sign-in failed."
+      }),
+      { status: 401, headers: authorizationPageHeaders(pending.redirectUri) }
+    );
   }
   const claimed = await stub.claimConnect(connectState, cookieValue, Date.now());
   if (!claimed || claimed.sessionId !== sessionId) {
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const completed = await stub.completeReviewConnect(
     env.MCP_REVIEW_ACCESS_VERSION!.trim(),
@@ -496,7 +519,7 @@ async function completeReviewConnect(request: Request, env: RuntimeEnv): Promise
   );
   if (!completed) {
     await stub.invalidate();
-    return oauthJsonError("invalid_request", 400);
+    return connectErrorResponse(request, "expired", 400);
   }
   const redirect = new URL(completed.redirectUri);
   redirect.searchParams.set("code", completed.code);
@@ -530,21 +553,6 @@ async function pendingConnectInput(
   return pending?.sessionId === sessionId ? { connectState, pending } : null;
 }
 
-function authorizationChoicePage(connectState: string, reviewEnabled: boolean, error = ""): string {
-  const reviewerForm = reviewEnabled
-    ? `<hr><h2>OpenAI reviewer sign in</h2>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
-<form method="post" action="${REVIEW_CONNECT_PATH}">
-<input type="hidden" name="connect_state" value="${connectState}">
-<label>Username <input name="username" autocomplete="username" required></label><br>
-<label>Password <input type="password" name="password" autocomplete="current-password" required></label><br>
-<button type="submit">Sign in</button></form>`
-    : "";
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Connect Kinic Wiki</title><body><h1>Connect Kinic Wiki</h1>
-<form method="post" action="${II_CONNECT_PATH}"><input type="hidden" name="connect_state" value="${connectState}">
-<button type="submit">Continue with Internet Identity</button></form>${reviewerForm}</body></html>`;
-}
-
 function authorizationPageHeaders(redirectUri: string): HeadersInit {
   // Browsers also check form-action against the redirect after a successful POST.
   const redirectOrigin = new URL(redirectUri).origin;
@@ -555,61 +563,51 @@ function authorizationPageHeaders(redirectUri: string): HeadersInit {
   return {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "content-security-policy": `default-src 'none'; form-action 'self' ${INTERNET_IDENTITY_ORIGIN} ${redirectOrigin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; form-action 'self' ${INTERNET_IDENTITY_ORIGIN} ${redirectOrigin}${platformRelay}; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "no-referrer"
   };
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/gu, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[character]!);
-}
-
-function connectPage(): Response {
-  const html = `<!doctype html>
-<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>Connecting Kinic Wiki</title><body><p id="status">Completing secure connection…</p>
-<script>
-(() => {
-  const messages = {
-    invalid_connection: "Connection data is invalid or expired. Start again from your AI client.",
-    registration_rejected: "Internet Identity rejected this connection. Check the trusted connector and reconnect.",
-    temporarily_unavailable: "Internet Identity is temporarily unavailable. Start a fresh connection and try again."
-  };
-  const status = document.querySelector("#status");
-  const p = new URLSearchParams(location.hash.slice(1));
-  const delegation = p.get("delegation");
-  const state = p.get("state");
-  history.replaceState(null, "", location.pathname + location.search);
-  if (!delegation || !state) { status.textContent = "Connection data is missing."; return; }
-  fetch(location.pathname, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify({delegation, state})
-  }).then(async (response) => {
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok || !body.redirect_uri) {
-      status.textContent = messages[body.error] || "Connection failed. Start again from your AI client.";
-      return;
-    }
-    location.replace(body.redirect_uri);
-  }).catch(() => { status.textContent = "Connection failed. Start again from your AI client."; });
-})();
-</script></body></html>`;
-  return new Response(html, {
+function connectPage(request: Request): Response {
+  return new Response(connectCallbackPage(requestLocale(request)), {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "content-security-policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "content-security-policy": `default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
       "referrer-policy": "no-referrer",
       "cache-control": "no-store"
     }
   });
+}
+
+// Browser form posts get an HTML error card instead of a raw OAuth JSON body.
+function connectErrorResponse(
+  request: Request,
+  kind: ConnectErrorKind,
+  status: 400 | 429 | 503,
+  extraHeaders: Record<string, string> = {}
+): Response {
+  return new Response(connectErrorPage(requestLocale(request), kind), {
+    status,
+    headers: {
+      ...extraHeaders,
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": `default-src 'none'; style-src '${PAGE_STYLE_HASH}'; base-uri 'none'; frame-ancestors 'none'`,
+      "referrer-policy": "no-referrer",
+      "cache-control": "no-store"
+    }
+  });
+}
+
+function requestLocale(request: Request): PageLocale {
+  return (
+    parseLocaleCookie(readCookie(request.headers.get("cookie"), LOCALE_COOKIE_NAME)) ??
+    localeFromAcceptLanguage(request.headers.get("accept-language")) ??
+    "en"
+  );
+}
+
+function scopeIncludesWrite(scope: string): boolean {
+  return scope.split(" ").includes("mcp:write");
 }
 
 async function completeConnect(request: Request, env: RuntimeEnv): Promise<Response> {
