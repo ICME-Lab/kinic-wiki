@@ -102,6 +102,8 @@ budget test pass. All five existing Wasm probes pass on PocketIC 10 with Node 24
 both Wiki SQL/SDK reader integration tests pass on PocketIC 16.1.0. Workflow YAML,
 dependency/runtime configuration and changed-path routing checks pass. The
 canonical locked release Wasm build, including public Candid metadata, passes.
+The CI regression-group guard now expects the SQLite compatibility crate in the
+canister filter; all eight regression groups and documentation link checks pass.
 
 Current artifact SHA-256:
 f8305de1f4fc6a74815b07261732d02a9221c59f2018e34d5955cd01967b5869.
