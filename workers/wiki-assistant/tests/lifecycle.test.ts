@@ -1,60 +1,17 @@
 import { AssistantUser } from "../src/user";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import OpenAI from "openai";
 import { AssistantError, DEFAULT_LIMITS } from "../src/contracts";
 import type { Env } from "../src/env";
 const mocks = vi.hoisted(() => ({
   deepseek: vi.fn(),
-  create: vi.fn(),
-  items: vi.fn(),
-  retrieve: vi.fn(),
-  turn: vi.fn(),
-  list: vi.fn(),
-  send: vi.fn(),
-  cancel: vi.fn(),
-  remove: vi.fn(),
   authorize: vi.fn(),
   readActor: vi.fn(),
   read: vi.fn(),
-  discardIntent: vi.fn(),
   route: vi.fn(),
 }));
 vi.mock("../src/deepseek", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/deepseek")>(),
   runDeepSeekTurn: mocks.deepseek,
-}));
-vi.mock("../src/openai", () => ({
-  client: () => ({
-    beta: {
-      agents: {
-        sessions: {
-          retrieve: mocks.retrieve,
-          events: { create: mocks.send },
-          turns: { retrieve: mocks.turn },
-          list: mocks.list,
-        },
-      },
-    },
-  }),
-  createAgent: mocks.create,
-  sessionItems: mocks.items,
-  cancelAgent: mocks.cancel,
-  deleteAgent: mocks.remove,
-  inputText: (
-    requestId: string,
-    question: string,
-    scope: string,
-    selectedPath?: string,
-    history: unknown[] = [],
-  ) =>
-    JSON.stringify({
-      requestId,
-      question,
-      scope,
-      selectedPath: selectedPath ?? null,
-      ...(history.length ? { history } : {}),
-    }),
-  messageText: (item: { text?: string }) => item.text ?? "",
 }));
 vi.mock("../src/routing", () => ({
   routeAskAiIntent: mocks.route,
@@ -177,9 +134,6 @@ vi.mock("../src/store", () => ({
     }
     async intent() {}
     async created() {}
-    async discardUncreatedAgentIntent(...args: unknown[]) {
-      return mocks.discardIntent(...args);
-    }
     async command() { return { fresh: true, response: null }; }
     async commandResult() {}
     async touch() {}
@@ -189,13 +143,12 @@ vi.mock("../src/store", () => ({
     }
   },
 }));
-async function harness(native = false) {
+async function harness(native = true) {
   const storage = new Map<string, unknown>();
   const background: Promise<unknown>[] = [];
   const memory = { storage, wake: null as number | null, revision: 0 };
   const env = {
     ASSISTANT_ENABLED: "true",
-    OPENAI_API_KEY: "fake",
     DEEPSEEK_API_KEY: "fake",
     TYPESAFE_API_KEY: "fake",
     ASSISTANT_KEY_ENCRYPTION_KEY: "fake",
@@ -257,18 +210,6 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.readActor.mockReturnValue({});
   mocks.authorize.mockResolvedValue(undefined);
-  mocks.create.mockResolvedValue({ id: "session-1" });
-  mocks.items.mockResolvedValue([]);
-  mocks.retrieve.mockResolvedValue({
-    status: "in_progress",
-    required_actions: [],
-  });
-  mocks.turn.mockResolvedValue({ status: "in_progress" });
-  mocks.list.mockImplementation(async function* () {});
-  mocks.cancel.mockResolvedValue(undefined);
-  mocks.remove.mockResolvedValue(undefined);
-  mocks.send.mockResolvedValue(undefined);
-  mocks.discardIntent.mockResolvedValue(true);
   mocks.route.mockResolvedValue({ route: "focused_search", durationMs: 3 });
 });
 const question = () => ({
@@ -308,7 +249,8 @@ describe("conversation lifecycle", () => {
     expect(h.user["state"].conversation).toBe(c);
     expect(save).not.toHaveBeenCalled();
   });
-  it.each([true, false])("selects the response-verification policy for native=%s without dropping authorization", async (native) => {
+  it("selects the response-verification policy for native requests without dropping authorization", async () => {
+    const native = true;
     const h = await harness(native);
     mocks.readActor.mockClear();
     mocks.authorize.mockClear();
@@ -406,7 +348,6 @@ describe("conversation lifecycle", () => {
     await h.call("/questions", question());
     await h.drain();
     expect(mocks.deepseek).toHaveBeenCalledOnce();
-    expect(mocks.create).not.toHaveBeenCalled();
     expect(h.user["state"].conversation!.messages[0].answer?.answer).toBe("Hello");
     await h.call("/questions", question());
     await h.drain();
@@ -454,8 +395,6 @@ describe("conversation lifecycle", () => {
     expect(c.deferred).toEqual({ id: "next-voice-question", offset: 0 });
     expect(c.status).toBe("ready");
     expect(h.user["state"].cleanup).toEqual([]);
-    expect(mocks.cancel).not.toHaveBeenCalled();
-    expect(mocks.remove).not.toHaveBeenCalled();
     release();
     await h.drain();
     expect(h.user["state"].conversation!.messages[0].answer).toBeNull();
@@ -473,9 +412,6 @@ describe("conversation lifecycle", () => {
     await h.drain();
     expect(h.user["state"].conversation!.messages[0]).toMatchObject({ answer: null, error: "unsupported_answer" });
     expect(h.user["state"].conversation!.pending).toBeNull();
-    expect(mocks.create).not.toHaveBeenCalled();
-    expect(mocks.cancel).not.toHaveBeenCalled();
-    expect(mocks.remove).not.toHaveBeenCalled();
   });
   it("handles malformed native answers without Agent reconciliation or voice cleanup", async () => {
     const h = await harness(true);
@@ -487,14 +423,12 @@ describe("conversation lifecycle", () => {
     expect(c.messages[0]).toMatchObject({ answer: null, error: "deepseek_invalid_response" });
     expect(c.status).toBe("ready");
     expect(c.sessionId).toBe("existing-voice-agent");
-    expect(mocks.discardIntent).not.toHaveBeenCalled();
-    expect(mocks.list).not.toHaveBeenCalled();
-    expect(mocks.remove).not.toHaveBeenCalled();
     expect(h.user["state"].cleanup).toEqual([]);
   });
   it("does not send native text to DeepSeek under old consent", async () => {
     const h = await harness();
     h.user["state"].conversation!.native = true;
+    h.user["state"].conversation!.nativeTextProvider = undefined;
     await h.call("/questions", question());
     await h.drain();
     expect(h.user["state"].conversation!.messages[0].error).toBe("consent_required");
@@ -509,7 +443,6 @@ describe("conversation lifecycle", () => {
     const q = question();
     expect((await h.call("/questions", q)).status).toBe(202);
     await h.drain();
-    expect(mocks.create).not.toHaveBeenCalled();
     const conversation = h.user["state"].conversation!;
     expect(conversation.pending).toBeNull();
     expect(conversation.messages[0]).toMatchObject({
@@ -541,7 +474,6 @@ describe("conversation lifecycle", () => {
     expect((await h.call("/questions", q)).status).toBe(202);
     await h.drain();
     expect((await h.call("/questions", q)).status).toBe(202);
-    expect(mocks.create).toHaveBeenCalledTimes(1);
     expect(
       (await h.call("/questions", { ...q, question: "changed" })).status,
     ).toBe(409);
@@ -553,104 +485,13 @@ describe("conversation lifecycle", () => {
         await h.call("/conversations", {
           databaseId: "other",
           scope: "/Knowledge",
-          consent: "2026-09-22",
+          consent: "2026-09-29",
         })
       ).status,
     ).toBe(409);
     expect(
       (await h.call("/conversation", undefined, crypto.randomUUID())).status,
     ).toBe(403);
-  });
-  it("does not resubmit an input when session creation has an uncertain outcome", async () => {
-    mocks.create.mockRejectedValue(new Error("connection reset"));
-    const h = await harness();
-    await h.call("/questions", question());
-    await h.drain();
-    await h.fireAlarm();
-    expect(mocks.create).toHaveBeenCalledTimes(1);
-    expect(mocks.send).not.toHaveBeenCalled();
-    expect(mocks.discardIntent).not.toHaveBeenCalled();
-  });
-  it.each([400, 401, 403, 404])(
-    "discards the Agent intent after a definitive %s creation rejection",
-    async (status) => {
-      const failure = Object.assign(Object.create(OpenAI.APIError.prototype), {
-        status,
-      });
-      mocks.create.mockRejectedValue(failure);
-      const h = await harness();
-      const q = question();
-      await h.call("/questions", q);
-      await h.drain();
-      expect(mocks.discardIntent).toHaveBeenCalledWith(
-        "agent:" + h.id + ":" + q.requestId,
-        expect.objectContaining({ scope: "question", id: h.id }),
-      );
-      const conversation = h.user["state"].conversation!;
-      expect(conversation.pending).toBeNull();
-      expect(conversation.status).toBe("ready");
-      expect(conversation.messages.at(-1)?.error).toBe(
-        "agent_response_unavailable",
-      );
-      expect(h.user["state"].cleanup).toEqual([]);
-      expect(mocks.list).not.toHaveBeenCalled();
-    },
-  );
-  it("keeps a rejected creation unresolved when intent deletion is not fenced", async () => {
-    const failure = Object.assign(Object.create(OpenAI.APIError.prototype), {
-      status: 400,
-    });
-    mocks.create.mockRejectedValue(failure);
-    mocks.discardIntent.mockResolvedValue(false);
-    const h = await harness();
-    await h.call("/questions", question());
-    await h.drain();
-    expect(h.user["state"].conversation?.pending?.stage).toBe("creating");
-    expect(h.user["state"].conversation?.error).toBe(
-      "checking_request_status",
-    );
-    await h.fireAlarm();
-    expect(mocks.create).toHaveBeenCalledTimes(1);
-  });
-  it("discards a delayed creation result after the conversation has ended", async () => {
-    let release!: (v: { id: string }) => void;
-    mocks.create.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
-    );
-    const h = await harness();
-    await h.call("/questions", question());
-    await vi.waitFor(() => expect(mocks.create).toHaveBeenCalled());
-    await h.user.endOwned("auth", h.id);
-    release({ id: "late-session" });
-    await h.drain();
-    expect((await h.call("/conversation")).status).toBe(410);
-    await h.fireAlarm();
-    expect(mocks.remove).toHaveBeenCalledWith(
-      expect.anything(),
-      "late-session",
-    );
-    expect(JSON.stringify(h.storage.get("state"))).not.toContain(
-      "What is the decision?",
-    );
-  });
-  it("keeps only cleanup IDs after failed remote deletion and retries them", async () => {
-    const h = await harness();
-    await h.call("/questions", question());
-    await h.drain();
-    mocks.remove.mockRejectedValueOnce(new Error("503"));
-    await h.user.endOwned("auth", h.id);
-    const stored = JSON.stringify(h.storage.get("state"));
-    expect(stored).toContain("session-1");
-    expect(stored).not.toContain("What is the decision?");
-    await h.fireAlarm();
-    expect(mocks.remove).toHaveBeenCalledTimes(1);
-    vi.useFakeTimers();
-    vi.setSystemTime(h.user["state"].cleanup[0].nextAttempt!);
-    await h.fireAlarm();
-    expect(mocks.remove).toHaveBeenCalledTimes(2);
   });
   it("retains the daily quota across ended conversations", async () => {
     const h = await harness();
@@ -664,107 +505,16 @@ describe("conversation lifecycle", () => {
     mocks.authorize.mockRejectedValue(new AssistantError("wiki_read_denied", 403));
     await h.fireAlarm();
     expect((await h.call("/conversation")).status).toBe(410);
-    expect(mocks.remove).toHaveBeenCalled();
   });
   it("preserves a conversation after a transient authorization failure and retries", async () => {
     const h = await harness();
     mocks.authorize.mockRejectedValueOnce(new Error("Network connection lost"));
     await h.fireAlarm();
     expect((await h.call("/conversation")).status).toBe(200);
-    expect(mocks.remove).not.toHaveBeenCalled();
     await h.fireAlarm();
     expect((await h.call("/conversation")).status).toBe(200);
   });
 });
-
-it("uses the current turn final answer, ignoring old completed turns", async () => {
-  const h = await harness();
-  const q = question();
-  const answer = {
-    answer: "根拠が見つかりませんでした。",
-    citations: [],
-    insufficient: true,
-    contradictions: [],
-    unverified: [],
-  };
-  mocks.items.mockResolvedValue([
-    {
-      type: "message",
-      role: "assistant",
-      turn_id: "old",
-      phase: "final_answer",
-      text: "invalid old answer",
-    },
-    {
-      type: "message",
-      role: "user",
-      turn_id: "current",
-      text: JSON.stringify({ ...q, selectedPath: null }),
-    },
-    {
-      type: "message",
-      role: "assistant",
-      turn_id: "current",
-      phase: "final_answer",
-      text: JSON.stringify(answer),
-    },
-  ]);
-  // The provider input has a stable field order independent of request JSON.
-  const items = await mocks.items();
-  items[1].text = JSON.stringify({
-    requestId: q.requestId,
-    question: q.question,
-    scope: q.scope,
-    selectedPath: null,
-  });
-  mocks.turn.mockResolvedValue({ status: "completed" });
-  await h.call("/questions", q);
-  await h.drain();
-  const state = JSON.stringify(h.storage.get("state"));
-  expect(state).toContain(answer.answer);
-  expect(state).not.toContain("invalid old answer");
-  expect(mocks.turn).toHaveBeenCalledWith("current", {
-    session_id: "session-1",
-  });
-});
-it("replays a saved tool result after a delivery failure without reading again", async () => {
-  const h = await harness();
-  const q = question();
-  mocks.items.mockResolvedValue([
-    {
-      type: "message",
-      role: "user",
-      turn_id: "current",
-      text: JSON.stringify({
-        requestId: q.requestId,
-        question: q.question,
-        scope: q.scope,
-        selectedPath: null,
-      }),
-    },
-  ]);
-  mocks.retrieve.mockResolvedValue({
-    status: "in_progress",
-    required_actions: [
-      {
-        type: "function_call",
-        turn_id: "current",
-        call_id: "read-1",
-        name: "wiki_read",
-        arguments: { path: "/Knowledge/test.md", start: 0 },
-      },
-    ],
-  });
-  mocks.read.mockResolvedValue("saved text");
-  mocks.send.mockRejectedValueOnce(new Error("connection reset"));
-  await h.call("/questions", q);
-  await h.drain();
-  await h.fireAlarm();
-  expect(mocks.read).toHaveBeenCalledTimes(1);
-  expect(mocks.send).toHaveBeenCalledTimes(2);
-  expect(mocks.send.mock.calls[1][1].events[0].output).toBe("saved text");
-});
-
 
 afterEach(() => {
   vi.useRealTimers();
@@ -783,8 +533,8 @@ it("expires inactivity despite presence and before external authorization", asyn
 it("cancels overdue questions before external authorization", async () => {
   vi.useFakeTimers();
   const h = await harness();
+  mocks.deepseek.mockImplementation(() => new Promise(() => {}));
   await h.call("/questions", question());
-  await h.drain();
   const c = h.user["state"].conversation!;
   vi.setSystemTime(c.pending!.started + 90000);
   mocks.authorize.mockImplementation(async () => {
@@ -838,12 +588,13 @@ it("retires the previous temporary conversation format through cleanup", async (
   expect(h.user["state"].conversation).toBeNull();
 });
 
-it.each(["live", "native", "delegation"])("drops retired %s state without provider termination or reconciliation", async (kind) => {
+it.each(["live", "native", "delegation", "browser"])("drops retired %s state without provider termination or reconciliation", async (kind) => {
   const h = await harness();
   const state = structuredClone(h.user["state"]);
   const c = state.conversation!;
   if (kind === "live") c.live = { id: "retired-provider", usage: { chargeId: "retired-charge" } };
   if (kind === "native") { c.native = true; delete c.nativeTextProvider; }
+  if (kind === "browser") c.native = false;
   if (kind === "delegation") {
     await h.call("/questions", question());
     c.pending = structuredClone(h.user["state"].conversation!.pending);
@@ -855,6 +606,4 @@ it.each(["live", "native", "delegation"])("drops retired %s state without provid
   await h.user.initialize();
   expect(h.user["state"].conversation).toBeNull();
   expect(h.user["state"].cleanup).toEqual([]);
-  expect(mocks.cancel).not.toHaveBeenCalled();
-  expect(mocks.remove).not.toHaveBeenCalled();
 });

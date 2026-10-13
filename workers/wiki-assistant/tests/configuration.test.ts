@@ -7,7 +7,6 @@ import worker from "../src/index";
 
 const configured = {
   ASSISTANT_ENABLED: "true",
-  OPENAI_API_KEY: "openai-key",
   TYPESAFE_API_KEY: "typesafe-key",
   ASSISTANT_KEY_ENCRYPTION_KEY: "encryption-key",
   ASSISTANT_ORIGIN: "https://wiki.kinic.xyz",
@@ -15,16 +14,16 @@ const configured = {
 const context = {} as ExecutionContext;
 
 describe("assistant provider configuration", () => {
-  it("requires DeepSeek for native availability without changing browser availability", async () => {
+  it("requires DeepSeek for native availability and removes the browser API", async () => {
     const native = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/native/status"), configured, context);
     expect(native.status).toBe(503);
     const ready = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/native/status"), { ...configured, DEEPSEEK_API_KEY: "fake" }, context);
     expect(ready.status).toBe(200);
     const browser = await worker.fetch(new Request("https://wiki.kinic.xyz/api/assistant/status"), configured, context);
-    expect(browser.status).toBe(200);
+    expect(browser.status).toBe(404);
   });
 
-  it("accepts an enabled service only when every provider key is configured", () => {
+  it("accepts an enabled service without an OpenAI key", () => {
     expect(() => requireEnabled(configured)).not.toThrow();
   });
 
@@ -36,8 +35,8 @@ describe("assistant provider configuration", () => {
 
   it("reports status as unavailable when the TypeSafe key is missing", async () => {
     const response = await worker.fetch(
-      new Request("https://wiki.kinic.xyz/api/assistant/status"),
-      { ...configured, TYPESAFE_API_KEY: undefined },
+      new Request("https://wiki.kinic.xyz/api/assistant/native/status"),
+      { ...configured, DEEPSEEK_API_KEY: "fake", TYPESAFE_API_KEY: undefined },
       context,
     );
     expect(response.status).toBe(503);
@@ -48,7 +47,7 @@ describe("assistant provider configuration", () => {
 
   it("rejects authentication setup before touching other bindings", async () => {
     const response = await worker.fetch(
-      new Request("https://wiki.kinic.xyz/api/assistant/auth/start", {
+      new Request("https://wiki.kinic.xyz/api/assistant/native/auth/start", {
         method: "POST",
         headers: { origin: "https://wiki.kinic.xyz" },
       }),

@@ -392,9 +392,6 @@ importers:
       '@kinic/jev-reranker':
         specifier: workspace:*
         version: link:../../packages/jev-reranker
-      openai:
-        specifier: 7.15.0
-        version: 7.15.0(undici@7.29.1)(ws@8.21.0)(zod@4.4.3)
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -3832,30 +3829,6 @@ packages:
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
-
-  openai@7.15.0:
-    resolution: {integrity: sha512-2DIwesnPSduw68MFx7nAdgvshrgvS8WOan5W8+tgUMlAy/tY+Q41g80Pa+w/v64rHA6rtn+dketa8QvMVxU96w==}
-    engines: {node: '>=22.0.0'}
-    peerDependencies:
-      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
-      '@smithy/hash-node': '>=4.3.0 <5'
-      '@smithy/signature-v4': '>=5.4.0 <6'
-      undici: 7.29.1
-      ws: 8.21.0
-      zod: ^3.25 || ^4.0
-    peerDependenciesMeta:
-      '@aws-sdk/credential-provider-node':
-        optional: true
-      '@smithy/hash-node':
-        optional: true
-      '@smithy/signature-v4':
-        optional: true
-      undici:
-        optional: true
-      ws:
-        optional: true
-      zod:
-        optional: true
 
   oxlint@1.74.0:
     resolution: {integrity: sha512-odGl2s2x5IOJoj3A0v1k0PGBXVFBZeZ2+AK/+K2MJur7Ghi3bkyX5NuLUWHKqa4js1wjep3hJeuTQJOlr+4+dA==}
@@ -8166,12 +8139,6 @@ snapshots:
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
-
-  openai@7.15.0(undici@7.29.1)(ws@8.21.0)(zod@4.4.3):
-    optionalDependencies:
-      undici: 7.29.1
-      ws: 8.21.0
-      zod: 4.4.3
 
   oxlint@1.74.0:
     optionalDependencies:

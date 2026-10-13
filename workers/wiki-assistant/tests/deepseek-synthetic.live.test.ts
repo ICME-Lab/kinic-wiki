@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { validateAnswer } from "../src/contracts";
 import { newDeepSeekTurn, runDeepSeekTurn } from "../src/deepseek";
 import { emptyToolState, KinicReader, type ReadActor, type Node } from "../src/kinic";
-import { inputText } from "../src/openai";
+import { inputText } from "../src/turn-input";
 
 // Explicit live configuration only. Invented evidence; no private Wiki is read.
 it("answers a Japanese overview with validated citations through live DeepSeek", async () => {

@@ -18,11 +18,6 @@ import {
   KinicReader,
 } from "./kinic";
 import {
-  cancelAgent,
-  client,
-  deleteAgent,
-} from "./openai";
-import {
   boundedRoutingHistory,
   clarificationFor,
   routeAskAiIntent,
@@ -33,7 +28,6 @@ import { requireEnabled } from "./auth";
 import type { Env } from "./env";
 
 import { runTextTurn, textTurnFailure } from "./text-turn";
-import { runAgentTurn, agentTurnFailure } from "./agent-turn";
 import type { TurnContext, TurnResult } from "./turn-context";
 
 import type { Question, Pending, Conversation, UserState } from "./state";
@@ -109,11 +103,11 @@ export class AssistantUser {
     const loaded = await this.store.load(this.principal, includeMessages);
     this.state = loaded.state;
     this.revision = loaded.revision;
-    this.state.cleanup = this.state.cleanup.filter((task) => !task.liveId && !task.voiceUsage);
+    this.state.cleanup = [];
     const stored = this.state.conversation;
-    if (stored && (stored.live || stored.pending?.delegationId ||
+    if (stored && (stored.native !== true || stored.live || stored.pending?.delegationId ||
       (stored.native && stored.nativeTextProvider !== "deepseek"))) {
-      // Retired voice state is dropped locally; no provider termination or billing.
+      // Retired browser/voice state is dropped locally; no provider termination or billing.
       this.state.conversation = null;
     }
     // Format 3 adds semantic routing and retrieval traces. Retire earlier
@@ -529,7 +523,6 @@ export class AssistantUser {
         },
       };
       const result = await this.runTurn(context);
-      if (!result) return; // Agents may still be running or reconciling submission.
       await this.publishTurn(context, result);
     } catch (error) {
       const c = startedConversation;
@@ -543,17 +536,10 @@ export class AssistantUser {
           await this.endOwned(c.authId);
         else await this.cancel(c);
       } else {
-        const failure = this.isTextTurn(c, startedPending)
-          ? textTurnFailure(error)
-          : await agentTurnFailure(error, {
-              conversation: c,
-              pending: startedPending,
-              store: this.store,
-              lease: this.questionLease,
-            });
+        const failure = textTurnFailure(error);
         if (!(await this.valid(c, startedPending))) return;
         c.error = failure.code;
-        if (failure.action === "cancel") await this.cancel(c, failure.unknownCreate);
+        if (failure.action === "cancel") await this.cancel(c);
         else {
           await this.save();
           this.broadcast();
@@ -671,40 +657,17 @@ export class AssistantUser {
   private isTextTurn(c: Conversation, p: Pending): boolean {
     return c.native === true && p.delegationId === null;
   }
-  private async runTurn(context: TurnContext): Promise<TurnResult | undefined> {
+  private async runTurn(context: TurnContext): Promise<TurnResult> {
     const { conversation: c, pending: p } = context;
-    if (this.isTextTurn(c, p)) {
-      this.textAbort = new AbortController();
-      return runTextTurn(context, {
-        apiKey: this.env.DEEPSEEK_API_KEY,
-        deadline: p.started + this.limits().turnMs,
-        signal: this.textAbort.signal,
-      });
-    }
-    return runAgentTurn(context, {
-      apiKey: this.env.OPENAI_API_KEY,
-      principal: this.principal,
-      store: this.store,
-      orphanCreatedSession: async (sessionId) => {
-        const uncertain = this.state.cleanup.find((task) =>
-          task.conversationId === c.id &&
-          task.requestId === p.input.requestId && task.unknownCreate,
-        );
-        if (uncertain) {
-          uncertain.sessionId = sessionId;
-          uncertain.unknownCreate = false;
-          uncertain.nextAttempt = 0;
-        } else {
-          this.state.cleanup.push({ sessionId, conversationId: c.id, unknownCreate: false, liveId: null });
-        }
-        await this.save();
-      },
+    if (!this.isTextTurn(c, p)) throw new AssistantError("consent_required", 409);
+    this.textAbort = new AbortController();
+    return runTextTurn(context, {
+      apiKey: this.env.DEEPSEEK_API_KEY,
+      deadline: p.started + this.limits().turnMs,
+      signal: this.textAbort.signal,
     });
   }
-  private async cancel(
-    c: Conversation,
-    unknownCreateOverride?: boolean,
-  ): Promise<void> {
+  private async cancel(c: Conversation): Promise<void> {
     this.textAbort?.abort();
     c.generation++;
     if (c.pending) {
@@ -713,29 +676,10 @@ export class AssistantUser {
       );
       if (message) message.error = c.error ?? "cancel_requested";
     }
-    if (c.pending && this.isTextTurn(c, c.pending)) {
-      c.pending = null;
-      c.status = "ready";
-      await this.save();
-      this.broadcast();
-      return;
-    }
-    c.deferred = null;
-    this.state.cleanup.push({
-      sessionId: c.sessionId,
-      conversationId: c.id,
-      unknownCreate:
-        unknownCreateOverride ??
-        (c.pending?.stage === "creating" && !c.sessionId),
-      requestId: c.pending?.input.requestId,
-      liveId: null,
-    });
-    c.sessionId = null;
     c.pending = null;
-    c.status = "cancelling";
+    c.status = "ready";
     await this.save();
     this.broadcast();
-    await this.cleanup();
   }
   async endOwned(
     authId: string,
@@ -750,72 +694,13 @@ export class AssistantUser {
       return;
     this.textAbort?.abort();
     c.generation++;
-    this.state.cleanup.push({
-      sessionId: c.sessionId,
-      conversationId: c.id,
-      unknownCreate: c.pending?.stage === "creating" && !c.sessionId,
-      requestId: c.pending?.input.requestId,
-      liveId: null,
-    });
-    this.state.conversation = null; // Drop transcripts, excerpts, and answers before remote cleanup.
+    this.state.conversation = null;
     await this.save();
     this.broadcast();
     for (const ws of this.sockets) ws.close(1000, "Conversation ended");
-    await this.cleanup();
   }
   private async cleanup(): Promise<void> {
-    for (const task of this.state.cleanup.slice()) {
-      if ((task.nextAttempt ?? 0) > Date.now()) continue;
-      try {
-        if (task.unknownCreate) {
-          const api = client(this.env.OPENAI_API_KEY);
-          let count = 0;
-          let found = false;
-          for await (const session of api.beta.agents.sessions.list({
-            limit: 100,
-          })) {
-            if (
-              session.metadata.kinic_conversation === task.conversationId &&
-              session.metadata.kinic_request === task.requestId
-            ) {
-              await this.store.created(
-                "agent:" + task.conversationId + ":" + task.requestId,
-                session.id,
-              );
-              await cancelAgent(api, session.id);
-              await deleteAgent(api, session.id);
-              found = true;
-            }
-            if (++count >= 300) break;
-          }
-          // Unknown creation cannot be declared deleted just because listing found nothing.
-          if (!found) throw new Error("unknown_session_creation");
-          task.unknownCreate = false;
-        }
-        if (task.sessionId) {
-          const api = client(this.env.OPENAI_API_KEY);
-          try {
-            await cancelAgent(api, task.sessionId);
-          } catch {
-            /* Deletion below is authoritative. */
-          }
-          await deleteAgent(api, task.sessionId);
-          task.sessionId = null;
-        }
-        this.state.cleanup = this.state.cleanup.filter((item) => item !== task);
-      } catch {
-        task.attempts = (task.attempts ?? 0) + 1;
-        task.nextAttempt =
-          Date.now() +
-          Math.min(1800000, 60000 * 2 ** Math.min(task.attempts - 1, 5));
-          console.error(
-            JSON.stringify({
-              event: "assistant_cleanup_pending",
-              conversationId: task.conversationId,
-            }),
-          );
-      }
-    }
+    this.state.cleanup = [];
     const c = this.state.conversation;
     if (c?.status === "cancelling" && !this.state.cleanup.length) {
       c.status = "ready";
@@ -871,10 +756,6 @@ export class AssistantUser {
       !this.state.cleanup.length &&
       this.state.day !== day()
     ) {
-      await this.store.db
-        .prepare("DELETE FROM assistant_cleanup WHERE principal=?")
-        .bind(this.principal)
-        .run();
       this.state.questions = 0;
       this.state.day = day();
     } else if (this.state.conversation && !this.state.conversation.pending && !this.state.cleanup.length) {
