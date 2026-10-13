@@ -410,6 +410,39 @@ impl VfsService {
         self.with_market_read_database_store(database_id, caller, |store| store.read_node(path))
     }
 
+    pub fn read_nodes(
+        &self,
+        database_id: &str,
+        caller: &str,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>, String> {
+        if paths.is_empty() || paths.len() > 10 {
+            return Err("read_nodes requires 1 to 10 paths".into());
+        }
+        self.with_market_read_database_store(database_id, caller, |store| {
+            let results = store.read_nodes(paths)?;
+            // Reserve the outer Candid envelope. Oversized items become errors;
+            // successful nodes are never silently shortened or stripped of metadata.
+            let mut bytes = 1024 + paths.len() * 128;
+            results
+                .into_iter()
+                .map(|result| {
+                    let size = candid::encode_one(&result)
+                        .map_err(|error| error.to_string())?
+                        .len();
+                    if bytes + size > 1_000_000 {
+                        Ok(Err(
+                            "read_nodes item exceeds response byte limit".to_string()
+                        ))
+                    } else {
+                        bytes += size;
+                        Ok(result)
+                    }
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+    }
+
     pub fn list_nodes(
         &self,
         caller: &str,

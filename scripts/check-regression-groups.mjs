@@ -49,7 +49,7 @@ const groups = {
     ["wikibrowser/lib/source-capture.ts", "sourceCaptureRequestId(Date.now(), crypto.randomUUID())"]
   ],
   canister_ci_filter: [
-    [".github/workflows/ci.yml", "crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/"],
+    [".github/workflows/ci.yml", "crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/"],
     [".github/workflows/ci.yml", "set_output rust_all"]
   ],
   canister_cycles_billing: [

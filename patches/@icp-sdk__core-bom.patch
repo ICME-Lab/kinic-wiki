@@ -1,0 +1,26 @@
+diff --git a/lib/cjs/candid/idl.js b/lib/cjs/candid/idl.js
+index 8f7a6d455daf506febac8b3918dc082ae53654d4..f3ce7b6e0bff7aa3cb2dd50b825a937cab77fac6 100644
+--- a/lib/cjs/candid/idl.js
++++ b/lib/cjs/candid/idl.js
+@@ -515,7 +515,7 @@ class TextClass extends PrimitiveType {
+         this.checkType(t);
+         const len = (0, leb128_ts_1.lebDecode)(b);
+         const buf = (0, leb128_ts_1.safeRead)(b, Number(len));
+-        const decoder = new TextDecoder('utf8', { fatal: true });
++        const decoder = new TextDecoder('utf8', { fatal: true, ignoreBOM: true });
+         return decoder.decode(buf);
+     }
+     get name() {
+diff --git a/lib/esm/candid/idl.js b/lib/esm/candid/idl.js
+index a45ecccbb151cbda3a9861301faba4b01849e211..e5a1fc3a1cf018c0680827d974bb6d475105c02c 100644
+--- a/lib/esm/candid/idl.js
++++ b/lib/esm/candid/idl.js
+@@ -490,7 +490,7 @@ export class TextClass extends PrimitiveType {
+         this.checkType(t);
+         const len = lebDecode(b);
+         const buf = safeRead(b, Number(len));
+-        const decoder = new TextDecoder('utf8', { fatal: true });
++        const decoder = new TextDecoder('utf8', { fatal: true, ignoreBOM: true });
+         return decoder.decode(buf);
+     }
+     get name() {

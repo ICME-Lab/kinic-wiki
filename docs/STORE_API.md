@@ -55,6 +55,7 @@ Do not answer from working notes as if they were canonical memory.
 
 - `memory_manifest(MemoryManifestRequest)`: discover the API version, enabled stores, roots, capability summary, canonical roles, limits, and recommended entrypoint.
 - `query_context(QueryContextRequest)`: read task-scoped knowledge context. This is the primary entrypoint for normal agent questions.
+- `read_nodes(database_id, paths)`: read 1–10 arbitrary paths in one database query. Uses the same Reader/marketplace/public access as `read_node`. The outer result reports database access/open failures; each ordered inner result is `Ok(opt Node)` or an item error. Duplicate normalized paths are loaded once. Full content and metadata are preserved; a conservative 1,000,000-byte Candid response budget turns oversized items into errors, preferring earlier inputs.
 - `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
 - `source_evidence(SourceEvidenceRequest)`: read `/Sources` evidence references for one known knowledge node path.
 
@@ -139,6 +140,14 @@ The browser Query panel `sql:` action and CLI `query-sql` command both call this
 The method only runs against the specified wiki DB. Reader, public reader, and marketplace-entitled callers can only issue the restricted JSON `SELECT` below against `fs_nodes` or `fs_links`.
 It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables.
 
+SQLite's authorizer checks the resolved reads throughout statement preparation and execution.
+Only `main.fs_nodes` and `main.fs_links` are permitted; internal tables, attached databases,
+writes, administration, and unknown operations are denied. The native and Wasm adapters use
+one policy and unregister it on all exits. Since SQLite omits the database name for an
+unqualified read with no referenced columns, installation first verifies a main-only
+connection; attached or temporary schemas fail closed. Lexical checks retain the existing
+SELECT grammar and budgets, but are not the table authorization boundary.
+
 SQL constraints:
 
 - The SQL must be one restricted `SELECT` statement, at most 4096 bytes.
@@ -149,7 +158,7 @@ SQL constraints:
 - `;`, comments, joins, compound selects, subqueries, grouping/window clauses, mutating/admin tokens, and large generated/aggregate values are rejected.
 - The query must return exactly one selected column, and each value must be non-null valid JSON object TEXT.
 - The request `limit` is also clamped to the canister query limit.
-- Each JSON row is capped at 64 KiB, and the total JSON rows response is capped at 256 KiB.
+- Each JSON row is capped at 256 KiB, and the total JSON rows response is capped at 1 MiB.
 
 Example:
 
@@ -183,3 +192,7 @@ Controller-only operational SQL remains separate in `query_index_sql_json`; data
 - Writes must use CLI commands, VFS mutation APIs, or the shared tool dispatcher.
 - `memory_summary` is not part of v1. Use `query_context` with a summary-style task when a maintained overview is needed.
 - Skill curator, knowledge curator, ambient surfacing, synonyms, and session resume summaries are outside v1.
+
+`read_nodes` is for explicitly selected paths, including pages in unrelated folders.
+`export_snapshot` remains the paginated prefix export API; `fetch_updates` remains
+revision-based synchronization. Neither is used as a fallback for arbitrary-path reads.

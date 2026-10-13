@@ -480,6 +480,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
+  const ResultReadNodes = idl.Variant({ Ok: idl.Vec(ResultNode), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
   const ResultNodePublication = idl.Variant({ Ok: NodePublication, Err: idl.Text });
   const ResultOptionalNodePublication = idl.Variant({ Ok: idl.Opt(NodePublication), Err: idl.Text });
@@ -573,6 +574,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     query_index_sql_json: idl.Func([idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
+    read_nodes: idl.Func([idl.Text, idl.Vec(idl.Text)], [ResultReadNodes], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),

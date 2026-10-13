@@ -14,6 +14,7 @@ ic-cdk = "0.20.1"
 ic-sqlite-vfs = { workspace = true, features = ["sqlite-bundled"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+kinic-sqlite-compat = { path = "../kinic_sqlite_compat" }
 ic-sqlite-vfs = { workspace = true, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]

@@ -665,6 +665,7 @@ export const expectedTypes = {
   ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "NodeMutationError" } },
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
+  ResultReadNodes: { kind: "variant", cases: { Ok: "vec ResultNode", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultNodePublication: { kind: "variant", cases: { Ok: "NodePublication", Err: "text" } },
   ResultOptionalNodePublication: { kind: "variant", cases: { Ok: "opt NodePublication", Err: "text" } },
@@ -797,17 +798,18 @@ export const didTypeAliases = {
   ResultIndexSqlJsonQuery: "Result_40",
   ResultNode: "Result_41",
   ResultNodeContext: "Result_42",
-  ResultPublicNode: "Result_43",
-  ResultSearch: "Result_45",
-  ResultStorageBillingBatch: "Result_46",
-  ResultSourceEvidence: "Result_47",
+  ResultReadNodes: "Result_43",
+  ResultPublicNode: "Result_44",
+  ResultSearch: "Result_46",
+  ResultStorageBillingBatch: "Result_47",
+  ResultSourceEvidence: "Result_48",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteNodes: "Result_51",
-  ResultDatabaseMetadata: "Result_48",
-  ResultWikiMetrics: "Result_49",
-  ResultWikiMetricsSeries: "Result_50",
-  ResultWriteSourceForGeneration: "Result_52"
+  ResultWriteNodes: "Result_52",
+  ResultDatabaseMetadata: "Result_49",
+  ResultWikiMetrics: "Result_50",
+  ResultWikiMetricsSeries: "Result_51",
+  ResultWriteSourceForGeneration: "Result_53"
 };
 
 export const expectedMethods = {
@@ -864,6 +866,7 @@ export const expectedMethods = {
   wiki_metrics: { input: [], output: "ResultWikiMetrics", mode: "query" },
   wiki_metrics_series: { input: ["nat32"], output: "ResultWikiMetricsSeries", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
+  read_nodes: { input: ["text", "vec text"], output: "ResultReadNodes", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   read_public_node: { input: ["text"], output: "ResultPublicNode", mode: "query" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },

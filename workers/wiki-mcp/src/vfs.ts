@@ -264,12 +264,6 @@ export type QueryContext = {
   namespace: string;
 };
 
-export type IndexSqlJsonQueryResult = {
-  rows: string[];
-  rowCount: number;
-  limit: number;
-};
-
 type RawDatabaseMetadata = {
   name: string;
   description: string;
@@ -408,12 +402,6 @@ type RawQueryContext = {
   namespace: string;
 };
 
-type RawIndexSqlJsonQueryResult = {
-  rows: string[];
-  row_count: number;
-  limit: number;
-};
-
 type VfsActor = {
   list_databases: () => Promise<Result<RawDatabaseSummary[]>>;
   list_nodes: (request: { database_id: string; prefix: string; recursive: boolean; limit: number }) => Promise<Result<RawNodeEntry[]>>;
@@ -435,8 +423,8 @@ type VfsActor = {
   }) => Promise<Result<RawQueryContext>>;
   memory_manifest: (request: { database_id: string }) => Promise<Result<RawMemoryManifest>>;
   source_evidence: (request: { database_id: string; node_path: string }) => Promise<Result<RawSourceEvidence>>;
-  query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<Result<RawIndexSqlJsonQueryResult>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
+  read_nodes: (databaseId: string, paths: string[]) => Promise<Result<Array<Result<[] | [RawNode]>>>>;
   write_node: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput>>;
   write_nodes: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput[]>>;
   append_node: (request: unknown) => Promise<MutationResult<RawWriteNodeOutput>>;
@@ -491,13 +479,31 @@ export async function listNodes(env: RuntimeEnv, databaseId: string, prefix: str
   return raw.map(normalizeNodeEntry);
 }
 
+export async function createNodeReader(env: RuntimeEnv) {
+  let actor: VfsActor;
+  try {
+    actor = await createVfsActor(env);
+  } catch (error) {
+    if (env.KINIC_WIKI_IDENTITY) throw new Error("Kinic Wiki database is unavailable");
+    throw error;
+  }
+  return {
+    readOne: async (databaseId: string, path: string) => {
+      const raw = unwrap(await callVfs(env, "read_node", () => readNodeRaw(actor, databaseId, path)), env);
+      return raw[0] ? normalizeNode(raw[0]) : null;
+    },
+    readMany: async (databaseId: string, paths: string[]) => {
+      const raw = unwrap(await callVfs(env, "read_nodes", () => actor.read_nodes(databaseId, paths)), env);
+      if (raw.length !== paths.length) throw new Error("read_nodes returned an unexpected result count");
+      return raw.map((result) => "Ok" in result
+        ? { node: result.Ok[0] ? normalizeNode(result.Ok[0]) : null, error: null }
+        : { node: null, error: env.KINIC_WIKI_IDENTITY ? "Kinic Wiki database is unavailable" : result.Err });
+    }
+  };
+}
+
 export async function readNode(env: RuntimeEnv, databaseId: string, path: string): Promise<WikiNode | null> {
-  const actor = await createVfsActor(env);
-  const raw = unwrap(
-    await callVfs(env, "read_node", () => readNodeRaw(actor, databaseId, path)),
-    env
-  );
-  return raw[0] ? normalizeNode(raw[0]) : null;
+  return (await createNodeReader(env)).readOne(databaseId, path);
 }
 
 export async function writeNodes(
@@ -578,23 +584,6 @@ export async function sourceEvidence(env: RuntimeEnv, databaseId: string, nodePa
     unwrap(
       await callVfs(env, "source_evidence", () =>
         actor.source_evidence({ database_id: databaseId, node_path: nodePath })
-      ),
-      env
-    )
-  );
-}
-
-export async function queryDatabaseSqlJson(
-  env: RuntimeEnv,
-  databaseId: string,
-  sql: string,
-  limit: number
-): Promise<IndexSqlJsonQueryResult> {
-  const actor = await createVfsActor(env);
-  return normalizeIndexSqlJsonQueryResult(
-    unwrap(
-      await callVfs(env, "query_database_sql_json", () =>
-        actor.query_database_sql_json(databaseId, sql, limit)
       ),
       env
     )
@@ -878,14 +867,6 @@ function normalizeQueryContext(raw: RawQueryContext): QueryContext {
     graphLinks: raw.graph_links.map(normalizeLinkEdge),
     searchHits: raw.search_hits.map(normalizeSearchHit),
     namespace: raw.namespace
-  };
-}
-
-function normalizeIndexSqlJsonQueryResult(raw: RawIndexSqlJsonQueryResult): IndexSqlJsonQueryResult {
-  return {
-    rows: raw.rows,
-    rowCount: raw.row_count,
-    limit: raw.limit
   };
 }
 
@@ -1284,6 +1265,7 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNodes = idl.Variant({ Ok: idl.Vec(NodeEntry), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
+  const ResultReadNodes = idl.Variant({ Ok: idl.Vec(ResultNode), Err: idl.Text });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: NodeMutationError });
   const ResultWriteNodes = idl.Variant({ Ok: idl.Vec(WriteNodeResult), Err: NodeMutationError });
   const ResultEditNode = idl.Variant({ Ok: EditNodeResult, Err: NodeMutationError });
@@ -1297,12 +1279,6 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultMemoryManifest = idl.Variant({ Ok: MemoryManifest, Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
-  const IndexSqlJsonQueryResult = idl.Record({
-    rows: idl.Vec(idl.Text),
-    row_count: idl.Nat32,
-    limit: idl.Nat32
-  });
-  const ResultIndexSqlJsonQuery = idl.Variant({ Ok: IndexSqlJsonQueryResult, Err: idl.Text });
   return idl.Service({
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_nodes: idl.Func([ListNodesRequest], [ResultNodes], ["query"]),
@@ -1310,8 +1286,8 @@ const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     memory_manifest: idl.Func([DatabaseIdRequest], [ResultMemoryManifest], ["query"]),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
-    query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
+    read_nodes: idl.Func([idl.Text, idl.Vec(idl.Text)], [ResultReadNodes], ["query"]),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     write_nodes: idl.Func([WriteNodesRequest], [ResultWriteNodes], []),
     append_node: idl.Func([AppendNodeRequest], [ResultWriteNode], []),

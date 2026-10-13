@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:probe": "cargo build -p ic-sqlite-vfs-probe --target wasm32-unknown-unknown --release",
-    "build:wiki": "cargo build -p vfs-canister --target wasm32-unknown-unknown --release",
+    "build:probe": "cargo build -p ic-sqlite-vfs-probe --target wasm32-unknown-unknown --release --locked",
+    "build:wiki": "cargo build -p vfs-canister --target wasm32-unknown-unknown --release --locked",
     "test:public-http": "pnpm run build:wiki && pnpm --dir ../wikibrowser build:worker && node --test integration/public-http.test.mjs",
-    "test": "npm run build:probe && node scripts/run-tests.mjs"
+    "test": "npm run build:probe && node scripts/run-tests.mjs",
+    "test:wiki-sql": "pnpm run build:wiki && pnpm run build:probe && node --test integration/wiki-sql-authorization.test.mjs"
   },
   "devDependencies": {
     "@dfinity/candid": "3.4.3",

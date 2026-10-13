@@ -209,6 +209,29 @@ impl FsStore {
         self.read_conn(|conn| load_node(conn, &normalized))
     }
 
+    /// One connection and one read per normalized path; results preserve input order.
+    pub fn read_nodes(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<Result<Option<Node>, String>>, String> {
+        if paths.is_empty() || paths.len() > 10 {
+            return Err("read_nodes requires 1 to 10 paths".into());
+        }
+        self.read_conn(|conn| {
+            let mut cache = BTreeMap::new();
+            Ok(paths
+                .iter()
+                .map(|path| {
+                    let normalized = normalize_node_path(path, false)?;
+                    cache
+                        .entry(normalized.clone())
+                        .or_insert_with(|| load_node(conn, &normalized))
+                        .clone()
+                })
+                .collect())
+        })
+    }
+
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
         let limit = capped_list_nodes_limit(request.limit);

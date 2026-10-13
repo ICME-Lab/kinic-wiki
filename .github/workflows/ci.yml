@@ -79,10 +79,10 @@ jobs:
             fi
           }
 
-          js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
+          js_workspace='(^package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^tools/candid/|^patches/|^scripts/cloudflare/|^crates/vfs_canister/vfs\.did$)'
 
-          set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
-          set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain|kinic_sqlite_compat)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs)|scripts/build-icp-cli-login\.mjs|extensions/wiki-clipper/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$)'
+          set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe|kinic_sqlite_compat)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output probe '^(Cargo\.lock|crates/ic_sqlite_vfs_probe/|pocketic-tests/|scripts/setup_canbench_ci\.sh|\.github/workflows/ci\.yml)'
           set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser "($js_workspace|^packages/vfs-candid/|^wikibrowser/)"
@@ -415,15 +415,17 @@ jobs:
 
   ic-sqlite-vfs-canister-probe:
     needs: changes
-    if: needs.changes.outputs.probe == 'true'
+    if: needs.changes.outputs.probe == 'true' || needs.changes.outputs.canister == 'true' || needs.changes.outputs.wiki_mcp == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: pocketic-tests/package-lock.json
+      - name: Enable corepack
+        run: corepack enable && corepack prepare pnpm@11.0.8 --activate
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
@@ -441,12 +443,26 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
       - name: Install WASI sysroot
         run: sudo apt-get update && sudo apt-get install -y wasi-libc
+      - name: Install workspace dependencies for the MCP reader
+        run: pnpm install --frozen-lockfile
       - name: Install PocketIC probe dependencies
         run: npm ci --prefix pocketic-tests
       - name: Provision PocketIC runtime
         run: bash scripts/setup_canbench_ci.sh
       - name: Run ignored-native replacement canister probe
         run: npm test --prefix pocketic-tests
+
+      # canbench requires PocketIC 10; SDK 6 requires the v3 read_state gateway.
+      - name: Provision PocketIC 16.1 for the SDK 6 reader
+        run: |
+          mkdir -p .canbench/wiki
+          curl -fsSL https://github.com/dfinity/pocketic/releases/download/16.1.0/pocket-ic-x86_64-linux.gz | gzip -d > .canbench/wiki/pocket-ic
+          chmod +x .canbench/wiki/pocket-ic
+          test "$(.canbench/wiki/pocket-ic --version)" = "pocket-ic-server 16.1.0"
+      - name: Verify Wiki SQL policy and node reads against release Wasm
+        env:
+          POCKET_IC_BIN: ${{ github.workspace }}/.canbench/wiki/pocket-ic
+        run: pnpm --dir pocketic-tests run test:wiki-sql
 
   cli-artifacts:
     needs: changes

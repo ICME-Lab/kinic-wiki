@@ -4356,7 +4356,6 @@ fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
         "SELECT json_object('ok', count(*)) FROM fs_nodes LIMIT 1",
         "SELECT json_group_array(path) FROM fs_nodes LIMIT 1",
         "SELECT group_concat(path) FROM fs_nodes LIMIT 1",
-        "SELECT json_object('x', hex(content)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', randomblob(4)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', zeroblob(4)) FROM fs_nodes LIMIT 1",
         "SELECT json_object('x', load_extension('x')) FROM fs_nodes LIMIT 1",
@@ -6061,4 +6060,61 @@ fn market_entitlement_allows_read_surface_but_not_export() {
             .is_err(),
         "entitlement must not allow export"
     );
+}
+
+#[test]
+fn batch_read_nodes_enforces_reader_access_order_and_response_budget() {
+    let service = service();
+    service.create_database("batch-read", "owner", 1).unwrap();
+    cycle_database(&service, "batch-read", "owner", 1_000_000, 1, 2);
+    for (path, content) in [
+        ("/Knowledge/a.md", "\u{feff}日本語\0😀".to_string()),
+        ("/Knowledge/large.md", "x".repeat(1_000_000)),
+    ] {
+        service
+            .write_node(
+                "owner",
+                WriteNodeRequest {
+                    database_id: "batch-read".into(),
+                    path: path.into(),
+                    kind: NodeKind::File,
+                    content,
+                    metadata_json: "{}".into(),
+                    expected_etag: None,
+                },
+                3,
+            )
+            .unwrap();
+    }
+    let paths = vec![
+        "/Knowledge/a.md".into(),
+        "/Knowledge/large.md".into(),
+        "/Knowledge/missing.md".into(),
+        "/Knowledge/a.md".into(),
+    ];
+    assert!(
+        service
+            .read_nodes("batch-read", "stranger", &paths)
+            .is_err()
+    );
+    for caller in ["reader", "2vxsx-fae"] {
+        service
+            .grant_database_access("batch-read", "owner", caller, DatabaseRole::Reader, 4)
+            .unwrap();
+        let result = service.read_nodes("batch-read", caller, &paths).unwrap();
+        assert_eq!(result[0], result[3]);
+        assert_eq!(
+            result[0],
+            service.read_node("batch-read", caller, &paths[0])
+        );
+        assert!(result[1].as_ref().unwrap_err().contains("byte limit"));
+        assert_eq!(result[2], Ok(None));
+        assert!(candid::encode_one(&result).unwrap().len() <= 1_000_000);
+        assert!(service.read_nodes("batch-read", caller, &[]).is_err());
+        assert!(
+            service
+                .read_nodes("batch-read", caller, &vec![paths[0].clone(); 11])
+                .is_err()
+        );
+    }
 }

@@ -80,6 +80,69 @@ fn put_then_fail(slot: u8, key: String, value: String) -> Result<(), String> {
         .map_err(error_text)
 }
 
+// A single update keeps the same SQLite connection alive across registration,
+// prepared-statement reuse, rejection, guard removal and ordinary writes.
+#[update]
+fn verify_read_authorizer() -> Result<(), String> {
+    use kinic_sqlite_compat as sqlite;
+    handle_for_slot(0)?
+        .update(|connection| {
+            connection.execute("CREATE TABLE IF NOT EXISTS fs_nodes(id INTEGER)", params![])?;
+            connection.execute("CREATE TABLE IF NOT EXISTS secret(id INTEGER)", params![])?;
+            connection.execute("INSERT INTO fs_nodes VALUES(1)", params![])?;
+            connection.execute("INSERT INTO secret VALUES(7)", params![])?;
+            let mut allowed = connection.prepare("SELECT id FROM fs_nodes LIMIT 1")?;
+            let mut forbidden = connection.prepare("SELECT id FROM secret LIMIT 1")?;
+            assert_eq!(
+                sqlite::query_one(&mut allowed, params![], |row| sqlite::row_get::<i64>(
+                    row, 0
+                ))?,
+                1
+            );
+            assert_eq!(
+                sqlite::query_one(&mut forbidden, params![], |row| sqlite::row_get::<i64>(
+                    row, 0
+                ))?,
+                7
+            );
+            {
+                let _guard =
+                    sqlite::install_read_authorizer(connection, &["fs_nodes", "fs_links"])?;
+                assert!(
+                    sqlite::query_one(&mut forbidden, params![], |row| sqlite::row_get::<i64>(
+                        row, 0
+                    ))
+                    .is_err()
+                );
+                assert_eq!(
+                    sqlite::query_one(&mut allowed, params![], |row| sqlite::row_get::<i64>(
+                        row, 0
+                    ))?,
+                    1
+                );
+                for sql in [
+                    "SELECT id FROM 'secret' fs_nodes",
+                    "SELECT id IN secret FROM fs_nodes",
+                    "SELECT json_object('x', 1) FROM secret",
+                    "DELETE FROM fs_nodes",
+                    "PRAGMA database_list",
+                ] {
+                    assert!(connection.prepare(sql).is_err(), "authorizer allowed {sql}");
+                }
+            }
+            // This happens in the same call, so IC query rollback cannot mask a
+            // stale callback or a policy pointer retained after guard destruction.
+            assert_eq!(
+                connection
+                    .query_optional_scalar::<i64>("SELECT id FROM secret LIMIT 1", params![])?,
+                Some(7)
+            );
+            connection.execute("INSERT INTO fs_nodes VALUES(2)", params![])?;
+            Ok(())
+        })
+        .map_err(error_text)
+}
+
 #[query]
 fn integrity_check(slot: u8) -> Result<String, String> {
     handle_for_slot(slot)?.integrity_check().map_err(error_text)

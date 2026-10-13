@@ -24,7 +24,7 @@ import {
   memoryManifest,
   mutateNodesBatch,
   queryContext,
-  queryDatabaseSqlJson,
+  createNodeReader,
   readNode,
   resolveCanisterId,
   searchNodes,
@@ -57,6 +57,8 @@ import {
   mcpToolNames,
   toolAuthMetadata
 } from "./tool-metadata.js";
+import { clipText } from "./text.js";
+
 const DEFAULT_DATABASE_LIMIT = 10;
 const MAX_DATABASE_LIMIT = 50;
 const DEFAULT_SEARCH_LIMIT = 10;
@@ -71,8 +73,7 @@ const MAX_CONTEXT_BUDGET_TOKENS = 8000;
 const DEFAULT_CONTEXT_DEPTH = 1;
 const MAX_CONTEXT_DEPTH = 2;
 const MAX_FETCH_TEXT_CHARS = 40_000;
-const MIN_SQL_FETCH_TEXT_CHARS = 8_000;
-const SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS = 220_000;
+const MAX_CONCURRENT_NODE_READS = 4;
 const DEFAULT_PREFIX = "/";
 const DEFAULT_CONTEXT_NAMESPACE = "/";
 const DEFAULT_PUBLIC_ORIGIN = "https://wiki.kinic.xyz";
@@ -513,7 +514,7 @@ export function createServer(
     "read_paths",
     {
       description:
-        "Read full text for 2 to 10 known VFS paths in one restricted SQL query. Use for multiple paths from list, context, or search metadata instead of repeated read_path/fetch calls.",
+        "Read text for 2 to 10 known VFS paths with bounded parallel reads. Use for multiple paths from list, context, or search metadata instead of repeated read_path/fetch calls.",
       inputSchema: {
         database_id: z.string().min(1),
         paths: z.array(z.string().min(1)).min(2).max(MAX_READ_PATHS)
@@ -738,11 +739,9 @@ async function mutationToolError(
     try {
       const current = await readNode(env, databaseId, conflictPath);
       if (current) {
-        const currentContentSize = current.content.length;
         payload.current_etag = current.etag;
-        payload.current_content = clipText(current.content, MAX_FETCH_TEXT_CHARS);
-        payload.current_content_truncated = currentContentSize > MAX_FETCH_TEXT_CHARS;
-        payload.current_content_size = currentContentSize;
+        payload.current_content = current.content;
+        payload.current_content_size = current.content.length;
       }
     } catch {
       // The stable conflict response remains useful when the follow-up read is unavailable.
@@ -887,24 +886,10 @@ export type SearchResultId = {
   path: string;
 };
 
-type SqlWikiNode = WikiNode & {
-  contentTruncated: boolean;
-};
-
-type ValidFetchManyItem = {
-  index: number;
-  id: string;
-  decoded: SearchResultId;
-};
-
-type SqlNodesByPath = {
-  nodesByPath: Map<string, SqlWikiNode>;
-  rowCount: number;
-  limit: number;
-  uniquePaths: string[];
-  parseErrorCount: number;
-  batchError: string | null;
-};
+type ValidFetchManyItem = { index: number; id: string; decoded: SearchResultId };
+type NodeReadRequest = { databaseId: string; path: string };
+type ReadWikiNode = WikiNode & { contentTruncated?: boolean };
+type NodeReadResult = { node: ReadWikiNode | null; error: string | null };
 
 export async function findDatabases(env: RuntimeEnv, input: FindDatabasesInput) {
   const query = normalizeQuery(input.query ?? "");
@@ -962,19 +947,15 @@ export async function fetchManySearchResults(env: RuntimeEnv, input: FetchManyIn
     }
   }
 
-  const groups = groupFetchManyItemsByDatabase(validItems);
-  await Promise.all(
-    [...groups.values()].map(async (group) => {
-      try {
-        await fillFetchManyGroup(env, group, results);
-      } catch (error) {
-        const message = `fetch failed: ${error instanceof Error ? error.message : String(error)}`;
-        for (const item of group) {
-          results[item.index] ??= fetchItemError(item.id, message);
-        }
-      }
-    })
-  );
+  const reads = await readNodeItems(env, validItems.map(({ decoded }) => ({
+    databaseId: decoded.database_id, path: decoded.path
+  })));
+  for (const [index, item] of validItems.entries()) {
+    const { node, error } = reads[index];
+    results[item.index] = error !== null ? fetchItemError(item.id, `fetch failed: ${error}`)
+      : node ? fetchedNode(env, item.id, item.decoded.database_id, node)
+      : fetchItemError(item.id, "node not found");
+  }
   return { results };
 }
 
@@ -1003,33 +984,25 @@ export async function readPaths(env: RuntimeEnv, input: ReadPathsInput) {
     return toolError("database_id is required", { error: "database_id is required" });
   }
   const paths = input.paths.slice(0, MAX_READ_PATHS).map((path) => normalizePrefix(path));
-  const batch = await readSqlNodesByPath(env, databaseId, paths);
+  const reads = await readNodeItems(env, paths.map((path) => ({ databaseId, path })));
   const canisterId = resolveCanisterId(env);
+  const uniquePaths = [...new Set(paths)];
   return {
-    results: paths.map((path) => {
-      if (batch.batchError) {
-        return readPathItemError(path, batch.batchError);
-      }
-      const node = batch.nodesByPath.get(path);
-      if (!node) {
-        return readPathItemError(path, "node not found");
-      }
-      const id = encodeSearchResultId({
-        version: 1,
-        canister_id: canisterId,
-        database_id: databaseId,
-        path
-      });
-      return fetchedNode(env, id, databaseId, node, node.contentTruncated);
+    results: paths.map((path, index) => {
+      const { node, error } = reads[index];
+      if (error !== null) return readPathItemError(path, `read failed: ${error}`);
+      if (!node) return readPathItemError(path, "node not found");
+      const id = encodeSearchResultId({ version: 1, canister_id: canisterId, database_id: databaseId, path });
+      return fetchedNode(env, id, databaseId, node);
     }),
     metadata: {
       database_id: databaseId,
       requested_paths: paths.length,
-      unique_paths: batch.uniquePaths.length,
-      row_count: batch.rowCount,
-      limit: batch.limit,
-      parse_error_count: batch.parseErrorCount,
-      batch_error: batch.batchError
+      unique_paths: uniquePaths.length,
+      row_count: uniquePaths.filter((path) => reads[paths.indexOf(path)].node !== null).length,
+      limit: uniquePaths.length,
+      parse_error_count: 0,
+      batch_error: null
     }
   };
 }
@@ -1148,45 +1121,43 @@ function decodeSearchResultReference(env: RuntimeEnv, reference: string): Search
   }
 }
 
-async function fetchSearchResultItem(env: RuntimeEnv, item: ValidFetchManyItem) {
-  const node = await readNode(env, item.decoded.database_id, item.decoded.path);
-  if (!node) {
-    return fetchItemError(item.id, "node not found");
+// One actor and one concurrency limit for the entire tool invocation.
+async function readNodeItems(env: RuntimeEnv, requests: NodeReadRequest[]): Promise<NodeReadResult[]> {
+  const key = ({ databaseId, path }: NodeReadRequest) => JSON.stringify([databaseId, path]);
+  const jobs = [...new Map(requests.map((request) => [key(request), request])).values()];
+  if (jobs.length === 0) return [];
+  const results = new Map<string, NodeReadResult>();
+  let reader: Awaited<ReturnType<typeof createNodeReader>>;
+  try {
+    reader = await createNodeReader(env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return requests.map(() => ({ node: null, error: message }));
   }
-  return fetchedNode(env, item.id, item.decoded.database_id, node);
-}
-
-function groupFetchManyItemsByDatabase(items: ValidFetchManyItem[]): Map<string, ValidFetchManyItem[]> {
-  const groups = new Map<string, ValidFetchManyItem[]>();
-  for (const item of items) {
-    const group = groups.get(item.decoded.database_id) ?? [];
-    group.push(item);
-    groups.set(item.decoded.database_id, group);
+  const groups = new Map<string, NodeReadRequest[]>();
+  for (const request of jobs) {
+    const group = groups.get(request.databaseId) ?? [];
+    group.push(request);
+    groups.set(request.databaseId, group);
   }
-  return groups;
-}
-
-async function fillFetchManyGroup(env: RuntimeEnv, group: ValidFetchManyItem[], results: Array<Record<string, unknown> | null>) {
-  if (group.length === 1) {
-    const [item] = group;
-    results[item.index] = await fetchSearchResultItem(env, item);
-    return;
-  }
-
-  const databaseId = group[0].decoded.database_id;
-  const batch = await readSqlNodesByPath(
-    env,
-    databaseId,
-    group.map((item) => item.decoded.path)
-  );
-  for (const item of group) {
-    if (batch.batchError) {
-      results[item.index] = fetchItemError(item.id, batch.batchError);
-      continue;
+  const batches = [...groups.values()];
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_NODE_READS, batches.length) }, async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      try {
+        const reads = await reader.readMany(batch[0].databaseId, batch.map((request) => request.path));
+        for (const [index, request] of batch.entries()) {
+          const { node, error } = reads[index];
+          results.set(key(request), { node: node ? { ...node, content: clipText(node.content, MAX_FETCH_TEXT_CHARS),
+            contentTruncated: node.content.length > MAX_FETCH_TEXT_CHARS } : null, error });
+        }
+      } catch (error) {
+        for (const request of batch) results.set(key(request), { node: null, error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    const node = batch.nodesByPath.get(item.decoded.path);
-    results[item.index] = node ? fetchedNode(env, item.id, databaseId, node, node.contentTruncated) : fetchItemError(item.id, "node not found");
-  }
+  }));
+  return requests.map((request) => results.get(key(request))!);
 }
 
 function fetchItemError(id: string, error: string) {
@@ -1362,7 +1333,7 @@ function kindRank(kind: string): number {
   return 3;
 }
 
-function fetchedNode(env: RuntimeEnv, id: string, databaseId: string, node: WikiNode, explicitTruncated?: boolean) {
+function fetchedNode(env: RuntimeEnv, id: string, databaseId: string, node: ReadWikiNode) {
   const text = clipText(node.content, MAX_FETCH_TEXT_CHARS);
   return {
     id,
@@ -1377,127 +1348,9 @@ function fetchedNode(env: RuntimeEnv, id: string, databaseId: string, node: Wiki
       created_at: node.createdAt,
       updated_at: node.updatedAt,
       metadata_json: node.metadataJson,
-      truncated: explicitTruncated ?? text.length !== node.content.length
+      truncated: node.contentTruncated === true || text.length !== node.content.length
     }
   };
-}
-
-function readPathsSql(paths: string[], contentCharLimit: number): string {
-  const pathList = paths.map(sqlStringLiteral).join(",");
-  return `SELECT json_object('path', path, 'kind', kind, 'etag', etag, 'created_at', created_at, 'updated_at', updated_at, 'metadata_json', metadata_json, 'content', substr(content, 1, ${contentCharLimit}), 'content_truncated', length(content) > ${contentCharLimit}) FROM fs_nodes WHERE path IN (${pathList}) LIMIT ${paths.length}`;
-}
-
-async function readSqlNodesByPath(env: RuntimeEnv, databaseId: string, paths: string[]): Promise<SqlNodesByPath> {
-  const uniquePaths = [...new Set(paths)];
-  if (uniquePaths.length === 0) {
-    return {
-      nodesByPath: new Map<string, SqlWikiNode>(),
-      rowCount: 0,
-      limit: 0,
-      uniquePaths,
-      parseErrorCount: 0,
-      batchError: null
-    };
-  }
-  const contentCharLimit = sqlBatchContentCharLimit(uniquePaths.length);
-  const sql = readPathsSql(uniquePaths, contentCharLimit);
-  let result: Awaited<ReturnType<typeof queryDatabaseSqlJson>>;
-  try {
-    result = await queryDatabaseSqlJson(env, databaseId, sql, uniquePaths.length);
-  } catch (error) {
-    return {
-      nodesByPath: new Map<string, SqlWikiNode>(),
-      rowCount: 0,
-      limit: uniquePaths.length,
-      uniquePaths,
-      parseErrorCount: 0,
-      batchError: batchReadError(error)
-    };
-  }
-  const nodesByPath = new Map<string, SqlWikiNode>();
-  let parseErrorCount = 0;
-
-  for (const row of result.rows) {
-    const node = parseSqlNodeRow(row);
-    if (node) {
-      nodesByPath.set(node.path, node);
-    } else {
-      parseErrorCount += 1;
-    }
-  }
-
-  return {
-    nodesByPath,
-    rowCount: result.rowCount,
-    limit: result.limit,
-    uniquePaths,
-    parseErrorCount,
-    batchError: null
-  };
-}
-
-function sqlBatchContentCharLimit(uniquePathCount: number): number {
-  const fairShare = Math.floor(SQL_BATCH_RESPONSE_TEXT_BUDGET_CHARS / Math.max(uniquePathCount, 1));
-  return Math.min(Math.max(fairShare, MIN_SQL_FETCH_TEXT_CHARS), MAX_FETCH_TEXT_CHARS);
-}
-
-function batchReadError(error: unknown): string {
-  return `batch read failed: ${error instanceof Error ? error.message : String(error)}`;
-}
-
-function sqlStringLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function parseSqlNodeRow(row: string): SqlWikiNode | null {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(row);
-  } catch {
-    return null;
-  }
-  if (!isRecord(decoded)) {
-    return null;
-  }
-  const path = requiredString(decoded.path);
-  const kind = requiredString(decoded.kind);
-  const content = requiredString(decoded.content);
-  const etag = requiredString(decoded.etag);
-  const metadataJson = requiredString(decoded.metadata_json);
-  const createdAt = scalarToString(decoded.created_at);
-  const updatedAt = scalarToString(decoded.updated_at);
-  const contentTruncated = scalarToBoolean(decoded.content_truncated);
-  if (!path || !kind || content === null || !etag || metadataJson === null || !createdAt || !updatedAt) {
-    return null;
-  }
-  return {
-    path,
-    kind,
-    content,
-    etag,
-    metadataJson,
-    createdAt,
-    updatedAt,
-    contentTruncated
-  };
-}
-
-function requiredString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function scalarToString(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return null;
-}
-
-function scalarToBoolean(value: unknown): boolean {
-  return value === true || value === 1 || value === "1";
 }
 
 function rankDatabases(databases: DatabaseSummary[], query: string): Array<{ database: DatabaseSummary; score: number }> {
@@ -1594,13 +1447,6 @@ function nodeUrl(env: RuntimeEnv, databaseId: string, path: string): string {
 
 function publicOrigin(env: RuntimeEnv): string {
   return env.KINIC_WIKI_PUBLIC_ORIGIN?.trim() || DEFAULT_PUBLIC_ORIGIN;
-}
-
-function clipText(text: string, maxChars: number): string {
-  if (text.length <= maxChars) {
-    return text;
-  }
-  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 type JsonBodyResult =

@@ -1486,6 +1486,7 @@ dependencies = [
  "candid",
  "ic-cdk 0.20.1",
  "ic-sqlite-vfs",
+ "kinic-sqlite-compat",
  "proptest",
 ]
 

@@ -1,0 +1,233 @@
+// Regression coverage for restricted database SQL and literal data.
+mod common;
+
+use common::{new_store, write_file};
+use rusqlite::{Connection, params};
+use vfs_store::validate_sql_json_select;
+use vfs_types::{NodeKind, WriteNodeRequest};
+
+fn bounded_paths_sql(paths: &[&str]) -> String {
+    let path_list = paths
+        .iter()
+        .map(|path| format!("'{}'", path.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "SELECT json_object('path', path, 'content_hex', hex(substr(CAST(content AS BLOB), 1, 40000)), 'etag', etag, 'content_truncated', length(CAST(content AS BLOB)) > 40000) FROM fs_nodes WHERE path IN ({path_list}) LIMIT {}",
+        paths.len()
+    )
+}
+
+#[test]
+fn bounded_paths_sql_reads_paths_containing_sql_syntax_as_data() {
+    let (_dir, store) = new_store();
+    let ordinary = "/Knowledge/ordinary.md";
+    write_file(&store, ordinary, None, 100);
+    let json = Connection::open_in_memory().unwrap();
+    for (index, path) in [
+        "/Knowledge/routing--420aa69ea5d3.md",
+        "/Knowledge/comment/*marker.md",
+        "/Knowledge/comment*/marker.md",
+        "/Knowledge/semi;colon.md",
+        "/Knowledge/update.md",
+        "/Knowledge/join.md",
+        "/Knowledge/select.md",
+        "/Knowledge/limit.md",
+        "/Knowledge/from.md",
+        "/Knowledge/owner's-notes.md",
+        "/Knowledge/quote'; DROP TABLE fs_nodes;--.md",
+        "/Knowledge/日本語.md",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let now = 200 + index as i64;
+        let etag = write_file(&store, path, None, now);
+        let result = store
+            .query_sql_json(&bounded_paths_sql(&[ordinary, path]), 2)
+            .unwrap_or_else(|error| panic!("batch failed for {path}: {error}"));
+        assert_eq!(result.row_count, 2, "{path}");
+        let rows = result.rows.iter().map(|row| {
+            json.query_row(
+                "SELECT json_extract(?1, '$.path'), json_extract(?1, '$.content_hex'), json_extract(?1, '$.etag'), json_extract(?1, '$.content_truncated')",
+                params![row],
+                |row| Ok((row.get::<_, String>(0)?, decode_hex(&row.get::<_, String>(1)?), row.get::<_, String>(2)?, row.get::<_, i64>(3)?)),
+            ).unwrap()
+        }).collect::<Vec<_>>();
+        assert!(
+            rows.iter()
+                .any(|row| row.0 == ordinary && row.1 == "content revision 100" && row.3 == 0)
+        );
+        assert!(
+            rows.iter().any(|row| row.0 == path
+                && row.1 == format!("content revision {now}")
+                && row.2 == etag
+                && row.3 == 0),
+            "{path}"
+        );
+    }
+}
+
+fn decode_hex(encoded: &str) -> String {
+    let bytes = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect::<Vec<_>>();
+    String::from_utf8(bytes).unwrap()
+}
+
+#[test]
+fn bounded_paths_sql_preserves_content_after_nul_with_correct_truncation() {
+    let (_dir, store) = new_store();
+    let ordinary = "/Knowledge/ordinary.md";
+    let path = "/Knowledge/nul.md";
+    write_file(&store, ordinary, None, 100);
+    store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".into(),
+                path: path.into(),
+                kind: NodeKind::File,
+                content: "prefix\0suffix".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            },
+            101,
+        )
+        .unwrap();
+    assert_eq!(
+        store.read_node(path).unwrap().unwrap().content,
+        "prefix\0suffix"
+    );
+    let result = store
+        .query_sql_json(&bounded_paths_sql(&[ordinary, path]), 2)
+        .unwrap();
+    let json = Connection::open_in_memory().unwrap();
+    let row = result
+        .rows
+        .iter()
+        .find(|row| row.contains("/Knowledge/nul.md"))
+        .unwrap();
+    let (encoded, truncated): (String, i64) = json
+        .query_row(
+            "SELECT json_extract(?1, '$.content_hex'), json_extract(?1, '$.content_truncated')",
+            params![row],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(decode_hex(&encoded), "prefix\0suffix");
+    assert_eq!(truncated, 0);
+}
+
+#[test]
+fn database_sql_still_rejects_syntax_outside_literals() {
+    let (_dir, store) = new_store();
+    for sql in [
+        "SELECT json_object('ok', 1) FROM fs_nodes -- comment LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes /* comment */ LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes */ LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1; SELECT 2",
+        "UPDATE fs_nodes SET content = ''",
+        "SELECT json_object('ok', 1) FROM secret_table LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes JOIN fs_links ON 1 = 1 LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes UNION SELECT 2 LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE id IN (SELECT id FROM fs_nodes) LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 0",
+        "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1 OFFSET 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes ORDER BY content LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE path = 'unclosed LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE path = 'escaped'' LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE path = 'safe''--data' /* real comment */ LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE path = 'safe'';data'; DELETE FROM fs_nodes",
+        "SELECT json_object('ok', 1) FROM \"secret_table\" LIMIT 1",
+        "SELECT json_object('ok', 1) FROM `secret_table` LIMIT 1",
+        "SELECT json_object('ok', 1) FROM [secret_table] LIMIT 1",
+        "SELECT \"load_extension\"('x') FROM fs_nodes LIMIT 1",
+    ] {
+        assert!(
+            store.query_sql_json(sql, 1).is_err(),
+            "accepted prohibited SQL: {sql}"
+        );
+    }
+}
+
+#[test]
+fn shared_select_validator_ignores_literal_keywords_but_rejects_real_operations() {
+    validate_sql_json_select(
+        "SELECT json_object('select;--update', 'owner''s /* notes */')",
+        "index SQL",
+    )
+    .unwrap();
+    for sql in [
+        "SELECT 1; DELETE FROM databases",
+        "SELECT 'safe' /* real comment */; DELETE FROM fs_nodes",
+        "SELECT 'unclosed",
+    ] {
+        assert!(validate_sql_json_select(sql, "index SQL").is_err(), "{sql}");
+    }
+    assert!(validate_sql_json_select("DELETE FROM databases", "index SQL").is_err());
+    // Index SQL historically permits comments; restricted database SQL does not.
+    validate_sql_json_select("SELECT 1 /* comment */", "index SQL").unwrap();
+    validate_sql_json_select("SELECT 1 -- comment\n", "index SQL").unwrap();
+    assert!(validate_sql_json_select("SELECT 1 /* unclosed", "index SQL").is_err());
+}
+
+#[test]
+fn quoted_identifiers_remain_subject_to_database_restrictions() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Knowledge/ordinary.md", None, 100);
+    assert_eq!(store.query_sql_json(
+        "SELECT json_object('hex', hex(content)) FROM fs_nodes WHERE path = '/Knowledge/ordinary.md' LIMIT 1", 1
+    ).unwrap().row_count, 1);
+    for table in ["\"fs_nodes\"", "`fs_nodes`", "[fs_nodes]"] {
+        let sql = format!("SELECT json_object('path', path) FROM {table} LIMIT 1");
+        assert_eq!(store.query_sql_json(&sql, 1).unwrap().row_count, 1);
+    }
+    for function in ["\"load_extension\"", "`load_extension`", "[load_extension]"] {
+        let sql = format!("SELECT {function}('x') FROM fs_nodes LIMIT 1");
+        assert!(
+            store
+                .query_sql_json(&sql, 1)
+                .unwrap_err()
+                .contains("token is not allowed: load_extension")
+        );
+    }
+    for sql in [
+        "SELECT json_object('ok', 1) FROM \"fs_nodes LIMIT 1",
+        "SELECT json_object('ok', 1) FROM `fs_nodes LIMIT 1",
+        "SELECT json_object('ok', 1) FROM [fs_nodes LIMIT 1",
+        "SELECT json_object('ok', 1) FROM \"fs_\"\"nodes\" LIMIT 1",
+        "SELECT json_object('ok', 1) FROM `fs_``nodes` LIMIT 1",
+    ] {
+        assert!(store.query_sql_json(sql, 1).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn database_sql_rejects_decoy_from_and_implicit_table_reads() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Knowledge/ordinary.md", None, 100);
+    for sql in [
+        "SELECT json_object(\"from\", \"fs_nodes\", \"where\", path) FROM fs_change_log LIMIT 1",
+        "SELECT json_object('internal_hit', id IN publication_mutation_commits) FROM fs_nodes LIMIT 1",
+    ] {
+        assert!(
+            store.query_sql_json(sql, 1).is_err(),
+            "accepted internal table read: {sql}"
+        );
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn arbitrary_literal_text_does_not_change_select_validation(value in ".{0,100}") {
+        let literal = value.replace('\'', "''");
+        let sql = format!("SELECT json_object('value', '{literal}') FROM fs_nodes LIMIT 1");
+        let multi_statement = format!("{sql}; DELETE FROM fs_nodes");
+        let commented = format!("{sql} /* comment */; DELETE FROM fs_nodes");
+        proptest::prop_assert!(validate_sql_json_select(&sql, "index SQL").is_ok());
+        proptest::prop_assert!(validate_sql_json_select(&multi_statement, "index SQL").is_err());
+        proptest::prop_assert!(validate_sql_json_select(&commented, "index SQL").is_err());
+    }
+}
