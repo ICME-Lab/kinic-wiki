@@ -90,13 +90,13 @@ async function main() {
     const missingFolders = missingReviewFolders(assertCompleteInventory(inventory));
     if (missingFolders.length > 0) {
       const createdFolders = await session.client.callTool({
-        name: "mutate_nodes_batch",
+        name: "create_folders",
         arguments: {
           database_id: databaseId,
-          operations: missingFolders.map((path) => ({ type: "mkdir", path }))
+          operations: missingFolders.map((path) => ({ path }))
         }
       });
-      assertToolSucceeded("mutate_nodes_batch fixture folders", createdFolders);
+      assertToolSucceeded("create_folders fixture folders", createdFolders);
     }
 
     const reads = [];

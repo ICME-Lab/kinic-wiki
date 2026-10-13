@@ -41,14 +41,14 @@ const EXPECTED_READ_TOOLS = [
   "read_paths",
   "search"
 ];
-const EXPECTED_TOOLS = [...EXPECTED_READ_TOOLS, "mutate_nodes_batch", "write_nodes"].sort();
-const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes"]);
+const EXPECTED_TOOLS = [...EXPECTED_READ_TOOLS, "mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"].sort();
+const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"]);
 const EXPECTED_CASE_TOOLS = [
   "find_databases, memory_manifest, list",
   "find_databases, context",
   "find_databases, search, fetch_many",
-  "find_databases, write_nodes, read_path, mutate_nodes_batch",
-  "find_databases, write_nodes, read_paths, mutate_nodes_batch"
+  "find_databases, write_nodes, read_path, append_nodes, edit_nodes, multi_edit_nodes, create_folders, move_nodes, delete_nodes",
+  "find_databases, write_nodes, read_paths, mutate_nodes_batch, delete_nodes"
 ];
 const DEFAULT_MCP_URLS = [
   "https://wiki-private-mcp.kinic.xyz/mcp"
@@ -147,8 +147,10 @@ export function validateSkillFiles(skill, toolReference, openAiConfig) {
   );
   assert(
     /use `write_nodes`/u.test(skill) && /use `mutate_nodes_batch`/u.test(skill),
-    "skill must route writes through the two batch tools"
+    "skill must document dedicated and mixed batch tools"
   );
+  for (const name of WRITE_TOOLS) assert(skill.includes(name), `skill must document ${name}`);
+  assert(skill.includes("Never split a mixed atomic batch into multiple calls."), "skill must preserve mixed batch atomicity");
   assert(skill.includes("expected_etag"), "skill must require etag-aware mutation handling");
   assert(
     /Use `expected_etag` for[^\n]*multi-edit/u.test(skill),
@@ -236,7 +238,7 @@ export function validateSubmissionCases(submission) {
     const isWrite = WRITE_TOOLS.has(toolName);
     assert(annotations?.readOnlyHint === !isWrite, `${toolName} readOnlyHint is inconsistent with its behavior`);
     assert(annotations?.openWorldHint === isWrite, `${toolName} openWorldHint is inconsistent with its behavior`);
-    assert(annotations?.destructiveHint === isWrite, `${toolName} destructiveHint is inconsistent with its behavior`);
+    assert(annotations?.destructiveHint === (isWrite && toolName !== "create_folders"), `${toolName} destructiveHint is inconsistent with its behavior`);
   }
 }
 
@@ -451,7 +453,10 @@ export async function checkReviewerWriteBoundary(client, mcpUrl, databaseId) {
 export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
   const suffix = randomBytes(4).toString("hex");
   const path = `${SCRATCH_PREFIX}/single-${suffix}.md`;
-  const artifact = { path, expectedContent: "OpenAI review single-node check", etag: undefined };
+  let artifact = { path, expectedContent: "OpenAI review single-node check", etag: undefined };
+  const artifacts = [artifact];
+  const folder = { path: `${SCRATCH_PREFIX}/single-${suffix}`, expectedContent: "", etag: undefined };
+  let folderCreated = false;
   let operationError;
   try {
     const created = await callTool(client, mcpUrl, "write_nodes", {
@@ -463,10 +468,47 @@ export async function checkSingleWriteCase(client, mcpUrl, databaseId) {
     assert(exactModelFacingContent(read.raw) === artifact.expectedContent, `${mcpUrl} single write content must roundtrip exactly`);
     artifact.etag = read.structured.metadata?.etag;
     assert(typeof artifact.etag === "string", `${mcpUrl} single write read must return an etag`);
+    for (const [name, fields, content] of [
+      ["append_nodes", { content: " appended", separator: "" }, "OpenAI review single-node check appended"],
+      ["edit_nodes", { old_text: "appended", new_text: "edited" }, "OpenAI review single-node check edited"],
+      ["multi_edit_nodes", { edits: [{ old_text: "edited", new_text: "intermediate" }, { old_text: "intermediate", new_text: "final" }] }, "OpenAI review single-node check final"]
+    ]) {
+      const expected_etag = artifact.etag;
+      artifact.etag = undefined;
+      // A lost response can mean either rollback or commit. Keep both possible
+      // owned contents until the result is confirmed, and reread before cleanup.
+      artifact.pendingContent = content;
+      const changed = await callTool(client, mcpUrl, name, {
+        database_id: databaseId, operations: [{ path, expected_etag, ...fields }]
+      });
+      artifact.etag = changed.structured.results?.[0]?.value?.node?.etag;
+      assert(typeof artifact.etag === "string", `${mcpUrl} ${name} must return an etag`);
+      artifact.expectedContent = content;
+      artifact.pendingContent = undefined;
+    }
+    const folders = await callTool(client, mcpUrl, "create_folders", {
+      database_id: databaseId, operations: [{ path: folder.path }]
+    });
+    folderCreated = folders.structured.results?.[0]?.value?.created === true;
+    assert(folderCreated, `${mcpUrl} scratch folder must be new`);
+    const movedArtifact = { path: `${folder.path}/page.md`, expectedContent: artifact.expectedContent, etag: undefined };
+    artifacts.push(movedArtifact);
+    const expected_etag = artifact.etag;
+    artifact.etag = undefined;
+    const moved = await callTool(client, mcpUrl, "move_nodes", {
+      database_id: databaseId, operations: [{ from_path: path, to_path: movedArtifact.path, expected_etag, overwrite: false }]
+    });
+    movedArtifact.etag = moved.structured.results?.[0]?.value?.node?.etag;
+    artifact = movedArtifact;
+    const verified = await callTool(client, mcpUrl, "read_path", { database_id: databaseId, path: artifact.path });
+    assert(exactModelFacingContent(verified.raw) === artifact.expectedContent, `${mcpUrl} dedicated mutations must roundtrip exactly`);
+    artifact.etag = verified.structured.metadata?.etag;
+
   } catch (error) {
     operationError = error;
   }
-  const cleanupFailureCount = await cleanupReviewArtifacts(client, mcpUrl, databaseId, [artifact]);
+  let cleanupFailureCount = await cleanupReviewArtifacts(client, mcpUrl, databaseId, artifacts);
+  if (folderCreated && cleanupFailureCount === 0) cleanupFailureCount += await cleanupReviewArtifacts(client, mcpUrl, databaseId, [folder]);
   const completionError = reviewCompletionError(operationError, cleanupFailureCount);
   if (completionError) {
     throw completionError;
@@ -504,6 +546,18 @@ export async function checkBatchWriteCase(client, mcpUrl, databaseId) {
       artifact.etag = item.metadata?.etag;
       assert(typeof artifact.etag === "string", `${mcpUrl} batch read must return an etag for ${artifact.path}`);
     }
+    const expectedA = artifacts[0].etag, expectedB = artifacts[1].etag;
+    artifacts[0].etag = undefined;
+    artifacts[0].pendingContent = "review batch A edited";
+    artifacts[1].etag = undefined;
+    const mixed = await callTool(client, mcpUrl, "mutate_nodes_batch", { database_id: databaseId, operations: [
+      { type: "edit", path: paths[0], old_text: "review batch A", new_text: "review batch A edited", expected_etag: expectedA },
+      { type: "delete", path: paths[1], expected_etag: expectedB }
+    ] });
+    artifacts[0].etag = mixed.structured.results?.[0]?.value?.node?.etag;
+    assert(typeof artifacts[0].etag === "string", `${mcpUrl} mixed edit must return an etag`);
+    artifacts[0].expectedContent = artifacts[0].pendingContent;
+    artifacts[0].pendingContent = undefined;
   } catch (error) {
     operationError = error;
   }
@@ -528,20 +582,22 @@ export async function cleanupReviewArtifacts(client, mcpUrl, databaseId, artifac
         );
         if (isNodeNotFoundResult(read)) continue;
         if (read.isError === true) throw new Error(`${mcpUrl} cleanup read_path failed`);
-        if (exactModelFacingContent(read) !== artifact.expectedContent) {
+        const content = exactModelFacingContent(read);
+        if (content !== artifact.expectedContent &&
+            !(typeof artifact.pendingContent === "string" && content === artifact.pendingContent)) {
           throw new Error(`${mcpUrl} cleanup content marker did not match for ${artifact.path}`);
         }
         etag = read.structuredContent?.metadata?.etag;
         if (typeof etag !== "string") throw new Error(`${mcpUrl} cleanup read_path omitted etag`);
       }
-      operations.push({ type: "delete", path: artifact.path, expected_etag: etag });
+      operations.push({ path: artifact.path, expected_etag: etag });
     } catch {
       failureCount += 1;
     }
   }
   if (operations.length > 0) {
     try {
-      await callTool(client, mcpUrl, "mutate_nodes_batch", { database_id: databaseId, operations });
+      await callTool(client, mcpUrl, "delete_nodes", { database_id: databaseId, operations });
     } catch {
       failureCount += operations.length;
     }
@@ -572,7 +628,8 @@ async function checkInvalidCalls(client, mcpUrl, databaseId) {
     ["memory_manifest", { database_id: "" }],
     ["context", { database_id: databaseId, task: "" }],
     ["write_nodes", { database_id: databaseId, nodes: [] }],
-    ["mutate_nodes_batch", { database_id: databaseId, operations: [] }]
+    ["mutate_nodes_batch", { database_id: databaseId, operations: [] }],
+    ...["append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"].map(name => [name, { database_id: databaseId, operations: [] }])
   ];
   for (const [name, toolArgs] of invalidCases) {
     const result = await callTool(client, mcpUrl, name, toolArgs, { expectError: true });

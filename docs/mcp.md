@@ -9,7 +9,7 @@
 ## Boundary
 
 - Public production reads public databases only and queries the canister anonymously.
-- Private production and Private staging expose exactly the existing eight read tools plus `write_nodes` and `mutate_nodes_batch`. `initialize`, `tools/list`, and `tools/call` all require OAuth.
+- Private production and Private staging expose exactly the existing eight read tools plus eight mutation tools (`write_nodes`, `mutate_nodes_batch`, `append_nodes`, `edit_nodes`, `multi_edit_nodes`, `create_folders`, `move_nodes`, `delete_nodes`). `initialize`, `tools/list`, and `tools/call` all require OAuth.
 - After connection, all data tools use only the delegated principal. Anonymous public database results are never merged into private results.
 - A supplied but invalid, expired, revoked, or wrong-resource Bearer token returns `401`; it never falls back to anonymous.
 - Private database authorization remains in the Kinic canister; the Worker does not accept a database owner principal as input.
@@ -123,20 +123,26 @@ Private Workers log only a random trace id, the connection, per-app delegation, 
   - Preferred for creation and full replacement, including a single node
   - Atomically creates or replaces 1 to 100 nodes in one database, in order
   - Every item requires `path`, `kind`, `content`, and `metadata_json`; only `expected_etag` is optional
+- `append_nodes`: Append content; optionally change metadata or kind. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `edit_nodes`: Replace exact text with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `multi_edit_nodes`: Apply ordered exact-text edits within each node. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `create_folders`: Create folders; existing folders are unchanged. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `move_nodes`: Move or rename nodes with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
+- `delete_nodes`: Delete explicitly selected nodes with etag protection. Accepts `database_id` and 1–100 `operations` without `type`; uses the corresponding mixed-batch fields below. Each call is ordered and atomic.
 - `mutate_nodes_batch`
-  - Preferred for the whole requested change set when any operation is `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete`, including a single operation
+  - Use when different operation kinds must commit together; prefer dedicated tools for same-kind operations and never split a mixed atomic batch
   - Atomically applies 1 to 100 ordered `write`, `append`, `edit`, `multi_edit`, `mkdir`, `move`, or `delete` operations in one database
   - A `write` operation has the same required fields as `write_nodes`
   - A `move` with `overwrite: true` must include `expected_target_etag` when the destination exists. If the destination does not exist, omit it. Supplying it with `overwrite: false` is invalid.
   - The first failure rolls back the entire transaction and returns a zero-based `failed_index`
 
-Read tools keep read-only annotations. Both batch tools use `readOnlyHint: false`, `destructiveHint: true`, and `openWorldHint: true`. The open-world hint is required because an authenticated writer can change a public database or the content of an already-published node.
+Read tools keep read-only annotations. All mutation tools use `readOnlyHint: false` and `openWorldHint: true`. `create_folders` is non-destructive and idempotent; the other mutation tools use `destructiveHint: true`. The open-world hint is required because an authenticated writer can change a public database or the content of an already-published node.
 
 ## Agent Write Workflow
 
 1. Read task-scoped private context with `context`, `read_path`, or `read_paths`.
 2. Write only when the user explicitly requests a change. Automatic skill invocation does not authorize writes.
-3. Use `write_nodes` for create/full replacement only, even for one node. If any append, edit, multi-edit, mkdir, move, or delete is present, place the entire ordered change set in `mutate_nodes_batch`, even for one operation.
+3. Use `write_nodes` for create/full replacement only, even for one node. Use the dedicated tool for same-kind changes, even for one item. Use `mutate_nodes_batch` when different operation kinds must execute atomically; never split such a batch into multiple calls.
 4. Keep each 1–100 item batch in one database and preserve returned etags.
 5. On `etag_conflict`, treat `path` as the failed operation input and `conflict_path` as the actual stale node. Compare supplied `current_content` and `current_etag` with the intended change, noting `current_content_truncated` and `current_content_size`; the inline content is capped at 40,000 characters. Regenerate the batch and retry at most twice only if intent remains unambiguous. Otherwise return the current/desired difference instead of overwriting.
 
@@ -215,7 +221,7 @@ MCP_STAGING_AUTH_CACHE="${XDG_STATE_HOME:-$HOME/.local/state}/kinic-wiki/mcp-pri
   --open
 ```
 
-The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 10-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
+The private smoke client uses a random OAuth state, S256 PKCE, and an ephemeral `127.0.0.1` callback. It stores the registered client and rotating OAuth tokens with file mode `0600`, requests `offline_access`, and reuses or refreshes that session on later runs. Browser consent is therefore required on the first run, when adding write scope, after expiry or revocation, or after `--reset-auth`; set `MCP_STAGING_AUTH_CACHE` to isolate the cache for each endpoint. Do not run this diagnostic concurrently against the same cache because refresh tokens rotate. It verifies the exact 16-tool contract, runs authenticated private reads, and optionally exercises single-item `write_nodes`, etag conflict rereads, atomic rollback, multi-item `write_nodes`, heterogeneous batch mutation, and batch cleanup at `--write-smoke-path`. The path must be new; cleanup uses returned etags. Output contains only tool counts, success flags, and response byte lengths.
 
 ## Configuration
 
@@ -258,7 +264,7 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
 
 1. In II Settings, add `https://wiki-private-mcp.kinic.xyz/mcp` as the trusted connector. Use the staging URL only for staging validation.
 2. Configure the same MCP URL in ChatGPT/Codex and confirm the initial connection starts OAuth from the HTTP `401` challenge.
-3. Refresh tools and confirm the exact 10-tool list contains eight reads plus `write_nodes` and `mutate_nodes_batch`, with no `connect_private` or single-mutation tools.
+3. Refresh tools and confirm the exact 16-tool list contains eight reads plus the eight mutation tools listed above, with no `connect_private` or single-mutation tools.
 4. Complete II consent with either `Questions only` or `Actions & questions`, then run authenticated `find_databases`, `context`, and `read_path`.
 5. Run review test cases:
    - `find_databases` can select `KINIC-WIKI`.
@@ -272,7 +278,7 @@ Use a separate Private wiki app. Do not replace the public search app or the exi
    - the same database stays unavailable anonymously and to another principal;
    - unknown or stale ids return a common unavailable error.
    - Questions-only sessions cannot call a mutation;
-   - Actions & questions sessions use `write_nodes` for single/multiple create or replace, and `mutate_nodes_batch` for append, edit, multi-edit, mkdir, move, and etag-guarded delete;
+   - Actions & questions sessions use `write_nodes` for single/multiple create or replace, use the six dedicated mutation tools for same-kind operations, and `mutate_nodes_batch` for mixed atomic operations;
    - a stale etag returns the failed operation index plus current content and etag, and does not partially commit the batch.
 6. Disable or remove the connector in II Settings and verify the next MCP request returns `invalid_token`.
 

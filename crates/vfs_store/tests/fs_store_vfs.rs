@@ -2,8 +2,8 @@ use rusqlite::Connection;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeItem, AppendNodeRequest, DeleteNodeRequest, EditNodeItem, EditNodeRequest,
-    GlobNodeType, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    AppendNodeItem, AppendNodeRequest, DeleteNodeItem, DeleteNodeRequest, EditNodeItem,
+    EditNodeRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeItem, MoveNodeRequest,
     MultiEdit, MultiEditNodeRequest, MutateNodesBatchRequest, NodeContextRequest, NodeEntryKind,
     NodeKind, NodeMutation, NodeMutationErrorCode, NodeMutationResult, OutgoingLinksRequest,
@@ -152,6 +152,131 @@ fn heterogeneous_mutation_batch_is_ordered_and_atomic() {
             .content,
         "alpha beta"
     );
+}
+
+#[test]
+fn mixed_edit_move_delete_preserves_order_and_rolls_back_late_failure() {
+    for fail_delete in [true, false] {
+        let (_dir, store) = new_store();
+        let nodes = ["edit", "move", "delete"].map(|name| {
+            store
+                .write_node(
+                    WriteNodeRequest {
+                        database_id: "default".into(),
+                        path: format!("/Knowledge/{name}.md"),
+                        kind: NodeKind::File,
+                        content: "original".into(),
+                        metadata_json: "{}".into(),
+                        expected_etag: None,
+                    },
+                    1,
+                )
+                .unwrap()
+                .node
+        });
+        let result = store.mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".into(),
+                operations: vec![
+                    NodeMutation::Edit(EditNodeItem {
+                        path: nodes[0].path.clone(),
+                        old_text: "original".into(),
+                        new_text: "edited".into(),
+                        expected_etag: Some(nodes[0].etag.clone()),
+                        replace_all: false,
+                    }),
+                    NodeMutation::Move(MoveNodeItem {
+                        from_path: nodes[1].path.clone(),
+                        to_path: "/Knowledge/moved.md".into(),
+                        expected_etag: Some(nodes[1].etag.clone()),
+                        expected_target_etag: None,
+                        overwrite: false,
+                    }),
+                    NodeMutation::Delete(DeleteNodeItem {
+                        path: nodes[2].path.clone(),
+                        expected_etag: Some(if fail_delete {
+                            "stale".into()
+                        } else {
+                            nodes[2].etag.clone()
+                        }),
+                        expected_folder_index_etag: None,
+                    }),
+                ],
+            },
+            2,
+        );
+        if fail_delete {
+            let error = result.unwrap_err();
+            assert_eq!(error.failed_index, Some(2));
+            assert_eq!(error.code, NodeMutationErrorCode::EtagConflict);
+            for node in &nodes {
+                let current = store.read_node(&node.path).unwrap().unwrap();
+                assert_eq!(current.content, "original");
+                assert_eq!(current.etag, node.etag);
+            }
+            assert!(store.read_node("/Knowledge/moved.md").unwrap().is_none());
+        } else {
+            let results = result.unwrap();
+            assert!(matches!(results[0], NodeMutationResult::Edit(_)));
+            assert!(matches!(results[1], NodeMutationResult::Move(_)));
+            assert!(matches!(results[2], NodeMutationResult::Delete(_)));
+            assert_eq!(
+                store.read_node(&nodes[0].path).unwrap().unwrap().content,
+                "edited"
+            );
+            assert!(store.read_node(&nodes[1].path).unwrap().is_none());
+            assert_eq!(
+                store
+                    .read_node("/Knowledge/moved.md")
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                "original"
+            );
+            assert!(store.read_node(&nodes[2].path).unwrap().is_none());
+        }
+    }
+}
+
+#[test]
+fn repeated_path_checks_the_intermediate_etag_and_rolls_back() {
+    let (_dir, store) = new_store();
+    let original = store
+        .write_node(
+            WriteNodeRequest {
+                database_id: "default".into(),
+                path: "/Knowledge/repeated.md".into(),
+                kind: NodeKind::File,
+                content: "original".into(),
+                metadata_json: "{}".into(),
+                expected_etag: None,
+            },
+            1,
+        )
+        .unwrap()
+        .node;
+    let operation = NodeMutation::Append(AppendNodeItem {
+        path: original.path.clone(),
+        content: " more".into(),
+        expected_etag: Some(original.etag.clone()),
+        separator: None,
+        metadata_json: None,
+        kind: None,
+    });
+    let error = store
+        .mutate_nodes_batch(
+            MutateNodesBatchRequest {
+                database_id: "default".into(),
+                operations: vec![operation.clone(), operation],
+            },
+            2,
+        )
+        .unwrap_err();
+    assert_eq!(error.failed_index, Some(1));
+    assert_eq!(error.code, NodeMutationErrorCode::EtagConflict);
+    let current = store.read_node(&original.path).unwrap().unwrap();
+    assert_eq!(current.content, "original");
+    assert_eq!(current.etag, original.etag);
 }
 
 #[test]

@@ -14,6 +14,12 @@ const AUTH_CACHE_VERSION = 1;
 const AUTH_CACHE_ENV = "MCP_STAGING_AUTH_CACHE";
 export const FIND_DATABASE_LIMIT = 50;
 const EXPECTED_TOOLS = [
+  "append_nodes",
+  "create_folders",
+  "delete_nodes",
+  "edit_nodes",
+  "move_nodes",
+  "multi_edit_nodes",
   "context",
   "fetch_many",
   "find_databases",
@@ -24,8 +30,8 @@ const EXPECTED_TOOLS = [
   "read_paths",
   "search",
   "write_nodes"
-];
-const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes"]);
+].sort();
+const WRITE_TOOLS = new Set(["mutate_nodes_batch", "write_nodes", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"]);
 const VALUE_ARGUMENTS = new Set([
   "--server-url",
   "--database-id",
@@ -217,16 +223,16 @@ export async function cleanupSmokeArtifacts(client, databaseId, artifacts) {
         }
       }
       const deleted = await client.callTool({
-        name: "mutate_nodes_batch",
+        name: "delete_nodes",
         arguments: {
           database_id: databaseId,
-          operations: [{ type: "delete", path: artifact.path, expected_etag: etag }]
+          operations: [{ path: artifact.path, expected_etag: etag }]
         }
       });
       if (isMutationNotFoundResult(deleted)) {
         continue;
       }
-      assertToolSucceeded("smoke cleanup mutate_nodes_batch", deleted);
+      assertToolSucceeded("smoke cleanup delete_nodes", deleted);
     } catch {
       failureCount += 1;
     }

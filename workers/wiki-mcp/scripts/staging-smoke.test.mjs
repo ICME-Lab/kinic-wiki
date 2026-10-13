@@ -310,10 +310,9 @@ test("cleans a committed single artifact when the write response is lost", async
     smokeWriteBatchDelete(client, "db_private", "/Knowledge/response-loss.md"),
     /single response lost/u
   );
-  assert.deepEqual(calls.map((call) => call.name), ["write_nodes", "read_path", "mutate_nodes_batch"]);
+  assert.deepEqual(calls.map((call) => call.name), ["write_nodes", "read_path", "delete_nodes"]);
   assert.deepEqual(calls[2].arguments.operations, [
     {
-      type: "delete",
       path: "/Knowledge/response-loss.md",
       expected_etag: "etag-recovered"
     }
@@ -470,9 +469,9 @@ test("attempts every artifact cleanup when a batch result omits etags", async ()
     ),
     [
       "read_path:/Knowledge/marker-batch-a.md",
-      "mutate_nodes_batch:/Knowledge/marker-batch-a.md",
+      "delete_nodes:/Knowledge/marker-batch-a.md",
       "read_path:/Knowledge/marker-batch-b.md",
-      "mutate_nodes_batch:/Knowledge/marker-batch-b.md"
+      "delete_nodes:/Knowledge/marker-batch-b.md"
     ]
   );
 });

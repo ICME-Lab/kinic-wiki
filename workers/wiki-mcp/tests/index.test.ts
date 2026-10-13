@@ -371,7 +371,7 @@ describe("wiki mcp worker", () => {
     expect(mocks.listDatabases).not.toHaveBeenCalled();
   });
 
-  it("advertises exactly eight reads and two batch writes after staging authentication", async () => {
+  it("advertises exactly eight reads and eight batch writes after staging authentication", async () => {
     const server = createServer(privateRequiredEnv, { accessPolicy: "private_required", writesAvailable: true });
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
@@ -400,7 +400,7 @@ describe("wiki mcp worker", () => {
       "memory_manifest",
       "context",
       "write_nodes",
-      "mutate_nodes_batch"
+      "mutate_nodes_batch", "append_nodes", "edit_nodes", "multi_edit_nodes", "create_folders", "move_nodes", "delete_nodes"
     ]);
     for (const tool of tools.slice(0, 8)) {
       expect(tool._meta?.securitySchemes).toEqual([
@@ -413,7 +413,8 @@ describe("wiki mcp worker", () => {
       ]);
       expect(tool.annotations).toMatchObject({
         readOnlyHint: false,
-        destructiveHint: true,
+        destructiveHint: tool.name !== "create_folders",
+        idempotentHint: tool.name === "create_folders",
         openWorldHint: true
       });
     }
@@ -437,6 +438,69 @@ describe("wiki mcp worker", () => {
       'error_description="Access token is invalid or expired"'
     );
     expect(mocks.listDatabases).not.toHaveBeenCalled();
+  });
+
+  const dedicatedCases = [
+    { name: "append_nodes", type: "append", input: { path: "/OpenAIReview/scratch/a.md", content: "more", separator: "\n", metadata_json: "{}", kind: "file", expected_etag: "v1" }, value: { path: "/OpenAIReview/scratch/a.md", content: "more", separator: "\n", metadataJson: "{}", kind: "file", expectedEtag: "v1" } },
+    { name: "edit_nodes", type: "edit", input: { path: "/OpenAIReview/scratch/a.md", old_text: "old", new_text: "new", replace_all: true, expected_etag: "v1" }, value: { path: "/OpenAIReview/scratch/a.md", oldText: "old", newText: "new", replaceAll: true, expectedEtag: "v1" } },
+    { name: "multi_edit_nodes", type: "multi_edit", input: { path: "/OpenAIReview/scratch/a.md", edits: [{ old_text: "A", new_text: "B" }, { old_text: "B", new_text: "C" }], expected_etag: "v1" }, value: { path: "/OpenAIReview/scratch/a.md", edits: [{ oldText: "A", newText: "B" }, { oldText: "B", newText: "C" }], expectedEtag: "v1" } },
+    { name: "create_folders", type: "mkdir", input: { path: "/OpenAIReview/scratch/folder" }, value: { path: "/OpenAIReview/scratch/folder" } },
+    { name: "move_nodes", type: "move", input: { from_path: "/OpenAIReview/scratch/a.md", to_path: "/OpenAIReview/scratch/b.md", expected_etag: "v1", expected_target_etag: "target-v1", overwrite: true }, value: { fromPath: "/OpenAIReview/scratch/a.md", toPath: "/OpenAIReview/scratch/b.md", expectedEtag: "v1", expectedTargetEtag: "target-v1", overwrite: true } },
+    { name: "delete_nodes", type: "delete", input: { path: "/OpenAIReview/scratch/a.md", expected_etag: "v1", expected_folder_index_etag: "index-v1" }, value: { path: "/OpenAIReview/scratch/a.md", expectedEtag: "v1", expectedFolderIndexEtag: "index-v1" } }
+  ];
+  for (const testCase of dedicatedCases) {
+    it(`${testCase.name} maps 1 and 100 items to a single ordered canister batch`, async () => {
+      for (const count of [1, 100]) {
+        mocks.mutateNodesBatch.mockClear();
+        const result = await callPrivateTool(reviewAuthorizedEnv, testCase.name, { database_id: "db_review", operations: Array.from({ length: count }, () => testCase.input) });
+        expect(result.result.isError).not.toBe(true);
+        expect(mocks.mutateNodesBatch).toHaveBeenCalledExactlyOnceWith(expect.anything(), "db_review", Array.from({ length: count }, () => ({ type: testCase.type, value: testCase.value })));
+      }
+    });
+    it(`${testCase.name} rejects empty, oversized, and operation-switching inputs`, async () => {
+      for (const operations of [[], Array(101).fill(testCase.input), [{ ...testCase.input, type: "delete" }]]) {
+        const result = await callPrivateTool(reviewAuthorizedEnv, testCase.name, { database_id: "db_review", operations });
+        expect(result.result.isError).toBe(true);
+      }
+      expect(mocks.mutateNodesBatch).not.toHaveBeenCalled();
+    });
+    it(`${testCase.name} enforces write scope, action permission, and reviewer boundaries`, async () => {
+      const auth = reviewAuthorizedEnv.KINIC_WIKI_AUTHORIZATION;
+      for (const runtimeEnv of [
+        { ...reviewAuthorizedEnv, KINIC_WIKI_AUTHORIZATION: { ...auth, scopes: ["mcp:read"] } },
+        { ...reviewAuthorizedEnv, KINIC_WIKI_AUTHORIZATION: { ...auth, actionPermission: "queries" as const } },
+        { ...reviewAuthorizedEnv, KINIC_WIKI_IDENTITY: undefined },
+        { ...reviewAuthorizedEnv, MCP_REVIEW_DATABASE_ID: "other" }
+      ]) {
+        const result = await callPrivateTool(runtimeEnv, testCase.name, { database_id: "db_review", operations: [testCase.input] });
+        expect(result.result.isError).toBe(true);
+      }
+      const outside = testCase.type === "move" ? { ...testCase.input, to_path: "/Knowledge/outside.md" } : { ...testCase.input, path: "/Knowledge/outside.md" };
+      const denied = await callPrivateTool(reviewAuthorizedEnv, testCase.name, { database_id: "db_review", operations: [outside] });
+      expect(denied.result.isError).toBe(true);
+      expect(mocks.mutateNodesBatch).not.toHaveBeenCalled();
+    });
+    it(`${testCase.name} shares bounded conflict responses without retry`, async () => {
+      const path = "/OpenAIReview/scratch/a.md";
+      mocks.mutateNodesBatch.mockRejectedValueOnce(new KinicMutationError("etag_conflict", 0, path));
+      mocks.readNode.mockResolvedValueOnce({ path, kind: "file", content: "\0".repeat(40_000), metadataJson: "{}", updatedAt: "3", etag: "current" });
+      const response = await callPrivateTool(reviewAuthorizedEnv, testCase.name, { database_id: "db_review", operations: [testCase.input] });
+      expect(response.result.isError).toBe(true);
+      expect(JSON.parse(response.result.content[0].text)).toMatchObject({ error: "etag_conflict", failed_index: 0, conflict_path: path, current_etag: "current", current_content_truncated: true });
+      expect(new TextEncoder().encode(JSON.stringify(response.result)).byteLength).toBeLessThanOrEqual(256_000);
+      expect(mocks.mutateNodesBatch).toHaveBeenCalledOnce();
+    });
+    it(`${testCase.name} bounds oversized successful metadata`, async () => {
+      mocks.mutateNodesBatch.mockResolvedValueOnce([{ path: "x".repeat(256_001) }]);
+      const response = await callPrivateTool(reviewAuthorizedEnv, testCase.name, { database_id: "db_review", operations: [testCase.input] });
+      expect(response.result.isError).toBe(true);
+      expect(new TextEncoder().encode(JSON.stringify(response.result)).byteLength).toBeLessThanOrEqual(256_000);
+    });
+  }
+  it("move_nodes checks the source even when its destination is within the reviewer boundary", async () => {
+    const result = await callPrivateTool(reviewAuthorizedEnv, "move_nodes", { database_id: "db_review", operations: [{ from_path: "/Knowledge/a.md", to_path: "/OpenAIReview/scratch/a.md", expected_etag: "v1" }] });
+    expect(result.result.isError).toBe(true);
+    expect(mocks.mutateNodesBatch).not.toHaveBeenCalled();
   });
 
   it("writes a node for an Actions & questions session", async () => {

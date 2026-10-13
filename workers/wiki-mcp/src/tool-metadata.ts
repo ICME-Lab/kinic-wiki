@@ -35,7 +35,13 @@ export const MCP_TOOL_NAMES = [
 
 export const MCP_MUTATION_TOOL_NAMES = [
   "write_nodes",
-  "mutate_nodes_batch"
+  "mutate_nodes_batch",
+  "append_nodes",
+  "edit_nodes",
+  "multi_edit_nodes",
+  "create_folders",
+  "move_nodes",
+  "delete_nodes"
 ] as const;
 
 export type ToolAccessPolicy = "public" | "private_required";
